@@ -7,8 +7,8 @@ export async function quoteCard() {
   const ctx = getContext();
   if (!ctx) return;
   // const { req, res } = ctx;
-  // console.log("req,res", req, res);
-  // console.log("cookies", req.cookies);
+  // console.log("req", req);
+  // console.log("res", res);
   // Simulate fetching data from a database or API
   const quotes = [
     {

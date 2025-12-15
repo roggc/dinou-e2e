@@ -45,6 +45,9 @@ function createResponseProxy() {
       sendCommand("status", [status]);
       sendCommand("redirect", [url]);
     },
+    status: (code) => {
+      sendCommand("status", [code]);
+    },
 
     // Si necesitas más funciones de respuesta (ej. set, send, etc.), añádelas aquí.
   };

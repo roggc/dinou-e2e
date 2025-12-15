@@ -15,11 +15,6 @@ const requestStorage = global[DINOU_CONTEXT_KEY];
 // El resto de tu archivo...
 function getContext() {
   const store = requestStorage.getStore(); // AHORA LEE DE LA INSTANCIA ÚNICA GLOBAL
-  // if (!store) {
-  //   throw new Error(
-  //     "getContext: No se puede llamar fuera de una Dinou Server Function."
-  //   );
-  // }
   return store;
 }
 

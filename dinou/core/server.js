@@ -247,6 +247,25 @@ const app = express();
 app.use(appUseCookieParser);
 app.use(express.json());
 
+function getContext(req, res) {
+  const context = {
+    req: {
+      cookies: { ...req.cookies },
+      headers: { ...req.headers },
+      query: { ...req.query },
+      path: req.path,
+      method: req.method,
+    },
+    res: {
+      clearCookie: res.clearCookie,
+      redirect: res.redirect,
+      setHeader: res.setHeader,
+      status: res.status,
+    },
+  };
+  return context;
+}
+
 app.use(express.static(path.resolve(process.cwd(), outputFolder)));
 
 app.get("/.well-known/appspecific/com.chrome.devtools.json", (req, res) => {
@@ -303,7 +322,7 @@ app.get(/^\/____rsc_payload____\/.*\/?$/, async (req, res) => {
         return readStream.pipe(res);
       }
     }
-    const context = { req, res };
+    const context = getContext(req, res);
     const pipe = await requestStorage.run(context, async () => {
       const jsx = await getSSGJSXOrJSX(
         reqPath,
@@ -379,10 +398,11 @@ app.get(/^\/.*\/?$/, (req, res) => {
     const contextForChild = {
       req: {
         // Solo serializa lo necesario para getContext().req
-        query: req.query,
-        cookies: req.cookies,
-        headers: req.headers,
+        query: { ...req.query },
+        cookies: { ...req.cookies },
+        headers: { ...req.headers },
         path: req.path,
+        method: req.method,
       },
       // No incluyas res aquí
     };
@@ -512,7 +532,7 @@ app.post("/____server_function____", async (req, res) => {
     }
 
     // Ejecutar la función con context
-    const context = { req, res };
+    const context = getContext(req, res);
     const result = await requestStorage.run(context, async () => {
       // La función del usuario (fn) es llamada SÓLO con los args que envía el cliente.
       return await fn(...args);
