@@ -43,6 +43,7 @@ const { fileURLToPath } = require("url");
 const isWebpack = process.env.DINOU_BUILD_TOOL === "webpack";
 const parseExports = require("./parse-exports.js");
 const { requestStorage } = require("./request-context.js");
+const { useServerRegex } = require("../constants.js");
 if (isDevelopment) {
   const manifestPath = path.resolve(
     process.cwd(),
@@ -248,6 +249,18 @@ app.use(appUseCookieParser);
 app.use(express.json());
 
 function getContext(req, res) {
+  // Helper para ejecutar métodos de res de forma segura
+  const safeResCall = (methodName, ...args) => {
+    if (res.headersSent) {
+      // console.warn(
+      //   `[Dinou Warning] RSC Stream activo. Ignorando res.${methodName}() para evitar crash.`
+      // );
+      return; // Salimos silenciosamente
+    }
+    // Ejecutamos manteniendo el contexto 'this' con bind/apply
+    return res[methodName].apply(res, args);
+  };
+
   const context = {
     req: {
       cookies: { ...req.cookies },
@@ -257,10 +270,27 @@ function getContext(req, res) {
       method: req.method,
     },
     res: {
-      clearCookie: res.clearCookie,
-      redirect: res.redirect,
-      setHeader: res.setHeader,
-      status: res.status,
+      // 1. STATUS
+      status: (code) => safeResCall("status", code),
+
+      // 2. SET HEADER
+      setHeader: (name, value) => safeResCall("setHeader", name, value),
+
+      // 3. CLEAR COOKIE
+      // Nota: Si headersSent es true, la cookie NO se borrará en esta petición RSC.
+      // Si es vital borrarla, deberías manejarlo en el Client Component o en una API route aparte.
+      clearCookie: (name, options) => safeResCall("clearCookie", name, options),
+
+      // 4. REDIRECT (Tu wrapper inteligente existente)
+      redirect: (...args) => safeResCall("redirect", ...args),
+      // redirect: (...args) => {
+      //   if (res.headersSent) {
+      //     // No hacemos nada en el objeto res.
+      //     // Confiamos en que tu Server Function devolverá <ClientRedirect />
+      //     return;
+      //   }
+      //   res.redirect.apply(res, args);
+      // },
     },
   };
   return context;
@@ -494,11 +524,7 @@ app.post("/____server_function____", async (req, res) => {
       // allowedExports = devCache.get(absolutePath);
       // if (!allowedExports) {
       const fileContent = readFileSync(absolutePath, "utf8"); // Solo lee una vez
-      const firstLine = fileContent.trim().split("\n")[0].trim();
-      if (
-        !firstLine.startsWith('"use server"') &&
-        !firstLine.startsWith("'use server'")
-      ) {
+      if (!useServerRegex.test(fileContent)) {
         return res
           .status(403)
           .json({ error: "Not a valid server function file" });

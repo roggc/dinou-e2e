@@ -8,6 +8,7 @@ const traverse = require("@babel/traverse").default;
 const { regex } = require("../../core/asset-extensions.js");
 const createScopedName = require("../../core/createScopedName.js");
 const { getAbsPathWithExt } = require("../../core/get-abs-path-with-ext.js");
+const { useClientRegex } = require("../../constants.js");
 
 function reactClientManifestPlugin({
   srcDir = path.resolve("src"),
@@ -234,7 +235,7 @@ function reactClientManifestPlugin({
       for (const absPath of files) {
         const code = readFileSync(absPath, "utf8");
         const normalizedPath = absPath.split(path.sep).join(path.posix.sep);
-        const isClientModule = /^(['"])use client\1/.test(code.trim());
+        const isClientModule = useClientRegex.test(code.trim());
 
         if (isClientModule) {
           clientModules.add(normalizedPath);
@@ -300,7 +301,7 @@ function reactClientManifestPlugin({
         return;
       }
       const code = readFileSync(id, "utf8");
-      const isClientModule = /^(['"])use client\1/.test(code.trim());
+      const isClientModule = useClientRegex.test(code.trim());
 
       updateManifestForModule(id, code, isClientModule);
 

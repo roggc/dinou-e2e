@@ -11,6 +11,7 @@ import {
 } from "../../core/asset-extensions.js";
 import { getAbsPathWithExt } from "../../core/get-abs-path-with-ext.js";
 import normalizePath from "./normalize-path.mjs";
+import { useClientRegex, useServerRegex } from "../../constants.js";
 
 function hashFilePath(absPath) {
   return crypto.createHash("sha1").update(absPath).digest("hex").slice(0, 8);
@@ -145,18 +146,14 @@ export default async function getEsbuildEntries({
 
       if (!isTopLevelClientComponent) {
         // Verificar si es un client component
-        const isImportedFileClient = /^(['"])use client\1/.test(
-          importedCode.trim()
-        );
+        const isImportedFileClient = useClientRegex.test(importedCode.trim());
 
         // Si es client component, NO procesar recursivamente
         if (isImportedFileClient) {
           continue; // No procesar recursivamente client components
         }
       } else {
-        const isImportedFileServer = /^(['"])use server\1/.test(
-          importedCode.trim()
-        );
+        const isImportedFileServer = useServerRegex.test(importedCode.trim());
 
         if (isImportedFileServer) {
           continue;
@@ -255,7 +252,7 @@ export default async function getEsbuildEntries({
   // Gather client modules and update manifest entries
   for (const absPath of files) {
     const code = readFileSync(absPath, "utf8");
-    const isClientModule = /^(['"])use client\1/.test(code.trim());
+    const isClientModule = useClientRegex.test(code.trim());
     const normalizedPath = normalizePath(absPath);
 
     if (isClientModule) {
