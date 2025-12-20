@@ -302,7 +302,11 @@ function getContext(req, res) {
 function getContextForServerFunctionEndpoint(req, res) {
   const context = {
     req: {
-      /* ... tus mapeos de req ... */
+      cookies: { ...req.cookies },
+      headers: { ...req.headers },
+      query: { ...req.query },
+      path: req.path,
+      method: req.method,
     },
     res: {
       redirect: (urlOrStatus, url) => {
