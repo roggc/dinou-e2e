@@ -252,6 +252,9 @@ function getContext(req, res) {
   // Helper para ejecutar métodos de res de forma segura
   const safeResCall = (methodName, ...args) => {
     if (res.headersSent) {
+      // console.log(
+      //   `[Dinou] res.${methodName} called but headers already sent. Ignoring.`
+      // );
       // console.warn(
       //   `[Dinou Warning] RSC Stream activo. Ignorando res.${methodName}() para evitar crash.`
       // );
@@ -291,6 +294,43 @@ function getContext(req, res) {
       //   }
       //   res.redirect.apply(res, args);
       // },
+    },
+  };
+  return context;
+}
+
+function getContextForServerFunctionEndpoint(req, res) {
+  const context = {
+    req: {
+      /* ... tus mapeos de req ... */
+    },
+    res: {
+      redirect: (urlOrStatus, url) => {
+        const targetUrl = url || urlOrStatus;
+        // Lanzamos un objeto especial que el endpoint interceptará
+        throw {
+          $$type: "dinou-internal-redirect",
+          url: targetUrl,
+        };
+      },
+      status: (code) => {
+        res.status(code);
+      },
+      setHeader: (n, v) => {
+        res.setHeader(n, v);
+      },
+      clearCookie: (name, options) => {
+        const path = options?.path || "/";
+        // Si los headers no se han enviado, los fijamos como RSC
+        if (!res.headersSent) {
+          res.setHeader("Content-Type", "text/x-component");
+        }
+        // Inyectamos el script directamente en el stream
+        // Ponemos un delimitador o simplemente lo soltamos; el proxy lo buscará.
+        res.write(
+          `<script>document.cookie = "${name}=; Max-Age=0; path=${path};";</script>`
+        );
+      },
     },
   };
   return context;
@@ -558,18 +598,43 @@ app.post("/____server_function____", async (req, res) => {
     }
 
     // Ejecutar la función con context
-    const context = getContext(req, res);
-    const result = await requestStorage.run(context, async () => {
-      // La función del usuario (fn) es llamada SÓLO con los args que envía el cliente.
-      return await fn(...args);
-    });
+    // const context = getContext(req, res);
+    // const result = await requestStorage.run(context, async () => {
+    //   // La función del usuario (fn) es llamada SÓLO con los args que envía el cliente.
+    //   return await fn(...args);
+    // });
+
+    const context = getContextForServerFunctionEndpoint(req, res);
+
+    let result;
+    try {
+      result = await requestStorage.run(context, async () => {
+        return await fn(...args);
+      });
+    } catch (err) {
+      // 💡 INTERCEPTAMOS LA REDIRECCIÓN
+      if (err && err.$$type === "dinou-internal-redirect") {
+        res.setHeader("Content-Type", "text/html");
+        return res.send(
+          `<script>window.location.href = "${err.url}";</script>`
+        );
+      }
+      throw err; // Si es otro error, lo lanzamos al catch externo
+    }
+
+    // 🛑 FIX: Comprobar si la función ya respondió (ej: un redirect)
+    // if (res.headersSent) {
+    //   // console.log("[Dinou] Response already handled inside Server Function via ctx.res.");
+    //   return; // ⬅️ IMPORTANTE: Detenemos la ejecución aquí.
+    // }
 
     // Manejo del resultado (igual que antes, pero con chequeos extras si es necesario)
     if (
       result &&
       result.$$typeof === Symbol.for("react.transitional.element")
     ) {
-      res.setHeader("Content-Type", "text/x-component");
+      if (!res.headersSent) res.setHeader("Content-Type", "text/x-component");
+      // res.setHeader("Content-Type", "text/x-component");
       const manifestPath = path.resolve(
         process.cwd(),
         isWebpack
@@ -586,7 +651,13 @@ app.post("/____server_function____", async (req, res) => {
       const { pipe } = renderToPipeableStream(result, manifest);
       pipe(res);
     } else {
-      res.json(result);
+      // Si es JSON pero ya inyectamos scripts, tenemos que cerrar manualmente
+      if (res.headersSent) {
+        res.write(JSON.stringify(result));
+        res.end();
+      } else {
+        res.json(result);
+      }
     }
   } catch (err) {
     console.error(`Server function error [${req.body?.id}]:`, err);

@@ -12,6 +12,7 @@ import {
 import { getAbsPathWithExt } from "../../core/get-abs-path-with-ext.js";
 import normalizePath from "./normalize-path.mjs";
 import { useClientRegex, useServerRegex } from "../../constants.js";
+import parseExports from "../../core/parse-exports.js";
 
 function hashFilePath(absPath) {
   return crypto.createHash("sha1").update(absPath).digest("hex").slice(0, 8);
@@ -28,44 +29,6 @@ export default async function getEsbuildEntries({
   const serverModules = new Set();
 
   // ---------- Helpers (ported mostly verbatim) ----------
-  function parseExports(code) {
-    const ast = parser.parse(code, {
-      sourceType: "module",
-      plugins: ["jsx", "typescript"],
-    });
-
-    const exports = new Set();
-
-    traverse.default(ast, {
-      ExportDefaultDeclaration(path) {
-        exports.add("default");
-      },
-      ExportNamedDeclaration(path) {
-        if (path.node.declaration) {
-          if (
-            path.node.declaration.type === "FunctionDeclaration" ||
-            path.node.declaration.type === "ClassDeclaration"
-          ) {
-            exports.add(path.node.declaration.id.name);
-          } else if (path.node.declaration.type === "VariableDeclaration") {
-            path.node.declaration.declarations.forEach((decl) => {
-              if (decl.id.type === "Identifier") {
-                exports.add(decl.id.name);
-              }
-            });
-          }
-        } else if (path.node.specifiers) {
-          path.node.specifiers.forEach((spec) => {
-            if (spec.type === "ExportSpecifier") {
-              exports.add(spec.exported.name);
-            }
-          });
-        }
-      },
-    });
-
-    return exports;
-  }
 
   function updateManifestForModule(absPath, code, isClientModule) {
     const fileUrl = pathToFileURL(absPath).href;
