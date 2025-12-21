@@ -36,82 +36,51 @@ export function createServerFunctionProxy(id) {
 
         const readableStream = new ReadableStream({
           async start(controller) {
+            let isRedirecting = false; // 🚩 Bandera nueva
+
             while (true) {
               const { done, value } = await reader.read();
               if (done) break;
 
               const chunk = decoder.decode(value, { stream: true });
 
-              // // 💡 EJECUCIÓN SEGURA Y PRECISA
-              // if (chunk.includes("<script>")) {
-              //   // 1. Extraer SOLO los scripts para ejecutarlos
-              //   // Usamos un regex para encontrar todos los bloques de script
-              //   const scriptRegex = /<script>(.*?)<\/script>/gs;
-              //   let match;
-
-              //   while ((match = scriptRegex.exec(chunk)) !== null) {
-              //     const scriptContent = match[1];
-              //     // Ejecutamos solo el contenido del script de forma segura
-              //     try {
-              //       // Opción A: new Function (más limpio que appendChild para JS puro)
-              //       // new Function(scriptContent)();
-
-              //       // Opción B: Si prefieres appendChild, crea un script tag limpio
-              //       const scriptEl = document.createElement("script");
-              //       scriptEl.text = scriptContent;
-              //       document.body.appendChild(scriptEl);
-              //       document.body.removeChild(scriptEl); // Limpieza inmediata
-              //     } catch (err) {
-              //       console.error("Error executing injected script:", err);
-              //     }
-              //   }
-
-              //   // 2. LIMPIAMOS el chunk para React
-              //   // Eliminamos las etiquetas script completas
-              //   const cleanChunk = chunk.replace(
-              //     /<script.*?>.*?<\/script>/gs,
-              //     ""
-              //   );
-
-              //   if (cleanChunk.trim()) {
-              //     controller.enqueue(encoder.encode(cleanChunk));
-              //   }
-              // } else {
-              //   // Si no hay scripts, pasamos el valor original
-              //   controller.enqueue(value);
-              // }
-
-              // 💡 LÓGICA CORREGIDA: Separar ejecución de limpieza
+              // LÓGICA DE SCRIPTS
               if (chunk.includes("<script>")) {
-                // 1. Extraer SOLO los scripts para el DOM
                 const scriptRegex = /<script>(.*?)<\/script>/gs;
                 const scriptsFound = chunk.match(scriptRegex);
 
                 if (scriptsFound) {
                   scriptsFound.forEach((scriptTag) => {
-                    // console.log("Injecting script tag:", scriptTag);
-                    // Creamos un fragmento SOLO con el script, ignorando el texto RSC
+                    // Detectar si es un redirect
+                    if (scriptTag.includes("window.location.href")) {
+                      isRedirecting = true; // 🚩 Marcamos que nos vamos
+                    }
+
                     const range = document.createRange();
                     const fragment = range.createContextualFragment(scriptTag);
                     document.body.appendChild(fragment);
                   });
                 }
 
-                // 2. Limpiar el chunk para pasárselo a React
                 const cleanChunk = chunk.replace(scriptRegex, "");
-
-                // Solo encolamos si queda algo (el payload RSC)
                 if (cleanChunk.trim()) {
                   controller.enqueue(encoder.encode(cleanChunk));
                 }
               } else {
-                // Si no hay scripts, es payload puro de React
                 controller.enqueue(value);
               }
             }
-            controller.close();
+
+            // 💡 EL TRUCO FINAL:
+            // Si estamos redirigiendo, NO cerramos el controller.
+            // Dejamos a React esperando (Pending) hasta que el navegador cambie de página.
+            // Esto evita el "Connection closed error".
+            if (!isRedirecting) {
+              controller.close();
+            }
           },
         });
+
         // return createFromFetch(Promise.resolve(res));
         return createFromFetch(Promise.resolve(new Response(readableStream)));
       } else {

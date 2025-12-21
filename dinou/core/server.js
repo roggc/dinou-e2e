@@ -698,14 +698,26 @@ app.post("/____server_function____", async (req, res) => {
       } catch (err) {
         // 💡 INTERCEPTAMOS LA REDIRECCIÓN
         if (err && err.$$type === "dinou-internal-redirect") {
-          res.setHeader("Content-Type", "text/html");
-          // 1. Sanear la URL (esto añade las comillas necesarias de forma segura)
+          // 1. Saneamos la URL siempre
           const safeUrl = JSON.stringify(err.url);
+          const script = `<script>window.location.href = ${safeUrl};</script>`;
 
-          // 2. Inyectar SIN añadir comillas extra alrededor de ${safeUrl}
-          return res.send(
-            `<script>window.location.href = ${safeUrl};</script>`
-          );
+          if (!res.headersSent) {
+            // ESCENARIO A: Limpio (Content-Type html)
+            res.setHeader("Content-Type", "text/html");
+            return res.send(script); // res.send hace end() y return detiene la función
+          } else {
+            // ESCENARIO B: Sucio/Stream activo (Content-Type ya fijado por clearCookie)
+            // Escribimos el script en el stream existente
+            res.write(script);
+
+            // ⚠️ IMPORTANTE:
+            // 1. Cerramos la respuesta, ya que redireccionamos y no habrá RSC payload.
+            res.end();
+
+            // 2. DETENEMOS la ejecución para que no siga hacia res.json() abajo.
+            return;
+          }
         }
         throw err; // Si es otro error, lo lanzamos al catch externo
       }

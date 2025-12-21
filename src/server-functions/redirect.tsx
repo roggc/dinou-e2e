@@ -8,7 +8,8 @@ export async function redirect() {
   if (!ctx) return;
 
   await new Promise((resolve) => setTimeout(resolve, 2000));
-  // ctx.res.redirect("/docs");
+
   ctx.res.clearCookie("dinou-test-cookie");
+  ctx.res.redirect("/docs");
   return <ClientRedirect to="/docs" />;
 }
