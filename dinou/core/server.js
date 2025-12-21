@@ -44,6 +44,7 @@ const isWebpack = process.env.DINOU_BUILD_TOOL === "webpack";
 const parseExports = require("./parse-exports.js");
 const { requestStorage } = require("./request-context.js");
 const { useServerRegex } = require("../constants.js");
+const processLimiter = require("./concurrency-manager.js");
 if (isDevelopment) {
   const manifestPath = path.resolve(
     process.cwd(),
@@ -260,6 +261,18 @@ function getContext(req, res) {
       // );
       return; // Salimos silenciosamente
     }
+    if (methodName === "redirect") {
+      function safeRedirect(url) {
+        if (url.startsWith("/") && !url.startsWith("//")) {
+          // Es segura (relativa)
+          res.redirect.apply(res, [url]);
+        } else {
+          // Es externa o peligrosa, forzar home o validar dominio
+          res.redirect.apply(res, ["/"]);
+        }
+      }
+      return safeRedirect(args[0]);
+    }
     // Ejecutamos manteniendo el contexto 'this' con bind/apply
     return res[methodName].apply(res, args);
   };
@@ -267,7 +280,12 @@ function getContext(req, res) {
   const context = {
     req: {
       cookies: { ...req.cookies },
-      headers: { ...req.headers },
+      headers: {
+        "user-agent": req.headers["user-agent"],
+        cookie: req.headers["cookie"],
+        referer: req.headers["referer"],
+        host: req.headers["host"],
+      },
       query: { ...req.query },
       path: req.path,
       method: req.method,
@@ -303,7 +321,12 @@ function getContextForServerFunctionEndpoint(req, res) {
   const context = {
     req: {
       cookies: { ...req.cookies },
-      headers: { ...req.headers },
+      headers: {
+        "user-agent": req.headers["user-agent"],
+        cookie: req.headers["cookie"],
+        referer: req.headers["referer"],
+        host: req.headers["host"],
+      },
       query: { ...req.query },
       path: req.path,
       method: req.method,
@@ -325,14 +348,22 @@ function getContextForServerFunctionEndpoint(req, res) {
       },
       clearCookie: (name, options) => {
         const path = options?.path || "/";
-        // Si los headers no se han enviado, los fijamos como RSC
+
         if (!res.headersSent) {
           res.setHeader("Content-Type", "text/x-component");
         }
-        // Inyectamos el script directamente en el stream
-        // Ponemos un delimitador o simplemente lo soltamos; el proxy lo buscará.
+
+        // 🛡️ SOLUCIÓN SEGURA:
+        // 1. Usamos JSON.stringify para que 'name' sea una string válida de JS (ej: "miCookie")
+        // 2. Usamos JSON.stringify para 'path' también (seguridad total)
+        // 3. NO ponemos comillas extra alrededor de ${...} en el template string
+        // 4. Usamos el operador '+' de JavaScript dentro del script para unir las piezas
+
+        const safeName = JSON.stringify(name); // Devuelve: "dinou-cookie"
+        const safePath = JSON.stringify(path); // Devuelve: "/"
+
         res.write(
-          `<script>document.cookie = "${name}=; Max-Age=0; path=${path};";</script>`
+          `<script>document.cookie = ${safeName} + "=; Max-Age=0; path=" + ${safePath} + ";";</script>`
         );
       },
     },
@@ -474,33 +505,74 @@ app.get(/^\/.*\/?$/, (req, res) => {
         // Solo serializa lo necesario para getContext().req
         query: { ...req.query },
         cookies: { ...req.cookies },
-        headers: { ...req.headers },
+        headers: {
+          "user-agent": req.headers["user-agent"],
+          cookie: req.headers["cookie"],
+          referer: req.headers["referer"],
+          host: req.headers["host"],
+        },
         path: req.path,
         method: req.method,
       },
       // No incluyas res aquí
     };
+    processLimiter
+      .run(async () => {
+        const appHtmlStream = renderAppToHtml(
+          reqPath,
+          JSON.stringify({ ...req.query }),
+          JSON.stringify({ ...req.cookies }),
+          contextForChild,
+          res
+        );
 
-    const appHtmlStream = renderAppToHtml(
-      reqPath,
-      JSON.stringify({ ...req.query }),
-      JSON.stringify({ ...req.cookies }),
-      contextForChild,
-      res
-    );
+        res.setHeader("Content-Type", "text/html");
+        appHtmlStream.pipe(res);
 
-    res.setHeader("Content-Type", "text/html");
-    appHtmlStream.pipe(res);
-
-    appHtmlStream.on("error", (error) => {
-      console.error("Stream error:", error);
-      res.status(500).send("Internal Server Error");
-    });
+        // 💡 TRUCO: Queremos liberar el slot de concurrencia SOLO cuando
+        // el stream haya terminado de enviarse o haya error.
+        await new Promise((resolve) => {
+          appHtmlStream.on("end", resolve);
+          appHtmlStream.on("error", (error) => {
+            console.error("Stream error:", error);
+            resolve();
+            res.status(500).send("Internal Server Error");
+          }); // Liberamos aunque falle
+          res.on("close", resolve); // Si el usuario cierra la pestaña
+        });
+      })
+      .catch((err) => {
+        console.error("Error en SSR limitado:", err);
+        if (!res.headersSent) res.status(500).send("Server Busy or Error");
+      });
   } catch (error) {
     console.error("Error rendering React app:", error);
     res.status(500).send("Internal Server Error");
   }
 });
+
+// Helper function para verificar origen
+function isOriginAllowed(req) {
+  // 1. En entornos server-to-server o tools, a veces no hay Origin.
+  // Si decides que es obligatorio, devuelve false aquí.
+  // Pero navegadores modernos SIEMPRE envían Origin en POST.
+  const origin = req.headers.origin;
+
+  // Si no hay origin (ej: llamada curl o server-side fetch sin headers),
+  // tú decides si ser estricto o permisivo.
+  if (!origin) return false; // Cambia a true si quieres permitir sin origin.
+
+  try {
+    // Parseamos para ignorar protocolo (http/https) y puerto si difieren sutilmente
+    const originHost = new URL(origin).host;
+    const serverHost = req.headers.host;
+
+    // Comparamos el host (dominio:puerto)
+    return originHost === serverHost;
+  } catch (e) {
+    return false; // Si la URL del origin es inválida, rechazar.
+  }
+}
 
 app.post("/____server_function____", async (req, res) => {
   try {
@@ -515,8 +587,16 @@ app.post("/____server_function____", async (req, res) => {
 
     // 2. Verificar Header Personalizado (Defensa CSRF robusta)
     // Asegúrate de que tu cliente (server-function-proxy.js) envíe este header
-    if (!req.headers["x-server-function-call"]) {
+    if (req.headers["x-server-function-call"] !== "1") {
       return res.status(403).json({ error: "Missing security header" });
+    }
+
+    // 2. Check del Origin (NUEVO)
+    if (!isDevelopment && !isOriginAllowed(req)) {
+      console.error(
+        `[Security] Blocked request from origin: ${req.headers.origin}`
+      );
+      return res.status(403).json({ error: "Origin not allowed" });
     }
     const { id, args } = req.body;
 
@@ -607,62 +687,67 @@ app.post("/____server_function____", async (req, res) => {
     //   // La función del usuario (fn) es llamada SÓLO con los args que envía el cliente.
     //   return await fn(...args);
     // });
+    await processLimiter.run(async () => {
+      const context = getContextForServerFunctionEndpoint(req, res);
 
-    const context = getContextForServerFunctionEndpoint(req, res);
+      let result;
+      try {
+        result = await requestStorage.run(context, async () => {
+          return await fn(...args);
+        });
+      } catch (err) {
+        // 💡 INTERCEPTAMOS LA REDIRECCIÓN
+        if (err && err.$$type === "dinou-internal-redirect") {
+          res.setHeader("Content-Type", "text/html");
+          // 1. Sanear la URL (esto añade las comillas necesarias de forma segura)
+          const safeUrl = JSON.stringify(err.url);
 
-    let result;
-    try {
-      result = await requestStorage.run(context, async () => {
-        return await fn(...args);
-      });
-    } catch (err) {
-      // 💡 INTERCEPTAMOS LA REDIRECCIÓN
-      if (err && err.$$type === "dinou-internal-redirect") {
-        res.setHeader("Content-Type", "text/html");
-        return res.send(
-          `<script>window.location.href = "${err.url}";</script>`
+          // 2. Inyectar SIN añadir comillas extra alrededor de ${safeUrl}
+          return res.send(
+            `<script>window.location.href = ${safeUrl};</script>`
+          );
+        }
+        throw err; // Si es otro error, lo lanzamos al catch externo
+      }
+
+      // 🛑 FIX: Comprobar si la función ya respondió (ej: un redirect)
+      // if (res.headersSent) {
+      //   // console.log("[Dinou] Response already handled inside Server Function via ctx.res.");
+      //   return; // ⬅️ IMPORTANTE: Detenemos la ejecución aquí.
+      // }
+
+      // Manejo del resultado (igual que antes, pero con chequeos extras si es necesario)
+      if (
+        result &&
+        result.$$typeof === Symbol.for("react.transitional.element")
+      ) {
+        if (!res.headersSent) res.setHeader("Content-Type", "text/x-component");
+        // res.setHeader("Content-Type", "text/x-component");
+        const manifestPath = path.resolve(
+          process.cwd(),
+          isWebpack
+            ? `${outputFolder}/react-client-manifest.json`
+            : `react_client_manifest/react-client-manifest.json`
         );
-      }
-      throw err; // Si es otro error, lo lanzamos al catch externo
-    }
-
-    // 🛑 FIX: Comprobar si la función ya respondió (ej: un redirect)
-    // if (res.headersSent) {
-    //   // console.log("[Dinou] Response already handled inside Server Function via ctx.res.");
-    //   return; // ⬅️ IMPORTANTE: Detenemos la ejecución aquí.
-    // }
-
-    // Manejo del resultado (igual que antes, pero con chequeos extras si es necesario)
-    if (
-      result &&
-      result.$$typeof === Symbol.for("react.transitional.element")
-    ) {
-      if (!res.headersSent) res.setHeader("Content-Type", "text/x-component");
-      // res.setHeader("Content-Type", "text/x-component");
-      const manifestPath = path.resolve(
-        process.cwd(),
-        isWebpack
-          ? `${outputFolder}/react-client-manifest.json`
-          : `react_client_manifest/react-client-manifest.json`
-      );
-      // Verificar que el manifest exista para evitar errores
-      if (!existsSync(manifestPath)) {
-        return res.status(500).json({ error: "Manifest not found" });
-      }
-      const manifest = isDevelopment
-        ? JSON.parse(readFileSync(manifestPath, "utf8"))
-        : cachedClientManifest;
-      const { pipe } = renderToPipeableStream(result, manifest);
-      pipe(res);
-    } else {
-      // Si es JSON pero ya inyectamos scripts, tenemos que cerrar manualmente
-      if (res.headersSent) {
-        res.write(JSON.stringify(result));
-        res.end();
+        // Verificar que el manifest exista para evitar errores
+        if (!existsSync(manifestPath)) {
+          return res.status(500).json({ error: "Manifest not found" });
+        }
+        const manifest = isDevelopment
+          ? JSON.parse(readFileSync(manifestPath, "utf8"))
+          : cachedClientManifest;
+        const { pipe } = renderToPipeableStream(result, manifest);
+        pipe(res);
       } else {
-        res.json(result);
+        // Si es JSON pero ya inyectamos scripts, tenemos que cerrar manualmente
+        if (res.headersSent) {
+          res.write(JSON.stringify(result));
+          res.end();
+        } else {
+          res.json(result);
+        }
       }
-    }
+    });
   } catch (err) {
     console.error(`Server function error [${req.body?.id}]:`, err);
     // En producción, no envíes err.message completo para evitar leaks

@@ -46,7 +46,10 @@ function renderAppToHtml(
     renderHtmlPath, // ⬅️ CAMBIO 2: El script (path) es el primer argumento de fork (sin necesidad de "node")
     scriptArgs, // Argumentos posicionales para el script (process.argv)
     {
-      env: { ...process.env },
+      env: {
+        NODE_ENV: process.env.NODE_ENV,
+        DINOU_BUILD_TOOL: process.env.DINOU_BUILD_TOOL,
+      }, // Puedes pasar otras variables de entorno si es necesario
       // ⬅️ CAMBIO 3: Aplicamos la Lista Blanca a execArgv, reseteando las opciones heredadas
       execArgv: childExecArgv,
       // ⬅️ CAMBIO 4: stdio necesita 'ipc' para que fork funcione y para el canal de comunicación futuro
@@ -115,8 +118,10 @@ function renderAppToHtml(
               `[Dinou] Streaming active. Redirecting via JavaScript to: ${url}`
             );
 
-            // Escribimos directamente en el stream de respuesta
-            res.write(`<script>window.location.href = "${url}";</script>`);
+            const safeUrl = JSON.stringify(url);
+
+            // 2. Inyectar SIN añadir comillas extra alrededor de ${safeUrl}
+            res.write(`<script>window.location.href = ${safeUrl};</script>`);
             res.end(); // Cerramos la respuesta
 
             // Opcional: Matar al proceso hijo para ahorrar recursos ya que nos vamos
@@ -143,8 +148,11 @@ function renderAppToHtml(
 
             // Inyectamos script para borrar la cookie (poniendo fecha en el pasado)
             // Nota: Esto solo funciona si la cookie NO es HttpOnly.
+            const safeName = JSON.stringify(name); // Devuelve: "dinou-cookie"
+            const safePath = JSON.stringify(path); // Devuelve: "/"
+
             res.write(
-              `<script>document.cookie = "${name}=; Max-Age=0; path=${path};";</script>`
+              `<script>document.cookie = ${safeName} + "=; Max-Age=0; path=" + ${safePath} + ";";</script>`
             );
             return;
           }
@@ -161,6 +169,18 @@ function renderAppToHtml(
 
       // Ejecutar el comando real de Express usando el 'res' pasado
       if (typeof res[command] === "function") {
+        if (command === "redirect") {
+          function safeRedirect(url) {
+            if (url.startsWith("/") && !url.startsWith("//")) {
+              // Es segura (relativa)
+              res.redirect.apply(res, [url]);
+            } else {
+              // Es externa o peligrosa, forzar home o validar dominio
+              res.redirect.apply(res, ["/"]);
+            }
+          }
+          return safeRedirect(args[0]);
+        }
         res[command].apply(res, args);
       } else {
         console.error(

@@ -89,6 +89,7 @@ export function createServerFunctionProxy(id) {
 
                 if (scriptsFound) {
                   scriptsFound.forEach((scriptTag) => {
+                    // console.log("Injecting script tag:", scriptTag);
                     // Creamos un fragmento SOLO con el script, ignorando el texto RSC
                     const range = document.createRange();
                     const fragment = range.createContextualFragment(scriptTag);
