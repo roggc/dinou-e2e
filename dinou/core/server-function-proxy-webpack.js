@@ -129,9 +129,8 @@ function createServerFunctionProxy(id) {
         });
 
         return createFromFetch(Promise.resolve(new Response(readableStream)));
-      } else {
-        return res.json();
       }
+      return res.json();
     },
   });
 }

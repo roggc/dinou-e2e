@@ -1,9 +1,9 @@
 "use server";
 
 import { getContext } from "dinou";
-import { ClientRedirect } from "@/components/client-redirect";
+import ComplexData from "@/components/complex-data";
 
-export async function redirect() {
+export async function complexData() {
   const ctx = getContext();
   if (!ctx) return;
 
@@ -12,14 +12,12 @@ export async function redirect() {
   // ctx.res.clearCookie("dinou-test-cookie");
   // ctx.res.redirect("/docs");
   // return <ClientRedirect to="/docs" />;
-  return {
-    date: new Date(),
-    map: new Map([["a", 1]]),
-    set: new Set([1, 2, 3]),
-    bigint: 1234567890n,
-    foo: "bar",
-    num1: 42,
-    num2: 3.14,
-    boolval: true,
-  };
+  return (
+    <ComplexData
+      date={new Date()}
+      map={new Map([["a", 1]])}
+      set={new Set([1, 2, 3])}
+      bigint={1234567890n}
+    />
+  );
 }

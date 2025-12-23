@@ -1,6 +1,6 @@
-"use client";
+// "use client";
 
-export default function QuoteCard({
+export default async function QuoteCard({
   quote,
   author,
 }: {

@@ -681,12 +681,6 @@ app.post("/____server_function____", async (req, res) => {
       return res.status(400).json({ error: "Export is not a function" });
     }
 
-    // Ejecutar la función con context
-    // const context = getContext(req, res);
-    // const result = await requestStorage.run(context, async () => {
-    //   // La función del usuario (fn) es llamada SÓLO con los args que envía el cliente.
-    //   return await fn(...args);
-    // });
     await processLimiter.run(async () => {
       const context = getContextForServerFunctionEndpoint(req, res);
 
@@ -722,43 +716,22 @@ app.post("/____server_function____", async (req, res) => {
         throw err; // Si es otro error, lo lanzamos al catch externo
       }
 
-      // 🛑 FIX: Comprobar si la función ya respondió (ej: un redirect)
-      // if (res.headersSent) {
-      //   // console.log("[Dinou] Response already handled inside Server Function via ctx.res.");
-      //   return; // ⬅️ IMPORTANTE: Detenemos la ejecución aquí.
-      // }
-
-      // Manejo del resultado (igual que antes, pero con chequeos extras si es necesario)
-      if (
-        result &&
-        result.$$typeof === Symbol.for("react.transitional.element")
-      ) {
-        if (!res.headersSent) res.setHeader("Content-Type", "text/x-component");
-        // res.setHeader("Content-Type", "text/x-component");
-        const manifestPath = path.resolve(
-          process.cwd(),
-          isWebpack
-            ? `${outputFolder}/react-client-manifest.json`
-            : `react_client_manifest/react-client-manifest.json`
-        );
-        // Verificar que el manifest exista para evitar errores
-        if (!existsSync(manifestPath)) {
-          return res.status(500).json({ error: "Manifest not found" });
-        }
-        const manifest = isDevelopment
-          ? JSON.parse(readFileSync(manifestPath, "utf8"))
-          : cachedClientManifest;
-        const { pipe } = renderToPipeableStream(result, manifest);
-        pipe(res);
-      } else {
-        // Si es JSON pero ya inyectamos scripts, tenemos que cerrar manualmente
-        if (res.headersSent) {
-          res.write(JSON.stringify(result));
-          res.end();
-        } else {
-          res.json(result);
-        }
+      if (!res.headersSent) res.setHeader("Content-Type", "text/x-component");
+      const manifestPath = path.resolve(
+        process.cwd(),
+        isWebpack
+          ? `${outputFolder}/react-client-manifest.json`
+          : `react_client_manifest/react-client-manifest.json`
+      );
+      // Verificar que el manifest exista para evitar errores
+      if (!existsSync(manifestPath)) {
+        return res.status(500).json({ error: "Manifest not found" });
       }
+      const manifest = isDevelopment
+        ? JSON.parse(readFileSync(manifestPath, "utf8"))
+        : cachedClientManifest;
+      const { pipe } = renderToPipeableStream(result, manifest);
+      pipe(res);
     });
   } catch (err) {
     console.error(`Server function error [${req.body?.id}]:`, err);
