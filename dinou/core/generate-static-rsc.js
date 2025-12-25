@@ -4,7 +4,7 @@ const { PassThrough } = require("stream");
 const getSSGJSXOrJSX = require("./get-ssg-jsx-or-jsx.js");
 const { renderToPipeableStream } = require("react-server-dom-webpack/server");
 
-// 👇 1. IMPORTAR STORAGE (Ajusta la ruta si es necesario)
+// 👇 1. IMPORTAR STORAGE
 const { requestStorage } = require("./request-context.js");
 
 const OUT_DIR = path.resolve("dist2");
@@ -14,13 +14,55 @@ async function generateStaticRSC(reqPath) {
   const finalReqPath = reqPath.endsWith("/") ? reqPath : reqPath + "/";
   const payloadPath = path.join(OUT_DIR, finalReqPath, "rsc.rsc");
 
-  // 👇 2. DEFINIR MOCK CONTEXT (Debe coincidir con generateStaticPage.js)
+  // 👇 2. MOCK RES ROBUSTO (Alineado estrictamente con el contrato ResponseProxy)
+  const mockRes = {
+    // Propiedades internas para debug o lógica futura (ocultas al contrato TS)
+    _statusCode: 200,
+    _headers: {},
+    _redirectUrl: null,
+
+    // clearCookie(name, options): void
+    clearCookie(name, options) {
+      // No-op en generación estática/ISR
+    },
+
+    // setHeader(name, value): void
+    setHeader(name, value) {
+      this._headers[name.toLowerCase()] = value;
+    },
+
+    // status(code): void (Nota: El contrato dice void, no permite chaining)
+    status(code) {
+      this._statusCode = code;
+    },
+
+    // redirect: Soporte de sobrecarga (status, url) o (url)
+    redirect(arg1, arg2) {
+      let status = 302;
+      let url = "";
+
+      if (typeof arg1 === "number") {
+        status = arg1;
+        url = arg2;
+      } else {
+        url = arg1;
+      }
+
+      this._statusCode = status;
+      this._redirectUrl = url;
+
+      console.warn(
+        `⚠️ [ISR] Redirect detected during revalidation of ${reqPath} -> ${url} (${status})`
+      );
+    },
+  };
+
+  // 👇 3. MOCK CONTEXT (Req limitado a lo que pide el contrato)
   const mockContext = {
     req: {
       query: {},
-      cookies: {},
+      cookies: {}, // ISR usualmente no tiene cookies de usuario específicas
       headers: {
-        // 🔥 CRÍTICO: Debe ser idéntico al del HTML para evitar mismatch
         "user-agent": "Dinou-ISR-Revalidator",
         host: "localhost",
         "x-forwarded-proto": "http",
@@ -28,12 +70,10 @@ async function generateStaticRSC(reqPath) {
       path: finalReqPath,
       method: "GET",
     },
-    res: {},
+    res: mockRes, // ✅ Mock seguro
   };
 
   try {
-    // console.log("🔄 Generating RSC payload for:", finalReqPath);
-
     const manifest = JSON.parse(
       fs.readFileSync(
         path.resolve(
@@ -50,9 +90,8 @@ async function generateStaticRSC(reqPath) {
     const fileStream = fs.createWriteStream(payloadPath);
     const passThrough = new PassThrough();
 
-    // 👇 3. ENVOLVER EN REQUEST STORAGE
+    // 👇 4. EJECUCIÓN CON CONTEXTO
     await requestStorage.run(mockContext, async () => {
-      // Ahora getContext() dentro de getSSGJSXOrJSX funcionará
       const jsx = await getSSGJSXOrJSX(finalReqPath, {});
 
       const { pipe } = renderToPipeableStream(jsx, manifest);
@@ -66,7 +105,14 @@ async function generateStaticRSC(reqPath) {
       fileStream.on("error", reject);
     });
 
-    console.log("✅ Generated RSC payload (ISR):", finalReqPath);
+    // Validación post-generación (Opcional)
+    if (mockRes._statusCode !== 200) {
+      console.log(
+        `⚠️ ISR Revalidation for ${finalReqPath} resulted in status ${mockRes._statusCode}`
+      );
+    } else {
+      console.log("✅ Generated RSC payload (ISR):", finalReqPath);
+    }
   } catch (error) {
     console.error("❌ Error generating RSC payload for:", finalReqPath, error);
   }

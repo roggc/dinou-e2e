@@ -4,8 +4,7 @@ const { PassThrough } = require("stream");
 const getSSGJSXOrJSX = require("./get-ssg-jsx-or-jsx.js");
 const { renderToPipeableStream } = require("react-server-dom-webpack/server");
 
-// 👇 IMPORTANTE: Necesitas importar tu almacenamiento de contexto
-// Ajusta la ruta a donde tengas definido tu AsyncLocalStorage en Dinou
+// 👇 Tu almacenamiento de contexto
 const { requestStorage } = require("./request-context.js");
 
 const OUT_DIR = path.resolve("dist2");
@@ -27,21 +26,73 @@ async function generateStaticRSCs(routes) {
     const reqPath = route.endsWith("/") ? route : route + "/";
     const payloadPath = path.join(OUT_DIR, reqPath, "rsc.rsc");
 
-    // 👇 1. CREAMOS EL CONTEXTO MOCK (Igual que en generateStaticPages)
-    // Esto asegura que "header" valga "Dinou-SSG-Builder" también aquí
-    const mockContext = {
-      req: {
-        query: {},
-        cookies: {},
-        headers: {
-          "user-agent": "Dinou-SSG-Builder", // 🔥 LA CLAVE
-          host: "localhost",
-          "x-forwarded-proto": "http",
-        },
-        path: reqPath,
-        method: "GET",
+    // ====================================================================
+    // 1. MOCK RES: Cumpliendo la interfaz ResponseProxy
+    // ====================================================================
+    // Aunque el contrato dice que devuelve void, internamente guardamos
+    // el estado por si quieres loguear errores (ej. un redirect en build time).
+    const mockRes = {
+      _statusCode: 200,
+      _headers: {},
+      _redirectUrl: null,
+
+      // clearCookie(name: string, options?: ...): void;
+      clearCookie(name, options) {
+        // En SSG no hacemos nada, pero cumplimos el contrato evitando crash
       },
-      res: {}, // Mock básico de response si fuera necesario
+
+      // setHeader(name: string, value: string | ReadonlyArray<string>): void;
+      setHeader(name, value) {
+        this._headers[name.toLowerCase()] = value;
+      },
+
+      // status(code: number): void;
+      status(code) {
+        this._statusCode = code;
+      },
+
+      // redirect(status: number, url: string): void;
+      // redirect(url: string): void;
+      redirect(arg1, arg2) {
+        let status = 302;
+        let url = "";
+
+        if (typeof arg1 === "number") {
+          status = arg1;
+          url = arg2;
+        } else {
+          url = arg1;
+        }
+
+        this._statusCode = status;
+        this._redirectUrl = url;
+
+        // Logueamos advertencia porque un redirect en SSG suele ser problemático
+        console.warn(
+          `⚠️ [SSG] Redirect detected in ${reqPath} -> ${url} (${status})`
+        );
+      },
+    };
+
+    // ====================================================================
+    // 2. MOCK REQ: Cumpliendo RequestContextStore['req']
+    // ====================================================================
+    const mockReq = {
+      query: {},
+      cookies: {},
+      headers: {
+        "user-agent": "Dinou-SSG-Builder",
+        host: "localhost",
+        // Añade aquí cualquier header default que necesites
+      },
+      path: reqPath,
+      method: "GET",
+    };
+
+    // 3. CONTEXTO COMPLETO
+    const mockContext = {
+      req: mockReq,
+      res: mockRes,
     };
 
     try {
@@ -49,17 +100,14 @@ async function generateStaticRSCs(routes) {
       const fileStream = fs.createWriteStream(payloadPath);
       const passThrough = new PassThrough();
 
-      // 👇 2. ENVOLVEMOS LA GENERACIÓN EN EL CONTEXTO
+      // Ejecutamos dentro del storage
       await requestStorage.run(mockContext, async () => {
-        // Ahora, cuando getSSGJSXOrJSX llame a serverFunction -> getContext(),
-        // encontrará nuestro mockContext.
         const jsx = await getSSGJSXOrJSX(reqPath, {});
 
         const { pipe } = renderToPipeableStream(jsx, manifest);
         pipe(passThrough);
       });
 
-      // El piping lo hacemos fuera o dentro, el stream ya está creado
       passThrough.pipe(fileStream);
 
       await new Promise((resolve, reject) => {
@@ -67,7 +115,14 @@ async function generateStaticRSCs(routes) {
         fileStream.on("error", reject);
       });
 
-      console.log("✅ Generated RSC payload:", reqPath);
+      // Validación post-generación
+      if (mockRes._statusCode !== 200) {
+        console.log(
+          `⚠️ Generated RSC for ${reqPath} but logic set status to ${mockRes._statusCode}`
+        );
+      } else {
+        console.log("✅ Generated RSC payload:", reqPath);
+      }
     } catch (error) {
       console.error("❌ Error generating RSC payload for:", reqPath, error);
     }
