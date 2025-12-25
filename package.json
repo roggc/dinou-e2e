@@ -26,7 +26,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "dinou": "file:../../dinou.tgz",
+    "dinou": "^3.0.6",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-enhanced-suspense": "^5.0.0"
