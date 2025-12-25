@@ -4,6 +4,9 @@ const { PassThrough } = require("stream");
 const getSSGJSXOrJSX = require("./get-ssg-jsx-or-jsx.js");
 const { renderToPipeableStream } = require("react-server-dom-webpack/server");
 
+// 👇 1. IMPORTAR STORAGE (Ajusta la ruta si es necesario)
+const { requestStorage } = require("./request-context.js");
+
 const OUT_DIR = path.resolve("dist2");
 const isWebpack = process.env.DINOU_BUILD_TOOL === "webpack";
 
@@ -11,10 +14,25 @@ async function generateStaticRSC(reqPath) {
   const finalReqPath = reqPath.endsWith("/") ? reqPath : reqPath + "/";
   const payloadPath = path.join(OUT_DIR, finalReqPath, "rsc.rsc");
 
+  // 👇 2. DEFINIR MOCK CONTEXT (Debe coincidir con generateStaticPage.js)
+  const mockContext = {
+    req: {
+      query: {},
+      cookies: {},
+      headers: {
+        // 🔥 CRÍTICO: Debe ser idéntico al del HTML para evitar mismatch
+        "user-agent": "Dinou-ISR-Revalidator",
+        host: "localhost",
+        "x-forwarded-proto": "http",
+      },
+      path: finalReqPath,
+      method: "GET",
+    },
+    res: {},
+  };
+
   try {
     // console.log("🔄 Generating RSC payload for:", finalReqPath);
-    const jsx = await getSSGJSXOrJSX(finalReqPath, {});
-    // console.log("✅ JSX retrieved for:", finalReqPath);
 
     const manifest = JSON.parse(
       fs.readFileSync(
@@ -32,8 +50,15 @@ async function generateStaticRSC(reqPath) {
     const fileStream = fs.createWriteStream(payloadPath);
     const passThrough = new PassThrough();
 
-    const { pipe } = renderToPipeableStream(jsx, manifest);
-    pipe(passThrough);
+    // 👇 3. ENVOLVER EN REQUEST STORAGE
+    await requestStorage.run(mockContext, async () => {
+      // Ahora getContext() dentro de getSSGJSXOrJSX funcionará
+      const jsx = await getSSGJSXOrJSX(finalReqPath, {});
+
+      const { pipe } = renderToPipeableStream(jsx, manifest);
+      pipe(passThrough);
+    });
+
     passThrough.pipe(fileStream);
 
     await new Promise((resolve, reject) => {

@@ -7,6 +7,7 @@ async function SSRStreamingFlow(page: any) {
     // 🟢 EN PROD (SSG): Esperamos el resultado final INMEDIATAMENTE
     // No debe haber loading, debe poner "bye!" directo.
     await expect(page.getByText("bye!")).toBeVisible();
+    await expect(page.getByText("Helper accessed User-Agent:")).toBeVisible();
     await expect(page.getByText("loading...")).not.toBeVisible();
     await expect(page.getByText("hello!")).toBeVisible();
   } else {
@@ -25,6 +26,9 @@ async function SSRStreamingFlow(page: any) {
     // Como tu server function tarda 1s y el timeout por defecto es 5s, esto pasará sin problemas.
     // Esto verifica que el Stream llegó y React hidrató el componente devuelto.
     await expect(page.getByText("bye!")).toBeVisible({ timeout: 10000 });
+    // El helper debe haber podido leer el User-Agent o una Cookie
+    // y la server function lo devuelve al cliente.
+    await expect(page.getByText("Helper accessed User-Agent:")).toBeVisible();
 
     // 4. ESTADO FINAL
     // Una vez llega el componente, el "loading..." debe desaparecer.
@@ -58,6 +62,7 @@ async function SSRStreamingFlowProd(page: any) {
   // Como tu server function tarda 1s y el timeout por defecto es 5s, esto pasará sin problemas.
   // Esto verifica que el Stream llegó y React hidrató el componente devuelto.
   await expect(page.getByText("bye!")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("Helper accessed User-Agent:")).toBeVisible();
 
   // 4. ESTADO FINAL
   // Una vez llega el componente, el "loading..." debe desaparecer.

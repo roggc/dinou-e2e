@@ -1,3 +1,8 @@
-export default async function Component() {
-  return <div>bye!</div>;
+export default async function Component({ header }: { header?: string }) {
+  return (
+    <div>
+      bye!
+      {header && <div>Helper accessed User-Agent: {header}</div>}
+    </div>
+  );
 }

@@ -63,41 +63,6 @@ function renderAppToHtml(
     if (message && message.type === "DINOU_CONTEXT_COMMAND") {
       const { command, args } = message;
 
-      // // Caso Especial: Redirección
-      // if (command === "redirect") {
-      //   // args puede ser [url] o [status, url]
-      //   // Normalizamos para obtener la URL
-      //   const url = args.length === 1 ? args[0] : args[1];
-
-      //   // 💡 AQUÍ ESTÁ LA MAGIA
-      //   if (res.headersSent) {
-      //     // ESCENARIO A: El streaming ya empezó (headers enviados).
-      //     // No podemos usar HTTP 302. Inyectamos JS en el stream.
-      //     console.log(
-      //       `[Dinou] Streaming activo. Redirigiendo vía JS a: ${url}`
-      //     );
-
-      //     // Escribimos directamente en el stream de respuesta
-      //     res.write(`<script>window.location.href = "${url}";</script>`);
-      //     res.end(); // Cerramos la respuesta
-
-      //     // Opcional: Matar al proceso hijo para ahorrar recursos ya que nos vamos
-      //     // child.kill();
-      //     return;
-      //   }
-      //   // else {
-      //   //   // ESCENARIO B: Aún no se ha enviado nada.
-      //   //   // Usamos la redirección HTTP nativa de Express.
-      //   //   console.log(
-      //   //     `[Dinou] Headers limpios. Redirigiendo vía HTTP a: ${url}`
-      //   //   );
-      //   //   if (typeof res.redirect === "function") {
-      //   //     res.redirect(...args);
-      //   //   }
-      //   // }
-      //   // return; // Salimos para no ejecutar el bloque genérico de abajo
-      // }
-
       if (
         command === "setHeader" ||
         command === "clearCookie" ||
