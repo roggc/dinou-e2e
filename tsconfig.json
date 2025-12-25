@@ -9,8 +9,6 @@
     "jsx": "react-jsx",
     "strict": true,
     "target": "es2020",
-    // "lib": ["dom", "dom.iterable", "esnext"],
-    // "module": "esnext",
     "moduleResolution": "node"
   },
   "include": ["src"]

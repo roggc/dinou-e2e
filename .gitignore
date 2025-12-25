@@ -6,3 +6,10 @@ public
 react_client_manifest
 server_functions_manifest
 .env
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/

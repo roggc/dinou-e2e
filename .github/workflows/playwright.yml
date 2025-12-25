@@ -1,0 +1,43 @@
+name: Playwright Tests
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+jobs:
+  e2e-tests:
+    name: ${{ matrix.os }} - ${{ matrix.bundler }} - ${{ matrix.mode }}
+    timeout-minutes: 60
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest] # Linux cubre Mac para lógica de Node
+        bundler: [webpack, rollup, esbuild]
+        mode: [dev, prod]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - name: Install dependencies
+        run: npm ci
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps
+      # Construimos si estamos en modo PROD
+      - name: Build App (if prod)
+        if: matrix.mode == 'prod'
+        run: npm run build:${{ matrix.bundler }}
+
+      # Ejecutamos el test
+      - name: Run Playwright Tests
+        # Definimos el comando dinámicamente según la matriz
+        env:
+          TEST_CMD: ${{ matrix.mode == 'dev' && format('npm run dev:{0}', matrix.bundler) || format('npm run start:{0}', matrix.bundler) }}
+        run: npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: report-${{ matrix.os }}-${{ matrix.bundler }}-${{ matrix.mode }}
+          path: playwright-report/
+          retention-days: 30

@@ -1,3 +1,3 @@
-export function revalidate() {
-  return 20000;
-}
+// export function revalidate() {
+//   return 20000;
+// }

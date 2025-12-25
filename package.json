@@ -4,7 +4,6 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "npm run dev:esbuild",
     "build": "npm run build:esbuild",
     "start": "npm run start:esbuild",
@@ -33,6 +32,8 @@
     "react-enhanced-suspense": "^5.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.57.0",
+    "@types/node": "^25.0.3",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7"
   }
