@@ -108,19 +108,22 @@ async function generateStaticRSCs(routes) {
       const fileStream = fs.createWriteStream(payloadPath);
       const passThrough = new PassThrough();
 
-      // Ejecutamos dentro del storage
+      // 1. Todo el ciclo de vida del stream debe estar dentro del storage
       await requestStorage.run(mockContext, async () => {
         const jsx = await getSSGJSXOrJSX(reqPath, {});
-
         const { pipe } = renderToPipeableStream(jsx, manifest);
+
         pipe(passThrough);
-      });
+        passThrough.pipe(fileStream);
 
-      passThrough.pipe(fileStream);
-
-      await new Promise((resolve, reject) => {
-        fileStream.on("finish", resolve);
-        fileStream.on("error", reject);
+        // 2. IMPORTANTE: Esperamos a que el archivo se escriba TOTALMENTE
+        // antes de salir del bloque 'run'.
+        await new Promise((resolve, reject) => {
+          fileStream.on("finish", resolve);
+          fileStream.on("error", reject);
+          // Opcional: manejar errores del passThrough también
+          passThrough.on("error", reject);
+        });
       });
 
       // Validación post-generación

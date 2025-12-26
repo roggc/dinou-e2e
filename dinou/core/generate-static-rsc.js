@@ -98,19 +98,25 @@ async function generateStaticRSC(reqPath) {
     const fileStream = fs.createWriteStream(payloadPath);
     const passThrough = new PassThrough();
 
-    // 👇 4. EJECUCIÓN CON CONTEXTO
+    // ✅ 4. EJECUCIÓN CON CONTEXTO PROTEGIDO
     await requestStorage.run(mockContext, async () => {
       const jsx = await getSSGJSXOrJSX(finalReqPath, {});
 
       const { pipe } = renderToPipeableStream(jsx, manifest);
+
+      // Conectamos los pipes dentro del contexto
       pipe(passThrough);
-    });
+      passThrough.pipe(fileStream);
 
-    passThrough.pipe(fileStream);
-
-    await new Promise((resolve, reject) => {
-      fileStream.on("finish", resolve);
-      fileStream.on("error", reject);
+      // ESPERAMOS a que el stream termine ANTES de que el contexto se destruya
+      await new Promise((resolve, reject) => {
+        fileStream.on("finish", resolve);
+        fileStream.on("error", (err) => {
+          console.error(`❌ ISR Error writing RSC for ${finalReqPath}:`, err);
+          reject(err);
+        });
+        passThrough.on("error", reject);
+      });
     });
 
     // Validación post-generación (Opcional)
