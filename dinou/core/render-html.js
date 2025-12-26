@@ -132,7 +132,7 @@ async function renderToStream(reqPath, query, cookies = {}, serializedBox) {
     // Usamos el Proxy en lugar del objeto res real
     res: createResponseProxy(),
   };
-  requestStorage.run(context, async () => {
+  await requestStorage.run(context, async () => {
     try {
       const jsx =
         Object.keys(query).length ||
@@ -240,4 +240,7 @@ process.on("unhandledRejection", (reason) => {
   process.exit(1);
 });
 
-renderToStream(reqPath, query, cookies, serializedBox);
+renderToStream(reqPath, query, cookies, serializedBox).catch((err) => {
+  console.error("❌ Fatal error starting render stream:", err);
+  process.exit(1);
+});
