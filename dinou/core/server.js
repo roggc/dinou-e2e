@@ -780,12 +780,74 @@ app.post("/____server_function____", async (req, res) => {
 
 const port = process.env.PORT || 3000;
 
-app.listen(port, async () => {
-  if (!isDevelopment) {
-    await generateStatic();
-  } else {
-    console.log("⚙️ Rendering dynamically in dev mode");
+const http = require("http");
+
+// Envolvemos todo el arranque en una IIFE asíncrona para usar await limpiamente
+(async () => {
+  try {
+    // ============================================================
+    // FASE 1: GENERACIÓN ESTÁTICA (Build Time)
+    // ============================================================
+    // Hacemos esto ANTES de crear el servidor. Así, si generateStatic
+    // hace limpiezas agresivas de memoria, no mata al servidor HTTP.
+    if (!isDevelopment) {
+      console.log("🏗️  [Startup] Starting static generation (SSG/ISR)...");
+      try {
+        await generateStatic();
+        console.log("✅ [Startup] Static generation finished successfully.");
+      } catch (buildError) {
+        console.error("❌ [Startup] Static generation failed:", buildError);
+        // Dependiendo de tu política, podrías salir (process.exit(1)) o continuar
+        // Si decides continuar, el servidor arrancará pero quizás falten archivos.
+        process.exit(1);
+      }
+    } else {
+      console.log(
+        "⚙️  [Startup] Running in Development Mode (Dynamic Rendering)"
+      );
+    }
+
+    // ============================================================
+    // FASE 2: CREACIÓN DEL SERVIDOR
+    // ============================================================
+    console.log("👉 [Startup] Initializing HTTP Server...");
+
+    // Pasamos 'app' a createServer. Esto desacopla Express de la red.
+    const server = http.createServer(app);
+
+    // ============================================================
+    // FASE 3: MANEJO DE ERRORES (Anti-Zombies)
+    // ============================================================
+    // Esto captura errores como EADDRINUSE antes de que crasheen el proceso silenciosamente
+    server.on("error", (error) => {
+      if (error.code === "EADDRINUSE") {
+        console.error(`\n❌ FATAL ERROR: Port ${port} is already in use!`);
+        console.error(
+          `   Cause: A previous instance, a zombie test runner, or another app is holding the port.`
+        );
+        console.error(
+          `   Action: Run 'netstat -ano | findstr :${port}' (Win) or 'lsof -i :${port}' to find the PID and kill it.\n`
+        );
+      } else {
+        console.error("❌ [Server Error]:", error);
+      }
+      process.exit(1); // Salimos explícitamente con código de error
+    });
+
+    // ============================================================
+    // FASE 4: ARRANQUE (Listen)
+    // ============================================================
+    server.listen(port, () => {
+      isReady = true;
+      console.log(
+        `\n🚀 Dinou Server is ready and listening on http://localhost:${port}`
+      );
+      console.log(
+        `   Environment: ${isDevelopment ? "Development" : "Production"}\n`
+      );
+    });
+  } catch (error) {
+    console.error("💥 [Fatal Startup Error]:", error);
+    process.exit(1);
   }
-  isReady = true;
-  console.log(`Listening on port ${port}`);
-});
+})();

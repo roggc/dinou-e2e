@@ -72,6 +72,102 @@ async function SSRStreamingFlowProd(page: any) {
   await expect(page.getByText("hello!")).toBeVisible();
 }
 
+async function conncurrencyFlow(
+  browser: any,
+  url: string,
+  invokedFromServer = false
+) {
+  test.skip(
+    isProd && invokedFromServer,
+    "SSG builds do not support dynamic content when invoked from Server Components"
+  );
+  // 1. Crear dos contextos (simula dos usuarios en dos PCs distintos)
+  const userA = await browser.newContext();
+  const userB = await browser.newContext();
+
+  // 2. Setear cookies distintas para identificarlos
+  await userA.addCookies([
+    { name: "user", value: "ALICE", domain: "localhost", path: "/" },
+  ]);
+  await userB.addCookies([
+    { name: "user", value: "BOB", domain: "localhost", path: "/" },
+  ]);
+
+  const pageA = await userA.newPage();
+  const pageB = await userB.newPage();
+
+  pageA.on("console", (msg: any) => {
+    if (msg.type() === "error") console.log(`[Browser Error]: ${msg.text()}`);
+  });
+  pageB.on("console", (msg: any) => {
+    if (msg.type() === "error") console.log(`[Browser Error]: ${msg.text()}`);
+  });
+
+  // 3. Lanzar las peticiones SIMULTÁNEAMENTE (Promise.all)
+  // La server function debe leer la cookie y devolver: "Hello [Name]"
+  // Añadimos un delay artificial en el servidor para forzar solapamiento.
+  await Promise.all([
+    pageA.goto(url, { waitUntil: "commit" }),
+    pageB.goto(url, { waitUntil: "commit" }),
+  ]);
+
+  // 4. Verificar que no se cruzaron los cables
+  await expect(pageA.getByText("Hello ALICE")).toBeVisible();
+  await expect(pageA.getByText("Hello BOB")).not.toBeVisible(); // 🛑 Si esto falla, tienes un leak grave
+
+  await expect(pageB.getByText("Hello BOB")).toBeVisible();
+  await expect(pageB.getByText("Hello ALICE")).not.toBeVisible();
+
+  await userA.close();
+  await userB.close();
+}
+
+async function conncurrencyFlowProdDynamic(browser: any, url: string) {
+  test.skip(
+    !isProd,
+    "Testing dynamic opt-out only makes sense in Production builds"
+  );
+  // 1. Crear dos contextos (simula dos usuarios en dos PCs distintos)
+  const userA = await browser.newContext();
+  const userB = await browser.newContext();
+
+  // 2. Setear cookies distintas para identificarlos
+  await userA.addCookies([
+    { name: "user", value: "ALICE", domain: "localhost", path: "/" },
+  ]);
+  await userB.addCookies([
+    { name: "user", value: "BOB", domain: "localhost", path: "/" },
+  ]);
+
+  const pageA = await userA.newPage();
+  const pageB = await userB.newPage();
+
+  pageA.on("console", (msg: any) => {
+    if (msg.type() === "error") console.log(`[Browser Error]: ${msg.text()}`);
+  });
+  pageB.on("console", (msg: any) => {
+    if (msg.type() === "error") console.log(`[Browser Error]: ${msg.text()}`);
+  });
+
+  // 3. Lanzar las peticiones SIMULTÁNEAMENTE (Promise.all)
+  // La server function debe leer la cookie y devolver: "Hello [Name]"
+  // Añadimos un delay artificial en el servidor para forzar solapamiento.
+  await Promise.all([
+    pageA.goto(url, { waitUntil: "commit" }),
+    pageB.goto(url, { waitUntil: "commit" }),
+  ]);
+
+  // 4. Verificar que no se cruzaron los cables
+  await expect(pageA.getByText("Hello ALICE")).toBeVisible();
+  await expect(pageA.getByText("Hello BOB")).not.toBeVisible(); // 🛑 Si esto falla, tienes un leak grave
+
+  await expect(pageB.getByText("Hello BOB")).toBeVisible();
+  await expect(pageB.getByText("Hello ALICE")).not.toBeVisible();
+
+  await userA.close();
+  await userB.close();
+}
+
 test.describe("Dinou Core: Suspense & Server Functions", () => {
   test("layout client component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
     page,
@@ -88,6 +184,14 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
 
     await SSRStreamingFlow(page);
   });
+  test("concurrency test - layout client component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
+    browser,
+  }) => {
+    await conncurrencyFlow(
+      browser,
+      "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-return-client-component"
+    );
+  });
   test("layout client component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
     page,
   }) => {
@@ -102,6 +206,14 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
     );
 
     await SSRStreamingFlow(page);
+  });
+  test("concurrency test - layout client component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
+    browser,
+  }) => {
+    await conncurrencyFlow(
+      browser,
+      "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-return-server-component"
+    );
   });
   test("layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
     page,
@@ -118,6 +230,15 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
 
     await SSRStreamingFlow(page);
   });
+  test("concurrency test - layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
+    browser,
+  }) => {
+    await conncurrencyFlow(
+      browser,
+      "/t-server-function/t-layout-client-component/t-invoked-from-server-component/t-return-client-component",
+      true
+    );
+  });
   test("layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
     page,
   }) => {
@@ -132,6 +253,15 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
     );
 
     await SSRStreamingFlow(page);
+  });
+  test("concurrency test - layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
+    browser,
+  }) => {
+    await conncurrencyFlow(
+      browser,
+      "/t-server-function/t-layout-client-component/t-invoked-from-server-component/t-return-server-component",
+      true
+    );
   });
   test("layout server component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
     page,
@@ -148,6 +278,14 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
 
     await SSRStreamingFlow(page);
   });
+  test("concurrency test - layout server component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
+    browser,
+  }) => {
+    await conncurrencyFlow(
+      browser,
+      "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-return-client-component"
+    );
+  });
   test("layout server component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
     page,
   }) => {
@@ -162,6 +300,14 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
     );
 
     await SSRStreamingFlow(page);
+  });
+  test("concurrency test - layout server component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
+    browser,
+  }) => {
+    await conncurrencyFlow(
+      browser,
+      "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-return-server-component"
+    );
   });
   test("layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
     page,
@@ -178,6 +324,15 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
 
     await SSRStreamingFlow(page);
   });
+  test("concurrency test - layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
+    browser,
+  }) => {
+    await conncurrencyFlow(
+      browser,
+      "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-return-client-component",
+      true
+    );
+  });
   test("layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
     page,
   }) => {
@@ -193,7 +348,15 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
 
     await SSRStreamingFlow(page);
   });
-
+  test("concurrency test - layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
+    browser,
+  }) => {
+    await conncurrencyFlow(
+      browser,
+      "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-return-server-component",
+      true
+    );
+  });
   test("prod-dynamic -> layout client component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
     page,
   }) => {
@@ -208,6 +371,14 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
     );
 
     await SSRStreamingFlowProd(page);
+  });
+  test("prod-dynamic -> concurrency test - layout client component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
+    browser,
+  }) => {
+    await conncurrencyFlowProdDynamic(
+      browser,
+      "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-return-client-component?opt-out=1"
+    );
   });
   test("prod-dynamic ->layout client component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
     page,
@@ -224,6 +395,14 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
 
     await SSRStreamingFlowProd(page);
   });
+  test("prod-dynamic -> concurrency test - layout client component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
+    browser,
+  }) => {
+    await conncurrencyFlowProdDynamic(
+      browser,
+      "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-return-server-component?opt-out=1"
+    );
+  });
   test("prod-dynamic ->layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
     page,
   }) => {
@@ -238,6 +417,14 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
     );
 
     await SSRStreamingFlowProd(page);
+  });
+  test("prod-dynamic -> concurrency test - layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
+    browser,
+  }) => {
+    await conncurrencyFlowProdDynamic(
+      browser,
+      "/t-server-function/t-layout-client-component/t-invoked-from-server-component/t-return-client-component?opt-out=1"
+    );
   });
   test("prod-dynamic ->layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
     page,
@@ -254,6 +441,14 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
 
     await SSRStreamingFlowProd(page);
   });
+  test("prod-dynamic -> concurrency test - layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
+    browser,
+  }) => {
+    await conncurrencyFlowProdDynamic(
+      browser,
+      "/t-server-function/t-layout-client-component/t-invoked-from-server-component/t-return-server-component?opt-out=1"
+    );
+  });
   test("prod-dynamic ->layout server component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
     page,
   }) => {
@@ -268,6 +463,14 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
     );
 
     await SSRStreamingFlowProd(page);
+  });
+  test("prod-dynamic -> concurrency test - layout server component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
+    browser,
+  }) => {
+    await conncurrencyFlowProdDynamic(
+      browser,
+      "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-return-client-component?opt-out=1"
+    );
   });
   test("prod-dynamic ->layout server component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
     page,
@@ -284,6 +487,14 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
 
     await SSRStreamingFlowProd(page);
   });
+  test("prod-dynamic -> concurrency test - layout server component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
+    browser,
+  }) => {
+    await conncurrencyFlowProdDynamic(
+      browser,
+      "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-return-server-component?opt-out=1"
+    );
+  });
   test("prod-dynamic ->layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
     page,
   }) => {
@@ -299,6 +510,14 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
 
     await SSRStreamingFlowProd(page);
   });
+  test("prod-dynamic -> concurrency test - layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
+    browser,
+  }) => {
+    await conncurrencyFlowProdDynamic(
+      browser,
+      "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-return-client-component?opt-out=1"
+    );
+  });
   test("prod-dynamic ->layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
     page,
   }) => {
@@ -313,5 +532,13 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
     );
 
     await SSRStreamingFlowProd(page);
+  });
+  test("prod-dynamic -> concurrency test - layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
+    browser,
+  }) => {
+    await conncurrencyFlowProdDynamic(
+      browser,
+      "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-return-server-component?opt-out=1"
+    );
   });
 });
