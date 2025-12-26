@@ -243,15 +243,28 @@ async function conncurrencyFlowProdDynamic(browser: any, url: string) {
   await userB.close();
 }
 
-// // e2e/redirects.spec.ts
-// test("getContext triggers redirect when unauthenticated", async ({ page }) => {
-//   // Vamos a una página protegida sin cookies
-//   await page.goto("/t-context/protected-dashboard");
-
-//   // Playwright debe haber sido redirigido automáticamente a /login
-//   await expect(page).toHaveURL(/.*\/login/);
-//   await expect(page.getByText("Please Login")).toBeVisible();
-// });
+async function redirectFlow(page: any, toServerComponent = false) {
+  if (!isProd) {
+    await expect(
+      page.getByText("This page will be redirected!Redirecting...")
+    ).toBeVisible();
+  }
+  if (toServerComponent) {
+    // Playwright debe haber sido redirigido automáticamente a /docs
+    await expect(page).toHaveURL("/docs", { timeout: 10000 });
+    await expect(
+      page.getByText("This page will be redirected!")
+    ).not.toBeVisible();
+    await expect(page.getByText("This is docs page")).toBeVisible();
+  } else {
+    // Playwright debe haber sido redirigido automáticamente a /
+    await expect(page).toHaveURL("/", { timeout: 10000 });
+    await expect(
+      page.getByText("This page will be redirected!")
+    ).not.toBeVisible();
+    await expect(page.getByText("hello!")).toBeVisible();
+  }
+}
 
 test.describe("Dinou Core: Suspense & Server Functions", () => {
   test("layout client component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
@@ -625,5 +638,109 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
       browser,
       "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-return-server-component?opt-out=1"
     );
+  });
+  test("redirect works - layout client component - invoked from client component - redirect to client component", async ({
+    page,
+  }) => {
+    page.on("console", (msg) => {
+      if (msg.type() === "error") console.log(`[Browser Error]: ${msg.text()}`);
+    });
+    // Vamos a una página protegida sin cookies
+    await page.goto(
+      "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-redirect-to-client-component",
+      { waitUntil: "commit" }
+    );
+    await redirectFlow(page, false);
+  });
+  test("redirect works - layout client component - invoked from client component - redirect to server component", async ({
+    page,
+  }) => {
+    page.on("console", (msg) => {
+      if (msg.type() === "error") console.log(`[Browser Error]: ${msg.text()}`);
+    });
+    // Vamos a una página protegida sin cookies
+    await page.goto(
+      "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-redirect-to-server-component",
+      { waitUntil: "commit" }
+    );
+    await redirectFlow(page, true);
+  });
+  test("redirect works - layout client component - invoked from server component - redirect to client component", async ({
+    page,
+  }) => {
+    page.on("console", (msg) => {
+      if (msg.type() === "error") console.log(`[Browser Error]: ${msg.text()}`);
+    });
+    // Vamos a una página protegida sin cookies
+    await page.goto(
+      "/t-server-function/t-layout-client-component/t-invoked-from-server-component/t-redirect-to-client-component",
+      { waitUntil: "commit" }
+    );
+    await redirectFlow(page, false);
+  });
+  test("redirect works - layout client component - invoked from server component - redirect to server component", async ({
+    page,
+  }) => {
+    page.on("console", (msg) => {
+      if (msg.type() === "error") console.log(`[Browser Error]: ${msg.text()}`);
+    });
+    // Vamos a una página protegida sin cookies
+    await page.goto(
+      "/t-server-function/t-layout-client-component/t-invoked-from-server-component/t-redirect-to-server-component",
+      { waitUntil: "commit" }
+    );
+    await redirectFlow(page, true);
+  });
+  test("redirect works - layout server component - invoked from client component - redirect to client component", async ({
+    page,
+  }) => {
+    page.on("console", (msg) => {
+      if (msg.type() === "error") console.log(`[Browser Error]: ${msg.text()}`);
+    });
+    // Vamos a una página protegida sin cookies
+    await page.goto(
+      "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-redirect-to-client-component",
+      { waitUntil: "commit" }
+    );
+    await redirectFlow(page, false);
+  });
+  test("redirect works - layout server component - invoked from client component - redirect to server component", async ({
+    page,
+  }) => {
+    page.on("console", (msg) => {
+      if (msg.type() === "error") console.log(`[Browser Error]: ${msg.text()}`);
+    });
+    // Vamos a una página protegida sin cookies
+    await page.goto(
+      "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-redirect-to-server-component",
+      { waitUntil: "commit" }
+    );
+    await redirectFlow(page, true);
+  });
+  test("redirect works - layout server component - invoked from server component - redirect to client component", async ({
+    page,
+  }) => {
+    page.on("console", (msg) => {
+      if (msg.type() === "error") console.log(`[Browser Error]: ${msg.text()}`);
+    });
+    // Vamos a una página protegida sin cookies
+    await page.goto(
+      "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-redirect-to-client-component",
+      { waitUntil: "commit" }
+    );
+    await redirectFlow(page, false);
+  });
+  test("redirect works - layout server component - invoked from server component - redirect to server component", async ({
+    page,
+  }) => {
+    page.on("console", (msg) => {
+      if (msg.type() === "error") console.log(`[Browser Error]: ${msg.text()}`);
+    });
+    // Vamos a una página protegida sin cookies
+    await page.goto(
+      "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-redirect-to-server-component",
+      { waitUntil: "commit" }
+    );
+    await redirectFlow(page, true);
   });
 });
