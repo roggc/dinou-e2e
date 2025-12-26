@@ -35,6 +35,14 @@ async function generateStaticRSCs(routes) {
       _statusCode: 200,
       _headers: {},
       _redirectUrl: null,
+      _cookies: [], // Opcional: para debug
+
+      // 👇 AÑADIR ESTE MÉTODO
+      cookie(name, value, options) {
+        // En SSG no hacemos nada real, pero guardamos registro si quieres debuguear
+        // console.log(`[SSG] Cookie set ignored: ${name}=${value}`);
+        this._cookies.push({ name, value, options });
+      },
 
       // clearCookie(name: string, options?: ...): void;
       clearCookie(name, options) {

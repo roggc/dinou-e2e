@@ -2,7 +2,11 @@ import { test, expect } from "@playwright/test";
 // Detectamos si estamos en un entorno de "start" (Producción)
 const isProd = process.env.TEST_CMD?.includes("start") || false;
 
-async function SSRStreamingFlow(page: any) {
+async function SSRStreamingFlow(
+  page: any,
+  response: any = null,
+  invokedFromServerComponent = false
+) {
   if (isProd) {
     // 🟢 EN PROD (SSG): Esperamos el resultado final INMEDIATAMENTE
     // No debe haber loading, debe poner "bye!" directo.
@@ -10,6 +14,40 @@ async function SSRStreamingFlow(page: any) {
     await expect(page.getByText("Helper accessed User-Agent:")).toBeVisible();
     await expect(page.getByText("loading...")).not.toBeVisible();
     await expect(page.getByText("hello!")).toBeVisible();
+
+    // 2. Verificaciones de Infraestructura (Cookies & Headers)
+    const cookies = await page.context().cookies();
+    const myCookie = cookies.find((c: any) => c.name === "theme");
+
+    if (!invokedFromServerComponent) {
+      // CASO A: Client Component (SSG + Fetch Cliente)
+      // ------------------------------------------------
+      // Aunque el HTML es estático, el cliente hizo un fetch a la API.
+      // Eza API sí es dinámica y SÍ devuelve headers/cookies.
+
+      // Cookie: Debe existir
+      expect(myCookie?.value).toBe("dark");
+
+      // Header: NO estará en la navegación principal (index.html),
+      // pero SÍ estaría en la petición de red del fetch (difícil de testear aquí sin interceptar).
+      // Así que asumimos que en navigation response NO está.
+      if (response) {
+        const headers = await response.allHeaders();
+        expect(headers["x-custom-dinou"]).toBeUndefined();
+      }
+    } else {
+      // CASO B: Server Component (SSG Puro)
+      // ------------------------------------------------
+      // Todo ocurrió en el build. El usuario recibe un HTML plano.
+
+      expect(myCookie?.value).toBe("dark");
+
+      // Header: NO debe existir
+      if (response) {
+        const headers = await response.allHeaders();
+        expect(headers["x-custom-dinou"]).toBeUndefined();
+      }
+    }
   } else {
     // 2. VERIFICACIÓN INICIAL (Inmediata)
     // El texto estático "hello!" debe estar ahí desde el HTML inicial (SSR).
@@ -36,10 +74,25 @@ async function SSRStreamingFlow(page: any) {
 
     // "hello!" debe seguir ahí (no se borró la página, fue un update parcial).
     await expect(page.getByText("hello!")).toBeVisible();
+
+    // Verificar Header
+    if (response && invokedFromServerComponent) {
+      const headers = await response.allHeaders();
+      expect(headers["x-custom-dinou"]).toBe("v4-rocks");
+    }
+
+    // Verificar Cookie en el navegador
+    const cookies = await page.context().cookies();
+    const myCookie = cookies.find((c: any) => c.name === "theme");
+    expect(myCookie?.value).toBe("dark");
   }
 }
 
-async function SSRStreamingFlowProd(page: any) {
+async function SSRStreamingFlowProd(
+  page: any,
+  response: any = null,
+  invokedFromServerComponent = false
+) {
   // 🛑 MAGIA DE PLAYWRIGHT:
   // Si NO estamos en producción, saltamos este test.
   // En el reporte saldrá como "Skipped" en lugar de "Passed".
@@ -70,6 +123,16 @@ async function SSRStreamingFlowProd(page: any) {
 
   // "hello!" debe seguir ahí (no se borró la página, fue un update parcial).
   await expect(page.getByText("hello!")).toBeVisible();
+
+  if (response && invokedFromServerComponent) {
+    const headers = await response.allHeaders();
+    expect(headers["x-custom-dinou"]).toBe("v4-rocks");
+  }
+
+  // Verificar Cookie en el navegador
+  const cookies = await page.context().cookies();
+  const myCookie = cookies.find((c: any) => c.name === "theme");
+  expect(myCookie?.value).toBe("dark");
 }
 
 async function conncurrencyFlow(
@@ -112,10 +175,16 @@ async function conncurrencyFlow(
   ]);
 
   // 4. Verificar que no se cruzaron los cables
-  await expect(pageA.getByText("Hello ALICE")).toBeVisible();
+  // await expect(pageA.getByText("Hello ALICE")).toBeVisible();
+  await expect(
+    pageA.getByText("Hello ALICE", { exact: true }).locator("visible=true")
+  ).toBeVisible();
   await expect(pageA.getByText("Hello BOB")).not.toBeVisible(); // 🛑 Si esto falla, tienes un leak grave
 
-  await expect(pageB.getByText("Hello BOB")).toBeVisible();
+  // await expect(pageB.getByText("Hello BOB")).toBeVisible();
+  await expect(
+    pageB.getByText("Hello BOB", { exact: true }).locator("visible=true")
+  ).toBeVisible();
   await expect(pageB.getByText("Hello ALICE")).not.toBeVisible();
 
   await userA.close();
@@ -158,15 +227,31 @@ async function conncurrencyFlowProdDynamic(browser: any, url: string) {
   ]);
 
   // 4. Verificar que no se cruzaron los cables
-  await expect(pageA.getByText("Hello ALICE")).toBeVisible();
+  // await expect(pageA.getByText("Hello ALICE")).toBeVisible();
+  await expect(
+    pageA.getByText("Hello ALICE", { exact: true }).locator("visible=true")
+  ).toBeVisible();
   await expect(pageA.getByText("Hello BOB")).not.toBeVisible(); // 🛑 Si esto falla, tienes un leak grave
 
-  await expect(pageB.getByText("Hello BOB")).toBeVisible();
+  // await expect(pageB.getByText("Hello BOB")).toBeVisible();
+  await expect(
+    pageB.getByText("Hello BOB", { exact: true }).locator("visible=true")
+  ).toBeVisible();
   await expect(pageB.getByText("Hello ALICE")).not.toBeVisible();
 
   await userA.close();
   await userB.close();
 }
+
+// // e2e/redirects.spec.ts
+// test("getContext triggers redirect when unauthenticated", async ({ page }) => {
+//   // Vamos a una página protegida sin cookies
+//   await page.goto("/t-context/protected-dashboard");
+
+//   // Playwright debe haber sido redirigido automáticamente a /login
+//   await expect(page).toHaveURL(/.*\/login/);
+//   await expect(page.getByText("Please Login")).toBeVisible();
+// });
 
 test.describe("Dinou Core: Suspense & Server Functions", () => {
   test("layout client component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
@@ -177,12 +262,12 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
     });
     // 1. Navegar a la página (asumiendo que este componente está en la home '/')
     // Si está en otra ruta, cambia '/' por '/tu-ruta'
-    await page.goto(
+    const response = await page.goto(
       "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-return-client-component",
       { waitUntil: "commit" }
     );
 
-    await SSRStreamingFlow(page);
+    await SSRStreamingFlow(page, response);
   });
   test("concurrency test - layout client component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
     browser,
@@ -200,12 +285,12 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
     });
     // 1. Navegar a la página (asumiendo que este componente está en la home '/')
     // Si está en otra ruta, cambia '/' por '/tu-ruta'
-    await page.goto(
+    const response = await page.goto(
       "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-return-server-component",
       { waitUntil: "commit" }
     );
 
-    await SSRStreamingFlow(page);
+    await SSRStreamingFlow(page, response);
   });
   test("concurrency test - layout client component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
     browser,
@@ -223,12 +308,12 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
     });
     // 1. Navegar a la página (asumiendo que este componente está en la home '/')
     // Si está en otra ruta, cambia '/' por '/tu-ruta'
-    await page.goto(
+    const response = await page.goto(
       "/t-server-function/t-layout-client-component/t-invoked-from-server-component/t-return-client-component",
       { waitUntil: "commit" }
     );
 
-    await SSRStreamingFlow(page);
+    await SSRStreamingFlow(page, response, true);
   });
   test("concurrency test - layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
     browser,
@@ -247,12 +332,12 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
     });
     // 1. Navegar a la página (asumiendo que este componente está en la home '/')
     // Si está en otra ruta, cambia '/' por '/tu-ruta'
-    await page.goto(
+    const response = await page.goto(
       "/t-server-function/t-layout-client-component/t-invoked-from-server-component/t-return-server-component",
       { waitUntil: "commit" }
     );
 
-    await SSRStreamingFlow(page);
+    await SSRStreamingFlow(page, response, true);
   });
   test("concurrency test - layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
     browser,
@@ -271,12 +356,12 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
     });
     // 1. Navegar a la página (asumiendo que este componente está en la home '/')
     // Si está en otra ruta, cambia '/' por '/tu-ruta'
-    await page.goto(
+    const response = await page.goto(
       "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-return-client-component",
       { waitUntil: "commit" }
     );
 
-    await SSRStreamingFlow(page);
+    await SSRStreamingFlow(page, response);
   });
   test("concurrency test - layout server component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
     browser,
@@ -294,12 +379,12 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
     });
     // 1. Navegar a la página (asumiendo que este componente está en la home '/')
     // Si está en otra ruta, cambia '/' por '/tu-ruta'
-    await page.goto(
+    const response = await page.goto(
       "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-return-server-component",
       { waitUntil: "commit" }
     );
 
-    await SSRStreamingFlow(page);
+    await SSRStreamingFlow(page, response);
   });
   test("concurrency test - layout server component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
     browser,
@@ -317,12 +402,12 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
     });
     // 1. Navegar a la página (asumiendo que este componente está en la home '/')
     // Si está en otra ruta, cambia '/' por '/tu-ruta'
-    await page.goto(
+    const response = await page.goto(
       "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-return-client-component",
       { waitUntil: "commit" }
     );
 
-    await SSRStreamingFlow(page);
+    await SSRStreamingFlow(page, response, true);
   });
   test("concurrency test - layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
     browser,
@@ -341,12 +426,12 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
     });
     // 1. Navegar a la página (asumiendo que este componente está en la home '/')
     // Si está en otra ruta, cambia '/' por '/tu-ruta'
-    await page.goto(
+    const response = await page.goto(
       "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-return-server-component",
       { waitUntil: "commit" }
     );
 
-    await SSRStreamingFlow(page);
+    await SSRStreamingFlow(page, response, true);
   });
   test("concurrency test - layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
     browser,
@@ -365,12 +450,12 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
     });
     // 1. Navegar a la página (asumiendo que este componente está en la home '/')
     // Si está en otra ruta, cambia '/' por '/tu-ruta'
-    await page.goto(
+    const response = await page.goto(
       "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-return-client-component?opt-out=1",
       { waitUntil: "commit" }
     );
 
-    await SSRStreamingFlowProd(page);
+    await SSRStreamingFlowProd(page, response);
   });
   test("prod-dynamic -> concurrency test - layout client component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
     browser,
@@ -388,12 +473,12 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
     });
     // 1. Navegar a la página (asumiendo que este componente está en la home '/')
     // Si está en otra ruta, cambia '/' por '/tu-ruta'
-    await page.goto(
+    const response = await page.goto(
       "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-return-server-component?opt-out=1",
       { waitUntil: "commit" }
     );
 
-    await SSRStreamingFlowProd(page);
+    await SSRStreamingFlowProd(page, response);
   });
   test("prod-dynamic -> concurrency test - layout client component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
     browser,
@@ -411,12 +496,12 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
     });
     // 1. Navegar a la página (asumiendo que este componente está en la home '/')
     // Si está en otra ruta, cambia '/' por '/tu-ruta'
-    await page.goto(
+    const response = await page.goto(
       "/t-server-function/t-layout-client-component/t-invoked-from-server-component/t-return-client-component?opt-out=1",
       { waitUntil: "commit" }
     );
 
-    await SSRStreamingFlowProd(page);
+    await SSRStreamingFlowProd(page, response, true);
   });
   test("prod-dynamic -> concurrency test - layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
     browser,
@@ -434,12 +519,12 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
     });
     // 1. Navegar a la página (asumiendo que este componente está en la home '/')
     // Si está en otra ruta, cambia '/' por '/tu-ruta'
-    await page.goto(
+    const response = await page.goto(
       "/t-server-function/t-layout-client-component/t-invoked-from-server-component/t-return-server-component?opt-out=1",
       { waitUntil: "commit" }
     );
 
-    await SSRStreamingFlowProd(page);
+    await SSRStreamingFlowProd(page, response, true);
   });
   test("prod-dynamic -> concurrency test - layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
     browser,
@@ -457,12 +542,12 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
     });
     // 1. Navegar a la página (asumiendo que este componente está en la home '/')
     // Si está en otra ruta, cambia '/' por '/tu-ruta'
-    await page.goto(
+    const response = await page.goto(
       "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-return-client-component?opt-out=1",
       { waitUntil: "commit" }
     );
 
-    await SSRStreamingFlowProd(page);
+    await SSRStreamingFlowProd(page, response);
   });
   test("prod-dynamic -> concurrency test - layout server component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
     browser,
@@ -480,12 +565,12 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
     });
     // 1. Navegar a la página (asumiendo que este componente está en la home '/')
     // Si está en otra ruta, cambia '/' por '/tu-ruta'
-    await page.goto(
+    const response = await page.goto(
       "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-return-server-component?opt-out=1",
       { waitUntil: "commit" }
     );
 
-    await SSRStreamingFlowProd(page);
+    await SSRStreamingFlowProd(page, response);
   });
   test("prod-dynamic -> concurrency test - layout server component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
     browser,
@@ -503,12 +588,12 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
     });
     // 1. Navegar a la página (asumiendo que este componente está en la home '/')
     // Si está en otra ruta, cambia '/' por '/tu-ruta'
-    await page.goto(
+    const response = await page.goto(
       "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-return-client-component?opt-out=1",
       { waitUntil: "commit" }
     );
 
-    await SSRStreamingFlowProd(page);
+    await SSRStreamingFlowProd(page, response, true);
   });
   test("prod-dynamic -> concurrency test - layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
     browser,
@@ -526,12 +611,12 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
     });
     // 1. Navegar a la página (asumiendo que este componente está en la home '/')
     // Si está en otra ruta, cambia '/' por '/tu-ruta'
-    await page.goto(
+    const response = await page.goto(
       "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-return-server-component?opt-out=1",
       { waitUntil: "commit" }
     );
 
-    await SSRStreamingFlowProd(page);
+    await SSRStreamingFlowProd(page, response, true);
   });
   test("prod-dynamic -> concurrency test - layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
     browser,
