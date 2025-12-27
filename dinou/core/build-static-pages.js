@@ -896,6 +896,7 @@ function serializeReactElement(element) {
     let type;
     let modulePath = null;
     let componentName = null;
+    let isPackage = false;
 
     if (typeof element.type === "string") {
       type = element.type;
@@ -908,30 +909,37 @@ function serializeReactElement(element) {
 
       // Intentamos obtener el nombre sin disparar errores de Proxy
       modulePath = element.__modulePath;
+      if (modulePath) {
+        type = "__clientComponent__";
+      }
       try {
         componentName = element.type.displayName || element.type.name;
       } catch (e) {}
 
       if (!modulePath && global.__DINOU_MODULE_MAP) {
-        modulePath = global.__DINOU_MODULE_MAP.get(element.type);
+        const meta = global.__DINOU_MODULE_MAP.get(element.type);
+        modulePath = meta?.id;
+        isPackage = meta?.isPackage;
+        if (!isPackage && modulePath) {
+          type = "__clientComponent__";
+        }
       }
 
-      // if (componentName && global.__DINOU_COMPONENT_REGISTRY) {
-      //   modulePath = global.__DINOU_COMPONENT_REGISTRY[componentName];
+      // // Casos especiales conocidos
+      // if (componentName === "EnhancedSuspense") {
+      //   type = "EnhancedSuspense";
+      // } else {
+      //   type = "__clientComponent__";
       // }
-
-      // Casos especiales conocidos
-      if (componentName === "EnhancedSuspense") {
-        type = "EnhancedSuspense";
-      } else {
-        type = "__clientComponent__";
-      }
     }
 
     return {
       type,
       name: componentName, // 👈 GUARDAMOS EL NOMBRE (ej: "ClientRedirect")
-      modulePath: modulePath
+      isPackage,
+      modulePath: isPackage
+        ? modulePath
+        : modulePath
         ? path.relative(process.cwd(), modulePath).split(path.sep).join("/")
         : null,
       props: {
