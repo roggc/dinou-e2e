@@ -42,26 +42,32 @@ function renderJSXToClientJSX(jsx, key = null) {
     throw new Error(`Unsupported symbol: ${String(jsx)}`);
   } else if (typeof jsx === "object") {
     if (jsx.$$typeof === Symbol.for("react.transitional.element")) {
-      if (jsx.type === Symbol.for("react.fragment")) {
+      if (
+        jsx.type === Symbol.for("react.fragment") ||
+        jsx.type === Symbol.for("react.suspense") ||
+        typeof jsx.type === "string"
+      ) {
         return {
           ...jsx,
           props: renderJSXToClientJSX(jsx.props),
           key: key ?? jsx.key,
         };
-      } else if (jsx.type === Symbol.for("react.suspense")) {
-        return {
-          ...jsx,
-          props: renderJSXToClientJSX(jsx.props),
-          key: key ?? jsx.key,
-        };
-      } else if (typeof jsx.type === "string") {
-        // HTML elements (e.g., <div>, <h1>)
-        return {
-          ...jsx,
-          props: renderJSXToClientJSX(jsx.props),
-          key: key ?? jsx.key,
-        };
-      } else if (typeof jsx.type === "function") {
+      }
+      // else if (jsx.type === Symbol.for("react.suspense")) {
+      //   return {
+      //     ...jsx,
+      //     props: renderJSXToClientJSX(jsx.props),
+      //     key: key ?? jsx.key,
+      //   };
+      // } else if (typeof jsx.type === "string") {
+      //   // HTML elements (e.g., <div>, <h1>)
+      //   return {
+      //     ...jsx,
+      //     props: renderJSXToClientJSX(jsx.props),
+      //     key: key ?? jsx.key,
+      //   };
+      // }
+      else if (typeof jsx.type === "function") {
         const Component = jsx.type;
         const props = jsx.props;
         if (isClientComponent(Component)) {
@@ -129,7 +135,11 @@ async function asyncRenderJSXToClientJSX(jsx, key = null) {
     throw new Error(`Unsupported symbol: ${String(jsx)}`);
   } else if (typeof jsx === "object") {
     if (jsx.$$typeof === Symbol.for("react.transitional.element")) {
-      if (jsx.type === Symbol.for("react.fragment")) {
+      if (
+        jsx.type === Symbol.for("react.fragment") ||
+        jsx.type === Symbol.for("react.suspense") ||
+        typeof jsx.type === "string"
+      ) {
         return {
           ...jsx,
           props: {
@@ -137,24 +147,26 @@ async function asyncRenderJSXToClientJSX(jsx, key = null) {
             key: key ?? jsx.key,
           },
         };
-      } else if (jsx.type === Symbol.for("react.suspense")) {
-        return {
-          ...jsx,
-          props: {
-            ...(await asyncRenderJSXToClientJSX(jsx.props, key ?? jsx.key)),
-            key: key ?? jsx.key,
-          },
-        };
-      } else if (typeof jsx.type === "string") {
-        // HTML elements (e.g., <div>, <h1>)
-        return {
-          ...jsx,
-          props: {
-            ...(await asyncRenderJSXToClientJSX(jsx.props, key ?? jsx.key)),
-            key: key ?? jsx.key,
-          },
-        };
-      } else if (typeof jsx.type === "function") {
+      }
+      //  else if (jsx.type === Symbol.for("react.suspense")) {
+      //   return {
+      //     ...jsx,
+      //     props: {
+      //       ...(await asyncRenderJSXToClientJSX(jsx.props, key ?? jsx.key)),
+      //       key: key ?? jsx.key,
+      //     },
+      //   };
+      // } else if (typeof jsx.type === "string") {
+      //   // HTML elements (e.g., <div>, <h1>)
+      //   return {
+      //     ...jsx,
+      //     props: {
+      //       ...(await asyncRenderJSXToClientJSX(jsx.props, key ?? jsx.key)),
+      //       key: key ?? jsx.key,
+      //     },
+      //   };
+      // }
+      else if (typeof jsx.type === "function") {
         const Component = jsx.type;
         const props = jsx.props;
         if (isClientComponent(Component)) {
@@ -177,6 +189,14 @@ async function asyncRenderJSXToClientJSX(jsx, key = null) {
         throw new Error("Unsupported JSX type");
       }
     } else if (jsx instanceof Promise) {
+      // // 🟢 FIX CRÍTICO:
+      // // 1. Esperamos a que la Server Function termine (resuelva el componente).
+      // const resolved = await jsx;
+
+      // // 2. IMPORTANTE: Volvemos a llamar a la función recursivamente.
+      // // Esto asegura que si el resultado es un Server Component, se ejecute.
+      // // Y si tiene props, se procesen.
+      // return await asyncRenderJSXToClientJSX(resolved, key);
       return jsx;
     } else {
       // Process object props (e.g., { className: "foo" })

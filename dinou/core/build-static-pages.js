@@ -13,6 +13,7 @@ const {
   getFilePathAndDynamicParams,
 } = require("./get-file-path-and-dynamic-params");
 const importModule = require("./import-module");
+const { requestStorage } = require("./request-context.js");
 
 async function buildStaticPages() {
   const srcFolder = path.resolve(process.cwd(), "src");
@@ -416,13 +417,96 @@ async function buildStaticPages() {
           }
         }
       }
+      const reqPath = "/" + segments.join("/");
+      // ====================================================================
+      // 1. MOCK RES: Cumpliendo la interfaz ResponseProxy
+      // ====================================================================
+      // Aunque el contrato dice que devuelve void, internamente guardamos
+      // el estado por si quieres loguear errores (ej. un redirect en build time).
+      const mockRes = {
+        _statusCode: 200,
+        _headers: {},
+        _redirectUrl: null,
+        _cookies: [], // Opcional: para debug
 
-      jsx = await asyncRenderJSXToClientJSX(jsx);
+        // 👇 AÑADIR ESTE MÉTODO
+        cookie(name, value, options) {
+          // En SSG no hacemos nada real, pero guardamos registro si quieres debuguear
+          // console.log(`[SSG] Cookie set ignored: ${name}=${value}`);
+          this._cookies.push({ name, value, options, isClear: false });
+        },
+
+        clearCookie(name, options) {
+          this._cookies.push({ name, value: "", options, isClear: true });
+        },
+
+        // setHeader(name: string, value: string | ReadonlyArray<string>): void;
+        setHeader(name, value) {
+          this._headers[name.toLowerCase()] = value;
+        },
+
+        // status(code: number): void;
+        status(code) {
+          this._statusCode = code;
+        },
+
+        // redirect(status: number, url: string): void;
+        // redirect(url: string): void;
+        redirect(arg1, arg2) {
+          let status = 302;
+          let url = "";
+
+          if (typeof arg1 === "number") {
+            status = arg1;
+            url = arg2;
+          } else {
+            url = arg1;
+          }
+
+          this._statusCode = status;
+          this._redirectUrl = url;
+
+          // Logueamos advertencia porque un redirect en SSG suele ser problemático
+          console.warn(
+            `⚠️ [SSG] Redirect detected in ${reqPath} -> ${url} (${status})`
+          );
+        },
+      };
+
+      // ====================================================================
+      // 2. MOCK REQ: Cumpliendo RequestContextStore['req']
+      // ====================================================================
+      const mockReq = {
+        query: {},
+        cookies: {},
+        headers: {
+          "user-agent": "Dinou-SSG-Builder",
+          host: "localhost",
+          // Añade aquí cualquier header default que necesites
+        },
+        path: reqPath,
+        method: "GET",
+      };
+
+      // 3. CONTEXTO COMPLETO
+      const mockContext = {
+        req: mockReq,
+        res: mockRes,
+      };
+
+      jsx = await requestStorage.run(mockContext, async () => {
+        return await asyncRenderJSXToClientJSX(jsx);
+      });
 
       const outputPath = path.join(distFolder, segments.join("/"));
       mkdirSync(outputPath, { recursive: true });
 
       const jsonPath = path.join(outputPath, "index.json");
+
+      const sideEffects = {
+        redirect: mockRes._redirectUrl,
+        cookies: mockRes._cookies,
+      };
 
       writeFileSync(
         jsonPath,
@@ -430,6 +514,7 @@ async function buildStaticPages() {
           jsx: serializeReactElement(jsx),
           revalidate: revalidate?.(),
           generatedAt: Date.now(),
+          metadata: { effects: sideEffects },
         })
       );
 
@@ -595,7 +680,90 @@ async function buildStaticPage(reqPath) {
       }
     }
 
-    jsx = await asyncRenderJSXToClientJSX(jsx);
+    // ====================================================================
+    // 1. MOCK RES: Cumpliendo la interfaz ResponseProxy
+    // ====================================================================
+    // Aunque el contrato dice que devuelve void, internamente guardamos
+    // el estado por si quieres loguear errores (ej. un redirect en build time).
+    const mockRes = {
+      _statusCode: 200,
+      _headers: {},
+      _redirectUrl: null,
+      _cookies: [], // Opcional: para debug
+
+      // 👇 AÑADIR ESTE MÉTODO
+      cookie(name, value, options) {
+        // En SSG no hacemos nada real, pero guardamos registro si quieres debuguear
+        // console.log(`[SSG] Cookie set ignored: ${name}=${value}`);
+        this._cookies.push({ name, value, options, isClear: false });
+      },
+
+      clearCookie(name, options) {
+        this._cookies.push({ name, value: "", options, isClear: true });
+      },
+
+      // setHeader(name: string, value: string | ReadonlyArray<string>): void;
+      setHeader(name, value) {
+        this._headers[name.toLowerCase()] = value;
+      },
+
+      // status(code: number): void;
+      status(code) {
+        this._statusCode = code;
+      },
+
+      // redirect(status: number, url: string): void;
+      // redirect(url: string): void;
+      redirect(arg1, arg2) {
+        let status = 302;
+        let url = "";
+
+        if (typeof arg1 === "number") {
+          status = arg1;
+          url = arg2;
+        } else {
+          url = arg1;
+        }
+
+        this._statusCode = status;
+        this._redirectUrl = url;
+
+        // Logueamos advertencia porque un redirect en SSG suele ser problemático
+        console.warn(
+          `⚠️ [SSG] Redirect detected in ${reqPath} -> ${url} (${status})`
+        );
+      },
+    };
+
+    // ====================================================================
+    // 2. MOCK REQ: Cumpliendo RequestContextStore['req']
+    // ====================================================================
+    const mockReq = {
+      query: {},
+      cookies: {},
+      headers: {
+        "user-agent": "Dinou-SSG-Builder",
+        host: "localhost",
+        // Añade aquí cualquier header default que necesites
+      },
+      path: reqPath,
+      method: "GET",
+    };
+
+    // 3. CONTEXTO COMPLETO
+    const mockContext = {
+      req: mockReq,
+      res: mockRes,
+    };
+
+    jsx = await requestStorage.run(mockContext, async () => {
+      return await asyncRenderJSXToClientJSX(jsx);
+    });
+
+    const sideEffects = {
+      redirect: mockRes._redirectUrl,
+      cookies: mockRes._cookies,
+    };
 
     await fs.mkdir(outputPath, { recursive: true });
     await fs.writeFile(
@@ -604,6 +772,7 @@ async function buildStaticPage(reqPath) {
         jsx: serializeReactElement(jsx),
         revalidate: revalidate?.(),
         generatedAt: Date.now(),
+        metadata: { effects: sideEffects },
       })
     );
 
@@ -633,75 +802,138 @@ function filterProps(props_) {
   return props_;
 }
 
+// function serializeReactElement(element) {
+//   if (React.isValidElement(element)) {
+//     let type;
+//     let modulePath = null;
+//     const typeOf = typeof element.type;
+
+//     // 1. Elementos HTML
+//     if (typeOf === "string") {
+//       type = element.type;
+//     }
+//     // 2. Symbols de React
+//     else if (typeOf === "symbol") {
+//       // ... (tu lógica de symbols igual que antes) ...
+//       if (element.type === Symbol.for("react.fragment")) {
+//         type = "Fragment";
+//       } else if (element.type === Symbol.for("react.suspense")) {
+//         type = "Suspense";
+//       } else {
+//         type = "Fragment";
+//       }
+//     }
+//     // 3. Objetos/Funciones (Componentes)
+//     else {
+//       // 1. Buscamos si Babel/Manual lo inyectó
+//       modulePath = element.__modulePath;
+
+//       // 2. Buscamos en el MAPA GLOBAL (WeakMap)
+//       if (!modulePath && global.__DINOU_MODULE_MAP) {
+//         // A) Intentamos con el tipo directo (Referencia del Proxy)
+//         modulePath = global.__DINOU_MODULE_MAP.get(element.type);
+
+//         // B) Intentamos con .default DE FORMA SEGURA 🛡️
+//         if (!modulePath) {
+//           try {
+//             // Accedemos a la propiedad DENTRO del try
+//             const defaultExport = element.type.default;
+//             if (defaultExport) {
+//               modulePath = global.__DINOU_MODULE_MAP.get(defaultExport);
+//             }
+//           } catch (e) {
+//             // Silencio: Es un Proxy restringido, no podemos leer .default
+//             // Esto es normal para Client Components en Server Components.
+//           }
+//         }
+//       }
+
+//       if (modulePath) {
+//         type = "__clientComponent__";
+//       } else {
+//         // 3. Fallback y detección de nombres DE FORMA SEGURA 🛡️
+//         let name = "Unknown";
+//         try {
+//           // Intentar leer displayName o name también puede disparar el Proxy
+//           name = element.type.displayName || element.type.name;
+//         } catch (e) {
+//           // Si falla, es un Proxy anónimo o restringido
+//         }
+
+//         if (name === "Suspense") {
+//           type = "Suspense";
+//         } else if (name === "EnhancedSuspense") {
+//           type = "EnhancedSuspense";
+//         } else {
+//           // Si llegamos aquí y es un objeto/función sin path, asumimos Client Component
+//           // para que el cliente intente resolverlo (o falle allí), pero no rompemos el build.
+//           type = "__clientComponent__";
+//         }
+//       }
+//     }
+
+//     return {
+//       type,
+//       // Normalizamos rutas a POSIX (/)
+//       modulePath: modulePath
+//         ? path.relative(process.cwd(), modulePath).split(path.sep).join("/")
+//         : null,
+//       props: {
+//         ...filterProps(element.props),
+//         children: Array.isArray(element.props.children)
+//           ? element.props.children.map((child) => serializeReactElement(child))
+//           : element.props.children
+//           ? serializeReactElement(element.props.children)
+//           : undefined,
+//       },
+//     };
+//   }
+//   return element;
+// }
+
 function serializeReactElement(element) {
   if (React.isValidElement(element)) {
     let type;
     let modulePath = null;
-    const typeOf = typeof element.type;
+    let componentName = null;
 
-    // 1. Elementos HTML (div, span...)
-    if (typeOf === "string") {
+    if (typeof element.type === "string") {
       type = element.type;
-    }
-    // 2. Symbols de React (Fragment, Suspense...)
-    else if (typeOf === "symbol") {
-      if (element.type === Symbol.for("react.fragment")) {
-        type = "Fragment";
-      } else if (element.type === Symbol.for("react.suspense")) {
-        type = "Suspense"; // 👈 NUEVO: Lo detectamos explícitamente
-      } else {
-        // Fallback para otros symbols (Profiler, StrictMode, etc.)
-        type = "Fragment";
-        console.warn(
-          "Unknown React Symbol serialized as Fragment:",
-          element.type.toString()
-        );
-      }
-    }
-    // 3. Objetos/Funciones (Componentes)
-    else {
-      // 🟢 AQUÍ ESTÁ EL FIX
-      // 1. Buscamos primero si Babel/Manual lo inyectó en el elemento (Layouts root)
+    } else if (element.type === Symbol.for("react.fragment")) {
+      type = "Fragment";
+    } else if (element.type === Symbol.for("react.suspense")) {
+      type = "Suspense";
+    } else {
+      // 🟢 BÚSQUEDA POR NOMBRE (Segura para React)
+
+      // Intentamos obtener el nombre sin disparar errores de Proxy
       modulePath = element.__modulePath;
+      try {
+        componentName = element.type.displayName || element.type.name;
+      } catch (e) {}
 
-      // 2. Si no, preguntamos al MAPA GLOBAL usando la referencia del componente
       if (!modulePath && global.__DINOU_MODULE_MAP) {
-        // Probamos con el tipo directo
         modulePath = global.__DINOU_MODULE_MAP.get(element.type);
-
-        // Si no, probamos con .default (si no es Proxy que bloquee acceso)
-        if (!modulePath && element.type.default) {
-          // Envuelve en try-catch por si acceder a .default dispara el Proxy trap
-          try {
-            modulePath = global.__DINOU_MODULE_MAP.get(element.type.default);
-          } catch (e) {}
-        }
       }
-      if (modulePath) {
-        type = "__clientComponent__";
+
+      // if (componentName && global.__DINOU_COMPONENT_REGISTRY) {
+      //   modulePath = global.__DINOU_COMPONENT_REGISTRY[componentName];
+      // }
+
+      // Casos especiales conocidos
+      if (componentName === "EnhancedSuspense") {
+        type = "EnhancedSuspense";
       } else {
-        // Si NO tiene path, intentamos ver si es un Suspense wrapper o algo conocido
-        const name = element.type.displayName || element.type.name;
-        if (name === "Suspense") {
-          type = "Suspense"; // 👈 TRUCO: Si la librería exporta una función llamada Suspense
-        } else if (name === "EnhancedSuspense") {
-          type = "EnhancedSuspense";
-        } else {
-          console.log(
-            `Type: ${
-              name || element.type
-            } has no modulePath, serializing as __clientComponent__ ${
-              element.type
-            }`
-          );
-          type = "__clientComponent__"; // Asumimos Client Component propio
-        }
+        type = "__clientComponent__";
       }
     }
 
     return {
       type,
-      modulePath: modulePath ? path.relative(process.cwd(), modulePath) : null,
+      name: componentName, // 👈 GUARDAMOS EL NOMBRE (ej: "ClientRedirect")
+      modulePath: modulePath
+        ? path.relative(process.cwd(), modulePath).split(path.sep).join("/")
+        : null,
       props: {
         ...filterProps(element.props),
         children: Array.isArray(element.props.children)

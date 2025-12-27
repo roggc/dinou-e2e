@@ -15,7 +15,7 @@ async function deserializeReactElement(serialized) {
     return serialized; // Pass through strings, nulls, etc.
   }
 
-  const { type, modulePath, props } = serialized;
+  const { type, modulePath, props, name } = serialized;
   let Component;
 
   // Variable LOCAL, no compartida por referencia
@@ -26,7 +26,14 @@ async function deserializeReactElement(serialized) {
       const module = await importModule(
         path.resolve(process.cwd(), modulePath)
       );
-      Component = module.default ?? module;
+      // 🟢 SOLUCIÓN AQUÍ:
+      // Si el nombre es "default" o no existe, buscamos .default
+      // Si el nombre es "ClientRedirect", buscamos mod["ClientRedirect"]
+      if (name && name !== "default" && module[name]) {
+        Component = module[name];
+      } else {
+        Component = module.default ?? module;
+      }
     } catch (err) {
       console.error(`Error loading module ${modulePath}:`, err);
       Component = type;
