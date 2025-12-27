@@ -636,16 +636,69 @@ function filterProps(props_) {
 function serializeReactElement(element) {
   if (React.isValidElement(element)) {
     let type;
-    if (typeof element.type === "string") {
-      type = element.type; // HTML elements (e.g., "html", "div")
-    } else if (element.type === Symbol.for("react.fragment")) {
-      type = "Fragment";
-    } else if (typeof element.type === "function") {
-      type = "__clientComponent__";
-    } else {
-      type = element.type.displayName ?? element.type.name ?? "Unknown";
+    let modulePath = null;
+    const typeOf = typeof element.type;
+
+    // 1. Elementos HTML (div, span...)
+    if (typeOf === "string") {
+      type = element.type;
     }
-    const modulePath = element.__modulePath;
+    // 2. Symbols de React (Fragment, Suspense...)
+    else if (typeOf === "symbol") {
+      if (element.type === Symbol.for("react.fragment")) {
+        type = "Fragment";
+      } else if (element.type === Symbol.for("react.suspense")) {
+        type = "Suspense"; // 👈 NUEVO: Lo detectamos explícitamente
+      } else {
+        // Fallback para otros symbols (Profiler, StrictMode, etc.)
+        type = "Fragment";
+        console.warn(
+          "Unknown React Symbol serialized as Fragment:",
+          element.type.toString()
+        );
+      }
+    }
+    // 3. Objetos/Funciones (Componentes)
+    else {
+      // 🟢 AQUÍ ESTÁ EL FIX
+      // 1. Buscamos primero si Babel/Manual lo inyectó en el elemento (Layouts root)
+      modulePath = element.__modulePath;
+
+      // 2. Si no, preguntamos al MAPA GLOBAL usando la referencia del componente
+      if (!modulePath && global.__DINOU_MODULE_MAP) {
+        // Probamos con el tipo directo
+        modulePath = global.__DINOU_MODULE_MAP.get(element.type);
+
+        // Si no, probamos con .default (si no es Proxy que bloquee acceso)
+        if (!modulePath && element.type.default) {
+          // Envuelve en try-catch por si acceder a .default dispara el Proxy trap
+          try {
+            modulePath = global.__DINOU_MODULE_MAP.get(element.type.default);
+          } catch (e) {}
+        }
+      }
+      if (modulePath) {
+        type = "__clientComponent__";
+      } else {
+        // Si NO tiene path, intentamos ver si es un Suspense wrapper o algo conocido
+        const name = element.type.displayName || element.type.name;
+        if (name === "Suspense") {
+          type = "Suspense"; // 👈 TRUCO: Si la librería exporta una función llamada Suspense
+        } else if (name === "EnhancedSuspense") {
+          type = "EnhancedSuspense";
+        } else {
+          console.log(
+            `Type: ${
+              name || element.type
+            } has no modulePath, serializing as __clientComponent__ ${
+              element.type
+            }`
+          );
+          type = "__clientComponent__"; // Asumimos Client Component propio
+        }
+      }
+    }
+
     return {
       type,
       modulePath: modulePath ? path.relative(process.cwd(), modulePath) : null,
@@ -659,7 +712,6 @@ function serializeReactElement(element) {
       },
     };
   }
-  // Handle non-React elements (strings, numbers, null)
   return element;
 }
 

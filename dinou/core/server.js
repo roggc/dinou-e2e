@@ -1,5 +1,6 @@
 require("dotenv/config");
 require("./register-paths");
+require("./register-hooks.js");
 const webpackRegister = require("react-server-dom-webpack/node-register");
 const path = require("path");
 const { readFileSync, existsSync, createReadStream } = require("fs");
@@ -10,6 +11,7 @@ const { getErrorJSX } = require("./get-error-jsx.js");
 const addHook = require("./asset-require-hook.js");
 const { extensions } = require("./asset-extensions.js");
 webpackRegister();
+const babelPluginRegisterRequire = require("./babel-plugin-register-require.js");
 const babelRegister = require("@babel/register");
 babelRegister({
   ignore: [/[\\\/](build|server|node_modules)[\\\/]/],
@@ -17,7 +19,7 @@ babelRegister({
     ["@babel/preset-react", { runtime: "automatic" }],
     "@babel/preset-typescript",
   ],
-  plugins: ["@babel/transform-modules-commonjs"],
+  plugins: ["@babel/transform-modules-commonjs", babelPluginRegisterRequire],
   extensions: [".js", ".jsx", ".ts", ".tsx"],
 });
 const createScopedName = require("./createScopedName");

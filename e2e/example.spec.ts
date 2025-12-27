@@ -744,3 +744,30 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
     await redirectFlow(page, true);
   });
 });
+
+test.describe("Dinou Core: ISR", () => {
+  test("ISR - Time based revalidation", async ({ page }) => {
+    if (!isProd) test.skip(); // ISR solo tiene sentido en build/prod
+    await page.waitForTimeout(4000);
+    await page.goto("/t-isr/t-layout-client-component/t-client-component");
+    await page.waitForTimeout(1000);
+    await page.reload();
+    const initialTime = await page.getByTestId("timestamp").innerText();
+
+    // Esperar menos del tiempo de revalidación
+    await page.waitForTimeout(1000);
+    await page.reload();
+    const secondTime = await page.getByTestId("timestamp").innerText();
+    expect(secondTime).toBe(initialTime); // Debe ser caché
+
+    // Esperar más del tiempo de revalidación
+    await page.waitForTimeout(4000);
+    await page.reload(); // Esto dispara la regeneración (usuario ve stale)
+    const thirdTime = await page.getByTestId("timestamp").innerText();
+    expect(thirdTime).toBe(initialTime); // Debe ser caché
+    await page.waitForTimeout(1000);
+    await page.reload(); // Ahora ve el fresco
+    const finalTime = await page.getByTestId("timestamp").innerText();
+    expect(finalTime).not.toBe(initialTime);
+  });
+});
