@@ -1,5 +1,6 @@
 "use client";
 import { usePathname } from "dinou"; // Tu nuevo hook
+// import { usePathname } from "../../../../dinou/core/navigation";
 
 export default function NavBar() {
   const pathname = usePathname();
