@@ -102,7 +102,7 @@ export default defineConfig({
     url: urlToWaitFor,
 
     // Timeout generoso para Webpack
-    timeout: 240 * 1000,
+    timeout: 420 * 1000,
     reuseExistingServer: !process.env.CI,
     stdout: "pipe",
     stderr: "pipe",
