@@ -819,3 +819,117 @@ test.describe("Dinou Core: ISR", () => {
     await ISRFlow(page);
   });
 });
+test.describe("Dinou Core: Soft navigation (SPA)", () => {
+  test("SPA Navigation preserves Layout State - layout client component - client component", async ({
+    page,
+  }) => {
+    await page.goto("/t-spa/t-layout-client-component/t-client-component"); // Carga inicial (Hard)
+
+    // 🛡️ FIX: Esperar a que React hidrate antes de interactuar
+    await page.waitForSelector('body[data-hydrated="true"]');
+
+    // 1. Modificar estado en el layout (asumiendo un botón contador)
+    await page.getByText("Increment").click();
+    await expect(page.getByTestId("counter")).toHaveText("1");
+
+    // 2. Click en enlace normal <a>
+    await page.getByRole("link", { name: "go to sub route" }).click();
+
+    // 3. Verificar URL y contenido nuevo
+    await expect(page).toHaveURL(
+      /\/t-spa\/t-layout-client-component\/t-client-component\/sub-route-a/
+    );
+    await expect(
+      page.getByText(
+        "hello from t-layout-client-component/t-client-component/sub-route-a/page.tsx"
+      )
+    ).toBeVisible();
+
+    // 4. Verificar que el contador SIGUE en 1 (No se reseteó a 0)
+    await expect(page.getByTestId("counter")).toHaveText("1");
+  });
+  test("SPA Navigation preserves Layout State - layout client component - server component", async ({
+    page,
+  }) => {
+    await page.goto("/t-spa/t-layout-client-component/t-server-component"); // Carga inicial (Hard)
+
+    // 🛡️ FIX: Esperar a que React hidrate antes de interactuar
+    await page.waitForSelector('body[data-hydrated="true"]');
+
+    // 1. Modificar estado en el layout (asumiendo un botón contador)
+    await page.getByText("Increment").click();
+    await expect(page.getByTestId("counter")).toHaveText("1");
+
+    // 2. Click en enlace normal <a>
+    await page.getByRole("link", { name: "go to sub route" }).click();
+
+    // 3. Verificar URL y contenido nuevo
+    await expect(page).toHaveURL(
+      /\/t-spa\/t-layout-client-component\/t-server-component\/sub-route-a/
+    );
+    await expect(
+      page.getByText(
+        "hello from t-layout-client-component/t-server-component/sub-route-a/page.tsx"
+      )
+    ).toBeVisible();
+
+    // 4. Verificar que el contador SIGUE en 1 (No se reseteó a 0)
+    await expect(page.getByTestId("counter")).toHaveText("1");
+  });
+  test("SPA Navigation preserves Layout State - layout server component - client component", async ({
+    page,
+  }) => {
+    await page.goto("/t-spa/t-layout-server-component/t-client-component"); // Carga inicial (Hard)
+
+    // 🛡️ FIX: Esperar a que React hidrate antes de interactuar
+    await page.waitForSelector('body[data-hydrated="true"]');
+
+    // 1. Modificar estado en el layout (asumiendo un botón contador)
+    await page.getByText("Increment").click();
+    await expect(page.getByTestId("counter")).toHaveText("1");
+
+    // 2. Click en enlace normal <a>
+    await page.getByRole("link", { name: "go to sub route" }).click();
+
+    // 3. Verificar URL y contenido nuevo
+    await expect(page).toHaveURL(
+      /\/t-spa\/t-layout-server-component\/t-client-component\/sub-route-a/
+    );
+    await expect(
+      page.getByText(
+        "hello from t-layout-server-component/t-client-component/sub-route-a/page.tsx"
+      )
+    ).toBeVisible();
+
+    // 4. Verificar que el contador SIGUE en 1 (No se reseteó a 0)
+    await expect(page.getByTestId("counter")).toHaveText("1");
+  });
+  test("SPA Navigation preserves Layout State - layout server component - server component", async ({
+    page,
+  }) => {
+    await page.goto("/t-spa/t-layout-server-component/t-server-component"); // Carga inicial (Hard)
+
+    // 🛡️ FIX: Esperar a que React hidrate antes de interactuar
+    await page.waitForSelector('body[data-hydrated="true"]');
+
+    // 1. Modificar estado en el layout (asumiendo un botón contador)
+    await page.getByText("Increment").click();
+    await expect(page.getByTestId("counter")).toHaveText("1");
+
+    // 2. Click en enlace normal <a>
+    await page.getByRole("link", { name: "go to sub route" }).click();
+
+    // 3. Verificar URL y contenido nuevo
+    await expect(page).toHaveURL(
+      /\/t-spa\/t-layout-server-component\/t-server-component\/sub-route-a/
+    );
+    await expect(
+      page.getByText(
+        "hello from t-layout-server-component/t-server-component/sub-route-a/page.tsx"
+      )
+    ).toBeVisible();
+
+    // 4. Verificar que el contador SIGUE en 1 (No se reseteó a 0)
+    await expect(page.getByTestId("counter")).toHaveText("1");
+  });
+});
