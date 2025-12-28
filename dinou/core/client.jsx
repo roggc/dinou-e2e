@@ -7,6 +7,7 @@ import {
 } from "react";
 import { createFromFetch } from "@roggc/react-server-dom-esm/client";
 import { hydrateRoot } from "react-dom/client";
+import { RouterContext } from "./navigation.js";
 
 // Caché global para no volver a pedir payloads de rutas ya visitadas
 const cache = new Map();
@@ -122,10 +123,13 @@ function Router() {
     cache.set(route, content);
   }
 
-  // 5. Renderizamos el árbol RSC
-  // Nota: Al cambiar 'route', React recibe un nuevo árbol.
-  // React compara el nuevo con el viejo. Si el Layout es el mismo, MANTIENE EL ESTADO.
-  return use(content);
+  // 5. PROVIDER: Envolvemos el contenido RSC con el Contexto
+  // Pasamos 'route' (que es la URL completa relativa)
+  return (
+    <RouterContext.Provider value={route}>
+      {use(content)}
+    </RouterContext.Provider>
+  );
 }
 
 // Hidratamos una sola vez con el Router

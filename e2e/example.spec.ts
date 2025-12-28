@@ -1012,3 +1012,42 @@ test.describe("Dinou Core: Scroll Restoration (SPA)", () => {
       .toBeCloseTo(500, 10);
   });
 });
+test.describe("Dinou Core: Navigation (SPA)", () => {
+  test("usePathname updates correctly on soft navigation - layout client component - client component", async ({
+    page,
+  }) => {
+    await page.goto(
+      "/t-spa-navigation/t-layout-client-component/t-client-component"
+    ); // Carga inicial (Hard)
+
+    // 🛡️ FIX: Esperar a que React hidrate antes de interactuar
+    await page.waitForSelector('body[data-hydrated="true"]');
+
+    // 1. Estado inicial
+    await expect(page.getByTestId("link-home")).toHaveCSS("font-weight", "700"); // Bold
+    await expect(page.getByTestId("link-about")).toHaveCSS(
+      "font-weight",
+      "400"
+    ); // Normal
+    await expect(page.getByTestId("current-path")).toHaveText(
+      "/t-spa-navigation/t-layout-client-component/t-client-component"
+    );
+
+    // 2. Navegación SPA (Click)
+    // Usamos click programático para asegurar que el router lo pilla sin scroll issues
+    await page.evaluate(() =>
+      document.querySelector('[data-testid="link-about"]')?.click()
+    );
+
+    // 3. Verificación
+    // Gracias al Contexto, esto se actualiza SOLO cuando la navegación termina
+    await expect(page.getByTestId("current-path")).toHaveText(
+      "/t-spa-navigation/t-layout-client-component/about"
+    );
+    await expect(page.getByTestId("link-home")).toHaveCSS("font-weight", "400");
+    await expect(page.getByTestId("link-about")).toHaveCSS(
+      "font-weight",
+      "700"
+    );
+  });
+});
