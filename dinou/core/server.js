@@ -3,13 +3,7 @@ require("./register-paths");
 require("./register-hooks.js");
 const webpackRegister = require("react-server-dom-webpack/node-register");
 const path = require("path");
-const {
-  readFileSync,
-  existsSync,
-  createReadStream,
-  unlinkSync,
-  read,
-} = require("fs");
+const { readFileSync, existsSync, createReadStream } = require("fs");
 const { renderToPipeableStream } = require("react-server-dom-webpack/server");
 const express = require("express");
 const getSSGJSXOrJSX = require("./get-ssg-jsx-or-jsx.js");

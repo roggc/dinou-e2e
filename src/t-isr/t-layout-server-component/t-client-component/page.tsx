@@ -1,5 +1,5 @@
-"use client";
+import { ClientComponent } from "./client-component";
 
-export default function Page() {
-  return <div data-testid="timestamp">{new Date().toISOString()}</div>;
+export default async function Page() {
+  return <ClientComponent timestamp={new Date().toISOString()} />;
 }

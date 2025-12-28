@@ -274,6 +274,34 @@ async function redirectFlow(page: any, toServerComponent = false) {
   }
 }
 
+async function ISRFlow(page: any) {
+  const time1 = await page.getByTestId("timestamp").innerText();
+
+  // 2. Esperar un tiempo prudencial (ej. 5 segundos) para asegurar que el revalidate (3s) expire
+  // No hacemos reloads intermedios para no "despertar" al servidor antes de tiempo
+  await page.waitForTimeout(5000);
+
+  // 3. Recargar. Esta petición disparará la regeneración (o nos dará el nuevo directamente)
+  await page.reload();
+  const time2 = await page.getByTestId("timestamp").innerText();
+
+  // 4. Lógica de verificación flexible
+  if (time2 !== time1) {
+    // Escenario A: El servidor fue rápido y nos dio el nuevo ya. ¡Éxito!
+    expect(new Date(time2).getTime()).toBeGreaterThan(
+      new Date(time1).getTime()
+    );
+  } else {
+    // Escenario B: Nos dio el Stale (viejo). Esperamos a que la regeneración termine.
+    await page.waitForTimeout(2000); // Margen para que buildStaticPage termine
+    await page.reload();
+    const time3 = await page.getByTestId("timestamp").innerText();
+    expect(new Date(time3).getTime()).toBeGreaterThan(
+      new Date(time1).getTime()
+    );
+  }
+}
+
 test.describe("Dinou Core: Suspense & Server Functions", () => {
   test("layout client component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
     page,
@@ -754,35 +782,40 @@ test.describe("Dinou Core: Suspense & Server Functions", () => {
 });
 
 test.describe("Dinou Core: ISR", () => {
-  test("ISR - Time based revalidation", async ({ page }) => {
+  test("ISR - Time based revalidation - layout client component - server + client component", async ({
+    page,
+  }) => {
     if (!isProd) test.skip();
 
     // 1. Entrar y obtener el tiempo de nacimiento de la página
     await page.goto("/t-isr/t-layout-client-component/t-client-component");
-    const time1 = await page.getByTestId("timestamp").innerText();
+    await ISRFlow(page);
+  });
+  test("ISR - Time based revalidation - layout client component - server component", async ({
+    page,
+  }) => {
+    if (!isProd) test.skip();
 
-    // 2. Esperar un tiempo prudencial (ej. 5 segundos) para asegurar que el revalidate (3s) expire
-    // No hacemos reloads intermedios para no "despertar" al servidor antes de tiempo
-    await page.waitForTimeout(5000);
+    // 1. Entrar y obtener el tiempo de nacimiento de la página
+    await page.goto("/t-isr/t-layout-client-component/t-server-component");
+    await ISRFlow(page);
+  });
+  test("ISR - Time based revalidation - layout server component - server + client component", async ({
+    page,
+  }) => {
+    if (!isProd) test.skip();
 
-    // 3. Recargar. Esta petición disparará la regeneración (o nos dará el nuevo directamente)
-    await page.reload();
-    const time2 = await page.getByTestId("timestamp").innerText();
+    // 1. Entrar y obtener el tiempo de nacimiento de la página
+    await page.goto("/t-isr/t-layout-server-component/t-client-component");
+    await ISRFlow(page);
+  });
+  test("ISR - Time based revalidation - layout server component - server component", async ({
+    page,
+  }) => {
+    if (!isProd) test.skip();
 
-    // 4. Lógica de verificación flexible
-    if (time2 !== time1) {
-      // Escenario A: El servidor fue rápido y nos dio el nuevo ya. ¡Éxito!
-      expect(new Date(time2).getTime()).toBeGreaterThan(
-        new Date(time1).getTime()
-      );
-    } else {
-      // Escenario B: Nos dio el Stale (viejo). Esperamos a que la regeneración termine.
-      await page.waitForTimeout(2000); // Margen para que buildStaticPage termine
-      await page.reload();
-      const time3 = await page.getByTestId("timestamp").innerText();
-      expect(new Date(time3).getTime()).toBeGreaterThan(
-        new Date(time1).getTime()
-      );
-    }
+    // 1. Entrar y obtener el tiempo de nacimiento de la página
+    await page.goto("/t-isr/t-layout-server-component/t-server-component");
+    await ISRFlow(page);
   });
 });

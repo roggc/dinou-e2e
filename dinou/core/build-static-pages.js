@@ -802,95 +802,6 @@ function filterProps(props_) {
   return props_;
 }
 
-// function serializeReactElement(element) {
-//   if (React.isValidElement(element)) {
-//     let type;
-//     let modulePath = null;
-//     const typeOf = typeof element.type;
-
-//     // 1. Elementos HTML
-//     if (typeOf === "string") {
-//       type = element.type;
-//     }
-//     // 2. Symbols de React
-//     else if (typeOf === "symbol") {
-//       // ... (tu lógica de symbols igual que antes) ...
-//       if (element.type === Symbol.for("react.fragment")) {
-//         type = "Fragment";
-//       } else if (element.type === Symbol.for("react.suspense")) {
-//         type = "Suspense";
-//       } else {
-//         type = "Fragment";
-//       }
-//     }
-//     // 3. Objetos/Funciones (Componentes)
-//     else {
-//       // 1. Buscamos si Babel/Manual lo inyectó
-//       modulePath = element.__modulePath;
-
-//       // 2. Buscamos en el MAPA GLOBAL (WeakMap)
-//       if (!modulePath && global.__DINOU_MODULE_MAP) {
-//         // A) Intentamos con el tipo directo (Referencia del Proxy)
-//         modulePath = global.__DINOU_MODULE_MAP.get(element.type);
-
-//         // B) Intentamos con .default DE FORMA SEGURA 🛡️
-//         if (!modulePath) {
-//           try {
-//             // Accedemos a la propiedad DENTRO del try
-//             const defaultExport = element.type.default;
-//             if (defaultExport) {
-//               modulePath = global.__DINOU_MODULE_MAP.get(defaultExport);
-//             }
-//           } catch (e) {
-//             // Silencio: Es un Proxy restringido, no podemos leer .default
-//             // Esto es normal para Client Components en Server Components.
-//           }
-//         }
-//       }
-
-//       if (modulePath) {
-//         type = "__clientComponent__";
-//       } else {
-//         // 3. Fallback y detección de nombres DE FORMA SEGURA 🛡️
-//         let name = "Unknown";
-//         try {
-//           // Intentar leer displayName o name también puede disparar el Proxy
-//           name = element.type.displayName || element.type.name;
-//         } catch (e) {
-//           // Si falla, es un Proxy anónimo o restringido
-//         }
-
-//         if (name === "Suspense") {
-//           type = "Suspense";
-//         } else if (name === "EnhancedSuspense") {
-//           type = "EnhancedSuspense";
-//         } else {
-//           // Si llegamos aquí y es un objeto/función sin path, asumimos Client Component
-//           // para que el cliente intente resolverlo (o falle allí), pero no rompemos el build.
-//           type = "__clientComponent__";
-//         }
-//       }
-//     }
-
-//     return {
-//       type,
-//       // Normalizamos rutas a POSIX (/)
-//       modulePath: modulePath
-//         ? path.relative(process.cwd(), modulePath).split(path.sep).join("/")
-//         : null,
-//       props: {
-//         ...filterProps(element.props),
-//         children: Array.isArray(element.props.children)
-//           ? element.props.children.map((child) => serializeReactElement(child))
-//           : element.props.children
-//           ? serializeReactElement(element.props.children)
-//           : undefined,
-//       },
-//     };
-//   }
-//   return element;
-// }
-
 function serializeReactElement(element) {
   if (React.isValidElement(element)) {
     let type;
@@ -905,9 +816,6 @@ function serializeReactElement(element) {
     } else if (element.type === Symbol.for("react.suspense")) {
       type = "Suspense";
     } else {
-      // 🟢 BÚSQUEDA POR NOMBRE (Segura para React)
-
-      // Intentamos obtener el nombre sin disparar errores de Proxy
       modulePath = element.__modulePath;
       if (modulePath) {
         type = "__clientComponent__";
@@ -924,13 +832,6 @@ function serializeReactElement(element) {
           type = "__clientComponent__";
         }
       }
-
-      // // Casos especiales conocidos
-      // if (componentName === "EnhancedSuspense") {
-      //   type = "EnhancedSuspense";
-      // } else {
-      //   type = "__clientComponent__";
-      // }
     }
 
     return {
