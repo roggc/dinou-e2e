@@ -1,0 +1,10 @@
+export default async function Page() {
+  return (
+    <div>
+      hello from t-layout-server-component/t-server-component/page.tsx
+      <a href="/t-spa/t-layout-server-component/t-server-component/sub-route-a">
+        go to sub route
+      </a>
+    </div>
+  );
+}

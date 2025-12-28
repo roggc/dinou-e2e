@@ -933,3 +933,82 @@ test.describe("Dinou Core: Soft navigation (SPA)", () => {
     await expect(page.getByTestId("counter")).toHaveText("1");
   });
 });
+test.describe("Dinou Core: Scroll Restoration (SPA)", () => {
+  test("Restores scroll position on Back navigation & Resets on New navigation", async ({
+    page,
+  }) => {
+    // Activar logs de consola del navegador en la terminal de Node
+    page.on("console", (msg) => console.log("PAGE LOG:", msg.text()));
+    // 1. Ir a la página A
+    await page.goto(
+      "/t-spa-scroll-restoration/t-layout-client-component/t-client-component"
+    ); // Usa una ruta que tenga un enlace a otra
+
+    // 🛡️ Esperar Hidratación (Tu fix)
+    await page.waitForSelector('body[data-hydrated="true"]');
+
+    // 📏 FORZAR ALTURA ROBUSTA (Inline Style)
+    await page.evaluate(() => {
+      document.body.style.minHeight = "3000px";
+    });
+
+    // 3. Hacer Scroll hacia abajo (ej. 500px)
+    await page.evaluate(() => window.scrollTo(0, 500));
+
+    // Verificar que estamos abajo
+    let scrollY = await page.evaluate(() => window.scrollY);
+    expect(scrollY).toBeCloseTo(500, 1); // Margen de error de 1px
+
+    // 4. 🚀 NAVEGACIÓN NUEVA (Click sin mover el scroll)
+    // Usamos evaluate para hacer click JS puro, así Playwright NO hace auto-scroll
+    // para buscar el elemento si se quedó arriba.
+    await page.evaluate(() => {
+      const link = document.querySelector('a[href*="sub-route-a"]');
+      if (link) link.click();
+    });
+
+    // Verificar que cambió la URL
+    await expect(page).toHaveURL(
+      /\/t-spa-scroll-restoration\/t-layout-client-component\/t-client-component\/sub-route-a/
+    );
+
+    // 🛡️ Esperar un tick para asegurar que el useLayoutEffect se ejecutó
+    // A veces el navegador es muy rápido reportando la URL
+    await page.waitForTimeout(100);
+
+    // 5. ✅ VERIFICACIÓN A: En navegación nueva, el scroll debe volver a ARRIBA (0)
+    scrollY = await page.evaluate(() => window.scrollY);
+    expect(scrollY).toBe(0);
+
+    // (Opcional) Forzar altura en la página B también si quieres probar scroll ahí
+    // await page.addStyleTag({ content: "body { min-height: 3000px; }" });
+
+    // 6. 🔙 NAVEGACIÓN ATRÁS (Simular botón Back del navegador)
+    await page.goBack();
+
+    // Verificar que volvimos a la URL A
+    await expect(page).toHaveURL(
+      /\/t-spa-scroll-restoration\/t-layout-client-component\/t-client-component/
+    );
+
+    // 🛑 MOMENTO CRÍTICO: VOLVER A FORZAR LA ALTURA 🛑
+    // Al volver atrás, React puede haber repintado el body y borrado el style inline.
+    // Lo reaplicamos inmediatamente antes de chequear el scroll.
+    await page.evaluate(() => {
+      document.body.style.minHeight = "3000px";
+      // Debug: Imprimir altura actual para ver si funcionó
+      console.log("Body Height after GoBack:", document.body.scrollHeight);
+    });
+
+    // 7. VERIFICACIÓN
+    await expect
+      .poll(async () => {
+        // Debug: ver qué está leyendo playwright
+        const y = await page.evaluate(() => window.scrollY);
+        const h = await page.evaluate(() => document.body.scrollHeight);
+        console.log(`Polling check -> ScrollY: ${y}, BodyHeight: ${h}`);
+        return y;
+      })
+      .toBeCloseTo(500, 10);
+  });
+});
