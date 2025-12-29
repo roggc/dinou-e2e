@@ -1182,3 +1182,33 @@ test.describe("Dinou Core: Server Component Redirects", () => {
     );
   });
 });
+test.describe("Dinou Core: Metadata Management", () => {
+  test("Updates document title and meta tags on Soft Navigation", async ({
+    page,
+  }) => {
+    // 1. Carga Inicial (SSR) - Aquí probablemente ya te funciona si usas getProps
+    await page.goto(
+      "/t-spa-metadata/t-layout-client-component/t-client-component/t-target-client-component"
+    );
+    await expect(page).toHaveTitle("Dinou - Home");
+
+    // Verificamos también un meta tag (ej. description)
+    const metaDesc = page.locator('meta[name="description"]');
+    await expect(metaDesc).toHaveAttribute(
+      "content",
+      "Welcome to the home page"
+    );
+
+    // 2. Navegación SPA (Click)
+    await page.getByText("Go to Target").click();
+
+    // 3. Verificación tras Soft Navigation
+    await expect(page).toHaveTitle("Dinou - Target Page");
+
+    // Verificamos que la descripción también cambió
+    await expect(metaDesc).toHaveAttribute(
+      "content",
+      "This is the target page"
+    );
+  });
+});
