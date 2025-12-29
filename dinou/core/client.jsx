@@ -10,6 +10,7 @@ import {
 import { createFromFetch } from "@roggc/react-server-dom-esm/client";
 import { hydrateRoot } from "react-dom/client";
 import { RouterContext } from "./navigation.js";
+import { resolveUrl } from "./navigation-utils.js";
 
 const cache = new Map();
 const scrollCache = new Map();
@@ -23,38 +24,32 @@ function Router() {
   // isPending será true mientras React espera el fetch del RSC y el renderizado
   const [isPending, startTransition] = useTransition();
 
+  // 📦 Función unificada para obtener/pre-cargar RSC
+  const getRSCPayload = (url) => {
+    // Importante: url ya debe venir normalizada aquí
+    if (cache.has(url)) return cache.get(url);
+
+    const payloadUrl = window.__DINOU_USE_OLD_RSC__
+      ? "/____rsc_payload_old____" + url
+      : "/____rsc_payload____" + url;
+
+    const content = createFromFetch(fetch(payloadUrl));
+    cache.set(url, content);
+    return content;
+  };
+
+  // Exponer prefetch al componente <Link>
+  useEffect(() => {
+    window.__DINOU_PREFETCH__ = (url) => getRSCPayload(url);
+  }, []);
+
   useEffect(() => {
     document.body.setAttribute("data-hydrated", "true");
   }, []);
 
-  // ⚡️ FUNCIÓN: navigate
-  // Maneja la navegación programática y la actualización del historial
   const navigate = (href, options = {}) => {
-    let finalPath;
+    const finalPath = resolveUrl(href, window.location.pathname);
 
-    // 1. Resolución de Ruta Relativa (Modo Directorio)
-    if (!href.startsWith("/") && !href.includes("://")) {
-      let base = window.location.pathname;
-      if (!base.endsWith("/")) base += "/";
-      const resolved = new URL(href, window.location.origin + base);
-      finalPath = resolved.pathname + resolved.search + resolved.hash;
-    } else {
-      const resolved = new URL(href, window.location.origin);
-      finalPath = resolved.pathname + resolved.search + resolved.hash;
-    }
-
-    // 2. Normalización de Trailing Slash para consistencia en URL y Cache
-    // Evita que "/home/" y "/home" se traten como rutas distintas
-    if (
-      finalPath.length > 1 &&
-      finalPath.endsWith("/") &&
-      !finalPath.includes("?") &&
-      !finalPath.includes("#")
-    ) {
-      finalPath = finalPath.slice(0, -1);
-    }
-
-    // 3. Gestión de Scroll y Estado
     scrollCache.set(
       window.location.pathname + window.location.search,
       window.scrollY
@@ -77,7 +72,6 @@ function Router() {
       window.history.scrollRestoration = "manual";
     }
 
-    // ⚡️ INTERCEPTOR: onNavigate (dentro del useEffect)
     const onNavigate = (e) => {
       const anchor = e.target.closest("a");
       if (
@@ -87,50 +81,28 @@ function Router() {
         e.ctrlKey ||
         e.shiftKey ||
         e.altKey
-      ) {
+      )
         return;
-      }
 
       const href = anchor.getAttribute("href");
       if (!href || href.startsWith("mailto:") || href.startsWith("tel:"))
         return;
 
-      // 1. Calcular la ruta destino final (aplicando lógica de directorio si es relativa)
-      let finalPath;
-      if (!href.startsWith("/") && !href.includes("://")) {
-        let base = window.location.pathname;
-        if (!base.endsWith("/")) base += "/";
-        const resolvedUrl = new URL(href, window.location.origin + base);
-        finalPath =
-          resolvedUrl.pathname + resolvedUrl.search + resolvedUrl.hash;
-      } else {
-        const targetUrl = new URL(anchor.href);
-        if (targetUrl.origin !== window.location.origin) return; // Enlace externo
-        finalPath = targetUrl.pathname + targetUrl.search + targetUrl.hash;
-      }
+      const finalPath = resolveUrl(href, window.location.pathname);
 
-      // 2. Verificación de "Misma Página" para evitar RSC Fetch en saltos de Hash (#)
-      // Comparamos los pathnames normalizados (sin la barra final virtual)
-      const normalize = (p) =>
-        p.length > 1 && p.endsWith("/") ? p.slice(0, -1) : p;
-
+      // Lógica de comparación de Hash para evitar fetch innecesario
       const targetUrlObj = new URL(finalPath, window.location.origin);
-      const targetPathClean = normalize(targetUrlObj.pathname);
-      const currentPathClean = normalize(window.location.pathname);
-
+      // (Aquí puedes usar la misma lógica de "clean path" de antes)
+      const currentPath = window.location.pathname + window.location.search;
       if (
-        targetPathClean + targetUrlObj.search ===
-          currentPathClean + window.location.search &&
+        targetUrlObj.pathname + targetUrlObj.search === currentPath &&
         targetUrlObj.hash
       ) {
-        // Es un salto de hash en la misma página:
-        // Dejamos que el navegador actúe de forma nativa (NO preventDefault, NO navigate)
         return;
       }
 
-      // 3. Ejecutar navegación SPA
       e.preventDefault();
-      navigate(finalPath);
+      navigate(href);
     };
 
     const onPopState = () => {
@@ -186,15 +158,7 @@ function Router() {
   }, [route]);
 
   // Lógica RSC
-  let content = cache.get(route);
-  if (!content) {
-    const payloadUrl = window.__DINOU_USE_OLD_RSC__
-      ? "/____rsc_payload_old____" + route
-      : "/____rsc_payload____" + route;
-
-    content = createFromFetch(fetch(payloadUrl));
-    cache.set(route, content);
-  }
+  let content = getRSCPayload(route);
 
   // 📦 VALOR DEL CONTEXTO: Ahora es un Objeto
   // Usamos useMemo para evitar re-renders innecesarios si algo más cambiara

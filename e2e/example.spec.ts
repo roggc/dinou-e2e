@@ -1307,3 +1307,25 @@ test.describe("Dinou Core: Relative Navigation", () => {
     );
   });
 });
+test.describe("Dinou Core: Link", () => {
+  test("Prefetches RSC payload on hover", async ({ page }) => {
+    await page.goto(
+      "/t-spa-link/t-layout-client-component/t-client-component/to-client-component"
+    );
+    await page.waitForSelector('body[data-hydrated="true"]');
+
+    // 1. Preparamos la escucha de la petición
+    const rscRequest = page.waitForRequest((req) =>
+      req.url().includes("____rsc_payload____")
+    );
+
+    // 2. Hacemos HOVER, no click
+    await page.hover('a[href="target"]');
+
+    // 3. Verificamos que la petición se disparó
+    const request = await rscRequest;
+    expect(request.url()).toContain("/target");
+
+    // En este punto, el test confirma que Dinou ya tiene los datos sin haber navegado aún.
+  });
+});
