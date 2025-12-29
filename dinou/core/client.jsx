@@ -84,21 +84,66 @@ function Router() {
   //   });
   // };
 
+  // const navigate = (href, options = {}) => {
+  //   let finalPath;
+
+  //   // Si la ruta es relativa, forzamos la base como directorio
+  //   if (!href.startsWith("/") && !href.includes("://")) {
+  //     let base = window.location.pathname;
+  //     if (!base.endsWith("/")) base += "/";
+  //     const resolved = new URL(href, window.location.origin + base);
+  //     finalPath = resolved.pathname + resolved.search + resolved.hash;
+  //   } else {
+  //     // Si es absoluta, solo normalizamos para asegurar que es un path interno
+  //     const resolved = new URL(href, window.location.origin);
+  //     finalPath = resolved.pathname + resolved.search + resolved.hash;
+  //   }
+
+  //   scrollCache.set(
+  //     window.location.pathname + window.location.search,
+  //     window.scrollY
+  //   );
+
+  //   if (options.replace) {
+  //     window.history.replaceState(null, "", finalPath);
+  //   } else {
+  //     window.history.pushState(null, "", finalPath);
+  //   }
+
+  //   startTransition(() => {
+  //     setIsPopState(false);
+  //     setRoute(finalPath);
+  //   });
+  // };
+
+  // ⚡️ FUNCIÓN: navigate
+  // Maneja la navegación programática y la actualización del historial
   const navigate = (href, options = {}) => {
     let finalPath;
 
-    // Si la ruta es relativa, forzamos la base como directorio
+    // 1. Resolución de Ruta Relativa (Modo Directorio)
     if (!href.startsWith("/") && !href.includes("://")) {
       let base = window.location.pathname;
       if (!base.endsWith("/")) base += "/";
       const resolved = new URL(href, window.location.origin + base);
       finalPath = resolved.pathname + resolved.search + resolved.hash;
     } else {
-      // Si es absoluta, solo normalizamos para asegurar que es un path interno
       const resolved = new URL(href, window.location.origin);
       finalPath = resolved.pathname + resolved.search + resolved.hash;
     }
 
+    // 2. Normalización de Trailing Slash para consistencia en URL y Cache
+    // Evita que "/home/" y "/home" se traten como rutas distintas
+    if (
+      finalPath.length > 1 &&
+      finalPath.endsWith("/") &&
+      !finalPath.includes("?") &&
+      !finalPath.includes("#")
+    ) {
+      finalPath = finalPath.slice(0, -1);
+    }
+
+    // 3. Gestión de Scroll y Estado
     scrollCache.set(
       window.location.pathname + window.location.search,
       window.scrollY
@@ -185,6 +230,58 @@ function Router() {
     //   navigate(fullPath);
     // };
 
+    // const onNavigate = (e) => {
+    //   const anchor = e.target.closest("a");
+    //   if (
+    //     !anchor ||
+    //     anchor.target ||
+    //     e.metaKey ||
+    //     e.ctrlKey ||
+    //     e.shiftKey ||
+    //     e.altKey
+    //   ) {
+    //     return;
+    //   }
+
+    //   const href = anchor.getAttribute("href");
+    //   if (!href || href.startsWith("mailto:") || href.startsWith("tel:"))
+    //     return;
+
+    //   // 1. Lógica de "Directorio Virtual":
+    //   // Si no es una ruta absoluta (no empieza por / ni es una URL completa)
+    //   let finalPath;
+    //   if (!href.startsWith("/") && !href.includes("://")) {
+    //     // Tomamos el pathname actual
+    //     let base = window.location.pathname;
+    //     // Forzamos que termine en '/' para que el constructor de URL
+    //     // entienda que CUALQUIER cosa que venga después es un hijo
+    //     if (!base.endsWith("/")) base += "/";
+
+    //     const resolvedUrl = new URL(href, window.location.origin + base);
+    //     finalPath =
+    //       resolvedUrl.pathname + resolvedUrl.search + resolvedUrl.hash;
+    //   } else {
+    //     // Si ya empieza por / o es absoluta, la resolvemos normal
+    //     const targetUrl = new URL(anchor.href);
+    //     if (targetUrl.origin !== window.location.origin) return;
+    //     finalPath = targetUrl.pathname + targetUrl.search + targetUrl.hash;
+    //   }
+
+    //   // 2. Si es solo un cambio de hash en la misma página resultante, ignoramos fetch
+    //   const currentFull = window.location.pathname + window.location.search;
+    //   const targetUrlObj = new URL(finalPath, window.location.origin);
+    //   if (
+    //     targetUrlObj.pathname + targetUrlObj.search === currentFull &&
+    //     targetUrlObj.hash
+    //   ) {
+    //     return;
+    //   }
+
+    //   e.preventDefault();
+    //   navigate(finalPath);
+    // };
+
+    // ⚡️ INTERCEPTOR: onNavigate (dentro del useEffect)
     const onNavigate = (e) => {
       const anchor = e.target.closest("a");
       if (
@@ -202,36 +299,40 @@ function Router() {
       if (!href || href.startsWith("mailto:") || href.startsWith("tel:"))
         return;
 
-      // 1. Lógica de "Directorio Virtual":
-      // Si no es una ruta absoluta (no empieza por / ni es una URL completa)
+      // 1. Calcular la ruta destino final (aplicando lógica de directorio si es relativa)
       let finalPath;
       if (!href.startsWith("/") && !href.includes("://")) {
-        // Tomamos el pathname actual
         let base = window.location.pathname;
-        // Forzamos que termine en '/' para que el constructor de URL
-        // entienda que CUALQUIER cosa que venga después es un hijo
         if (!base.endsWith("/")) base += "/";
-
         const resolvedUrl = new URL(href, window.location.origin + base);
         finalPath =
           resolvedUrl.pathname + resolvedUrl.search + resolvedUrl.hash;
       } else {
-        // Si ya empieza por / o es absoluta, la resolvemos normal
         const targetUrl = new URL(anchor.href);
-        if (targetUrl.origin !== window.location.origin) return;
+        if (targetUrl.origin !== window.location.origin) return; // Enlace externo
         finalPath = targetUrl.pathname + targetUrl.search + targetUrl.hash;
       }
 
-      // 2. Si es solo un cambio de hash en la misma página resultante, ignoramos fetch
-      const currentFull = window.location.pathname + window.location.search;
+      // 2. Verificación de "Misma Página" para evitar RSC Fetch en saltos de Hash (#)
+      // Comparamos los pathnames normalizados (sin la barra final virtual)
+      const normalize = (p) =>
+        p.length > 1 && p.endsWith("/") ? p.slice(0, -1) : p;
+
       const targetUrlObj = new URL(finalPath, window.location.origin);
+      const targetPathClean = normalize(targetUrlObj.pathname);
+      const currentPathClean = normalize(window.location.pathname);
+
       if (
-        targetUrlObj.pathname + targetUrlObj.search === currentFull &&
+        targetPathClean + targetUrlObj.search ===
+          currentPathClean + window.location.search &&
         targetUrlObj.hash
       ) {
+        // Es un salto de hash en la misma página:
+        // Dejamos que el navegador actúe de forma nativa (NO preventDefault, NO navigate)
         return;
       }
 
+      // 3. Ejecutar navegación SPA
       e.preventDefault();
       navigate(finalPath);
     };

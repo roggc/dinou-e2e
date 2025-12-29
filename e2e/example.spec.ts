@@ -1284,17 +1284,26 @@ test.describe("Dinou Core: Hash Navigation", () => {
   });
 });
 test.describe("Dinou Core: Relative Navigation", () => {
-  // test("Navigates to relative paths correctly", async ({ page }) => {
-  //   await page.goto("/parent/child");
-  //   await page.waitForSelector('body[data-hydrated="true"]');
-  //   // Inyectar enlace relativo
-  //   await page.evaluate(() => {
-  //     const a = document.createElement("a");
-  //     a.href = "sibling"; // Debería ir a /parent/sibling
-  //     a.id = "rel-link";
-  //     document.body.appendChild(a);
-  //   });
-  //   await page.click("#rel-link");
-  //   await expect(page).toHaveURL(/\/parent\/sibling$/);
-  // });
+  test("Navigates to relative paths correctly", async ({ page }) => {
+    await page.goto(
+      "/t-spa-relative/t-layout-client-component/t-client-component/page-a"
+    );
+    await page.waitForSelector('body[data-hydrated="true"]');
+    // Inyectar enlace relativo
+    // await page.evaluate(() => {
+    //   const a = document.createElement("a");
+    //   a.href = "sibling"; // Debería ir a /parent/sibling
+    //   a.id = "rel-link";
+    //   document.body.appendChild(a);
+    // });
+    await page.getByTestId("sibling").click();
+    await expect(page).toHaveURL(
+      /\/t-spa-relative\/t-layout-client-component\/t-client-component\/page-b$/
+    );
+    await page.goBack();
+    await page.getByTestId("nested").click();
+    await expect(page).toHaveURL(
+      /\/t-spa-relative\/t-layout-client-component\/t-client-component\/page-a\/nested$/
+    );
+  });
 });
