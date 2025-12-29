@@ -81,28 +81,38 @@ function Router() {
         e.ctrlKey ||
         e.shiftKey ||
         e.altKey
-      )
+      ) {
         return;
+      }
 
       const href = anchor.getAttribute("href");
       if (!href || href.startsWith("mailto:") || href.startsWith("tel:"))
         return;
 
+      // 1. Usamos el helper unificado
       const finalPath = resolveUrl(href, window.location.pathname);
 
-      // Lógica de comparación de Hash para evitar fetch innecesario
+      // 2. Lógica de comparación de Hash CRÍTICA
       const targetUrlObj = new URL(finalPath, window.location.origin);
-      // (Aquí puedes usar la misma lógica de "clean path" de antes)
-      const currentPath = window.location.pathname + window.location.search;
+
+      // 🛡️ RESTAURACIÓN DEL FIX: Normalizamos quitando la barra final para comparar
+      const normalizePath = (p) =>
+        p.length > 1 && p.endsWith("/") ? p.slice(0, -1) : p;
+
+      const targetPathClean = normalizePath(targetUrlObj.pathname);
+      const currentPathClean = normalizePath(window.location.pathname);
+
       if (
-        targetUrlObj.pathname + targetUrlObj.search === currentPath &&
+        targetPathClean + targetUrlObj.search ===
+          currentPathClean + window.location.search &&
         targetUrlObj.hash
       ) {
+        // Es la misma página + hash: STOP. No hacemos nada.
         return;
       }
 
       e.preventDefault();
-      navigate(href);
+      navigate(href); // Pasamos el href original o finalPath, navigate ya resuelve dentro también
     };
 
     const onPopState = () => {
