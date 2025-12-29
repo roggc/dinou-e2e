@@ -1361,3 +1361,27 @@ test.describe("Dinou Core: Link", () => {
     // En este punto, el test confirma que Dinou ya tiene los datos sin haber navegado aún.
   });
 });
+test.describe("Dinou Core: HTTP Status Codes", () => {
+  test("Returns HTTP 404 for non-existent routes (SSR)", async ({ page }) => {
+    // 1. Navegación directa (Hard Navigation) a una ruta que no existe
+    const response = await page.goto("/esta-ruta-no-existe-12345");
+
+    // Verificamos que hubo respuesta
+    expect(response).not.toBeNull();
+
+    // 2. Verificamos el contenido visual (esto dices que YA funciona)
+    // Asumo que tu página 404 tiene algún texto identificativo
+    await expect(
+      page.getByText(/Page not found: no "page" file found for/i)
+    ).toBeVisible();
+
+    // 3. LA PRUEBA DE FUEGO: Verificamos el código de estado HTTP
+    // Si esto es 200, Google indexará esta página basura.
+    // Si es 404, Google sabrá que no existe.
+    expect(response?.status()).toBe(404);
+  });
+  test("Returns HTTP 404 for nested non-existent routes", async ({ page }) => {
+    const response = await page.goto("/blog/post-que-no-existe");
+    expect(response?.status()).toBe(404);
+  });
+});

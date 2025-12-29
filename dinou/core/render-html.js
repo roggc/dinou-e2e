@@ -136,14 +136,21 @@ async function renderToStream(reqPath, query, cookies = {}, serializedBox) {
   };
   await requestStorage.run(context, async () => {
     try {
+      const isNotFound = {};
       const jsx =
         Object.keys(query).length ||
         isDevelopment ||
         Object.keys(cookies).length
-          ? renderJSXToClientJSX(await getJSX(reqPath, query, cookies))
+          ? renderJSXToClientJSX(
+              await getJSX(reqPath, query, cookies, isNotFound)
+            )
           : (await getSSGJSX(reqPath)) ??
-            renderJSXToClientJSX(await getJSX(reqPath, query, cookies));
-
+            renderJSXToClientJSX(
+              await getJSX(reqPath, query, cookies, isNotFound)
+            );
+      if (isNotFound.value) {
+        context.res.status(404);
+      }
       const stream = renderToPipeableStream(jsx, {
         onError(error) {
           process.nextTick(async () => {
