@@ -1259,6 +1259,38 @@ test.describe("Dinou Core: Hash Navigation", () => {
     // C. CRÍTICO: No debe haber habido petición RSC
     expect(rscRequestOccurred).toBe(false);
   });
+  test("Smoothly scrolls to an element ID without triggering RSC fetch - Link", async ({
+    page,
+  }) => {
+    await page.goto(
+      "/t-spa-hash/t-layout-client-component/t-client-component/t-target-client-component/t-link"
+    );
+    await page.waitForSelector('body[data-hydrated="true"]');
+
+    // B. El scroll debe haber cambiado (no estar en 0)
+    let scrollY = await page.evaluate(() => window.scrollY);
+    expect(scrollY).not.toBeGreaterThan(100);
+    // 1. Interceptar peticiones de red para asegurar que NO se pide un RSC
+    let rscRequestOccurred = false;
+    page.on("request", (request) => {
+      if (request.url().includes("____rsc_payload")) {
+        rscRequestOccurred = true;
+      }
+    });
+
+    await page.getByTestId("hash-link").click();
+
+    // 3. Verificaciones
+    // A. La URL debe terminar en #section-target
+    await expect(page).toHaveURL(/#pepe-section$/);
+
+    // B. El scroll debe haber cambiado (no estar en 0)
+    scrollY = await page.evaluate(() => window.scrollY);
+    expect(scrollY).toBeGreaterThan(100);
+
+    // C. CRÍTICO: No debe haber habido petición RSC
+    expect(rscRequestOccurred).toBe(false);
+  });
   test("Navigating to a different page with a hash jumps to the element", async ({
     page,
   }) => {

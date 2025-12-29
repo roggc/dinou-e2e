@@ -17,6 +17,21 @@ const scrollCache = new Map();
 
 const getCurrentRoute = () => window.location.pathname + window.location.search;
 
+// Helper para detectar si solo cambiamos el hash en la misma página
+const isHashChangeOnly = (finalPath) => {
+  const targetUrl = new URL(finalPath, window.location.origin);
+  const normalize = (p) =>
+    p.length > 1 && p.endsWith("/") ? p.slice(0, -1) : p;
+
+  const targetPath = normalize(targetUrl.pathname);
+  const currentPath = normalize(window.location.pathname);
+
+  return (
+    targetPath + targetUrl.search === currentPath + window.location.search &&
+    targetUrl.hash !== ""
+  );
+};
+
 function Router() {
   const [route, setRoute] = useState(getCurrentRoute());
   const [isPopState, setIsPopState] = useState(false);
@@ -40,9 +55,13 @@ function Router() {
 
   // Exponer prefetch al componente <Link>
   useEffect(() => {
-    window.__DINOU_PREFETCH__ = (url) => getRSCPayload(url);
-  }, []);
+    window.__DINOU_PREFETCH__ = (url) => {
+      // 🛡️ PROTECCIÓN PREFETCH: Si es un hash local, no hacemos nada
+      if (isHashChangeOnly(url)) return;
 
+      getRSCPayload(url);
+    };
+  }, []);
   useEffect(() => {
     document.body.setAttribute("data-hydrated", "true");
   }, []);
@@ -50,6 +69,29 @@ function Router() {
   const navigate = (href, options = {}) => {
     const finalPath = resolveUrl(href, window.location.pathname);
 
+    // 🛡️ PROTECCIÓN NAVIGATE: Detección de Hash
+    if (isHashChangeOnly(finalPath)) {
+      // 1. Actualizamos la URL en el navegador (sin recargar)
+      if (options.replace) {
+        window.history.replaceState(null, "", finalPath);
+      } else {
+        window.history.pushState(null, "", finalPath);
+      }
+
+      // 2. Manejamos el Scroll manualmente (React no se va a enterar)
+      const hash = new URL(finalPath, window.location.origin).hash;
+      const id = hash.replace("#", "");
+      const element = document.getElementById(id);
+      if (element) {
+        element.scrollIntoView({ behavior: "auto" });
+      }
+
+      // 3. STOP CRÍTICO: No llamamos a startTransition ni setRoute
+      // Esto evita el RSC Fetch
+      return;
+    }
+
+    // ... Resto de la lógica normal de navegación ...
     scrollCache.set(
       window.location.pathname + window.location.search,
       window.scrollY
