@@ -1212,3 +1212,91 @@ test.describe("Dinou Core: Metadata Management", () => {
     );
   });
 });
+test.describe("Dinou Core: Hash Navigation", () => {
+  test("Smoothly scrolls to an element ID without triggering RSC fetch", async ({
+    page,
+  }) => {
+    await page.goto("/t-spa-hash/t-layout-client-component/t-client-component");
+    await page.waitForSelector('body[data-hydrated="true"]');
+
+    // Forzamos altura para que haya scroll real
+    await page.evaluate(() => {
+      document.body.style.minHeight = "2000px";
+      const div = document.createElement("div");
+      div.id = "section-target";
+      div.style.marginTop = "1500px";
+      div.innerText = "Target Section";
+      document.body.appendChild(div);
+    });
+
+    // 1. Interceptar peticiones de red para asegurar que NO se pide un RSC
+    let rscRequestOccurred = false;
+    page.on("request", (request) => {
+      if (request.url().includes("____rsc_payload____")) {
+        rscRequestOccurred = true;
+      }
+    });
+
+    // 2. Click en un enlace de hash
+    await page.evaluate(() => {
+      const a = document.createElement("a");
+      a.href = "#section-target";
+      a.innerText = "Jump to Section";
+      a.id = "hash-link";
+      document.body.appendChild(a);
+    });
+
+    await page.click("#hash-link");
+
+    // 3. Verificaciones
+    // A. La URL debe terminar en #section-target
+    await expect(page).toHaveURL(/#section-target$/);
+
+    // B. El scroll debe haber cambiado (no estar en 0)
+    const scrollY = await page.evaluate(() => window.scrollY);
+    expect(scrollY).toBeGreaterThan(1000);
+
+    // C. CRÍTICO: No debe haber habido petición RSC
+    expect(rscRequestOccurred).toBe(false);
+  });
+  test("Navigating to a different page with a hash jumps to the element", async ({
+    page,
+  }) => {
+    await page.goto(
+      "/t-spa-hash/t-layout-client-component/t-client-component/t-target-client-component"
+    );
+    await page.waitForSelector('body[data-hydrated="true"]');
+
+    // Navegar a otra página con hash
+    await page.click(
+      'a[href="/t-spa-hash/t-layout-client-component/t-client-component/t-target-client-component/target#pepe-section"]'
+    );
+
+    // Verificar URL
+    await expect(page).toHaveURL(/target#pepe-section$/);
+
+    // Verificar que el scroll se movió
+    await expect
+      .poll(async () => {
+        return await page.evaluate(() => window.scrollY);
+      })
+      .toBeGreaterThan(100);
+  });
+});
+test.describe("Dinou Core: Relative Navigation", () => {
+  test("Navigates to relative paths correctly", async ({ page }) => {
+    await page.goto("/parent/child");
+    await page.waitForSelector('body[data-hydrated="true"]');
+
+    // Inyectar enlace relativo
+    await page.evaluate(() => {
+      const a = document.createElement("a");
+      a.href = "sibling"; // Debería ir a /parent/sibling
+      a.id = "rel-link";
+      document.body.appendChild(a);
+    });
+
+    await page.click("#rel-link");
+    await expect(page).toHaveURL(/\/parent\/sibling$/);
+  });
+});

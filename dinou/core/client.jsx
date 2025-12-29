@@ -27,26 +27,27 @@ function Router() {
     document.body.setAttribute("data-hydrated", "true");
   }, []);
 
-  // ⚡️ NUEVA FUNCIÓN: navigate
-  // Esta es la pieza clave que expone la lógica al mundo
   const navigate = (href, options = {}) => {
-    // 1. Guardar scroll actual
+    // 🧭 NORMALIZACIÓN: Convertir cualquier ruta (relativa o absoluta) en absoluta
+    // Si href es "contacto", se convierte en "/ruta-actual/contacto"
+    const resolvedUrl = new URL(href, window.location.href);
+    const absoluteHref =
+      resolvedUrl.pathname + resolvedUrl.search + resolvedUrl.hash;
+
     scrollCache.set(
       window.location.pathname + window.location.search,
       window.scrollY
     );
 
-    // 2. Actualizar Historial (Soporte para replace o push)
     if (options.replace) {
-      window.history.replaceState(null, "", href);
+      window.history.replaceState(null, "", absoluteHref);
     } else {
-      window.history.pushState(null, "", href);
+      window.history.pushState(null, "", absoluteHref);
     }
 
-    // 3. Actualizar React
     startTransition(() => {
       setIsPopState(false);
-      setRoute(href);
+      setRoute(absoluteHref);
     });
   };
 
@@ -69,12 +70,27 @@ function Router() {
       }
 
       const href = anchor.getAttribute("href");
-      if (!href || !href.startsWith("/")) return;
+      if (!href || href.startsWith("mailto:") || href.startsWith("tel:"))
+        return;
+
+      // 1. Validar si es una URL interna (mismo dominio)
+      // Usamos anchor.href porque el navegador ya la devuelve absoluta automáticamente
+      const targetUrl = new URL(anchor.href);
+      if (targetUrl.origin !== window.location.origin) return;
+
+      // 2. Si es un hash en la misma página, dejamos que el navegador lo maneje
+      if (
+        href.startsWith("#") ||
+        (targetUrl.pathname === window.location.pathname && targetUrl.hash)
+      ) {
+        return;
+      }
 
       e.preventDefault();
 
-      // ♻️ REUTILIZAMOS LA FUNCIÓN NAVIGATE
-      navigate(href);
+      // 3. Extraemos el path relativo al dominio (pathname + search + hash)
+      const fullPath = targetUrl.pathname + targetUrl.search + targetUrl.hash;
+      navigate(fullPath);
     };
 
     const onPopState = () => {
@@ -95,6 +111,8 @@ function Router() {
 
   useLayoutEffect(() => {
     requestAnimationFrame(() => {
+      if (window.location.hash) return;
+
       if (isPopState) {
         const key = route;
         const savedY = scrollCache.get(key);
@@ -106,6 +124,26 @@ function Router() {
       }
     });
   }, [route, isPopState]);
+
+  useEffect(() => {
+    // Solo actuamos si hay un hash en la URL
+    const hash = window.location.hash;
+    if (!hash) return;
+
+    // Usamos requestAnimationFrame o un pequeño timeout
+    // para asegurar que el DOM de la nueva página ya se ha pintado
+    requestAnimationFrame(() => {
+      const id = hash.replace("#", "");
+      const element = document.getElementById(id);
+
+      if (element) {
+        // scrollIntoView es la forma más moderna y limpia de hacerlo
+        element.scrollIntoView({ behavior: "auto" });
+        // Si prefieres scroll instantáneo "behavior: auto" es lo suyo para que
+        // se parezca al comportamiento nativo del navegador.
+      }
+    });
+  }, [route]);
 
   // Lógica RSC
   let content = cache.get(route);
