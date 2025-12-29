@@ -21,6 +21,7 @@ module.exports = {
   getContext: contextModule.getContext,
   usePathname: navigationModule.usePathname,
   useSearchParams: navigationModule.useSearchParams,
+  useRouter: navigationModule.useRouter,
 
   // Otras utilidades que puedas añadir en el futuro, ej:
   // cache: require('./cache.js').cache,

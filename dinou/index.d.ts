@@ -137,3 +137,25 @@ export declare function usePathname(): string;
  * const page = searchParams.get('page');
  */
 export declare function useSearchParams(): URLSearchParams;
+
+/**
+ * A Client Component hook that allows you to programmatically navigate between routes.
+ *
+ * @returns {object} An object containing navigation methods.
+ * @example
+ * const router = useRouter();
+ * router.push('/dashboard');
+ */
+export declare function useRouter(): {
+  /**
+   * Navigate to the provided href. Pushes a new entry into the history stack.
+   * @param href - The URL to navigate to (e.g., "/about").
+   */
+  push: (href: string) => void;
+
+  /**
+   * Navigate to the provided href. Replaces the current entry in the history stack.
+   * @param href - The URL to navigate to.
+   */
+  replace: (href: string) => void;
+};

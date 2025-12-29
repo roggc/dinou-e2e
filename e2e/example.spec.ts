@@ -1051,3 +1051,51 @@ test.describe("Dinou Core: Navigation (SPA)", () => {
     );
   });
 });
+test.describe("Dinou Core: Programmatic Navigation (useRouter)", () => {
+  test("router.push navigates correctly without full reload", async ({
+    page,
+  }) => {
+    // 1. Carga inicial
+    await page.goto(
+      "/t-spa-use-router/t-layout-client-component/t-client-component"
+    );
+
+    // 🛡️ IMPORTANTE: Esperar a hidratación (tu fix de seguridad)
+    await page.waitForSelector('body[data-hydrated="true"]');
+
+    // 2. Verificar estado inicial
+    await expect(page.getByText("Page: Source")).toBeVisible();
+
+    // 3. Ejecutar navegación programática
+    await page.getByTestId("btn-push").click();
+
+    // 4. Verificaciones
+    // A. La URL debe cambiar
+    await expect(page).toHaveURL(
+      /.*\/t-spa-use-router\/t-layout-client-component\/t-client-component\/target/
+    );
+
+    // B. El contenido nuevo debe aparecer (Payload RSC cargado y renderizado)
+    await expect(page.getByTestId("target-title")).toHaveText("Page: Target");
+
+    // C. Verificar que NO estamos en la página anterior
+    await expect(page.getByText("Page: Source")).toBeHidden();
+  });
+
+  test("router.replace navigates correctly", async ({ page }) => {
+    // 1. Carga inicial
+    await page.goto(
+      "/t-spa-use-router/t-layout-client-component/t-client-component"
+    );
+    await page.waitForSelector('body[data-hydrated="true"]');
+
+    // 2. Ejecutar navegación con replace
+    await page.getByTestId("btn-replace").click();
+
+    // 3. Verificar URL y Contenido
+    await expect(page).toHaveURL(
+      /.*\/t-spa-use-router\/t-layout-client-component\/t-client-component\/target/
+    );
+    await expect(page.getByTestId("target-title")).toHaveText("Page: Target");
+  });
+});
