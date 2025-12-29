@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import "@/globals.css";
+import GlobalProgress from "@/components/global-progress";
 
 export default function Layout({ children }: { children: ReactNode }) {
   return (
@@ -31,7 +32,10 @@ export default function Layout({ children }: { children: ReactNode }) {
         <link rel="manifest" href="/site.webmanifest"></link>
         <link href="/styles.css" rel="stylesheet"></link>
       </head>
-      <body>{children}</body>
+      <body>
+        <GlobalProgress />
+        {children}
+      </body>
     </html>
   );
 }

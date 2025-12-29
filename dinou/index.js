@@ -22,6 +22,7 @@ module.exports = {
   usePathname: navigationModule.usePathname,
   useSearchParams: navigationModule.useSearchParams,
   useRouter: navigationModule.useRouter,
+  useNavigationLoading: navigationModule.useNavigationLoading,
 
   // Otras utilidades que puedas añadir en el futuro, ej:
   // cache: require('./cache.js').cache,

@@ -1055,6 +1055,14 @@ test.describe("Dinou Core: Programmatic Navigation (useRouter)", () => {
   test("router.push navigates correctly without full reload", async ({
     page,
   }) => {
+    // 1. Configurar Intercepción de Red (La Magia 🪄)
+    // Interceptamos cualquier petición que contenga "____rsc_payload____"
+    await page.route(/.*____rsc_payload____.*/, async (route) => {
+      // Retrasamos la respuesta 500ms o 1s
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      // Dejamos que la petición continúe al servidor real
+      await route.continue();
+    });
     // 1. Carga inicial
     await page.goto(
       "/t-spa-use-router/t-layout-client-component/t-client-component"
@@ -1062,12 +1070,18 @@ test.describe("Dinou Core: Programmatic Navigation (useRouter)", () => {
 
     // 🛡️ IMPORTANTE: Esperar a hidratación (tu fix de seguridad)
     await page.waitForSelector('body[data-hydrated="true"]');
+    // Aseguramos que NO se ve al principio
+    await expect(page.getByTestId("global-loader")).toBeHidden();
 
     // 2. Verificar estado inicial
     await expect(page.getByText("Page: Source")).toBeVisible();
 
     // 3. Ejecutar navegación programática
     await page.getByTestId("btn-push").click();
+
+    // 4. Verificación durante la carga
+    // Como hemos "congelado" la red 1 segundo, Playwright tiene tiempo de sobra para verlo
+    await expect(page.getByTestId("global-loader")).toBeVisible();
 
     // 4. Verificaciones
     // A. La URL debe cambiar
@@ -1080,6 +1094,8 @@ test.describe("Dinou Core: Programmatic Navigation (useRouter)", () => {
 
     // C. Verificar que NO estamos en la página anterior
     await expect(page.getByText("Page: Source")).toBeHidden();
+    // El loader debe haber desaparecido
+    await expect(page.getByTestId("global-loader")).toBeHidden();
   });
 
   test("router.replace navigates correctly", async ({ page }) => {

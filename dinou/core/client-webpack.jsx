@@ -3,7 +3,7 @@ import {
   use,
   useState,
   useEffect,
-  startTransition,
+  useTransition,
   useLayoutEffect,
   useMemo, // 1. Añadimos useMemo
 } from "react";
@@ -19,6 +19,9 @@ const getCurrentRoute = () => window.location.pathname + window.location.search;
 function Router() {
   const [route, setRoute] = useState(getCurrentRoute());
   const [isPopState, setIsPopState] = useState(false);
+  // ⚡️ HOOK DE TRANSICIÓN
+  // isPending será true mientras React espera el fetch del RSC y el renderizado
+  const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
     document.body.setAttribute("data-hydrated", "true");
@@ -121,8 +124,9 @@ function Router() {
     () => ({
       url: route, // La URL actual
       navigate, // La función para navegar
+      isPending,
     }),
-    [route]
+    [route, isPending]
   );
 
   return (

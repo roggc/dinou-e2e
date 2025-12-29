@@ -17,6 +17,7 @@ export const RouterContext = createContext({
   navigate: (url) => {
     console.warn("navigate called outside Router");
   },
+  isPending: false, // Default value
 });
 
 // Función de limpieza (Mantenemos la lógica de trailing slash)
@@ -27,6 +28,24 @@ function normalizePath(path) {
     return path.slice(0, -1);
   }
   return path;
+}
+
+// ⏳ NUEVO HOOK: useNavigationLoading
+export function useNavigationLoading() {
+  // 1. En el servidor siempre es false
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  // 2. En el cliente, leemos del contexto
+  const context = useContext(RouterContext);
+
+  // Si el contexto es antiguo (string) o nulo, asumimos false
+  if (!context || typeof context === "string") {
+    return false;
+  }
+
+  return context.isPending;
 }
 
 // 🧭 NUEVO HOOK: useRouter

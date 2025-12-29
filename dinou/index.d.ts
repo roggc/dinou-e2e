@@ -159,3 +159,11 @@ export declare function useRouter(): {
    */
   replace: (href: string) => void;
 };
+
+/**
+ * A Client Component hook that returns true if a navigation (SPA transition) is currently in progress.
+ * Useful for showing progress bars or loading spinners globally.
+ *
+ * @returns {boolean} True if navigation is pending, false otherwise.
+ */
+export declare function useNavigationLoading(): boolean;
