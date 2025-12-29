@@ -972,13 +972,19 @@ test.describe("Dinou Core: Scroll Restoration (SPA)", () => {
       /\/t-spa-scroll-restoration\/t-layout-client-component\/t-client-component\/sub-route-a/
     );
 
-    // 🛡️ Esperar un tick para asegurar que el useLayoutEffect se ejecutó
-    // A veces el navegador es muy rápido reportando la URL
-    await page.waitForTimeout(100);
-
     // 5. ✅ VERIFICACIÓN A: En navegación nueva, el scroll debe volver a ARRIBA (0)
-    scrollY = await page.evaluate(() => window.scrollY);
-    expect(scrollY).toBe(0);
+    // Usamos POLL para esperar a que el requestAnimationFrame de React haga efecto
+    await expect
+      .poll(
+        async () => {
+          return await page.evaluate(() => window.scrollY);
+        },
+        {
+          // Opcional: timeout específico para esta aserción si quieres
+          timeout: 2000,
+        }
+      )
+      .toBe(0);
 
     // (Opcional) Forzar altura en la página B también si quieres probar scroll ahí
     // await page.addStyleTag({ content: "body { min-height: 3000px; }" });
@@ -1097,7 +1103,6 @@ test.describe("Dinou Core: Programmatic Navigation (useRouter)", () => {
     // El loader debe haber desaparecido
     await expect(page.getByTestId("global-loader")).toBeHidden();
   });
-
   test("router.replace navigates correctly", async ({ page }) => {
     // 1. Carga inicial
     await page.goto(
@@ -1113,5 +1118,67 @@ test.describe("Dinou Core: Programmatic Navigation (useRouter)", () => {
       /.*\/t-spa-use-router\/t-layout-client-component\/t-client-component\/target/
     );
     await expect(page.getByTestId("target-title")).toHaveText("Page: Target");
+  });
+});
+test.describe("Dinou Core: Server Component Redirects", () => {
+  const BASE_PATH =
+    "/t-redirect-from-server-component/to-server-component/t-layout-server-component";
+  const SOURCE_URL = `${BASE_PATH}`;
+  const TARGET_URL = `${BASE_PATH}/redirect-to`;
+  const SOFT_BASE_URL = `${BASE_PATH}/redirect-to/redirect-soft`;
+  const SOFT_TARGET_URL = `${BASE_PATH}/redirect-to/redirect-soft/target`;
+
+  // CASO 1: Navegación Directa (SSR / Hard Load)
+  // El navegador recibe el 302 del servidor y lo sigue automáticamente.
+  test("Hard Navigation: Server redirects immediately on initial load", async ({
+    page,
+  }) => {
+    // 1. Vamos directamente a la URL que provoca el redirect
+    await page.goto(SOURCE_URL);
+
+    // 2. Esperamos hidratación
+    await page.waitForSelector('body[data-hydrated="true"]');
+
+    // 3. Verificamos que la URL final en el navegador es la de destino
+    // Usamos RegExp para evitar problemas con http://localhost...
+    await expect(page).toHaveURL(new RegExp(TARGET_URL));
+
+    // 4. Verificamos que se renderizó el contenido correcto
+    await expect(page.getByTestId("target-content")).toHaveText(
+      "hello from server component B"
+    );
+  });
+
+  // CASO 2: Navegación SPA (Soft Navigation)
+  // El Router hace fetch(), recibe el redirect, y debe actualizar la URL.
+  test("Soft Navigation: Router handles redirect from RSC payload", async ({
+    page,
+  }) => {
+    // 1. Empezamos en una página segura (la de destino, por ejemplo, o la home)
+    // para cargar React y el Router primero.
+    await page.goto(TARGET_URL);
+    await page.waitForSelector('body[data-hydrated="true"]');
+
+    // // 2. Inyectamos un enlace temporal en el DOM para simular una navegación SPA
+    // // Esto nos ahorra crear una página "Menu" solo para el test.
+    // await page.evaluate((url) => {
+    //   const a = document.createElement("a");
+    //   a.href = url;
+    //   a.innerText = "Click to Redirect";
+    //   a.setAttribute("data-testid", "link-trigger");
+    //   document.body.appendChild(a);
+    // }, SOFT_BASE_URL);
+
+    // 3. Hacemos click (Interceptado por tu Router -> fetch)
+    await page.getByTestId("link-trigger").click();
+
+    // 4. Verificaciones
+    // A. El Router debe haber detectado el cambio y actualizado la URL
+    await expect(page).toHaveURL(new RegExp(SOFT_TARGET_URL));
+
+    // B. El contenido debe ser visible
+    await expect(page.getByTestId("target-content")).toHaveText(
+      "hello from server component X"
+    );
   });
 });
