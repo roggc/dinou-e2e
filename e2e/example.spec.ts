@@ -1427,7 +1427,9 @@ test.describe("Dinou Core: HTTP Status Codes", () => {
 test.describe("Dinou Core: Error pages", () => {
   test("Go to Error page when error", async ({ page }) => {
     // 1. Navegación directa (Hard Navigation) a una ruta que no existe
-    await page.goto("/t-error/t-layout-client-component/t-client-component");
+    await page.goto(
+      "/t-error/t-layout-client-component/t-client-component/t-with-error-page"
+    );
     await page.waitForSelector('body[data-hydrated="true"]');
 
     // 2. Verificamos el contenido visual (esto dices que YA funciona)
