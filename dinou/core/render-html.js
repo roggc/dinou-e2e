@@ -165,6 +165,8 @@ async function renderToStream(reqPath, query, cookies = {}, serializedBox) {
             try {
               const errorJSX = await getErrorJSX(reqPath, query, error);
 
+              if (!context.res.headersSent) context.res.status(500);
+
               if (errorJSX === undefined) {
                 writeErrorOutput(error, isProd);
                 process.exit(1);
