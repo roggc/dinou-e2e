@@ -49,39 +49,98 @@ export default function esmHmrPlugin({
         }
       });
 
+      // build.onLoad({ filter: /.*/ }, async (args) => {
+      //   const abs = path.resolve(args.path);
+
+      //   const outfileName = Object.entries(entryPoints).find(
+      //     ([, value]) => norm(value) === norm(abs)
+      //   )?.[0];
+
+      //   if (!outfileName) {
+      //     return null;
+      //   }
+
+      //   for (let i = 0; i < entryAbsPaths.length; i++) {
+      //     if (abs === entryAbsPaths[i] && entrySources[i]) {
+      //       let injectCode = `import { createHotContext } from "/__hmr_client__.js";\n`;
+      //       injectCode += `window.__hotContext = createHotContext;\n`;
+
+      //       return {
+      //         contents: injectCode + entrySources[i],
+      //         loader: "jsx",
+      //       };
+      //     }
+      //   }
+
+      //   const source = await fs.readFile(args.path, "utf8");
+      //   const transformed = babelCore.transformSync(source, {
+      //     ...babelConfig,
+      //     filename: abs,
+      //   }).code;
+
+      //   return {
+      //     contents: transformed,
+      //     loader: args.path.endsWith(".tsx") ? "tsx" : "jsx",
+      //   };
+      // });
+
       build.onLoad({ filter: /.*/ }, async (args) => {
         const abs = path.resolve(args.path);
 
-        const outfileName = Object.entries(entryPoints).find(
-          ([, value]) => norm(value) === norm(abs)
-        )?.[0];
+        const absNorm = norm(abs);
 
-        if (!outfileName) {
-          return null;
-        }
+        // 1. Comprobamos si es un ROOT Entry (client.jsx o error.tsx)
+        // Estos son los que tienes guardados en 'entryAbsPaths'
+        const rootIndex = entryAbsPaths.findIndex(
+          (entryPath) => norm(entryPath) === absNorm
+        );
 
-        for (let i = 0; i < entryAbsPaths.length; i++) {
-          if (abs === entryAbsPaths[i] && entrySources[i]) {
+        // CASO A: Es Main o Error (Roots)
+        if (rootIndex !== -1) {
+          const source = entrySources[rootIndex];
+          if (source) {
             let injectCode = `import { createHotContext } from "/__hmr_client__.js";\n`;
             injectCode += `window.__hotContext = createHotContext;\n`;
 
+            // IMPORTANTE: Devolvemos 'source' CRUDO + inyección.
+            // Sin pasar por Babel para evitar que $RefreshSig$ rompa la inicialización.
             return {
-              contents: injectCode + entrySources[i],
+              contents: injectCode + source,
               loader: "jsx",
             };
           }
+          return null;
         }
 
-        const source = await fs.readFile(args.path, "utf8");
-        const transformed = babelCore.transformSync(source, {
-          ...babelConfig,
-          filename: abs,
-        }).code;
+        // 2. Comprobamos si es cualquier OTRO Entry Point de la configuración de esbuild
+        // (Aquí están tus páginas, layouts, componentes...)
+        const isAnEntryPoint = Object.values(entryPoints).some(
+          (val) => norm(path.resolve(val)) === absNorm
+        );
 
-        return {
-          contents: transformed,
-          loader: args.path.endsWith(".tsx") ? "tsx" : "jsx",
-        };
+        // CASO B: Es una página o componente de usuario
+        if (isAnEntryPoint) {
+          // AQUÍ SÍ aplicamos Babel para tener React Fast Refresh
+          const source = await fs.readFile(args.path, "utf8");
+
+          try {
+            const transformed = babelCore.transformSync(source, {
+              ...babelConfig,
+              filename: abs,
+            }).code;
+
+            return {
+              contents: transformed,
+              loader: args.path.endsWith(".tsx") ? "tsx" : "jsx",
+            };
+          } catch (e) {
+            // Si babel falla, fallback al original
+            return null;
+          }
+        }
+
+        // CASO C: No es un entry point (librerías, helpers internos, node_modules...)
+        return null;
       });
 
       build.onEnd(async (result) => {
