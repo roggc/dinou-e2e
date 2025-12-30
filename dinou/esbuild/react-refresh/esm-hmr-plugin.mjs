@@ -13,7 +13,7 @@ const norm = (p) => path.resolve(p).replace(/\\/g, "/");
 let serverStarted = false;
 
 export default function esmHmrPlugin({
-  entryName = "main",
+  entryNames = ["main", "error"],
   changedIds,
   hmrEngine,
 } = {}) {
@@ -24,9 +24,9 @@ export default function esmHmrPlugin({
       const outdir = build.initialOptions.outdir || "public";
       const entryPoints = build.initialOptions.entryPoints;
 
-      let entrySource = null;
-      let entryAbsPath = null;
-      let entryOutputName = null;
+      const entrySources = [];
+      const entryAbsPaths = [];
+      const entryOutputNames = [];
 
       if (!serverStarted) {
         const server = createServer();
@@ -38,16 +38,15 @@ export default function esmHmrPlugin({
       }
 
       build.onStart(async () => {
-        const entryPath = entryPoints?.[entryName];
-        if (!entryPath) return;
+        for (const entryName of entryNames) {
+          const entryPath = entryPoints?.[entryName];
+          if (!entryPath) return;
 
-        entryAbsPath = path.resolve(entryPath);
-        entrySource = await fs.readFile(entryAbsPath, "utf8");
-        entryOutputName = entryName + ".js";
-
-        // console.log(
-        //   `[esm-hmr] Entry cargado: ${entryAbsPath} → ${entryOutputName}`
-        // );
+          const absPath = path.resolve(entryPath);
+          entryAbsPaths.push(absPath);
+          entrySources.push(await fs.readFile(absPath, "utf8"));
+          entryOutputNames.push(entryName + ".js");
+        }
       });
 
       build.onLoad({ filter: /.*/ }, async (args) => {
@@ -61,14 +60,16 @@ export default function esmHmrPlugin({
           return null;
         }
 
-        if (abs === entryAbsPath && entrySource) {
-          let injectCode = `import { createHotContext } from "/__hmr_client__.js";\n`;
-          injectCode += `window.__hotContext = createHotContext;\n`;
+        for (let i = 0; i < entryAbsPaths.length; i++) {
+          if (abs === entryAbsPaths[i] && entrySources[i]) {
+            let injectCode = `import { createHotContext } from "/__hmr_client__.js";\n`;
+            injectCode += `window.__hotContext = createHotContext;\n`;
 
-          return {
-            contents: injectCode + entrySource,
-            loader: "jsx",
-          };
+            return {
+              contents: injectCode + entrySources[i],
+              loader: "jsx",
+            };
+          }
         }
 
         const source = await fs.readFile(args.path, "utf8");

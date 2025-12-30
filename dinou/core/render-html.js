@@ -179,12 +179,24 @@ async function renderToStream(reqPath, query, cookies = {}, serializedBox) {
                   writeErrorOutput(error, isProd);
                   process.exit(1);
                 },
-                bootstrapModules: [getAssetFromManifest("error.js")],
+                // bootstrapModules: [getAssetFromManifest("error.js")],
+                bootstrapModules: isDevelopment
+                  ? [
+                      getAssetFromManifest("error.js"),
+                      isWebpack
+                        ? undefined
+                        : getAssetFromManifest("runtime.js"),
+                    ].filter(Boolean)
+                  : [getAssetFromManifest("error.js")],
                 bootstrapScriptContent: `window.__DINOU_ERROR_MESSAGE__=${JSON.stringify(
                   error.message || "Unknown error"
                 )};window.__DINOU_ERROR_STACK__=${JSON.stringify(
                   error.stack || "No stack trace available"
-                )};`,
+                )};${
+                  isDevelopment
+                    ? `window.HMR_WEBSOCKET_URL="ws://localhost:3001";`
+                    : ""
+                }`,
               });
             } catch (err) {
               console.error("Render error (no error.tsx?):", err);

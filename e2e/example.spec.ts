@@ -275,31 +275,49 @@ async function redirectFlow(page: any, toServerComponent = false) {
 }
 
 async function ISRFlow(page: any) {
+  // 1. Obtenemos el timestamp inicial
   const time1 = await page.getByTestId("timestamp").innerText();
+  const targetUrl = page.url(); // Guardamos la URL limpia
 
-  // 2. Esperar un tiempo prudencial (ej. 5 segundos) para asegurar que el revalidate (3s) expire
-  // No hacemos reloads intermedios para no "despertar" al servidor antes de tiempo
-  await page.waitForTimeout(5000);
+  // 2. Esperamos el tiempo de revalidación (5s)
+  await page.waitForTimeout(4000);
 
-  // 3. Recargar. Esta petición disparará la regeneración (o nos dará el nuevo directamente)
-  await page.reload();
-  const time2 = await page.getByTestId("timestamp").innerText();
+  // 3. VERIFICACIÓN CON CONTEXTO LIMPIO (Sonda ISR)
+  // En lugar de recargar la misma página, abrimos una ventana de incógnito nueva
+  // repetidamente hasta que el servidor nos sirva la versión nueva.
+  await expect
+    .poll(
+      async () => {
+        // A. Creamos un contexto nuevo (Sin caché, sin cookies previas)
+        // Usamos el browser original para no lanzar una instancia nueva de Firefox (rápido)
+        const browser = page.context().browser();
+        if (!browser) throw new Error("No browser instance found");
 
-  // 4. Lógica de verificación flexible
-  if (time2 !== time1) {
-    // Escenario A: El servidor fue rápido y nos dio el nuevo ya. ¡Éxito!
-    expect(new Date(time2).getTime()).toBeGreaterThan(
-      new Date(time1).getTime()
-    );
-  } else {
-    // Escenario B: Nos dio el Stale (viejo). Esperamos a que la regeneración termine.
-    await page.waitForTimeout(2000); // Margen para que buildStaticPage termine
-    await page.reload();
-    const time3 = await page.getByTestId("timestamp").innerText();
-    expect(new Date(time3).getTime()).toBeGreaterThan(
-      new Date(time1).getTime()
-    );
-  }
+        const tempContext = await browser.newContext();
+        const tempPage = await tempContext.newPage();
+
+        // B. Vamos a la URL limpia
+        await tempPage.goto(targetUrl);
+
+        // C. Leemos el dato
+        const currentTime = await tempPage.getByTestId("timestamp").innerText();
+
+        // D. Cerramos el contexto para limpiar memoria
+        await tempContext.close();
+
+        return new Date(currentTime).getTime();
+      },
+      {
+        message: "El ISR no regeneró la página (verificado con New Context)",
+        timeout: 15000,
+        intervals: [2000], // Intervalos un poco más largos ya que abrimos contextos
+      }
+    )
+    .toBeGreaterThan(new Date(time1).getTime());
+
+  // Opcional: Si quieres que la página original del test también se actualice visualmente
+  // para pasos posteriores, ahora sí puedes hacer reload (aunque puede que Firefox siga con su caché)
+  // await page.reload();
 }
 
 test.describe("Dinou Core: Suspense & Server Functions", () => {
@@ -851,6 +869,13 @@ test.describe("Dinou Core: Soft navigation (SPA)", () => {
   test("SPA Navigation preserves Layout State - layout client component - server component", async ({
     page,
   }) => {
+    // 🕵️‍♂️ CHIVATO: Ver logs y errores del navegador en tu terminal
+    page.on("console", (msg) =>
+      console.log(`[BROWSER CONSOLE]: ${msg.text()}`)
+    );
+    page.on("pageerror", (err) =>
+      console.log(`[BROWSER ERROR]: ${err.message}`)
+    );
     await page.goto("/t-spa/t-layout-client-component/t-server-component"); // Carga inicial (Hard)
 
     // 🛡️ FIX: Esperar a que React hidrate antes de interactuar
@@ -1216,6 +1241,13 @@ test.describe("Dinou Core: Hash Navigation", () => {
   test("Smoothly scrolls to an element ID without triggering RSC fetch", async ({
     page,
   }) => {
+    // 🕵️‍♂️ CHIVATO: Ver logs y errores del navegador en tu terminal
+    page.on("console", (msg) =>
+      console.log(`[BROWSER CONSOLE]: ${msg.text()}`)
+    );
+    page.on("pageerror", (err) =>
+      console.log(`[BROWSER ERROR]: ${err.message}`)
+    );
     await page.goto("/t-spa-hash/t-layout-client-component/t-client-component");
     await page.waitForSelector('body[data-hydrated="true"]');
 
@@ -1317,6 +1349,13 @@ test.describe("Dinou Core: Hash Navigation", () => {
 });
 test.describe("Dinou Core: Relative Navigation", () => {
   test("Navigates to relative paths correctly", async ({ page }) => {
+    // 🕵️‍♂️ CHIVATO: Ver logs y errores del navegador en tu terminal
+    page.on("console", (msg) =>
+      console.log(`[BROWSER CONSOLE]: ${msg.text()}`)
+    );
+    page.on("pageerror", (err) =>
+      console.log(`[BROWSER ERROR]: ${err.message}`)
+    );
     await page.goto(
       "/t-spa-relative/t-layout-client-component/t-client-component/page-a"
     );
@@ -1379,6 +1418,21 @@ test.describe("Dinou Core: HTTP Status Codes", () => {
     // Si esto es 200, Google indexará esta página basura.
     // Si es 404, Google sabrá que no existe.
     expect(response?.status()).toBe(404);
+  });
+  test("Returns HTTP 404 for nested non-existent routes", async ({ page }) => {
+    const response = await page.goto("/blog/post-que-no-existe");
+    expect(response?.status()).toBe(404);
+  });
+});
+test.describe("Dinou Core: Error pages", () => {
+  test("Go to Error page when error", async ({ page }) => {
+    // 1. Navegación directa (Hard Navigation) a una ruta que no existe
+    await page.goto("/t-error/t-layout-client-component/t-client-component");
+    await page.waitForSelector('body[data-hydrated="true"]');
+
+    // 2. Verificamos el contenido visual (esto dices que YA funciona)
+    // Asumo que tu página 404 tiene algún texto identificativo
+    await expect(page.getByText(/ups!/i)).toBeVisible();
   });
   test("Returns HTTP 404 for nested non-existent routes", async ({ page }) => {
     const response = await page.goto("/blog/post-que-no-existe");
