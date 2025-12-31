@@ -530,7 +530,7 @@ async function buildStaticPages() {
   console.log(`Static site generated with ${pages.length} pages`);
 }
 
-async function buildStaticPage(reqPath) {
+async function buildStaticPage(reqPath, isDynamic = null) {
   const srcFolder = path.resolve(process.cwd(), "src");
   const distFolder = path.resolve(process.cwd(), "dist");
   const outputPath = path.join(distFolder, reqPath);
@@ -606,6 +606,8 @@ async function buildStaticPage(reqPath) {
     if (pageFunctionsPath) {
       const pageFunctionsModule = await importModule(pageFunctionsPath);
       const getProps = pageFunctionsModule.getProps;
+      if (isDynamic && (isDynamic.value = pageFunctionsModule.dynamic?.()))
+        return;
       revalidate = pageFunctionsModule.revalidate;
       pageFunctionsProps = await getProps?.(dParams, {}, {});
       props = { ...props, ...(pageFunctionsProps?.page ?? {}) };

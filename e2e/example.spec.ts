@@ -1754,10 +1754,10 @@ test.describe("Dinou SSG (getStaticPaths)", () => {
     // AQUÍ ESTÁ EL CAMBIO: Esperamos 200, NO 404
     expect(resC?.status()).toBe(200);
     await expect(page.locator("body")).toContainText("Slug: gamma");
-
     // OPCIONAL: Si Dinou es ISR, después de visitarla, el archivo AHORA sí debería existir.
     // Si es solo SSR, seguirá sin existir. Depende de tu arquitectura.
-    // expect(fs.existsSync(gammaPath)).toBe(true);
+    await page.waitForTimeout(2000);
+    expect(fs.existsSync(gammaPath)).toBe(true);
   });
 });
 test.describe("Dinou Data Fetching (getProps)", () => {
