@@ -1,4 +1,6 @@
 import { test, expect } from "@playwright/test";
+import fs from "fs";
+import path from "path";
 // Detectamos si estamos en un entorno de "start" (Producción)
 const isProd = process.env.TEST_CMD?.includes("start") || false;
 
@@ -1441,3 +1443,161 @@ test.describe("Dinou Core: Error pages", () => {
     expect(response?.status()).toBe(404);
   });
 });
+test.describe("ISR Error Protection Shield", () => {
+  const PAGE_URL =
+    "/t-isr/t-layout-client-component/t-server-component/t-time-bomb";
+  const DIST_DIR = path.resolve("dist2");
+  const HTML_PATH = path.join(DIST_DIR, PAGE_URL, "index.html");
+  const FLAG_FILE = path.resolve("trigger-error.txt");
+  test.beforeEach(() => {
+    // Asegurar limpieza antes de empezar
+    if (fs.existsSync(FLAG_FILE)) fs.unlinkSync(FLAG_FILE);
+    // Opcional: Borrar el HTML generado previamente para empezar de cero
+    // if (fs.existsSync(HTML_PATH)) fs.unlinkSync(HTML_PATH);
+  });
+
+  test.afterEach(() => {
+    // Limpieza al terminar
+    if (fs.existsSync(FLAG_FILE)) fs.unlinkSync(FLAG_FILE);
+  });
+
+  test("Should KEEP old content if ISR regeneration fails after natural expiration", async ({
+    request,
+    page,
+  }) => {
+    // -----------------------------------------------------------
+    // 3. SABOTAJE
+    // -----------------------------------------------------------
+    // Ponemos la "bomba" para que la PRÓXIMA regeneración falle
+    console.log(`[TEST] Creando bomba en: ${FLAG_FILE}`);
+    fs.writeFileSync(FLAG_FILE, "BOOM");
+    // -----------------------------------------------------------
+    // 1. GENERACIÓN INICIAL (Happy Path)
+    // -----------------------------------------------------------
+    const res1 = await request.get(PAGE_URL);
+    expect(res1.status()).toBe(200);
+
+    const content1 = await res1.text();
+    expect(content1).toContain("Contenido Seguro y Valido");
+
+    // Verificamos que se creó el archivo en disco
+    expect(fs.existsSync(HTML_PATH)).toBe(true);
+    const diskContent1 = fs.readFileSync(HTML_PATH, "utf-8");
+    expect(diskContent1).toContain("Contenido Seguro y Valido");
+
+    // -----------------------------------------------------------
+    // 2. ESPERA NATURAL (Dejamos que caduque el cache)
+    // -----------------------------------------------------------
+    // Como revalidate = 1s, esperamos 1.5s para estar seguros
+    console.log("⏳ Esperando a que caduque la caché (1.5s)...");
+    await page.waitForTimeout(1500);
+
+    // -----------------------------------------------------------
+    // 4. DISPARAR ISR
+    // -----------------------------------------------------------
+    // Hacemos la petición. Como ya pasó el tiempo:
+    // a) El servidor devolverá la versión "Stale" (200 OK) INMEDIATAMENTE.
+    // b) El servidor lanzará el proceso de regeneración en background.
+    console.log("🔄 Disparando ISR...");
+    const res2 = await request.get(PAGE_URL);
+
+    // Verificamos "Stale-While-Revalidate": El usuario NO ve el error
+    expect(res2.status()).toBe(200);
+    expect(await res2.text()).toContain("Contenido Seguro y Valido");
+
+    // -----------------------------------------------------------
+    // 5. ESPERAR RESULTADO DEL BACKGROUND
+    // -----------------------------------------------------------
+    // Damos tiempo a Node.js para que intente regenerar, falle y aborte.
+    console.log("⏳ Esperando proceso background (2s)...");
+    await page.waitForTimeout(2000);
+
+    // -----------------------------------------------------------
+    // 6. VERIFICACIÓN FINAL
+    // -----------------------------------------------------------
+    // Si la protección funciona, el archivo en disco NO debe haber cambiado.
+    const diskContentFinal = fs.readFileSync(HTML_PATH, "utf-8");
+
+    // Debe seguir siendo el contenido válido original
+    expect(diskContentFinal).toContain("Contenido Seguro y Valido");
+
+    // No debe ser una página de error de React/Express
+    expect(diskContentFinal).not.toContain("Internal Server Error");
+    expect(diskContentFinal).not.toContain("Simulated Critical Error");
+
+    // Verificamos que no quedaron temporales basura
+    expect(fs.existsSync(HTML_PATH + ".tmp")).toBe(false);
+  });
+});
+// test.describe("ISR Status Updates", () => {
+//   const PAGE_URL =
+//     "/t-isr/t-layout-client-component/t-server-component/t-redirect";
+//   const OUT_DIR = path.resolve("dist2");
+//   const MANIFEST_PATH = path.join(OUT_DIR, "status-manifest.json");
+//   const FLAG_FILE = path.resolve("exists.flag");
+//   // Empezamos limpios
+//   test.beforeEach(() => {
+//     if (fs.existsSync(FLAG_FILE)) fs.unlinkSync(FLAG_FILE);
+//   });
+//   test.afterEach(() => {
+//     if (fs.existsSync(FLAG_FILE)) fs.unlinkSync(FLAG_FILE);
+//   });
+//   test("Should update manifest from 404 to 200 and back to 404", async ({
+//     request,
+//     page,
+//   }) => {
+//     // --- FASE 1: NO EXISTE (404 Inicial) ---
+//     console.log("Phase 1: Expecting 404");
+//     const res1 = await request.get(PAGE_URL);
+//     expect(res1.status()).toBe(404);
+
+//     // Verificamos Manifiesto
+//     const manifest1 = JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf-8"));
+//     // Nota: Ajusta la ruta del key según cómo la guardes (con o sin slash final)
+//     expect(manifest1[PAGE_URL + "/"]?.status).toBe(404);
+
+//     // --- FASE 2: CREACIÓN (404 -> 200) ---
+//     console.log("Phase 2: Creating product...");
+//     fs.writeFileSync(FLAG_FILE, "exists");
+
+//     // Esperar caducidad
+//     await page.waitForTimeout(1500);
+
+//     // Disparar ISR
+//     // La primera petición devolverá el 404 cacheado (Stale)
+//     await request.get(PAGE_URL);
+
+//     // Esperar regeneración background
+//     await page.waitForTimeout(2000);
+
+//     // Segunda petición: Ya debería ser 200
+//     const res2 = await request.get(PAGE_URL);
+//     expect(res2.status()).toBe(200);
+//     expect(await res2.text()).toContain("Producto Disponible");
+
+//     // Verificamos Manifiesto ACTUALIZADO
+//     const manifest2 = JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf-8"));
+//     expect(manifest2[PAGE_URL + "/"]?.status).toBe(200);
+
+//     // --- FASE 3: BORRADO (200 -> 404) ---
+//     console.log("Phase 3: Deleting product...");
+//     fs.unlinkSync(FLAG_FILE);
+
+//     // Esperar caducidad
+//     await page.waitForTimeout(1500);
+
+//     // Disparar ISR (devuelve stale 200)
+//     await request.get(PAGE_URL);
+
+//     // Esperar regeneración
+//     await page.waitForTimeout(2000);
+
+//     // Segunda petición: Ya debería ser 404 de nuevo
+//     const res3 = await request.get(PAGE_URL);
+//     expect(res3.status()).toBe(404);
+
+//     // Verificamos Manifiesto ACTUALIZADO
+//     const manifest3 = JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf-8"));
+//     expect(manifest3[PAGE_URL + "/"]?.status).toBe(404);
+//   });
+// });

@@ -223,6 +223,12 @@ async function renderToStream(reqPath, query, cookies = {}, serializedBox) {
           : {}),
       });
     } catch (error) {
+      // 👇 AÑADIR ESTO: Avisar al padre explícitamente del error 500 antes de morir
+      if (context && context.res && typeof context.res.status === "function") {
+        // Si el padre está escuchando, esto le dice "Oye, fue un 500"
+        // aunque luego el exit(1) probablemente tenga prioridad.
+        if (!context.res.headersSent) context.res.status(500);
+      }
       process.stdout.write(formatErrorHtml(error));
       process.stderr.write(
         JSON.stringify({
