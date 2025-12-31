@@ -1714,3 +1714,92 @@ test.describe("Router: Shadowing & Complexity", () => {
   //   await expect(page.locator("#res")).toContainText("admin");
   // });
 });
+test.describe("Dinou SSG (getStaticPaths)", () => {
+  const BUILD_DIR = path.resolve(process.cwd(), "dist2");
+  test("Should verify SSG for defined paths and fallback for undefined ones", async ({
+    page,
+  }) => {
+    if (!isProd) test.skip();
+    // --- PARTE 1: RUTAS PRE-GENERADAS (Alpha) ---
+    // Verificamos que 'alpha' fue generada por getStaticPaths
+    // Dependiendo de tu estructura, ajusta la ruta del archivo (ej: /alpha/index.html)
+    const alphaPath = path.join(BUILD_DIR, "t-ssg", "alpha", "index.html");
+
+    // PRUEBA DE FUEGO: ¿El archivo existe físicamente?
+    // Si falla aquí, es que getStaticPaths no se ejecutó al build.
+    expect(
+      fs.existsSync(alphaPath),
+      "Alpha debería estar pre-renderizada en disco"
+    ).toBe(true);
+
+    // Navegamos para confirmar que se sirve bien
+    const resA = await page.goto("/t-ssg/alpha");
+    expect(resA?.status()).toBe(200);
+    await expect(page.locator("body")).toContainText("Slug: alpha");
+
+    // --- PARTE 2: RUTAS NO DEFINIDAS (Gamma) ---
+    // Gamma NO estaba en getStaticPaths, así que NO debería existir en disco todavía.
+    const gammaPath = path.join(BUILD_DIR, "t-ssg", "gamma", "index.html");
+
+    // PRUEBA DE FUEGO: Aseguramos que NO se pre-generó "sin querer"
+    expect(
+      fs.existsSync(gammaPath),
+      "Gamma NO debería existir en disco antes de visitarla"
+    ).toBe(false);
+
+    // Ahora la visitamos. Dinou debería generarla AL VUELO (SSR/ISR).
+    console.log("Navegando a ruta no estática (Gamma)...");
+    const resC = await page.goto("/t-ssg/gamma");
+
+    // AQUÍ ESTÁ EL CAMBIO: Esperamos 200, NO 404
+    expect(resC?.status()).toBe(200);
+    await expect(page.locator("body")).toContainText("Slug: gamma");
+
+    // OPCIONAL: Si Dinou es ISR, después de visitarla, el archivo AHORA sí debería existir.
+    // Si es solo SSR, seguirá sin existir. Depende de tu arquitectura.
+    // expect(fs.existsSync(gammaPath)).toBe(true);
+  });
+});
+test.describe("Dinou Data Fetching (getProps)", () => {
+  // TEST 2: getProps (Síncrono vs Asíncrono)
+  test("Should handle both Sync and Async getProps correctly", async ({
+    page,
+  }) => {
+    // Caso Síncrono
+    const resSync = await page.goto("/t-props/sync");
+    expect(resSync?.status()).toBe(200);
+
+    // Verificamos que el prop llegó al DOM
+    // Si el HTML crudo era "Prop: SYNC_DATA", aquí leerá "Prop: SYNC_DATA"
+    await expect(page.locator("body")).toContainText("Prop: SYNC_DATA");
+
+    // Caso Asíncrono (simulando delay)
+    const resAsync = await page.goto("/t-props/async");
+    expect(resAsync?.status()).toBe(200);
+
+    await expect(page.locator("body")).toContainText("Prop: ASYNC_DATA");
+  });
+});
+test.describe("Dinou not found", () => {
+  // TEST 3: Custom 404
+  test("Should render Custom 404 page instead of default", async ({ page }) => {
+    // Vamos a una ruta que no existe
+    let res = await page.goto("/t-not-found/ruta-super-inventada-123");
+
+    // CHECK 1: Status Code (El navegador recibe el header 404)
+    expect(res?.status()).toBe(404);
+
+    // CHECK 2: Contenido Visual
+    // Verificamos que se renderizó tu componente personalizado
+    await expect(page.locator("body")).toContainText("Oops Custom 404");
+
+    res = await page.goto("/t-not-found/nested/ruta-super-inventada-123");
+
+    // CHECK 1: Status Code (El navegador recibe el header 404)
+    expect(res?.status()).toBe(404);
+
+    // CHECK 2: Contenido Visual
+    // Verificamos que se renderizó tu componente personalizado
+    await expect(page.locator("body")).toContainText("Nested 404");
+  });
+});
