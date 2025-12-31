@@ -1422,7 +1422,7 @@ test.describe("Dinou Core: HTTP Status Codes", () => {
     expect(response?.status()).toBe(404);
   });
   test("Returns HTTP 404 for nested non-existent routes", async ({ page }) => {
-    const response = await page.goto("/blog/post-que-no-existe");
+    const response = await page.goto("/foo-bla-bla-bla");
     expect(response?.status()).toBe(404);
   });
 });
@@ -1437,10 +1437,6 @@ test.describe("Dinou Core: Error pages", () => {
     // 2. Verificamos el contenido visual (esto dices que YA funciona)
     // Asumo que tu página 404 tiene algún texto identificativo
     await expect(page.getByText(/ups!/i)).toBeVisible();
-  });
-  test("Returns HTTP 404 for nested non-existent routes", async ({ page }) => {
-    const response = await page.goto("/blog/post-que-no-existe");
-    expect(response?.status()).toBe(404);
   });
 });
 test.describe("ISR Error Protection Shield", () => {
@@ -1465,6 +1461,7 @@ test.describe("ISR Error Protection Shield", () => {
     request,
     page,
   }) => {
+    if (!isProd) test.skip();
     // -----------------------------------------------------------
     // 3. SABOTAJE
     // -----------------------------------------------------------
@@ -1601,3 +1598,90 @@ test.describe("ISR Error Protection Shield", () => {
 //     expect(manifest3[PAGE_URL + "/"]?.status).toBe(404);
 //   });
 // });
+test.describe("Routing Precedence", () => {
+  test("Static routes should take precedence over dynamic routes", async ({
+    page,
+  }) => {
+    // Asumiendo que tienes:
+    // 1. /blog/new (Estática: "Crear Post")
+    // 2. /blog/[slug] (Dinámica: "Ver Post: {slug}")
+
+    // Caso A: Ruta Estática
+    await page.goto("/blog/new");
+    const staticContent = await page.textContent("h1");
+    expect(staticContent).toContain("Crear Post");
+    // Si falla y dice "Ver Post: new", tu router está mal ordenado.
+
+    // Caso B: Ruta Dinámica
+    await page.goto("/blog/hola-mundo");
+    const dynamicContent = await page.textContent("h1");
+    expect(dynamicContent).toContain("Ver Post: hola-mundo");
+  });
+});
+test.describe("Dinou Router: The Ultimate Challenge", () => {
+  // NIVEL 1: Precedencia Mixta (El clásico rompecabezas)
+  // Tenemos /a/b (Static), /a/[sub] (Dynamic) y /[...slug] (Catch-all)
+  // El router debe elegir siempre el más específico.
+
+  test("Level 1: Specificity Wars (Static > Dynamic > CatchAll)", async ({
+    page,
+  }) => {
+    // 1. Debe ganar la estática exacta
+    await page.goto("/t-router/conflicts/a/b");
+    await expect(page.locator("#res")).toHaveText("STATIC_AB");
+
+    // 2. Debe ganar la dinámica específica (coincide el 'a', pero 'c' es variable)
+    await page.goto("/t-router/conflicts/a/c");
+    await expect(page.locator("#res")).toHaveText("DYNAMIC_SUB:c");
+
+    // 3. Debe caer en el Catch-All (porque no empieza por 'a')
+    await page.goto("/t-router/conflicts/x/y/z");
+    await expect(page.locator("#res")).toHaveText('CATCH_ALL:["x","y","z"]');
+  });
+
+  // NIVEL 2: El Catch-All "Goloso"
+  // Un catch-all [...slug] debe comerse todo lo que le echen, incluyendo slashes.
+
+  test("Level 2: The Greedy Catch-All", async ({ page }) => {
+    const complexPath = "/t-router/conflicts/uno/dos/tres/cuatro";
+    await page.goto(complexPath);
+
+    // El router NO debe confundirse por la profundidad
+    // Debe devolver un array ordenado
+    await expect(page.locator("#res")).toHaveText(
+      'CATCH_ALL:["uno","dos","tres","cuatro"]'
+    );
+  });
+
+  // NIVEL 3: Caracteres Especiales y URL Encoding
+  // ¿Qué pasa si el slug tiene espacios, tildes o emojis?
+  // Muchos routers fallan al decodificar esto en params.
+
+  test("Level 3: URI Encoding & Special Chars", async ({ page }) => {
+    // URL real: /t-router/conflicts/a/café con leche
+    const encoded = encodeURI("/t-router/conflicts/a/café con leche");
+    await page.goto(encoded);
+
+    // Dinou debe decodificarlo automáticamente en params
+    // Si sale "caf%C3%A9...", has fallado.
+    await expect(page.locator("#res")).toHaveText("DYNAMIC_SUB:café con leche");
+  });
+
+  // NIVEL 4: El Optional Catch-All (El Jefe Final) ☠️
+  // [[...opt]] tiene una particularidad: DEBE matchear también la ruta base sin params.
+  // Es decir, /t-router/optional debe renderizar el componente, no un 404.
+
+  test("Level 4: The Optional Catch-All Paradox", async ({ page }) => {
+    // Caso A: Con parámetros (Fácil)
+    await page.goto("/t-router/optional/a/b");
+    await expect(page.locator("#res")).toHaveText('OPTIONAL:["a","b"]');
+
+    // Caso B: LA TRAMPA (Sin parámetros)
+    // Muchos routers explotan aquí porque buscan params[0] y es undefined
+    // o devuelven 404 porque esperan al menos un segmento.
+    await page.goto("/t-router/optional");
+
+    // Debe renderizar la página, indicando que no hay params (o array vacío)
+    await expect(page.locator("#res")).toHaveText("OPTIONAL:[]");
+  });
+});

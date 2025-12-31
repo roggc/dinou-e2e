@@ -14,3 +14,5 @@
 [2025-12-31T12:12:21.177Z] Checked: C:\Users\roggc\dev\my-dinou-apps\test-3.0.6\trigger-error.txt | Exists: false
 [2025-12-31T12:15:13.474Z] Checked: C:\Users\roggc\dev\my-dinou-apps\test-3.0.6\trigger-error.txt | Exists: false
 [2025-12-31T12:18:03.990Z] Checked: C:\Users\roggc\dev\my-dinou-apps\test-3.0.6\trigger-error.txt | Exists: false
+[2025-12-31T14:16:54.131Z] Checked: C:\Users\roggc\dev\my-dinou-apps\test-3.0.6\trigger-error.txt | Exists: true
+[2025-12-31T14:16:54.132Z] 💥 BOOM! Throwing Error...
