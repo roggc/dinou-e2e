@@ -434,23 +434,23 @@ function getContextForServerFunctionEndpoint(req, res) {
 
 app.use(express.static(path.resolve(process.cwd(), outputFolder)));
 
-app.use((req, res, next) => {
-  // Asegúrate de NO devolver 200 si lo que piden es un .js que no existe
-  if (
-    req.path.endsWith(".js") ||
-    req.path.endsWith(".css") ||
-    req.path.endsWith(".png") ||
-    req.path.endsWith(".jpg") ||
-    req.path.endsWith(".svg") ||
-    req.path.endsWith(".webp") ||
-    req.path.endsWith(".ico") ||
-    req.path.endsWith(".json")
-  ) {
-    return res.status(404).send("Not found");
-  }
-  next();
-  // ... renderizado de Dinou ...
-});
+// app.use((req, res, next) => {
+//   // Asegúrate de NO devolver 200 si lo que piden es un .js que no existe
+//   if (
+//     req.path.endsWith(".js") ||
+//     req.path.endsWith(".css") ||
+//     req.path.endsWith(".png") ||
+//     req.path.endsWith(".jpg") ||
+//     req.path.endsWith(".svg") ||
+//     req.path.endsWith(".webp") ||
+//     req.path.endsWith(".ico") ||
+//     req.path.endsWith(".json")
+//   ) {
+//     return res.status(404).send("Not found");
+//   }
+//   next();
+//   // ... renderizado de Dinou ...
+// });
 
 let isReady = isDevelopment; // En dev siempre estamos listos (o casi)
 

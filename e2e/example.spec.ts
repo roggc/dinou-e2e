@@ -1685,3 +1685,32 @@ test.describe("Dinou Router: The Ultimate Challenge", () => {
     await expect(page.locator("#res")).toHaveText("OPTIONAL:[]");
   });
 });
+test.describe("Router: Shadowing & Complexity", () => {
+  test("Should prioritize deeply nested static route over top-level catch-all", async ({
+    page,
+  }) => {
+    // Escenario: /shadow/[...slug] vs /shadow/deep/very/deep/static
+    await page.goto("/t-router/shadow/deep/very/deep/static");
+
+    // Si tu algoritmo de "puntuación" de rutas es correcto, ganará la estática
+    await expect(page.locator("#res")).toHaveText("STATIC_DEEP");
+  });
+
+  test("Should handle dots in dynamic parameters correctly", async ({
+    page,
+  }) => {
+    // Escenario: /files/[id] -> /files/my.photo.jpg
+    await page.goto("/t-router/files/my.photo.jpg");
+
+    await expect(page.locator("#res")).toHaveText("ID:my.photo.jpg");
+  });
+
+  // test("Should resolve segments in nested catch-alls", async ({ page }) => {
+  //   // Escenario: /nested/[...folder]/[...file] -> /nested/admin/assets/images/logo.png
+  //   // Este test es para ver cómo particiona tu recursión los segmentos restantes
+  //   await page.goto("/t-router/nested/admin/assets/images/logo.png");
+
+  //   // Esto nos dirá mucho sobre cómo funciona tu index y reqSegments.slice
+  //   await expect(page.locator("#res")).toContainText("admin");
+  // });
+});
