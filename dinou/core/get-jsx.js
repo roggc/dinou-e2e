@@ -5,6 +5,7 @@ const {
   getFilePathAndDynamicParams,
 } = require("./get-file-path-and-dynamic-params");
 const importModule = require("./import-module");
+const { asyncRenderJSXToClientJSX } = require("./render-jsx-to-client-jsx");
 
 async function getJSX(reqPath, query, cookies, isNotFound = null) {
   const srcFolder = path.resolve(process.cwd(), "src");
@@ -16,8 +17,9 @@ async function getJSX(reqPath, query, cookies, isNotFound = null) {
     // 2. Dynamic Params: [slug], [...slug], [[...slug]]
     // Todos empiezan por '[' y terminan por ']'
     const isDynamic = seg.startsWith("[") && seg.endsWith("]");
+    const isSlot = seg.startsWith("@");
 
-    return isGroup || isDynamic;
+    return isGroup || isDynamic || isSlot;
   });
 
   let pagePath;
@@ -150,7 +152,43 @@ async function getJSX(reqPath, query, cookies, isNotFound = null) {
         false
       )[0];
       const Layout = layoutModule.default ?? layoutModule;
-      let props = { params: dParams, query, ...slots };
+      const updatedSlots = {};
+      for (const [slotName, slotElement] of Object.entries(slots)) {
+        let updatedSlotElement;
+        try {
+          await asyncRenderJSXToClientJSX(slotElement);
+          updatedSlotElement = slotElement;
+        } catch (e) {
+          const slotFolder = path.join(
+            path.dirname(layoutPath),
+            `@${slotName}`
+          );
+          const [slotErrorPath, slotErrorParams] = getFilePathAndDynamicParams(
+            reqSegments,
+            {},
+            slotFolder,
+            "error",
+            true,
+            true,
+            undefined,
+            reqSegments.length
+          );
+          if (slotErrorPath) {
+            const slotErrorModule = require(slotErrorPath);
+            const SlotError = slotErrorModule.default ?? slotErrorModule;
+
+            updatedSlotElement = React.createElement(SlotError, {
+              params: slotErrorParams,
+              query,
+              key: slotName,
+              error: e,
+            });
+          }
+        } finally {
+          updatedSlots[slotName] = updatedSlotElement;
+        }
+      }
+      let props = { params: dParams, query, ...updatedSlots };
       if (index === layouts.length - 1 || resetLayoutPath) {
         props = { ...props, ...(pageFunctionsProps?.layout ?? {}) };
       }

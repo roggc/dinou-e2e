@@ -4,7 +4,7 @@ const React = require("react");
 
 function safeDecode(val) {
   try {
-    return val ? decodeURIComponent(val) : val;
+    return !!val ? decodeURIComponent(val) : val;
   } catch (e) {
     return val; // Si falla la decodificación, devolvemos el original
   }
@@ -197,7 +197,9 @@ function getFilePathAndDynamicParams(
   const isRouterSyntaxInSegment =
     reqSegments[index] &&
     ((reqSegments[index].startsWith("(") && reqSegments[index].endsWith(")")) ||
-      (reqSegments[index].startsWith("[") && reqSegments[index].endsWith("]")));
+      (reqSegments[index].startsWith("[") &&
+        reqSegments[index].endsWith("]")) ||
+      reqSegments[index].startsWith("@"));
   if (existsSync(staticPath) && !isRouterSyntaxInSegment) {
     return getFilePathAndDynamicParams(
       reqSegments,

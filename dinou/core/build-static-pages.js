@@ -15,6 +15,14 @@ const {
 const importModule = require("./import-module");
 const { requestStorage } = require("./request-context.js");
 
+function safeDecode(val) {
+  try {
+    return !!val ? decodeURIComponent(val) : val;
+  } catch (e) {
+    return val; // Si falla la decodificación, devolvemos el original
+  }
+}
+
 async function buildStaticPages() {
   const srcFolder = path.resolve(process.cwd(), "src");
   const distFolder = path.resolve(process.cwd(), "dist");
@@ -543,8 +551,13 @@ async function buildStaticPage(reqPath, isDynamic = null) {
 
     for (let i = 0; i < segments.length; i++) {
       const segment = segments[i];
+      const isRouterSyntaxInSegment =
+        segment &&
+        ((segment.startsWith("(") && segment.endsWith(")")) ||
+          (segment.startsWith("[") && segment.endsWith("]")) ||
+          segment.startsWith("@"));
       const currentPath = path.join(folderPath, segment);
-      if (existsSync(currentPath)) {
+      if (existsSync(currentPath) && !isRouterSyntaxInSegment) {
         folderPath = currentPath;
         continue;
       }
@@ -563,10 +576,10 @@ async function buildStaticPage(reqPath, isDynamic = null) {
           .replace(/^\[\[?|\]\]?$/g, "")
           .replace("...", "");
         if (dynamicEntry.name.includes("...")) {
-          dynamicParams[paramName] = segments.slice(i);
+          dynamicParams[paramName] = segments.slice(i).map(safeDecode);
           break;
         } else {
-          dynamicParams[paramName] = segment;
+          dynamicParams[paramName] = safeDecode(segment);
         }
       } else {
         throw new Error(`No matching route found for ${reqPath}`);

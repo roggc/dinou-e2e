@@ -1665,6 +1665,72 @@ test.describe("Dinou Router: The Ultimate Challenge", () => {
     // Dinou debe decodificarlo automáticamente en params
     // Si sale "caf%C3%A9...", has fallado.
     await expect(page.locator("#res")).toHaveText("DYNAMIC_SUB:café con leche");
+    if (!isProd) return;
+    await page.waitForTimeout(4000);
+    await page.reload();
+    await expect(page.locator("#res")).toHaveText("DYNAMIC_SUB:café con leche");
+  });
+
+  test("Level 3 bis: URI Encoding & Special Chars", async ({ page }) => {
+    // URL real: /t-router/conflicts/a/café con leche
+    const encoded = encodeURI("/t-router/conflicts/a/café agridulce");
+    await page.goto(encoded);
+
+    // Dinou debe decodificarlo automáticamente en params
+    // Si sale "caf%C3%A9...", has fallado.
+    await expect(page.locator("#res")).toHaveText("DYNAMIC_SUB:café agridulce");
+  });
+
+  test("Level 3 re-bis: URI Encoding & Special Chars", async ({ page }) => {
+    // URL real: /t-router/conflicts/a/café con leche
+    const encoded = encodeURI("/t-router/conflicts/a/[sub]");
+    await page.goto(encoded);
+
+    // Dinou debe decodificarlo automáticamente en params
+    // Si sale "caf%C3%A9...", has fallado.
+    await expect(page.locator("#res")).toHaveText("DYNAMIC_SUB:[sub]");
+  });
+
+  test("Level 3 re-re-bis: URI Encoding & Special Chars", async ({ page }) => {
+    // URL real: /t-router/conflicts/a/café con leche
+    const encoded = encodeURI("/t-router/conflicts/a/[subs]");
+    await page.goto(encoded);
+
+    // Dinou debe decodificarlo automáticamente en params
+    // Si sale "caf%C3%A9...", has fallado.
+    await expect(page.locator("#res")).toHaveText("DYNAMIC_SUB:[subs]");
+    if (!isProd) return;
+    await page.waitForTimeout(4000);
+    await page.reload();
+    await expect(page.locator("#res")).toHaveText("DYNAMIC_SUB:[subs]");
+  });
+
+  test("Level 3 router syntax: URI Encoding & Special Chars", async ({
+    page,
+  }) => {
+    // URL real: /t-router/conflicts/a/café con leche
+    const encoded = encodeURI("/t-router/conflicts/a/(subs)");
+    await page.goto(encoded);
+
+    // Dinou debe decodificarlo automáticamente en params
+    // Si sale "caf%C3%A9...", has fallado.
+    await expect(page.locator("#res")).toHaveText("DYNAMIC_SUB:(subs)");
+    if (!isProd) return;
+    await page.waitForTimeout(4000);
+    await page.reload();
+    await expect(page.locator("#res")).toHaveText("DYNAMIC_SUB:(subs)");
+  });
+
+  test("Level 3 router syntax bis: URI Encoding & Special Chars", async ({
+    page,
+  }) => {
+    // URL real: /t-router/conflicts/a/café con leche
+    const encoded = encodeURI("/t-router/conflicts/a/(sub)");
+    await page.goto(encoded);
+
+    // Dinou debe decodificarlo automáticamente en params
+    // Si sale "caf%C3%A9...", has fallado.
+    await expect(page.locator("#res")).toHaveText("DYNAMIC_SUB:(sub)");
   });
 
   // NIVEL 4: El Optional Catch-All (El Jefe Final) ☠️
@@ -1776,7 +1842,7 @@ test.describe("Dinou SSG (getStaticPaths)", () => {
     await expect(page.locator("body")).toContainText("Slug: gamma");
     // OPCIONAL: Si Dinou es ISR, después de visitarla, el archivo AHORA sí debería existir.
     // Si es solo SSR, seguirá sin existir. Depende de tu arquitectura.
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(4000);
     expect(fs.existsSync(gammaPath)).toBe(true);
   });
 });
@@ -1838,5 +1904,102 @@ test.describe("Dinou groups", () => {
     // Prueba negativa: Si incluyo el grupo, debería dar 404
     const resBad = await page.goto("/t-groups/(marketing)/landing");
     expect(resBad?.status()).toBe(404);
+  });
+});
+test.describe("Dinou Slots (Parallel Routes)", () => {
+  test("Should render @sidebar slot and children into the Layout correctly", async ({
+    page,
+  }) => {
+    // 1. Navegar a la ruta base (el router debe componer layout + page + @sidebar)
+    const response = await page.goto("/t-slots");
+    expect(response?.status()).toBe(200);
+
+    // 2. Verificar que el Layout se ha cargado
+    const layout = page.locator("#slots-layout");
+    await expect(layout).toBeVisible();
+
+    // 3. VERIFICACIÓN DEL SLOT (@sidebar)
+    // Buscamos el texto específico DENTRO del contenedor del sidebar (#area-sidebar)
+    // Esto confirma que el Layout recibió la prop 'sidebar' correctamente.
+    const sidebarArea = page.locator("#area-sidebar");
+    await expect(sidebarArea).toContainText("Soy el contenido del Sidebar");
+
+    // Opcional: Verificar que es interactivo (que se hidrató bien)
+    await expect(sidebarArea.locator("button")).toBeVisible();
+
+    // 4. VERIFICACIÓN DEL CHILDREN (page.tsx)
+    // Buscamos el texto DENTRO del main (#area-main)
+    const mainArea = page.locator("#area-main");
+    await expect(mainArea).toContainText("Soy el contenido Principal");
+  });
+
+  // TEST EXTRA: Robustez
+  // ¿Qué pasa si navegamos a una sub-ruta? El slot debería mantenerse (si Dinou lo soporta)
+  // O si no lo soporta, al menos no debería crashear.
+  // Puedes dejar este comentado hasta que confirmes el básico.
+  /*
+  test("Should handle missing slots gracefully (if implemented)", async ({ page }) => {
+     // Si tuvieras un slot opcional o condicional, aquí lo probarías.
+  });
+  */
+});
+test.describe("Dinou Slots Error Handling (Granularity)", () => {
+  test("Should render Error component for a failing slot WITHOUT crashing the whole page", async ({
+    page,
+  }) => {
+    // Navegamos a la página con el slot tóxico
+    const response = await page.goto("/t-slots-error");
+
+    // 1. EL STATUS CODE ES CRÍTICO:
+    // Dependiendo de tu implementación, puede ser 200 (porque se recuperó parcialmente)
+    // o 500 si no tienes Error Boundaries.
+    // Lo ideal en UI parcial es que la página se sirva (200 OK) aunque un trozo falle.
+    expect(response?.status()).toBe(200);
+
+    // 2. VERIFICAR SUPERVIVENCIA (La parte sana debe estar ahí)
+    // Si esto falla, es que el error del slot mató toda la página.
+    await expect(page.locator("#safe-zone")).toContainText(
+      "Soy contenido seguro"
+    );
+
+    // 3. VERIFICAR CONTENCIÓN DEL ERROR (El slot debe mostrar el fallback)
+    // El componente @toxic/page.tsx falló, así que @toxic/error.tsx debió tomar su lugar.
+    const dangerZone = page.locator("#danger-zone");
+    await expect(dangerZone).toContainText("Ha ocurrido un error parcial");
+    if (isProd) {
+      await expect(dangerZone).toContainText(
+        "An error occurred in the Server Components render. The specific message is omitted in production builds to avoid leaking sensitive details. A digest property is included on this error instance which may provide additional details about the nature of the error."
+      );
+    } else {
+      await expect(dangerZone).toContainText("EXPLOSIÓN EN EL SLOT");
+    }
+  });
+});
+test.describe("Dinou Slots Error Handling (Granularity - Error page)", () => {
+  test("Should render Error component for a failing slot WITHOUT crashing the whole error page", async ({
+    page,
+  }) => {
+    // Navegamos a la página con el slot tóxico
+    const response = await page.goto("/t-slots-error-error");
+
+    expect(response?.status()).toBe(500);
+
+    // 2. VERIFICAR SUPERVIVENCIA (La parte sana debe estar ahí)
+    // Si esto falla, es que el error del slot mató toda la página.
+    await expect(page.locator("#safe-zone")).toContainText(
+      "Soy contenido seguro"
+    );
+
+    // 3. VERIFICAR CONTENCIÓN DEL ERROR (El slot debe mostrar el fallback)
+    // El componente @toxic/page.tsx falló, así que @toxic/error.tsx debió tomar su lugar.
+    const dangerZone = page.locator("#danger-zone");
+    await expect(dangerZone).toContainText("Ha ocurrido un error parcial");
+    if (isProd) {
+      await expect(dangerZone).toContainText(
+        "An error occurred in the Server Components render. The specific message is omitted in production builds to avoid leaking sensitive details. A digest property is included on this error instance which may provide additional details about the nature of the error."
+      );
+    } else {
+      await expect(dangerZone).toContainText("EXPLOSIÓN EN EL SLOT");
+    }
   });
 });
