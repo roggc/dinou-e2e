@@ -3,13 +3,7 @@
 import type { ReactNode } from "react";
 import "@/globals.css";
 
-export default function Layout({
-  children,
-  sidebar,
-}: {
-  children: ReactNode;
-  sidebar: ReactNode;
-}) {
+export default function Layout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <head>
@@ -37,10 +31,7 @@ export default function Layout({
         <link rel="manifest" href="/site.webmanifest"></link>
         <link href="/styles.css" rel="stylesheet"></link>
       </head>
-      <body>
-        {children}
-        {sidebar}
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

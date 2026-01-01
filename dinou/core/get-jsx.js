@@ -165,7 +165,7 @@ async function getJSX(reqPath, query, cookies, isNotFound = null) {
           );
           const [slotErrorPath, slotErrorParams] = getFilePathAndDynamicParams(
             reqSegments,
-            {},
+            query,
             slotFolder,
             "error",
             true,

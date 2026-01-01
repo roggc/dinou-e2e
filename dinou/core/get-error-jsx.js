@@ -122,7 +122,7 @@ async function getErrorJSX(reqPath, query, error) {
             const [slotErrorPath, slotErrorParams] =
               getFilePathAndDynamicParams(
                 reqSegments,
-                {},
+                query,
                 slotFolder,
                 "error",
                 true,
