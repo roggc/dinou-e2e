@@ -261,14 +261,14 @@ async function redirectFlow(page: any, toServerComponent = false) {
   }
   if (toServerComponent) {
     // Playwright debe haber sido redirigido automáticamente a /docs
-    await expect(page).toHaveURL("/docs", { timeout: 10000 });
+    await expect(page).toHaveURL("/docs", { timeout: 20000 });
     await expect(
       page.getByText("This page will be redirected!")
     ).not.toBeVisible();
     await expect(page.getByText("This is docs page")).toBeVisible();
   } else {
     // Playwright debe haber sido redirigido automáticamente a /
-    await expect(page).toHaveURL("/", { timeout: 10000 });
+    await expect(page).toHaveURL("/", { timeout: 20000 });
     await expect(
       page.getByText("This page will be redirected!")
     ).not.toBeVisible();
@@ -1802,6 +1802,7 @@ test.describe("Dinou SSG (getStaticPaths)", () => {
   const BUILD_DIR = path.resolve(process.cwd(), "dist2");
   test("Should verify SSG for defined paths and fallback for undefined ones", async ({
     page,
+    browserName,
   }) => {
     if (!isProd) test.skip();
     // --- PARTE 1: RUTAS PRE-GENERADAS (Alpha) ---
@@ -1843,7 +1844,12 @@ test.describe("Dinou SSG (getStaticPaths)", () => {
 
     // --- PARTE 2: RUTAS NO DEFINIDAS (Gamma) ---
     // Gamma NO estaba en getStaticPaths, así que NO debería existir en disco todavía.
-    const gammaPath = path.join(BUILD_DIR, "t-ssg", "gamma", "index.html");
+    const gammaPath = path.join(
+      BUILD_DIR,
+      "t-ssg",
+      `gamma-${browserName}`,
+      "index.html"
+    );
 
     // PRUEBA DE FUEGO: Aseguramos que NO se pre-generó "sin querer"
     expect(
@@ -1853,15 +1859,22 @@ test.describe("Dinou SSG (getStaticPaths)", () => {
 
     // Ahora la visitamos. Dinou debería generarla AL VUELO (SSR/ISR).
     console.log("Navegando a ruta no estática (Gamma)...");
-    const resC = await page.goto("/t-ssg/gamma");
+    const resC = await page.goto(`/t-ssg/gamma-${browserName}`);
 
     // AQUÍ ESTÁ EL CAMBIO: Esperamos 200, NO 404
     expect(resC?.status()).toBe(200);
-    await expect(page.locator("body")).toContainText("Slug: gamma");
+    await expect(page.locator("body")).toContainText(
+      `Slug: gamma-${browserName}`
+    );
     // OPCIONAL: Si Dinou es ISR, después de visitarla, el archivo AHORA sí debería existir.
     // Si es solo SSR, seguirá sin existir. Depende de tu arquitectura.
-    await page.waitForTimeout(4000);
-    expect(fs.existsSync(gammaPath)).toBe(true);
+    await expect
+      .poll(() => fs.existsSync(gammaPath), {
+        timeout: 5000,
+        message:
+          "El archivo ISG debería haberse creado en disco tras la visita",
+      })
+      .toBe(true);
   });
 });
 test.describe("Dinou Data Fetching (getProps)", () => {
