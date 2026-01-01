@@ -1698,7 +1698,9 @@ test.describe("Dinou Router: The Ultimate Challenge", () => {
 
     // Dinou debe decodificarlo automáticamente en params
     // Si sale "caf%C3%A9...", has fallado.
-    await expect(page.locator("#res")).toHaveText("DYNAMIC_SUB:[subs]");
+    await expect(page.locator("#res")).toHaveText("DYNAMIC_SUB:[subs]", {
+      timeout: 10000,
+    });
     if (!isProd) return;
     await page.waitForTimeout(4000);
     await page.reload();
@@ -1731,6 +1733,22 @@ test.describe("Dinou Router: The Ultimate Challenge", () => {
     // Dinou debe decodificarlo automáticamente en params
     // Si sale "caf%C3%A9...", has fallado.
     await expect(page.locator("#res")).toHaveText("DYNAMIC_SUB:(sub)");
+  });
+
+  test("Level 3 slot in group", async ({ page }) => {
+    // URL real: /t-router/conflicts/a/café con leche
+    const encoded = encodeURI("/t-router/conflicts/a");
+    await page.goto(encoded);
+
+    // Dinou debe decodificarlo automáticamente en params
+    // Si sale "caf%C3%A9...", has fallado.
+    await expect(page.locator("#slot")).toHaveText("sidebar!", {
+      timeout: 10000,
+    });
+    await expect(page.locator("#slot-error-message-title")).toHaveText(
+      "Ha ocurrido un error parcial",
+      { timeout: 10000 }
+    );
   });
 
   // NIVEL 4: El Optional Catch-All (El Jefe Final) ☠️

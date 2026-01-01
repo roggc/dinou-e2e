@@ -159,30 +159,54 @@ async function getJSX(reqPath, query, cookies, isNotFound = null) {
           await asyncRenderJSXToClientJSX(slotElement);
           updatedSlotElement = slotElement;
         } catch (e) {
-          const slotFolder = path.join(
-            path.dirname(layoutPath),
-            `@${slotName}`
-          );
-          const [slotErrorPath, slotErrorParams] = getFilePathAndDynamicParams(
-            reqSegments,
-            query,
-            slotFolder,
-            "error",
-            true,
-            true,
-            undefined,
-            reqSegments.length
-          );
-          if (slotErrorPath) {
-            const slotErrorModule = require(slotErrorPath);
-            const SlotError = slotErrorModule.default ?? slotErrorModule;
+          // 1. RECUPERAR LA RUTA REAL
+          // Usamos el "hack" (metadata) que inyectamos en getSlots.
+          // Esto nos da la ruta al archivo: .../src/(grupo)/@sidebar/page.tsx
+          const slotFilePath = slotElement.props?.__modulePath;
 
-            updatedSlotElement = React.createElement(SlotError, {
-              params: slotErrorParams,
-              query,
-              key: slotName,
-              error: e,
-            });
+          if (slotFilePath) {
+            // 2. OBTENER LA CARPETA DEL SLOT
+            // Quitamos el nombre del archivo para quedarnos con el directorio:
+            // .../src/(grupo)/@sidebar
+            const realSlotFolder = path.dirname(slotFilePath);
+
+            // 3. BUSCAR EL ERROR.TSX EN ESA CARPETA
+            // Usamos tu helper, pero ahora le pasamos la carpeta CORRECTA como 'currentPath'.
+            const [slotErrorPath, slotErrorParams] =
+              getFilePathAndDynamicParams(
+                reqSegments,
+                query, // query (irrelevante para buscar el archivo)
+                realSlotFolder, // <--- LA CLAVE: Buscamos dentro de la carpeta real del slot
+                "error", // Buscamos 'error' (error.tsx, error.js, etc.)
+                true, // withExtension
+                true, // finalDestination
+                undefined, // lastFound
+                reqSegments.length // TRUCO: Forzamos index al final para que busque archivo directo
+              );
+
+            if (slotErrorPath) {
+              const slotErrorModule = require(slotErrorPath);
+              const SlotError = slotErrorModule.default ?? slotErrorModule;
+
+              updatedSlotElement = React.createElement(SlotError, {
+                params: slotErrorParams, // Params resueltos (si hubiera)
+                query,
+                key: slotName,
+                error: e, // Pasamos el error capturado
+              });
+            } else {
+              // Opcional: Si no hay error.tsx, podrías loguear o devolver null
+              console.warn(
+                `[Dinou] Slot @${slotName} falló y no tiene error.tsx`
+              );
+              updatedSlotElement = null;
+            }
+          } else {
+            // Si por alguna razón no tenemos __modulePath (ej: componente estático puro sin wrapper)
+            console.error(
+              `[Dinou] No se pudo localizar el path del slot @${slotName}`
+            );
+            updatedSlotElement = null;
           }
         } finally {
           updatedSlots[slotName] = updatedSlotElement;

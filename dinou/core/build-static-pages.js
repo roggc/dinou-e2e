@@ -383,25 +383,12 @@ async function buildStaticPages() {
             // if (!Layout.displayName) Layout.displayName = "Layout";
             const updatedSlots = {};
             for (const [slotName, slotElement] of Object.entries(slots)) {
-              const slotFolder = path.join(
-                path.dirname(layoutPath),
-                `@${slotName}`
-              );
-              const [slotPath] = getFilePathAndDynamicParams(
-                segments,
-                {},
-                slotFolder,
-                "page",
-                true,
-                true,
-                undefined,
-                segments.length
-              );
-              const updatedSlotElement = {
+              const alreadyFoundPath = slotElement.props?.__modulePath;
+
+              updatedSlots[slotName] = {
                 ...slotElement,
-                __modulePath: slotPath ?? null,
+                __modulePath: alreadyFoundPath ?? null,
               };
-              updatedSlots[slotName] = updatedSlotElement;
             }
             let props = { params: dParams, query: {}, ...updatedSlots };
             if (index === layouts.length - 1) {
@@ -650,23 +637,11 @@ async function buildStaticPage(reqPath, isDynamic = null) {
           const Layout = layoutModule.default ?? layoutModule;
           const updatedSlots = {};
           for (const [slotName, slotElement] of Object.entries(slots)) {
-            const slotFolder = path.join(
-              path.dirname(layoutPath),
-              `@${slotName}`
-            );
-            const [slotPath] = getFilePathAndDynamicParams(
-              segments,
-              {},
-              slotFolder,
-              "page",
-              true,
-              true,
-              undefined,
-              segments.length
-            );
+            const alreadyFoundPath = slotElement.props?.__modulePath;
+
             updatedSlots[slotName] = {
               ...slotElement,
-              __modulePath: slotPath ?? null,
+              __modulePath: alreadyFoundPath ?? null,
             };
           }
           let layoutProps = { params: dParams, query: {}, ...updatedSlots };

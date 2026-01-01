@@ -6,9 +6,11 @@ import "@/globals.css";
 export default function Layout({
   children,
   sidebar,
+  toxic,
 }: {
   children: ReactNode;
   sidebar: ReactNode;
+  toxic: ReactNode;
 }) {
   return (
     <html lang="en">
@@ -40,6 +42,7 @@ export default function Layout({
       <body>
         {children}
         {sidebar}
+        {toxic}
       </body>
     </html>
   );
