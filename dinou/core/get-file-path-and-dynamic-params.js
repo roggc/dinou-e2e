@@ -194,7 +194,11 @@ function getFilePathAndDynamicParams(
     }
   }
   const staticPath = path.join(currentPath, reqSegments[index]);
-  if (existsSync(staticPath)) {
+  const isRouterSyntaxInSegment =
+    reqSegments[index] &&
+    ((reqSegments[index].startsWith("(") && reqSegments[index].endsWith(")")) ||
+      (reqSegments[index].startsWith("[") && reqSegments[index].endsWith("]")));
+  if (existsSync(staticPath) && !isRouterSyntaxInSegment) {
     return getFilePathAndDynamicParams(
       reqSegments,
       query,

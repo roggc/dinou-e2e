@@ -9,13 +9,27 @@ const importModule = require("./import-module");
 async function getJSX(reqPath, query, cookies, isNotFound = null) {
   const srcFolder = path.resolve(process.cwd(), "src");
   const reqSegments = reqPath.split("/").filter(Boolean);
-  const folderPath = path.join(srcFolder, ...reqSegments);
+  const hasRouterSyntax = reqSegments.some((seg) => {
+    // 1. Route Groups: (nombre)
+    const isGroup = seg.startsWith("(") && seg.endsWith(")");
+
+    // 2. Dynamic Params: [slug], [...slug], [[...slug]]
+    // Todos empiezan por '[' y terminan por ']'
+    const isDynamic = seg.startsWith("[") && seg.endsWith("]");
+
+    return isGroup || isDynamic;
+  });
+
   let pagePath;
-  if (existsSync(folderPath)) {
-    for (const ext of [".tsx", ".ts", ".jsx", ".js"]) {
-      const candidatePath = path.join(folderPath, `page${ext}`);
-      if (existsSync(candidatePath)) {
-        pagePath = candidatePath;
+  if (!hasRouterSyntax) {
+    const folderPath = path.join(srcFolder, ...reqSegments);
+    if (existsSync(folderPath)) {
+      for (const ext of [".tsx", ".ts", ".jsx", ".js"]) {
+        const candidatePath = path.join(folderPath, `page${ext}`);
+        if (existsSync(candidatePath)) {
+          pagePath = candidatePath;
+          break;
+        }
       }
     }
   }

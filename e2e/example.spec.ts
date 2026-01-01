@@ -1737,6 +1737,26 @@ test.describe("Dinou SSG (getStaticPaths)", () => {
     expect(resA?.status()).toBe(200);
     await expect(page.locator("body")).toContainText("Slug: alpha");
 
+    const alphaNestedPath = path.join(
+      BUILD_DIR,
+      "t-ssg",
+      "alpha",
+      "nested",
+      "index.html"
+    );
+
+    // PRUEBA DE FUEGO: ¿El archivo existe físicamente?
+    // Si falla aquí, es que getStaticPaths no se ejecutó al build.
+    expect(
+      fs.existsSync(alphaNestedPath),
+      "Alpha nested debería estar pre-renderizada en disco"
+    ).toBe(true);
+
+    // Navegamos para confirmar que se sirve bien
+    const resANested = await page.goto("/t-ssg/alpha/nested");
+    expect(resANested?.status()).toBe(200);
+    await expect(page.locator("body")).toContainText("Slug in nested: alpha");
+
     // --- PARTE 2: RUTAS NO DEFINIDAS (Gamma) ---
     // Gamma NO estaba en getStaticPaths, así que NO debería existir en disco todavía.
     const gammaPath = path.join(BUILD_DIR, "t-ssg", "gamma", "index.html");
@@ -1801,5 +1821,22 @@ test.describe("Dinou not found", () => {
     // CHECK 2: Contenido Visual
     // Verificamos que se renderizó tu componente personalizado
     await expect(page.locator("body")).toContainText("Nested 404");
+  });
+});
+test.describe("Dinou groups", () => {
+  // ----------------------------------------------------------------
+  // TEST 2: Route Groups (Omitir carpetas entre paréntesis)
+  // ----------------------------------------------------------------
+  test("Should ignore (groups) in URL structure", async ({ page }) => {
+    // La estructura es src/t-groups/(marketing)/landing/page.tsx
+    // La URL debe ser /t-groups/landing (SIN 'marketing')
+
+    const response = await page.goto("/t-groups/landing");
+    expect(response?.status()).toBe(200);
+    await expect(page.locator("text=Marketing Landing")).toBeVisible();
+
+    // Prueba negativa: Si incluyo el grupo, debería dar 404
+    const resBad = await page.goto("/t-groups/(marketing)/landing");
+    expect(resBad?.status()).toBe(404);
   });
 });
