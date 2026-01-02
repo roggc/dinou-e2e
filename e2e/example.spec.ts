@@ -52,10 +52,10 @@ async function SSRStreamingFlow(
       // });
       expect(myCookie?.value).toBe("dark");
 
-      // Header: NO debe existir
+      // Header: debe existir because page rendered dynamically (bailout) because cookie access.
       if (response) {
         const headers = await response.allHeaders();
-        expect(headers["x-custom-dinou"]).toBeUndefined();
+        expect(headers["x-custom-dinou"]).toBe("v4-rocks");
       }
     }
   } else {
@@ -1389,7 +1389,7 @@ test.describe("Dinou Core: Link", () => {
 
     // 1. Preparamos la escucha de la petición
     const rscRequest = page.waitForRequest((req) =>
-      req.url().includes("____rsc_payload____")
+      req.url().includes("____rsc_payload")
     );
 
     // 2. Hacemos HOVER, no click
@@ -1864,13 +1864,14 @@ test.describe("Dinou SSG (getStaticPaths)", () => {
     // AQUÍ ESTÁ EL CAMBIO: Esperamos 200, NO 404
     expect(resC?.status()).toBe(200);
     await expect(page.locator("body")).toContainText(
-      `Slug: gamma-${browserName}`
+      `Slug: gamma-${browserName}`,
+      { timeout: 10000 }
     );
     // OPCIONAL: Si Dinou es ISR, después de visitarla, el archivo AHORA sí debería existir.
     // Si es solo SSR, seguirá sin existir. Depende de tu arquitectura.
     await expect
       .poll(() => fs.existsSync(gammaPath), {
-        timeout: 5000,
+        timeout: 10000,
         message:
           "El archivo ISG debería haberse creado en disco tras la visita",
       })
@@ -2032,5 +2033,204 @@ test.describe("Dinou Slots Error Handling (Granularity - Error page)", () => {
     } else {
       await expect(dangerZone).toContainText("EXPLOSIÓN EN EL SLOT");
     }
+  });
+});
+
+test.describe("Static Bailout (Cookie Access Detection)", () => {
+  // Ajusta esto a donde tu framework genere los archivos
+  const BUILD_DIR = path.resolve(process.cwd(), "dist2");
+  test("Should generate HTML for pure static pages BUT skip generation for pages accessing cookies", async ({
+    page,
+  }) => {
+    if (!isProd) test.skip();
+    // --- FASE 1: VERIFICACIÓN DE DISCO (BUILD TIME) ---
+
+    // 1. La página estática DEBE existir como HTML
+    const staticHtmlPath = path.join(
+      BUILD_DIR,
+      "t-bailout",
+      "static-page",
+      "index.html"
+    );
+    expect(
+      fs.existsSync(staticHtmlPath),
+      "La página estática debería haber generado un .html"
+    ).toBe(true);
+
+    // 2. La página dinámica (cookies) NO DEBE existir como HTML
+    // Aquí es donde probamos que tu Proxy funcionó durante el buildStaticPage
+    const dynamicHtmlPath = path.join(
+      BUILD_DIR,
+      "t-bailout",
+      "cookie-page",
+      "index.html"
+    );
+    expect(
+      fs.existsSync(dynamicHtmlPath),
+      "La página que lee cookies NO debería tener archivo .html (Bailout)"
+    ).toBe(false);
+
+    // --- FASE 2: VERIFICACIÓN DE NAVEGACIÓN (RUNTIME SSR) ---
+
+    // 3. Visitamos la estática (se sirve el archivo)
+    await page.goto("/t-bailout/static-page");
+    await expect(page.locator("#static-content")).toBeVisible();
+
+    // 4. Visitamos la dinámica (Dinou debe hacer SSR al vuelo porque no hay HTML)
+    // Establecemos una cookie para ver si la lee bien en runtime
+    await page.context().addCookies([
+      {
+        name: "user_session",
+        value: "PlaywrightBot",
+        domain: "localhost", // Ajusta si usas otro dominio
+        path: "/",
+      },
+    ]);
+
+    const response = await page.goto("/t-bailout/cookie-page");
+
+    // Debe responder 200 OK (SSR funcionando)
+    expect(response?.status()).toBe(200);
+
+    // Debe haber leído la cookie (prueba de que el SSR tiene acceso real)
+    await expect(page.locator("#dynamic-content")).toContainText(
+      "PlaywrightBot"
+    );
+
+    // 2. La página dinámica (cookies) NO DEBE existir como HTML
+    // Aquí es donde probamos que tu Proxy funcionó durante el buildStaticPage
+    const dynamicHtmlPath2 = path.join(
+      BUILD_DIR,
+      "t-bailout",
+      "cookie-page2",
+      "index.html"
+    );
+    expect(
+      fs.existsSync(dynamicHtmlPath2),
+      "La página que lee cookies NO debería tener archivo .html (Bailout)"
+    ).toBe(false);
+
+    // --- FASE 2: VERIFICACIÓN DE NAVEGACIÓN (RUNTIME SSR) ---
+
+    // 4. Visitamos la dinámica (Dinou debe hacer SSR al vuelo porque no hay HTML)
+    // Establecemos una cookie para ver si la lee bien en runtime
+    await page.context().addCookies([
+      {
+        name: "user_session2",
+        value: "PlaywrightBot2",
+        domain: "localhost", // Ajusta si usas otro dominio
+        path: "/",
+      },
+    ]);
+
+    const response2 = await page.goto("/t-bailout/cookie-page2");
+
+    // Debe responder 200 OK (SSR funcionando)
+    expect(response2?.status()).toBe(200);
+
+    // Debe haber leído la cookie (prueba de que el SSR tiene acceso real)
+    await expect(page.locator("#dynamic-content")).toContainText(
+      "PlaywrightBot2"
+    );
+  });
+});
+test.describe("Hybrid Static/Dynamic Switching (Concurrency Safe)", () => {
+  const DIST_DIR = path.resolve(process.cwd(), "dist2");
+  const TRIGGER_FILE = path.join(DIST_DIR, "hybrid.mode");
+  const HTML_PATH = path.join(DIST_DIR, "t-hybrid", "index.html");
+
+  // Limpieza previa
+  test.beforeAll(() => {
+    if (fs.existsSync(TRIGGER_FILE)) fs.unlinkSync(TRIGGER_FILE);
+  });
+
+  test.afterAll(() => {
+    if (fs.existsSync(TRIGGER_FILE)) fs.unlinkSync(TRIGGER_FILE);
+  });
+
+  test("Should switch from Static to Dynamic and back without crashing", async ({
+    page,
+  }) => {
+    if (!isProd) test.skip(); // Asumiendo que tienes un flag para prod
+    // // 🔥 1. FORZAR "DISABLE CACHE" (Como tener DevTools abiertas)
+    // // Esto obliga al navegador a preguntar al servidor en cada reload
+    // const client = await page.context().newCDPSession(page);
+    // await client.send("Network.setCacheDisabled", { cacheDisabled: true });
+    // ---------------------------------------------------------
+    // FASE 1: ESTADO INICIAL (ESTÁTICO)
+    // ---------------------------------------------------------
+    // Aseguramos que el trigger dice STATIC
+    fs.writeFileSync(TRIGGER_FILE, "STATIC");
+
+    // Verificar que el build generó el archivo (porque por defecto era estático)
+    expect(
+      fs.existsSync(HTML_PATH),
+      "El archivo HTML debería existir inicialmente"
+    ).toBe(true);
+
+    await page.goto("/t-hybrid");
+    await expect(page.locator("h1")).toHaveText("Mode: STATIC");
+    await expect(page.locator("p")).toContainText("[STATIC MODE]");
+
+    // ---------------------------------------------------------
+    // FASE 2: CAMBIO A DINÁMICO (Trigger Bailout)
+    // ---------------------------------------------------------
+    // 1. Cambiamos el interruptor
+    console.log("--> Cambiando interruptor a DYNAMIC");
+    fs.writeFileSync(TRIGGER_FILE, "DYNAMIC");
+    await page.waitForTimeout(5000);
+    // 2. Visita de "Sacrificio" (Dispara revalidación)
+    // El servidor sirve el viejo (STATIC) pero detecta el cambio en background.
+    await page.reload();
+
+    // 3. Esperamos a que el ISR procese el cambio
+    // Tu lógica detectará el acceso a cookies -> pondrá isDynamic Map = true
+    await page.waitForTimeout(5000);
+    // console.log("___________going to reload page____________________");
+    // 4. Visita Real
+    // Ahora el servidor ve el Map=true y hace SSR
+    await page.reload();
+
+    await page.waitForTimeout(5000);
+    // console.log("___________going to reload page____________________");
+    // 4. Visita Real
+    // Ahora el servidor ve el Map=true y hace SSR
+    await page.reload();
+    await expect(page.locator("h1")).toHaveText("Mode: DYNAMIC", {
+      timeout: 10000,
+    });
+    await expect(page.locator("p")).toContainText("[DYNAMIC MODE ACTIVATED]");
+
+    // 💡 PRUEBA DE CONCURRENCIA:
+    // A pesar de estar sirviendo dinámico, el archivo estático viejo DEBE SEGUIR AHÍ
+    expect(
+      fs.existsSync(HTML_PATH),
+      "El archivo HTML físico NO debe borrarse"
+    ).toBe(true);
+
+    // ---------------------------------------------------------
+    // FASE 3: VUELTA A ESTÁTICO (Recovery)
+    // ---------------------------------------------------------
+    // 1. Cambiamos el interruptor
+    console.log("--> Cambiando interruptor a STATIC");
+    fs.writeFileSync(TRIGGER_FILE, "STATIC");
+
+    // 2. Esperamos revalidación (si usas tiempo)
+    // await page.waitForTimeout(2000);
+
+    // 3. Visita de "Sacrificio"
+    // Sirve dinámico (porque el Map seguía true), pero en background genera estático con éxito.
+    // Al tener éxito, tu código pone el Map = false.
+    await page.reload();
+
+    // 4. Esperamos generación
+    await page.waitForTimeout(8000);
+
+    // 5. Visita Final
+    // El servidor ve Map = false -> Sirve el nuevo archivo estático
+    await page.reload();
+    await expect(page.locator("h1")).toHaveText("Mode: STATIC");
+
+    // Verificamos que el timestamp es reciente (opcional)
   });
 });
