@@ -1,9 +1,10 @@
 "use client";
-import { useRouter } from "dinou"; // Ajusta el import a tu framework
+import { useRouter, useNavigationLoading } from "dinou"; // Ajusta el import a tu framework
 
 export default function Controls({ currentStep }: { currentStep: string }) {
   const router = useRouter();
   const nextStep = parseInt(currentStep) + 1;
+  const isNavigating = useNavigationLoading();
 
   return (
     <div
@@ -12,7 +13,7 @@ export default function Controls({ currentStep }: { currentStep: string }) {
       <p>
         Current Step: <span id="step-display">{currentStep}</span>
       </p>
-
+      {isNavigating && <div id="navigating">is navigating</div>}
       <button
         id="btn-next"
         onClick={() => router.push(`/t-spa-router/history/${nextStep}`)}

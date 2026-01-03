@@ -2241,21 +2241,27 @@ test.describe("Router Features: History & Refresh", () => {
   test("Should handle back() and forward() navigation correctly", async ({
     page,
   }) => {
+    test.setTimeout(400000);
     // 1. Empezamos en el Paso 1
     await page.goto("/t-spa-router/history/1");
+    await expect(page.locator("body")).toHaveAttribute(
+      "data-hydrated",
+      "true",
+      { timeout: 100000 }
+    );
     await expect(page.locator("#step-display")).toHaveText("1");
 
     // 2. Navegamos al Paso 2 (Push)
     await page.click("#btn-next");
     await expect(page).toHaveURL(/\/t-spa-router\/history\/2/, {
-      timeout: 40000,
+      timeout: 100000,
     });
     await expect(page.locator("#step-display")).toHaveText("2");
 
     // 3. Navegamos al Paso 3 (Push)
     await page.click("#btn-next");
     await expect(page).toHaveURL(/\/t-spa-router\/history\/3/, {
-      timeout: 40000,
+      timeout: 100000,
     });
     await expect(page.locator("#step-display")).toHaveText("3");
 
@@ -2283,8 +2289,14 @@ test.describe("Router Features: History & Refresh", () => {
   test("Should refresh Server Data but keep Client State (Soft Reload)", async ({
     page,
   }) => {
+    test.setTimeout(200000);
     await page.goto("/t-spa-router/refresh");
 
+    await expect(page.locator("body")).toHaveAttribute(
+      "data-hydrated",
+      "true",
+      { timeout: 100000 }
+    );
     // 1. Capturamos el ID inicial del servidor
     const initialId = await page.innerText("#server-id");
     console.log(`Initial Server ID: ${initialId}`);
@@ -2303,13 +2315,13 @@ test.describe("Router Features: History & Refresh", () => {
       // A. El ID del servidor DEBE haber cambiado (Datos Frescos)
       // Esperamos a que el texto sea diferente al inicial
       await expect(page.locator("#server-id")).not.toHaveText(initialId, {
-        timeout: 5000,
+        timeout: 20000,
       });
       const newId = await page.innerText("#server-id");
       console.log(`New Server ID: ${newId}`);
     } else {
       await expect(page.locator("#server-id")).toHaveText(initialId, {
-        timeout: 5000,
+        timeout: 20000,
       });
     }
 

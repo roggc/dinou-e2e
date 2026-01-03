@@ -1,24 +1,21 @@
 const path = require("path");
 const fs = require("fs").promises; // Usamos promesas
-const { existsSync, readFileSync, copyFileSync } = require("fs");
+const { existsSync, copyFileSync } = require("fs");
 const generateStaticPage = require("./generate-static-page");
 const { buildStaticPage } = require("./build-static-pages");
 const generateStaticRSC = require("./generate-static-rsc");
 const { safeRename } = require("./safe-rename");
 const { updateStatus } = require("./status-manifest");
+const { getJSXJSON } = require("./jsx-json");
 
 const regenerating = new Set();
 
 function revalidating(reqPath, isDynamicFromServer) {
-  const distFolder = path.resolve(process.cwd(), "dist");
   const dist2Folder = path.resolve(process.cwd(), "dist2");
-  const jsonPath = path.join(distFolder, reqPath, "index.json");
+  const jsxJSON = getJSXJSON(reqPath);
+  if (!jsxJSON) return;
 
-  if (!existsSync(jsonPath)) return;
-
-  const { revalidate, generatedAt } = JSON.parse(
-    readFileSync(jsonPath, "utf8")
-  );
+  const { revalidate, generatedAt } = jsxJSON;
 
   const isExpired =
     typeof revalidate === "number" &&

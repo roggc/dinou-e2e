@@ -9,7 +9,6 @@ const { updateStatus } = require("./status-manifest.js");
 const OUT_DIR = path.resolve("dist2");
 
 async function generateStaticPages(routes) {
-  const statusManifest = {};
   for (const route of routes) {
     // Normalización de la ruta
     const reqPath = route.endsWith("/") ? route : route + "/";

@@ -569,12 +569,6 @@ async function serveRSCPayload(req, res, isOld = false, isStatic = false) {
     }
     const context = getContext(req, res);
     await requestStorage.run(context, async () => {
-      // const jsx = await getSSGJSXOrJSX(
-      //   reqPath,
-      //   { ...req.query },
-      //   { ...req.cookies },
-      //   isDevelopment
-      // );
       const jsx = await getJSX(reqPath, { ...req.query }, { ...req.cookies });
       const manifest = isDevelopment
         ? JSON.parse(
