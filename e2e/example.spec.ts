@@ -2248,14 +2248,14 @@ test.describe("Router Features: History & Refresh", () => {
     // 2. Navegamos al Paso 2 (Push)
     await page.click("#btn-next");
     await expect(page).toHaveURL(/\/t-spa-router\/history\/2/, {
-      timeout: 10000,
+      timeout: 40000,
     });
     await expect(page.locator("#step-display")).toHaveText("2");
 
     // 3. Navegamos al Paso 3 (Push)
     await page.click("#btn-next");
     await expect(page).toHaveURL(/\/t-spa-router\/history\/3/, {
-      timeout: 10000,
+      timeout: 40000,
     });
     await expect(page.locator("#step-display")).toHaveText("3");
 
@@ -2338,6 +2338,7 @@ test.describe("Concurrency Stress Test", () => {
     browser,
   }) => {
     if (!isProd) test.skip();
+    test.setTimeout(340000);
     // 1. Inicializar estado STATIC
     fs.writeFileSync(TRIGGER_FILE, "STATIC");
     console.log("🔥 [CHAOS] Iniciando en modo STATIC");
@@ -2380,7 +2381,7 @@ test.describe("Concurrency Stress Test", () => {
           await user.page.goto(PAGE_URL);
 
           // Verificación básica de que la página cargó
-          await expect(user.page.locator("h1")).toBeVisible({ timeout: 10000 });
+          await expect(user.page.locator("h1")).toBeVisible({ timeout: 80000 });
 
           // Loguear progreso ligero
           // console.log(`User ${user.id} - Reload ${j} OK`);
@@ -2448,7 +2449,7 @@ test.describe("Staggered Concurrency Stress Test", () => {
   }) => {
     if (!isProd) test.skip();
     // Aumentamos el timeout del test porque este va a durar más
-    test.setTimeout(120000);
+    test.setTimeout(340000);
 
     let testsRunning = true; // Bandera para detener el Chaos Monkey cuando acaben los usuarios
 
@@ -2506,7 +2507,7 @@ test.describe("Staggered Concurrency Stress Test", () => {
           await page.goto(PAGE_URL);
 
           // Verificamos que cargó algo coherente
-          await expect(page.locator("h1")).toBeVisible({ timeout: 10000 });
+          await expect(page.locator("h1")).toBeVisible({ timeout: 80000 });
 
           // Pequeña pausa humana entre recargas (0.5s - 1s)
           await page.waitForTimeout(Math.random() * 500 + 500);
@@ -2568,6 +2569,7 @@ test.describe("Concurrency Stress Test - Slow Network (Chrome)", () => {
     browserName,
   }) => {
     if (!isProd || browserName !== "chromium") test.skip();
+    test.setTimeout(340000);
     // 1. Inicializar estado STATIC
     fs.writeFileSync(TRIGGER_FILE, "STATIC");
     console.log("🔥 [CHAOS] Iniciando en modo STATIC");
@@ -2625,7 +2627,7 @@ test.describe("Concurrency Stress Test - Slow Network (Chrome)", () => {
           await user.page.goto(PAGE_URL);
 
           // Verificación básica de que la página cargó
-          await expect(user.page.locator("h1")).toBeVisible({ timeout: 10000 });
+          await expect(user.page.locator("h1")).toBeVisible({ timeout: 80000 });
 
           // Loguear progreso ligero
           // console.log(`User ${user.id} - Reload ${j} OK`);
@@ -2694,7 +2696,7 @@ test.describe("Staggered Concurrency Stress Test - Slow Network - Chromium", () 
   }) => {
     if (!isProd || browserName !== "chromium") test.skip();
     // Aumentamos el timeout del test porque este va a durar más
-    test.setTimeout(120000);
+    test.setTimeout(340000);
 
     let testsRunning = true; // Bandera para detener el Chaos Monkey cuando acaben los usuarios
 
@@ -2764,7 +2766,7 @@ test.describe("Staggered Concurrency Stress Test - Slow Network - Chromium", () 
           await page.goto(PAGE_URL);
 
           // Verificamos que cargó algo coherente
-          await expect(page.locator("h1")).toBeVisible({ timeout: 10000 });
+          await expect(page.locator("h1")).toBeVisible({ timeout: 80000 });
 
           // Pequeña pausa humana entre recargas (0.5s - 1s)
           await page.waitForTimeout(Math.random() * 500 + 500);

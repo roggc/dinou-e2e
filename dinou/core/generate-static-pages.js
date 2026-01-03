@@ -4,42 +4,9 @@ const { mkdirSync, createWriteStream } = require("fs");
 const { writeFile } = require("fs").promises;
 const renderAppToHtml = require("./render-app-to-html.js");
 const getSSGMetadata = require("./get-ssg-metadata.js");
+const { updateStatus } = require("./status-manifest.js");
 
 const OUT_DIR = path.resolve("dist2");
-
-function addToStatusManifest(status, reqPath, manifest) {
-  // Lógica de Manifiesto / Guardado
-  if (status == 500) {
-    console.warn(
-      `[SSG] Error 500 detectado en ${reqPath}. Guardando como página de error.`
-    );
-    // Opción A: Guardar en el manifiesto
-    manifest[reqPath] = { status: 500 };
-  } else if (status == 404) {
-    manifest[reqPath] = { status: 404 };
-  } else {
-    // Status 200 normal
-    manifest[reqPath] = { status: 200 };
-  }
-}
-
-async function writeStatusManifest(outDir, statusManifest) {
-  try {
-    // 1. Definimos la ruta del archivo (ej: ./out/dinou-manifest.json)
-    const manifestPath = path.join(outDir, "status-manifest.json");
-
-    // 2. Convertimos el objeto a Texto JSON
-    // null, 2 -> Sirve para que el JSON se escriba "bonito" (indentado), legible para humanos.
-    const jsonContent = JSON.stringify(statusManifest, null, 2);
-
-    // 3. Escribimos en disco
-    await writeFile(manifestPath, jsonContent, "utf-8");
-
-    console.log(`[Dinou] Manifest saved successfully at: ${manifestPath}`);
-  } catch (error) {
-    console.error("[Dinou] Error saving status manifest:", error);
-  }
-}
 
 async function generateStaticPages(routes) {
   const statusManifest = {};
@@ -142,7 +109,7 @@ async function generateStaticPages(routes) {
         // Manejo de eventos
         htmlStream.on("end", () => {
           if (!fileStream.writableEnded) fileStream.end();
-          addToStatusManifest(capturedStatus.value, reqPath, statusManifest);
+          updateStatus(reqPath, capturedStatus.value);
           resolve();
         });
 
@@ -171,7 +138,6 @@ async function generateStaticPages(routes) {
   }
 
   console.log("🟢 Static page generation complete.");
-  await writeStatusManifest(OUT_DIR, statusManifest);
 }
 
 module.exports = generateStaticPages;

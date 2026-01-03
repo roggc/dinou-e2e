@@ -5,33 +5,9 @@ const generateStaticPage = require("./generate-static-page");
 const { buildStaticPage } = require("./build-static-pages");
 const generateStaticRSC = require("./generate-static-rsc");
 const { safeRename } = require("./safe-rename");
+const { updateStatus } = require("./status-manifest");
 
 const regenerating = new Set();
-const OUT_DIR = path.resolve("dist2");
-const MANIFEST_PATH = path.join(OUT_DIR, "status-manifest.json");
-
-// Helper para actualizar el manifiesto (movido aquí)
-async function updateStatusManifest(reqPath, status) {
-  try {
-    let manifest = {};
-    try {
-      const content = await fs.readFile(MANIFEST_PATH, "utf-8");
-      manifest = JSON.parse(content);
-    } catch (e) {}
-
-    const currentStatus = manifest[reqPath]?.status;
-    if (currentStatus === status) return;
-
-    manifest[reqPath] = { status };
-    await fs.writeFile(
-      MANIFEST_PATH,
-      JSON.stringify(manifest, null, 2),
-      "utf-8"
-    );
-  } catch (error) {
-    console.error(`[ISR] Failed to update manifest:`, error);
-  }
-}
 
 function revalidating(reqPath, isDynamicFromServer) {
   const distFolder = path.resolve(process.cwd(), "dist");
@@ -106,7 +82,7 @@ function revalidating(reqPath, isDynamicFromServer) {
           // await fs.rename(rscResult.tempPath, rscResult.finalPath);
 
           // 3. Actualizar Manifiesto (Usamos el status del HTML que es el principal)
-          await updateStatusManifest(reqPath, pageResult.status);
+          updateStatus(reqPath, pageResult.status);
           isDynamicFromServer.value = false;
           console.log(
             `✅ [ISR] Successfully committed ${reqPath} (Status: ${pageResult.status})`
@@ -130,4 +106,4 @@ function revalidating(reqPath, isDynamicFromServer) {
   }
 }
 
-module.exports = { revalidating, regenerating, updateStatusManifest };
+module.exports = { revalidating, regenerating };
