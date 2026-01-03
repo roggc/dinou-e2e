@@ -2234,3 +2234,574 @@ test.describe("Hybrid Static/Dynamic Switching (Concurrency Safe)", () => {
     // Verificamos que el timestamp es reciente (opcional)
   });
 });
+test.describe("Router Features: History & Refresh", () => {
+  // =================================================================
+  // TEST 1: BACK & FORWARD
+  // =================================================================
+  test("Should handle back() and forward() navigation correctly", async ({
+    page,
+  }) => {
+    // 1. Empezamos en el Paso 1
+    await page.goto("/t-spa-router/history/1");
+    await expect(page.locator("#step-display")).toHaveText("1");
+
+    // 2. Navegamos al Paso 2 (Push)
+    await page.click("#btn-next");
+    await expect(page).toHaveURL(/\/t-spa-router\/history\/2/, {
+      timeout: 10000,
+    });
+    await expect(page.locator("#step-display")).toHaveText("2");
+
+    // 3. Navegamos al Paso 3 (Push)
+    await page.click("#btn-next");
+    await expect(page).toHaveURL(/\/t-spa-router\/history\/3/, {
+      timeout: 10000,
+    });
+    await expect(page.locator("#step-display")).toHaveText("3");
+
+    // 4. Probamos BACK (Debería volver al 2)
+    console.log("Testing router.back()...");
+    await page.click("#btn-back");
+    await expect(page).toHaveURL(/\/t-spa-router\/history\/2/);
+    await expect(page.locator("#step-display")).toHaveText("2");
+
+    // 5. Probamos BACK otra vez (Debería volver al 1)
+    await page.click("#btn-back");
+    await expect(page).toHaveURL(/\/t-spa-router\/history\/1/);
+    await expect(page.locator("#step-display")).toHaveText("1");
+
+    // 6. Probamos FORWARD (Debería ir al 2)
+    console.log("Testing router.forward()...");
+    await page.click("#btn-forward");
+    await expect(page).toHaveURL(/\/t-spa-router\/history\/2/);
+    await expect(page.locator("#step-display")).toHaveText("2");
+  });
+
+  // =================================================================
+  // TEST 2: SOFT REFRESH
+  // =================================================================
+  test("Should refresh Server Data but keep Client State (Soft Reload)", async ({
+    page,
+  }) => {
+    await page.goto("/t-spa-router/refresh");
+
+    // 1. Capturamos el ID inicial del servidor
+    const initialId = await page.innerText("#server-id");
+    console.log(`Initial Server ID: ${initialId}`);
+
+    // 2. Modificamos el estado del cliente (escribimos en el input)
+    // Esto es CRUCIAL: Si la página se recargara completa (F5), esto se borraría.
+    const clientText = "I persist because of Soft Navigation";
+    await page.fill("#client-input", clientText);
+
+    // 3. Ejecutamos router.refresh()
+    console.log("Triggering router.refresh()...");
+    await page.click("#btn-refresh");
+
+    // 4. Verificaciones:
+    if (!isProd) {
+      // A. El ID del servidor DEBE haber cambiado (Datos Frescos)
+      // Esperamos a que el texto sea diferente al inicial
+      await expect(page.locator("#server-id")).not.toHaveText(initialId, {
+        timeout: 5000,
+      });
+      const newId = await page.innerText("#server-id");
+      console.log(`New Server ID: ${newId}`);
+    } else {
+      await expect(page.locator("#server-id")).toHaveText(initialId, {
+        timeout: 5000,
+      });
+    }
+
+    // B. El input del cliente DEBE mantener su valor (No hubo Full Reload)
+    await expect(page.locator("#client-input")).toHaveValue(clientText);
+  });
+});
+
+test.describe("Concurrency Stress Test", () => {
+  const DIST_DIR = path.resolve(process.cwd(), "dist2");
+  const TRIGGER_FILE = path.join(DIST_DIR, "hybrid-chaos.mode");
+  // Configuración
+  const CONCURRENT_USERS = 10; // No subas mucho esto si no tienes una RAM bestial
+  const RELOADS_PER_USER = 10;
+  const PAGE_URL = "/t-hybrid-chaos";
+
+  test.beforeAll(() => {
+    if (fs.existsSync(TRIGGER_FILE)) fs.unlinkSync(TRIGGER_FILE);
+  });
+
+  test.afterAll(() => {
+    if (fs.existsSync(TRIGGER_FILE)) fs.unlinkSync(TRIGGER_FILE);
+  });
+
+  test(`Should survive ${CONCURRENT_USERS} concurrent users switching modes`, async ({
+    browser,
+  }) => {
+    if (!isProd) test.skip();
+    // 1. Inicializar estado STATIC
+    fs.writeFileSync(TRIGGER_FILE, "STATIC");
+    console.log("🔥 [CHAOS] Iniciando en modo STATIC");
+
+    // 2. Crear los "Usuarios" (Contextos aislados)
+    const users = await Promise.all(
+      Array.from({ length: CONCURRENT_USERS }).map(async (_, i) => {
+        const context = await browser.newContext();
+        const page = await context.newPage();
+
+        // Listener de errores para cada usuario
+        page.on("console", (msg) => {
+          if (msg.type() === "error") {
+            console.error(`🚨 [USER ${i}] Console Error: ${msg.text()}`);
+          }
+        });
+
+        page.on("response", (response) => {
+          if (response.status() >= 500) {
+            console.error(
+              `💀 [USER ${i}] Server Error 500 en ${response.url()}`
+            );
+          }
+        });
+
+        return { id: i, page, context };
+      })
+    );
+
+    // 3. Definir la tarea del "Usuario"
+    const runUserJourney = async (user: any) => {
+      for (let j = 0; j < RELOADS_PER_USER; j++) {
+        try {
+          // // Desactiva caché para forzar al servidor a trabajar
+          // const client = await user.page.context().newCDPSession(user.page);
+          // await client.send("Network.setCacheDisabled", {
+          //   cacheDisabled: true,
+          // });
+
+          await user.page.goto(PAGE_URL);
+
+          // Verificación básica de que la página cargó
+          await expect(user.page.locator("h1")).toBeVisible({ timeout: 10000 });
+
+          // Loguear progreso ligero
+          // console.log(`User ${user.id} - Reload ${j} OK`);
+        } catch (e: any) {
+          console.error(
+            `❌ [USER ${user.id}] Falló en iteración ${j}:`,
+            e.message
+          );
+          throw e; // Hacemos fallar el test si un usuario muere
+        }
+      }
+    };
+
+    // 4. EL CAOS: Ejecutar usuarios y cambiar modos simultáneamente
+    console.log("🚀 [CHAOS] Lanzando usuarios...");
+
+    const userPromises = users.map((u) => runUserJourney(u));
+
+    // Mientras los usuarios navegan, cambiamos el modo en intervalos
+    const chaosLoop = async () => {
+      await new Promise((r) => setTimeout(r, 2000));
+      console.log("⚡ [CHAOS] Switch -> DYNAMIC");
+      fs.writeFileSync(TRIGGER_FILE, "DYNAMIC");
+
+      await new Promise((r) => setTimeout(r, 4000)); // Esperar revalidaciones
+      console.log("⚡ [CHAOS] Switch -> STATIC");
+      fs.writeFileSync(TRIGGER_FILE, "STATIC");
+    };
+
+    // Ejecutamos todo a la vez
+    await Promise.all([
+      Promise.all(userPromises), // Esperar a que todos los usuarios terminen sus recargas
+      chaosLoop(), // Ejecutar el cambio de modo
+    ]);
+
+    console.log("✅ [CHAOS] Test finalizado sin crashes.");
+
+    // Limpieza
+    await Promise.all(users.map((u) => u.context.close()));
+  });
+});
+
+test.describe("Staggered Concurrency Stress Test", () => {
+  // Configuración
+  const TOTAL_USERS = 10;
+  const STAGGER_DELAY_MS = 1500; // Un usuario nuevo entra cada 1.5 segundos
+  const RELOADS_PER_USER = 15; // Cada usuario recargará varias veces para mantenerse activo
+  const PAGE_URL = "/t-hybrid-staggered";
+  const DIST_DIR = path.resolve(process.cwd(), "dist2");
+  const TRIGGER_FILE = path.join(DIST_DIR, "hybrid-staggered.mode");
+
+  // Limpieza
+  test.beforeAll(() => {
+    if (fs.existsSync(TRIGGER_FILE)) fs.unlinkSync(TRIGGER_FILE);
+    // Empezamos limpio y estático
+    fs.writeFileSync(TRIGGER_FILE, "STATIC");
+  });
+
+  test.afterAll(() => {
+    if (fs.existsSync(TRIGGER_FILE)) fs.unlinkSync(TRIGGER_FILE);
+  });
+
+  test(`Should survive staggered load (ramp-up) while switching modes`, async ({
+    browser,
+  }) => {
+    if (!isProd) test.skip();
+    // Aumentamos el timeout del test porque este va a durar más
+    test.setTimeout(120000);
+
+    let testsRunning = true; // Bandera para detener el Chaos Monkey cuando acaben los usuarios
+
+    // -----------------------------------------------------------------------
+    // 1. EL "CHAOS MONKEY" (Cambia modos en bucle infinito hasta que paremos)
+    // -----------------------------------------------------------------------
+    const chaosLoop = async () => {
+      let mode = "STATIC";
+      console.log("🐵 [CHAOS] Monkey started.");
+
+      while (testsRunning) {
+        // Esperamos un tiempo aleatorio entre 3 y 6 segundos para no ser predecibles
+        const randomWait = Math.floor(Math.random() * 3000) + 3000;
+        await new Promise((r) => setTimeout(r, randomWait));
+
+        if (!testsRunning) break;
+
+        mode = mode === "STATIC" ? "DYNAMIC" : "STATIC";
+        console.log(`⚡ [CHAOS] Switching to ${mode}`);
+        fs.writeFileSync(TRIGGER_FILE, mode);
+      }
+      console.log("🐵 [CHAOS] Monkey stopped.");
+    };
+
+    // -----------------------------------------------------------------------
+    // 2. LA "OLA" DE USUARIOS (Staggered Journey)
+    // -----------------------------------------------------------------------
+    const runUserJourney = async (id: any) => {
+      // A. EL DECALAGE (Espera inicial escalonada)
+      const startDelay = id * STAGGER_DELAY_MS;
+      console.log(`👤 [USER ${id}] Waiting ${startDelay}ms to start...`);
+      await new Promise((r) => setTimeout(r, startDelay));
+
+      console.log(`▶️ [USER ${id}] Entering the site.`);
+      const context = await browser.newContext();
+      const page = await context.newPage();
+
+      // B. MONITORIZACIÓN
+      const errors: any = [];
+      page.on("console", (msg) => {
+        if (msg.type() === "error") errors.push(msg.text());
+      });
+      page.on("response", (resp) => {
+        if (resp.status() >= 500)
+          errors.push(`Status ${resp.status()} on ${resp.url()}`);
+      });
+
+      // C. BUCLE DE NAVEGACIÓN
+      try {
+        // // Desactivar caché es vital para estresar al servidor
+        // const client = await page.context().newCDPSession(page);
+        // await client.send("Network.setCacheDisabled", { cacheDisabled: true });
+
+        for (let i = 0; i < RELOADS_PER_USER; i++) {
+          await page.goto(PAGE_URL);
+
+          // Verificamos que cargó algo coherente
+          await expect(page.locator("h1")).toBeVisible({ timeout: 10000 });
+
+          // Pequeña pausa humana entre recargas (0.5s - 1s)
+          await page.waitForTimeout(Math.random() * 500 + 500);
+        }
+        console.log(`🏁 [USER ${id}] Finished journey.`);
+      } catch (err) {
+        console.error(`❌ [USER ${id}] CRASHED:`, err);
+        throw err;
+      } finally {
+        // Si hubo errores, los reportamos
+        if (errors.length > 0) {
+          console.error(`⚠️ [USER ${id}] Encountered errors:`, errors);
+        }
+        await context.close();
+      }
+    };
+
+    // -----------------------------------------------------------------------
+    // 3. EJECUCIÓN PARALELA
+    // -----------------------------------------------------------------------
+
+    // Lanzamos el Chaos Monkey (no usamos await aquí para que corra en background)
+    const chaosPromise = chaosLoop();
+
+    // Lanzamos a los usuarios
+    console.log("🚀 [TEST] Launching user wave...");
+    const userPromises = Array.from({ length: TOTAL_USERS }).map((_, i) =>
+      runUserJourney(i)
+    );
+
+    // Esperamos a que TODOS los usuarios terminen
+    await Promise.all(userPromises);
+
+    // Detenemos el caos
+    testsRunning = false;
+    await chaosPromise;
+
+    console.log("✅ [TEST] Staggered test completed successfully.");
+  });
+});
+test.describe("Concurrency Stress Test - Slow Network (Chrome)", () => {
+  const DIST_DIR = path.resolve(process.cwd(), "dist2");
+  const TRIGGER_FILE = path.join(DIST_DIR, "hybrid-chaos-slow.mode");
+  // Configuración
+  const CONCURRENT_USERS = 10; // No subas mucho esto si no tienes una RAM bestial
+  const RELOADS_PER_USER = 10;
+  const PAGE_URL = "/t-hybrid-chaos-slow";
+
+  test.beforeAll(() => {
+    if (fs.existsSync(TRIGGER_FILE)) fs.unlinkSync(TRIGGER_FILE);
+  });
+
+  test.afterAll(() => {
+    if (fs.existsSync(TRIGGER_FILE)) fs.unlinkSync(TRIGGER_FILE);
+  });
+
+  test(`Should survive ${CONCURRENT_USERS} concurrent users switching modes`, async ({
+    browser,
+    browserName,
+  }) => {
+    if (!isProd || browserName !== "chromium") test.skip();
+    // 1. Inicializar estado STATIC
+    fs.writeFileSync(TRIGGER_FILE, "STATIC");
+    console.log("🔥 [CHAOS] Iniciando en modo STATIC");
+
+    // 2. Crear los "Usuarios" (Contextos aislados)
+    const users = await Promise.all(
+      Array.from({ length: CONCURRENT_USERS }).map(async (_, i) => {
+        const context = await browser.newContext();
+        const page = await context.newPage();
+
+        // Listener de errores para cada usuario
+        page.on("console", (msg) => {
+          if (msg.type() === "error") {
+            console.error(`🚨 [USER ${i}] Console Error: ${msg.text()}`);
+          }
+        });
+
+        page.on("response", (response) => {
+          if (response.status() >= 500) {
+            console.error(
+              `💀 [USER ${i}] Server Error 500 en ${response.url()}`
+            );
+          }
+        });
+
+        return { id: i, page, context };
+      })
+    );
+
+    // 3. Definir la tarea del "Usuario"
+    const runUserJourney = async (user: any) => {
+      // Dentro de runUserJourney, antes del bucle for
+      const client = await user.page.context().newCDPSession(user.page);
+
+      // 1. Desactivar Caché (Ya lo tenías)
+      await client.send("Network.setCacheDisabled", { cacheDisabled: true });
+
+      // 2. 🔥 ACTIVAR RED LENTA (Slow 3G)
+      // Esto hará que la descarga del HTML y RSC tarde mucho más,
+      // manteniendo el archivo 'open' en el servidor durante más tiempo.
+      await client.send("Network.emulateNetworkConditions", {
+        offline: false,
+        latency: 500, // 500ms de latencia
+        downloadThroughput: 50 * 1024, // 50 kb/s (Muy lento)
+        uploadThroughput: 50 * 1024,
+      });
+      for (let j = 0; j < RELOADS_PER_USER; j++) {
+        try {
+          // // Desactiva caché para forzar al servidor a trabajar
+          // const client = await user.page.context().newCDPSession(user.page);
+          // await client.send("Network.setCacheDisabled", {
+          //   cacheDisabled: true,
+          // });
+
+          await user.page.goto(PAGE_URL);
+
+          // Verificación básica de que la página cargó
+          await expect(user.page.locator("h1")).toBeVisible({ timeout: 10000 });
+
+          // Loguear progreso ligero
+          // console.log(`User ${user.id} - Reload ${j} OK`);
+        } catch (e: any) {
+          console.error(
+            `❌ [USER ${user.id}] Falló en iteración ${j}:`,
+            e.message
+          );
+          throw e; // Hacemos fallar el test si un usuario muere
+        }
+      }
+    };
+
+    // 4. EL CAOS: Ejecutar usuarios y cambiar modos simultáneamente
+    console.log("🚀 [CHAOS] Lanzando usuarios...");
+
+    const userPromises = users.map((u) => runUserJourney(u));
+
+    // Mientras los usuarios navegan, cambiamos el modo en intervalos
+    const chaosLoop = async () => {
+      await new Promise((r) => setTimeout(r, 2000));
+      console.log("⚡ [CHAOS] Switch -> DYNAMIC");
+      fs.writeFileSync(TRIGGER_FILE, "DYNAMIC");
+
+      await new Promise((r) => setTimeout(r, 4000)); // Esperar revalidaciones
+      console.log("⚡ [CHAOS] Switch -> STATIC");
+      fs.writeFileSync(TRIGGER_FILE, "STATIC");
+    };
+
+    // Ejecutamos todo a la vez
+    await Promise.all([
+      Promise.all(userPromises), // Esperar a que todos los usuarios terminen sus recargas
+      chaosLoop(), // Ejecutar el cambio de modo
+    ]);
+
+    console.log("✅ [CHAOS] Test finalizado sin crashes.");
+
+    // Limpieza
+    await Promise.all(users.map((u) => u.context.close()));
+  });
+});
+
+test.describe("Staggered Concurrency Stress Test - Slow Network - Chromium", () => {
+  // Configuración
+  const TOTAL_USERS = 10;
+  const STAGGER_DELAY_MS = 1500; // Un usuario nuevo entra cada 1.5 segundos
+  const RELOADS_PER_USER = 15; // Cada usuario recargará varias veces para mantenerse activo
+  const PAGE_URL = "/t-hybrid-staggered-slow";
+  const DIST_DIR = path.resolve(process.cwd(), "dist2");
+  const TRIGGER_FILE = path.join(DIST_DIR, "hybrid-staggered-slow.mode");
+
+  // Limpieza
+  test.beforeAll(() => {
+    if (fs.existsSync(TRIGGER_FILE)) fs.unlinkSync(TRIGGER_FILE);
+    // Empezamos limpio y estático
+    fs.writeFileSync(TRIGGER_FILE, "STATIC");
+  });
+
+  test.afterAll(() => {
+    if (fs.existsSync(TRIGGER_FILE)) fs.unlinkSync(TRIGGER_FILE);
+  });
+
+  test(`Should survive staggered load (ramp-up) while switching modes`, async ({
+    browser,
+    browserName,
+  }) => {
+    if (!isProd || browserName !== "chromium") test.skip();
+    // Aumentamos el timeout del test porque este va a durar más
+    test.setTimeout(120000);
+
+    let testsRunning = true; // Bandera para detener el Chaos Monkey cuando acaben los usuarios
+
+    // -----------------------------------------------------------------------
+    // 1. EL "CHAOS MONKEY" (Cambia modos en bucle infinito hasta que paremos)
+    // -----------------------------------------------------------------------
+    const chaosLoop = async () => {
+      let mode = "STATIC";
+      console.log("🐵 [CHAOS] Monkey started.");
+
+      while (testsRunning) {
+        // Esperamos un tiempo aleatorio entre 3 y 6 segundos para no ser predecibles
+        const randomWait = Math.floor(Math.random() * 3000) + 3000;
+        await new Promise((r) => setTimeout(r, randomWait));
+
+        if (!testsRunning) break;
+
+        mode = mode === "STATIC" ? "DYNAMIC" : "STATIC";
+        console.log(`⚡ [CHAOS] Switching to ${mode}`);
+        fs.writeFileSync(TRIGGER_FILE, mode);
+      }
+      console.log("🐵 [CHAOS] Monkey stopped.");
+    };
+
+    // -----------------------------------------------------------------------
+    // 2. LA "OLA" DE USUARIOS (Staggered Journey)
+    // -----------------------------------------------------------------------
+    const runUserJourney = async (id: any) => {
+      // A. EL DECALAGE (Espera inicial escalonada)
+      const startDelay = id * STAGGER_DELAY_MS;
+      console.log(`👤 [USER ${id}] Waiting ${startDelay}ms to start...`);
+      await new Promise((r) => setTimeout(r, startDelay));
+
+      console.log(`▶️ [USER ${id}] Entering the site.`);
+      const context = await browser.newContext();
+      const page = await context.newPage();
+
+      // B. MONITORIZACIÓN
+      const errors: any = [];
+      page.on("console", (msg) => {
+        if (msg.type() === "error") errors.push(msg.text());
+      });
+      page.on("response", (resp) => {
+        if (resp.status() >= 500)
+          errors.push(`Status ${resp.status()} on ${resp.url()}`);
+      });
+
+      // C. BUCLE DE NAVEGACIÓN
+      try {
+        // Dentro de runUserJourney, antes del bucle for
+        const client = await page.context().newCDPSession(page);
+
+        // 1. Desactivar Caché (Ya lo tenías)
+        await client.send("Network.setCacheDisabled", { cacheDisabled: true });
+
+        // 2. 🔥 ACTIVAR RED LENTA (Slow 3G)
+        // Esto hará que la descarga del HTML y RSC tarde mucho más,
+        // manteniendo el archivo 'open' en el servidor durante más tiempo.
+        await client.send("Network.emulateNetworkConditions", {
+          offline: false,
+          latency: 500, // 500ms de latencia
+          downloadThroughput: 50 * 1024, // 50 kb/s (Muy lento)
+          uploadThroughput: 50 * 1024,
+        });
+
+        for (let i = 0; i < RELOADS_PER_USER; i++) {
+          await page.goto(PAGE_URL);
+
+          // Verificamos que cargó algo coherente
+          await expect(page.locator("h1")).toBeVisible({ timeout: 10000 });
+
+          // Pequeña pausa humana entre recargas (0.5s - 1s)
+          await page.waitForTimeout(Math.random() * 500 + 500);
+        }
+        console.log(`🏁 [USER ${id}] Finished journey.`);
+      } catch (err) {
+        console.error(`❌ [USER ${id}] CRASHED:`, err);
+        throw err;
+      } finally {
+        // Si hubo errores, los reportamos
+        if (errors.length > 0) {
+          console.error(`⚠️ [USER ${id}] Encountered errors:`, errors);
+        }
+        await context.close();
+      }
+    };
+
+    // -----------------------------------------------------------------------
+    // 3. EJECUCIÓN PARALELA
+    // -----------------------------------------------------------------------
+
+    // Lanzamos el Chaos Monkey (no usamos await aquí para que corra en background)
+    const chaosPromise = chaosLoop();
+
+    // Lanzamos a los usuarios
+    console.log("🚀 [TEST] Launching user wave...");
+    const userPromises = Array.from({ length: TOTAL_USERS }).map((_, i) =>
+      runUserJourney(i)
+    );
+
+    // Esperamos a que TODOS los usuarios terminen
+    await Promise.all(userPromises);
+
+    // Detenemos el caos
+    testsRunning = false;
+    await chaosPromise;
+
+    console.log("✅ [TEST] Staggered test completed successfully.");
+  });
+});
