@@ -35,7 +35,7 @@ async function getJSX(reqPath, query, cookies, isNotFound = null) {
       }
     }
   }
-  let dynamicParams;
+  let dynamicParams = {};
 
   if (!pagePath) {
     const [filePath, dParams] = getFilePathAndDynamicParams(

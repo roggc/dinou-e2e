@@ -31,7 +31,7 @@ async function getErrorJSX(reqPath, query, error) {
       }
     }
   }
-  let dynamicParams;
+  let dynamicParams = {};
 
   if (!pagePath) {
     const [filePath, dParams] = getFilePathAndDynamicParams(
