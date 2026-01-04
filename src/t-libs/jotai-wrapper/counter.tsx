@@ -1,5 +1,5 @@
 "use client";
-import { useAtom } from "./atoms";
+import { useAtom } from "@/atoms";
 
 export default function Counter() {
   const [count, setCount] = useAtom("counter");
