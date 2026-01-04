@@ -2234,6 +2234,81 @@ test.describe("Hybrid Static/Dynamic Switching (Concurrency Safe)", () => {
     // Verificamos que el timestamp es reciente (opcional)
   });
 });
+test.describe("External libraries: ESM", () => {
+  test("Should render external ESM libs (Jotai-wrapper) correctly", async ({
+    page,
+  }) => {
+    await page.goto("/t-libs/jotai-wrapper");
+    await expect(page.locator("body")).toHaveAttribute(
+      "data-hydrated",
+      "true",
+      { timeout: 10000 }
+    );
+    // 1. Verificar que no explotó el render (smoke test)
+    await expect(page.locator("h1")).toHaveText("Testing External Libs (ESM)");
+
+    // 2. Verificar interactividad (Client Component hidratado)
+    await expect(page.locator("#count-val")).toHaveText("0");
+    await page.click("#btn-inc");
+    await expect(page.locator("#count-val")).toHaveText("1");
+  });
+  test("Should render external ESM libs (Jotai-wrapper) correctly - server component", async ({
+    page,
+  }) => {
+    await page.goto("/t-libs/jotai-wrapper/server-component");
+    await expect(page.locator("body")).toHaveAttribute(
+      "data-hydrated",
+      "true",
+      { timeout: 10000 }
+    );
+    // 1. Verificar que no explotó el render (smoke test)
+    await expect(page.locator("h1")).toHaveText("Testing External Libs (ESM)");
+
+    // 2. Verificar interactividad (Client Component hidratado)
+    await expect(page.locator("#count-val")).toHaveText("0");
+    await page.click("#btn-inc");
+    await expect(page.locator("#count-val")).toHaveText("1");
+  });
+});
+test.describe("Dinou SPA: Fresh", () => {
+  test("Link with 'fresh' prop should bypass client cache", async ({
+    page,
+  }) => {
+    // 1. Visita inicial para llenar la caché
+    await page.goto("/t-spa-fresh");
+    await expect(page.locator("body")).toHaveAttribute(
+      "data-hydrated",
+      "true",
+      { timeout: 100000 }
+    );
+    await page.click("#link-cached");
+    const firstValue = await page.innerText("#rnd-val");
+    console.log("Val 1:", firstValue);
+
+    // 2. Volver a Home
+    await page.click("#go-back");
+
+    // 3. Navegación CACHEADA (Link normal)
+    // Al volver a random, debería mostrar el MISMO valor (cache hit)
+    await page.click("#link-cached");
+    await expect(page.locator("#rnd-val")).toHaveText(firstValue);
+
+    // 4. Volver a Home
+    await page.click("#go-back");
+
+    // 5. Navegación FRESH (Link fresh)
+    // Al volver a random, debería mostrar un valor DIFERENTE (cache miss -> new fetch)
+    await page.click("#link-fresh");
+
+    // Esperamos que el texto NO sea el mismo
+    await expect(page.locator("#rnd-val")).not.toHaveText(firstValue, {
+      timeout: 10000,
+    });
+    const secondValue = await page.innerText("#rnd-val");
+    console.log("Val 2 (Fresh):", secondValue);
+  });
+});
+
 test.describe("Router Features: History & Refresh", () => {
   // =================================================================
   // TEST 1: BACK & FORWARD
