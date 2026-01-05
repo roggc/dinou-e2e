@@ -84,7 +84,12 @@ async function buildStaticPages() {
     mkdirSync(distFolder, { recursive: true });
   }
 
-  async function collectPages(currentPath, segments = [], params = {}) {
+  async function collectPages(
+    currentPath,
+    segments = [],
+    params = {},
+    dynamicStructure = []
+  ) {
     const entries = readdirSync(currentPath, { withFileTypes: true });
     const pages = [];
 
@@ -95,7 +100,8 @@ async function buildStaticPages() {
             ...(await collectPages(
               path.join(currentPath, entry.name),
               segments,
-              params
+              params,
+              dynamicStructure
             ))
           );
         } else if (
@@ -319,19 +325,47 @@ async function buildStaticPages() {
             try {
               if (getStaticPaths) {
                 const paths = getStaticPaths();
-                for (const path of paths) {
-                  const isObject = typeof path === "object" && path !== null;
-                  const segmentsToAdd = isObject ? Object.values(path) : [path];
-                  const paramsToAdd = isObject ? path : { [paramName]: path };
+                for (const pathItem of paths) {
+                  const currentStructure = [...dynamicStructure, paramName];
+
+                  const isObject =
+                    typeof pathItem === "object" && pathItem !== null;
+
+                  // 2. Extraemos los segmentos en ORDEN ESTRICTO
+                  let segmentsToAdd;
+
+                  if (isObject) {
+                    // MAPEO ROBUSTO: Recorremos la estructura conocida y sacamos los valores del objeto
+                    segmentsToAdd = currentStructure.map((key) => {
+                      const val = pathItem[key];
+                      if (val === undefined) {
+                        throw new Error(
+                          `[Dinou] getStaticPaths en ${dynamicPath} devolvió un objeto, pero falta la clave '${key}' requerida por la jerarquía de carpetas.`
+                        );
+                      }
+                      return val;
+                    });
+                  } else {
+                    // Caso simple (string): Solo añadimos el actual
+                    segmentsToAdd = [pathItem];
+                  }
+
+                  // 3. Extraemos params (igual que antes)
+                  const paramsToAdd = isObject
+                    ? pathItem
+                    : { [paramName]: pathItem };
 
                   pages.push(
                     ...(await collectPages(
                       dynamicPath,
-                      [...segments, ...segmentsToAdd], // Aquí se rellenan los huecos acumulados
+                      [...segments, ...segmentsToAdd.flat()], // .flat() por si hay catch-alls arrays
                       {
                         ...params,
                         ...paramsToAdd,
-                      }
+                      },
+                      // No hace falta pasar dynamicStructure a los hijos de un page leaf
+                      // porque aquí se rompe la generación estática anidada, pero por consistencia:
+                      currentStructure
                     ))
                   );
                 }
@@ -340,14 +374,20 @@ async function buildStaticPages() {
               console.error(`Error loading ${pagePath}:`, err);
             }
           } else {
-            pages.push(...(await collectPages(dynamicPath, segments, params)));
+            pages.push(
+              ...(await collectPages(dynamicPath, segments, params, [
+                ...dynamicStructure,
+                paramName,
+              ]))
+            );
           }
         } else if (!entry.name.startsWith("@")) {
           pages.push(
             ...(await collectPages(
               path.join(currentPath, entry.name),
               [...segments, entry.name],
-              params
+              params,
+              dynamicStructure
             ))
           );
         }
