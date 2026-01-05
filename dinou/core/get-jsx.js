@@ -7,7 +7,13 @@ const {
 const importModule = require("./import-module");
 const { asyncRenderJSXToClientJSX } = require("./render-jsx-to-client-jsx");
 
-async function getJSX(reqPath, query, cookies, isNotFound = null) {
+async function getJSX(
+  reqPath,
+  query,
+  cookies,
+  isNotFound = null,
+  isDevelopment = false
+) {
   const srcFolder = path.resolve(process.cwd(), "src");
   const reqSegments = reqPath.split("/").filter(Boolean);
   const hasRouterSyntax = reqSegments.some((seg) => {
@@ -188,11 +194,20 @@ async function getJSX(reqPath, query, cookies, isNotFound = null) {
               const slotErrorModule = require(slotErrorPath);
               const SlotError = slotErrorModule.default ?? slotErrorModule;
 
+              // 🛡️ FIX: Convertir la instancia de Error a un objeto plano
+              // Las propiedades 'message' y 'stack' no son enumerables en un Error nativo,
+              // por lo que se pierden al serializar hacia un Client Component en SSR.
+              const serializedError = {
+                message: e.message || "Unknown Error",
+                name: e.name,
+                stack: isDevelopment ? e.stack : undefined,
+              };
+
               updatedSlotElement = React.createElement(SlotError, {
                 params: slotErrorParams, // Params resueltos (si hubiera)
                 searchParams: query,
                 key: slotName,
-                error: e, // Pasamos el error capturado
+                error: serializedError, // Pasamos el error capturado
               });
             } else {
               // Opcional: Si no hay error.tsx, podrías loguear o devolver null

@@ -568,8 +568,15 @@ async function serveRSCPayload(req, res, isOld = false, isStatic = false) {
       }
     }
     const context = getContext(req, res);
+    const isNotFound = null;
     await requestStorage.run(context, async () => {
-      const jsx = await getJSX(reqPath, { ...req.query }, { ...req.cookies });
+      const jsx = await getJSX(
+        reqPath,
+        { ...req.query },
+        { ...req.cookies },
+        isNotFound,
+        isDevelopment
+      );
       const manifest = isDevelopment
         ? JSON.parse(
             readFileSync(
@@ -614,7 +621,12 @@ app.post(/^\/____rsc_payload_error____\/.*\/?$/, async (req, res) => {
     const reqPath = (
       req.path.endsWith("/") ? req.path : req.path + "/"
     ).replace("/____rsc_payload_error____", "");
-    const jsx = await getErrorJSX(reqPath, { ...req.query }, req.body.error);
+    const jsx = await getErrorJSX(
+      reqPath,
+      { ...req.query },
+      req.body.error,
+      isDevelopment
+    );
     const manifest = isDevelopment
       ? JSON.parse(
           readFileSync(

@@ -1,6 +1,4 @@
-"use client";
-
-export default function Page({ params, searchParams, error }: any) {
+export default async function Page({ error, params, searchParams }: any) {
   return (
     <>
       <div>page params: {JSON.stringify(params, null, 2)}</div>

@@ -8,11 +8,12 @@ async function getSSGJSXOrJSX(
   cookies = {},
   isDevelopment = false
 ) {
+  const isNotFound = null;
   const result =
     Object.keys(query).length || isDevelopment || Object.keys(cookies).length
-      ? await getJSX(reqPath, query, cookies)
+      ? await getJSX(reqPath, query, cookies, isNotFound, isDevelopment)
       : (await getSSGJSX(getJSXJSON(reqPath))) ??
-        (await getJSX(reqPath, query, cookies));
+        (await getJSX(reqPath, query, cookies, isNotFound, isDevelopment));
   return result;
 }
 

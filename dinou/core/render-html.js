@@ -152,11 +152,11 @@ async function renderToStream(
         isDynamic ||
         !hasJsxJson
           ? renderJSXToClientJSX(
-              await getJSX(reqPath, query, cookies, isNotFound)
+              await getJSX(reqPath, query, cookies, isNotFound, isDevelopment)
             )
           : (await getSSGJSX(jsxJson)) ??
             renderJSXToClientJSX(
-              await getJSX(reqPath, query, cookies, isNotFound)
+              await getJSX(reqPath, query, cookies, isNotFound, isDevelopment)
             );
       if (isNotFound.value) {
         context.res.status(404);
@@ -173,7 +173,12 @@ async function renderToStream(
             const isProd = process.env.NODE_ENV === "production";
 
             try {
-              const errorJSX = await getErrorJSX(reqPath, query, error);
+              const errorJSX = await getErrorJSX(
+                reqPath,
+                query,
+                error,
+                isDevelopment
+              );
 
               if (!context.res.headersSent) context.res.status(500);
 
@@ -202,9 +207,13 @@ async function renderToStream(
                   : [getAssetFromManifest("error.js")],
                 bootstrapScriptContent: `window.__DINOU_ERROR_MESSAGE__=${JSON.stringify(
                   error.message || "Unknown error"
-                )};window.__DINOU_ERROR_STACK__=${JSON.stringify(
-                  error.stack || "No stack trace available"
-                )};${
+                )};window.__DINOU_ERROR_NAME__=${JSON.stringify(error.name)};${
+                  isDevelopment
+                    ? `window.__DINOU_ERROR_STACK__=${JSON.stringify(
+                        error.stack || "No stack trace available"
+                      )};`
+                    : ""
+                }${
                   isDevelopment
                     ? `window.HMR_WEBSOCKET_URL="ws://localhost:3001";`
                     : ""
