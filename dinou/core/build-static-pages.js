@@ -94,7 +94,8 @@ async function buildStaticPages() {
           pages.push(
             ...(await collectPages(
               path.join(currentPath, entry.name),
-              segments
+              segments,
+              params
             ))
           );
         } else if (
@@ -141,13 +142,17 @@ async function buildStaticPages() {
               if (getStaticPaths) {
                 const paths = getStaticPaths();
                 for (const path of paths) {
+                  const isArray = Array.isArray(path);
+                  const pathSegments = isArray ? path : path[paramName] || []; // Extraemos array: ['a', 'b']
+                  const pathParams = isArray ? { [paramName]: path } : path; // Extraemos params: { slug: ['a', 'b'] }
+
                   pages.push(
                     ...(await collectPages(
                       dynamicPath,
-                      [...segments, ...path],
+                      [...segments, ...pathSegments], // Spread de los segmentos
                       {
                         ...params,
-                        [paramName]: path,
+                        ...pathParams, // Spread de los params (permite heredar id, etc.)
                       }
                     ))
                   );
@@ -197,13 +202,17 @@ async function buildStaticPages() {
               if (getStaticPaths) {
                 const paths = getStaticPaths();
                 for (const path of paths) {
+                  const isArray = Array.isArray(path);
+                  const pathSegments = isArray ? path : path[paramName]; // ['a', 'b']
+                  const pathParams = isArray ? { [paramName]: path } : path;
+
                   pages.push(
                     ...(await collectPages(
                       dynamicPath,
-                      [...segments, ...path],
+                      [...segments, ...pathSegments],
                       {
                         ...params,
-                        [paramName]: path,
+                        ...pathParams,
                       }
                     ))
                   );
@@ -254,11 +263,18 @@ async function buildStaticPages() {
               if (getStaticPaths) {
                 const paths = getStaticPaths();
                 for (const path of paths) {
+                  const isString = typeof path === "string";
+                  const segmentValue = isString ? path : path[paramName];
+                  const pathParams = isString ? { [paramName]: path } : path;
                   pages.push(
-                    ...(await collectPages(dynamicPath, [...segments, path], {
-                      ...params,
-                      [paramName]: path,
-                    }))
+                    ...(await collectPages(
+                      dynamicPath,
+                      [...segments, segmentValue],
+                      {
+                        ...params,
+                        ...pathParams,
+                      }
+                    ))
                   );
                 }
               }
@@ -305,16 +321,29 @@ async function buildStaticPages() {
                 const paths = getStaticPaths();
                 for (const path of paths) {
                   pages.push(
-                    ...(await collectPages(dynamicPath, [...segments, path], {
-                      ...params,
-                      [paramName]: path,
-                    }))
+                    ...(await collectPages(
+                      dynamicPath,
+                      [
+                        ...segments,
+                        ...(typeof path === "string"
+                          ? [path]
+                          : Object.values(path)),
+                      ],
+                      {
+                        ...params,
+                        ...(typeof path === "string"
+                          ? { [paramName]: path }
+                          : path),
+                      }
+                    ))
                   );
                 }
               }
             } catch (err) {
               console.error(`Error loading ${pagePath}:`, err);
             }
+          } else {
+            pages.push(...(await collectPages(dynamicPath, segments, params)));
           }
         } else if (!entry.name.startsWith("@")) {
           pages.push(
