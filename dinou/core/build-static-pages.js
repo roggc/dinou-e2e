@@ -401,7 +401,7 @@ async function buildStaticPages() {
         const pageFunctionsModule = await importModule(pageFunctionsPath);
         const getProps = pageFunctionsModule.getProps;
         revalidate = pageFunctionsModule.revalidate;
-        pageFunctionsProps = await getProps?.(params, {}, {});
+        pageFunctionsProps = await getProps?.(params);
         props = { ...props, ...(pageFunctionsProps?.page ?? {}) };
       }
 
@@ -676,7 +676,7 @@ async function buildStaticPage(reqPath, isDynamic = null) {
       if (isDynamic && (isDynamic.value = pageFunctionsModule.dynamic?.()))
         return;
       revalidate = pageFunctionsModule.revalidate;
-      pageFunctionsProps = await getProps?.(dParams, {}, {});
+      pageFunctionsProps = await getProps?.(dParams);
       props = { ...props, ...(pageFunctionsProps?.page ?? {}) };
     }
 

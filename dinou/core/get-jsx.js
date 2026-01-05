@@ -10,7 +10,6 @@ const { asyncRenderJSXToClientJSX } = require("./render-jsx-to-client-jsx");
 async function getJSX(
   reqPath,
   query,
-  cookies,
   isNotFound = null,
   isDevelopment = false
 ) {
@@ -113,7 +112,7 @@ async function getJSX(
     if (pageFunctionsPath) {
       const pageFunctionsModule = await importModule(pageFunctionsPath);
       const getProps = pageFunctionsModule.getProps;
-      pageFunctionsProps = await getProps?.(dynamicParams, query, cookies);
+      pageFunctionsProps = await getProps?.(dynamicParams);
       props = { ...props, ...(pageFunctionsProps?.page ?? {}) };
     }
 

@@ -573,7 +573,6 @@ async function serveRSCPayload(req, res, isOld = false, isStatic = false) {
       const jsx = await getJSX(
         reqPath,
         { ...req.query },
-        { ...req.cookies },
         isNotFound,
         isDevelopment
       );
@@ -740,12 +739,13 @@ app.get(/^\/.*\/?$/, (req, res) => {
     processLimiter
       .run(async () => {
         const isDynamic = true;
+        const capturedStatus = null;
         const appHtmlStream = renderAppToHtml(
           reqPath,
           JSON.stringify({ ...req.query }),
-          JSON.stringify({ ...req.cookies }),
           contextForChild,
           res,
+          capturedStatus,
           isDynamic
         );
 
