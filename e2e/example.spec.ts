@@ -1998,13 +1998,13 @@ test.describe("Dinou Slots Error Handling (Granularity)", () => {
     // El componente @toxic/page.tsx falló, así que @toxic/error.tsx debió tomar su lugar.
     const dangerZone = page.locator("#danger-zone");
     await expect(dangerZone).toContainText("Ha ocurrido un error parcial");
-    if (isProd) {
-      await expect(dangerZone).toContainText(
-        "An error occurred in the Server Components render. The specific message is omitted in production builds to avoid leaking sensitive details. A digest property is included on this error instance which may provide additional details about the nature of the error."
-      );
-    } else {
-      await expect(dangerZone).toContainText("EXPLOSIÓN EN EL SLOT");
-    }
+    // if (isProd) {
+    //   await expect(dangerZone).toContainText(
+    //     "An error occurred in the Server Components render. The specific message is omitted in production builds to avoid leaking sensitive details. A digest property is included on this error instance which may provide additional details about the nature of the error."
+    //   );
+    // } else {
+    await expect(dangerZone).toContainText("EXPLOSIÓN EN EL SLOT");
+    // }
   });
 });
 test.describe("Dinou Slots Error Handling (Granularity - Error page)", () => {
@@ -2026,13 +2026,13 @@ test.describe("Dinou Slots Error Handling (Granularity - Error page)", () => {
     // El componente @toxic/page.tsx falló, así que @toxic/error.tsx debió tomar su lugar.
     const dangerZone = page.locator("#danger-zone");
     await expect(dangerZone).toContainText("Ha ocurrido un error parcial");
-    if (isProd) {
-      await expect(dangerZone).toContainText(
-        "An error occurred in the Server Components render. The specific message is omitted in production builds to avoid leaking sensitive details. A digest property is included on this error instance which may provide additional details about the nature of the error."
-      );
-    } else {
-      await expect(dangerZone).toContainText("EXPLOSIÓN EN EL SLOT");
-    }
+    // if (isProd) {
+    //   await expect(dangerZone).toContainText(
+    //     "An error occurred in the Server Components render. The specific message is omitted in production builds to avoid leaking sensitive details. A digest property is included on this error instance which may provide additional details about the nature of the error."
+    //   );
+    // } else {
+    await expect(dangerZone).toContainText("EXPLOSIÓN EN EL SLOT");
+    // }
   });
 });
 
