@@ -263,9 +263,9 @@ async function buildStaticPages() {
               if (getStaticPaths) {
                 const paths = getStaticPaths();
                 for (const path of paths) {
-                  const isString = typeof path === "string";
-                  const segmentValue = isString ? path : path[paramName];
-                  const pathParams = isString ? { [paramName]: path } : path;
+                  const isObject = typeof path === "object" && path !== null;
+                  const segmentValue = !isObject ? path : path[paramName];
+                  const pathParams = !isObject ? { [paramName]: path } : path;
                   pages.push(
                     ...(await collectPages(
                       dynamicPath,
@@ -320,20 +320,17 @@ async function buildStaticPages() {
               if (getStaticPaths) {
                 const paths = getStaticPaths();
                 for (const path of paths) {
+                  const isObject = typeof path === "object" && path !== null;
+                  const segmentsToAdd = isObject ? Object.values(path) : [path];
+                  const paramsToAdd = isObject ? path : { [paramName]: path };
+
                   pages.push(
                     ...(await collectPages(
                       dynamicPath,
-                      [
-                        ...segments,
-                        ...(typeof path === "string"
-                          ? [path]
-                          : Object.values(path)),
-                      ],
+                      [...segments, ...segmentsToAdd], // Aquí se rellenan los huecos acumulados
                       {
                         ...params,
-                        ...(typeof path === "string"
-                          ? { [paramName]: path }
-                          : path),
+                        ...paramsToAdd,
                       }
                     ))
                   );
