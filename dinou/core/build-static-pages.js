@@ -250,27 +250,33 @@ async function buildStaticPages() {
 
                   let segmentsToAdd;
                   if (isObject) {
-                    segmentsToAdd = currentStructure.map((key) => {
+                    let notValidRoute = false;
+                    segmentsToAdd = currentStructure.map((key, i, arr) => {
                       const val = pathItem[key];
 
                       // 🛡️ FIX 1: Validación relajada.
                       // Solo lanzamos error si falta el parámetro ACTUAL (que es catch-all obligatorio).
                       // Si faltan claves padres (key !== paramName), permitimos undefined (asumimos opcionales).
-                      if (val === undefined && key === paramName)
-                        throw new Error(
-                          `[Dinou] El parámetro catch-all obligatorio '${paramName}' es undefined en ${dynamicPath}.`
-                        );
+                      if (
+                        val === undefined /*&& key === paramName*/ &&
+                        i < arr.length - 1
+                      ) {
+                        notValidRoute = true;
+                      }
+                      // throw new Error(
+                      //   `[Dinou] El parámetro catch-all obligatorio '${paramName}' es undefined en ${dynamicPath}.`
+                      // );
                       return val;
                     });
+                    if (notValidRoute) continue;
                   } else {
                     segmentsToAdd = [pathItem];
                   }
 
                   // 🛡️ FIX 2: Filtrado de segmentos.
                   // Aplanamos (.flat) para manejar el array del catch-all y filtramos undefineds de los padres.
-                  const validSegmentsToAdd = segmentsToAdd
-                    .flat()
-                    .filter((s) => s !== undefined && s !== null && s !== "");
+                  const validSegmentsToAdd = segmentsToAdd.flat();
+                  // .filter((s) => s !== undefined && s !== null && s !== "");
 
                   const paramsToAdd = isObject
                     ? pathItem
@@ -359,12 +365,23 @@ async function buildStaticPages() {
                   }
 
                   // Filtrar undefineds para la URL (segments), pero mantenerlos para params si vienen en el objeto
-                  const validSegmentsToAdd = segmentsToAdd
-                    .flat()
-                    .filter((s) => s !== undefined && s !== null && s !== "");
-
+                  let validSegmentsToAdd = segmentsToAdd.flat();
+                  // .filter((s) => s !== undefined && s !== null && s !== "");
+                  const lastSegment =
+                    validSegmentsToAdd[validSegmentsToAdd.length - 1];
+                  const doNotTakeAccount =
+                    lastSegment === undefined ||
+                    lastSegment === null ||
+                    lastSegment === "";
+                  if (doNotTakeAccount) {
+                    validSegmentsToAdd = validSegmentsToAdd.slice(0, -1);
+                  }
                   const paramsToAdd = isObject
-                    ? pathItem
+                    ? doNotTakeAccount
+                      ? { ...pathItem }
+                      : pathItem
+                    : doNotTakeAccount
+                    ? {}
                     : { [paramName]: pathItem };
 
                   pages.push(
@@ -438,26 +455,31 @@ async function buildStaticPages() {
                   let segmentsToAdd;
 
                   if (isObject) {
-                    segmentsToAdd = currentStructure.map((key) => {
+                    let notValidRoute = false;
+                    segmentsToAdd = currentStructure.map((key, i, arr) => {
                       const val = pathItem[key];
 
                       // 🛡️ CAMBIO: Solo lanzamos error si falta el parámetro ACTUAL (que es obligatorio).
                       // Si falta un parámetro padre (key !== paramName), asumimos que podría ser opcional.
-                      if (val === undefined && key === paramName) {
-                        throw new Error(
-                          `[Dinou] El parámetro obligatorio '${paramName}' es undefined en ${dynamicPath}.`
-                        );
+                      if (
+                        val === undefined /*&& key === paramName*/ &&
+                        i < arr.length - 1
+                      ) {
+                        notValidRoute = true;
+                        // throw new Error(
+                        //   `[Dinou] El parámetro obligatorio '${paramName}' es undefined en ${dynamicPath}.`
+                        // );
                       }
                       return val;
                     });
+                    if (notValidRoute) continue;
                   } else {
                     segmentsToAdd = [pathItem];
                   }
 
                   // 🛡️ CAMBIO: Filtramos undefineds también aquí, porque un padre pudo ser opcional
-                  const validSegmentsToAdd = segmentsToAdd
-                    .flat()
-                    .filter((s) => s !== undefined && s !== null && s !== "");
+                  const validSegmentsToAdd = segmentsToAdd.flat();
+                  // .filter((s) => s !== undefined && s !== null && s !== "");
 
                   const paramsToAdd = isObject
                     ? pathItem
@@ -529,6 +551,8 @@ async function buildStaticPages() {
 
     if (pagePath && !dynamic?.() && !doNotPushAtEnd) {
       pages.push({ path: currentPath, segments, params: dParams });
+      if (segments.includes("shop2"))
+        console.log("currentPath", currentPath, "params", dParams);
       console.log(`Found static route: ${segments.join("/") || "/"}`);
     }
 
