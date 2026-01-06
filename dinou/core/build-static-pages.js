@@ -237,7 +237,6 @@ async function buildStaticPages() {
               if (getStaticPaths) {
                 const paths = getStaticPaths();
                 for (const pathItem of paths) {
-                  // LÓGICA ROBUSTA
                   const currentStructure = [...dynamicStructure, paramName];
                   const isObject =
                     typeof pathItem === "object" &&
@@ -248,15 +247,25 @@ async function buildStaticPages() {
                   if (isObject) {
                     segmentsToAdd = currentStructure.map((key) => {
                       const val = pathItem[key];
-                      if (val === undefined)
+
+                      // 🛡️ FIX 1: Validación relajada.
+                      // Solo lanzamos error si falta el parámetro ACTUAL (que es catch-all obligatorio).
+                      // Si faltan claves padres (key !== paramName), permitimos undefined (asumimos opcionales).
+                      if (val === undefined && key === paramName)
                         throw new Error(
-                          `[Dinou] Falta clave '${key}' en catch-all.`
+                          `[Dinou] El parámetro catch-all obligatorio '${paramName}' es undefined en ${dynamicPath}.`
                         );
                       return val;
                     });
                   } else {
                     segmentsToAdd = [pathItem];
                   }
+
+                  // 🛡️ FIX 2: Filtrado de segmentos.
+                  // Aplanamos (.flat) para manejar el array del catch-all y filtramos undefineds de los padres.
+                  const validSegmentsToAdd = segmentsToAdd
+                    .flat()
+                    .filter((s) => s !== undefined && s !== null && s !== "");
 
                   const paramsToAdd = isObject
                     ? pathItem
@@ -265,7 +274,7 @@ async function buildStaticPages() {
                   pages.push(
                     ...(await collectPages(
                       dynamicPath,
-                      [...segments, ...segmentsToAdd.flat()],
+                      [...segments, ...validSegmentsToAdd], // Usamos la versión filtrada
                       { ...params, ...paramsToAdd }
                     ))
                   );
@@ -412,30 +421,33 @@ async function buildStaticPages() {
                 const paths = getStaticPaths();
                 for (const pathItem of paths) {
                   const currentStructure = [...dynamicStructure, paramName];
-
                   const isObject =
                     typeof pathItem === "object" && pathItem !== null;
 
-                  // 2. Extraemos los segmentos en ORDEN ESTRICTO
                   let segmentsToAdd;
 
                   if (isObject) {
-                    // MAPEO ROBUSTO: Recorremos la estructura conocida y sacamos los valores del objeto
                     segmentsToAdd = currentStructure.map((key) => {
                       const val = pathItem[key];
-                      if (val === undefined) {
+
+                      // 🛡️ CAMBIO: Solo lanzamos error si falta el parámetro ACTUAL (que es obligatorio).
+                      // Si falta un parámetro padre (key !== paramName), asumimos que podría ser opcional.
+                      if (val === undefined && key === paramName) {
                         throw new Error(
-                          `[Dinou] getStaticPaths en ${dynamicPath} devolvió un objeto, pero falta la clave '${key}' requerida por la jerarquía de carpetas.`
+                          `[Dinou] El parámetro obligatorio '${paramName}' es undefined en ${dynamicPath}.`
                         );
                       }
                       return val;
                     });
                   } else {
-                    // Caso simple (string): Solo añadimos el actual
                     segmentsToAdd = [pathItem];
                   }
 
-                  // 3. Extraemos params (igual que antes)
+                  // 🛡️ CAMBIO: Filtramos undefineds también aquí, porque un padre pudo ser opcional
+                  const validSegmentsToAdd = segmentsToAdd
+                    .flat()
+                    .filter((s) => s !== undefined && s !== null && s !== "");
+
                   const paramsToAdd = isObject
                     ? pathItem
                     : { [paramName]: pathItem };
@@ -443,14 +455,8 @@ async function buildStaticPages() {
                   pages.push(
                     ...(await collectPages(
                       dynamicPath,
-                      [...segments, ...segmentsToAdd.flat()], // .flat() por si hay catch-alls arrays
-                      {
-                        ...params,
-                        ...paramsToAdd,
-                      },
-                      // No hace falta pasar dynamicStructure a los hijos de un page leaf
-                      // porque aquí se rompe la generación estática anidada, pero por consistencia:
-                      currentStructure
+                      [...segments, ...validSegmentsToAdd], // Usamos la versión filtrada
+                      { ...params, ...paramsToAdd }
                     ))
                   );
                 }
