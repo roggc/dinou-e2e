@@ -164,7 +164,9 @@ async function buildStaticPages() {
                       const val = pathItem[key];
                       // Nota: En optional catch-all, un valor podría ser undefined/vacío si estamos en la raíz,
                       // pero si getStaticPaths devuelve un objeto, esperamos que cumpla la estructura.
-                      return val === undefined ? [] : val;
+                      return val === undefined || val === null || val === ""
+                        ? []
+                        : val;
                     });
                   } else {
                     // Si es array directo o string
@@ -174,6 +176,22 @@ async function buildStaticPages() {
                   const paramsToAdd = isObject
                     ? pathItem
                     : { [paramName]: pathItem };
+
+                  // 🛡️ NORMALIZACIÓN TOTAL CATCH-ALL:
+                  // Queremos que el resultado sea SIEMPRE un Array para que coincida con el modo dinámico.
+                  const currentVal = paramsToAdd[paramName];
+
+                  if (
+                    currentVal === undefined ||
+                    currentVal === null ||
+                    currentVal === ""
+                  ) {
+                    // Caso: undefined -> []
+                    paramsToAdd[paramName] = [];
+                  } else if (!Array.isArray(currentVal)) {
+                    // Caso: "foo" -> ["foo"]
+                    paramsToAdd[paramName] = [currentVal];
+                  }
 
                   pages.push(
                     ...(await collectPages(
@@ -258,7 +276,7 @@ async function buildStaticPages() {
                       // Solo lanzamos error si falta el parámetro ACTUAL (que es catch-all obligatorio).
                       // Si faltan claves padres (key !== paramName), permitimos undefined (asumimos opcionales).
                       if (
-                        val === undefined /*&& key === paramName*/ &&
+                        (val === undefined || val === null || val === "") &&
                         i < arr.length - 1
                       ) {
                         notValidRoute = true;
@@ -462,7 +480,7 @@ async function buildStaticPages() {
                       // 🛡️ CAMBIO: Solo lanzamos error si falta el parámetro ACTUAL (que es obligatorio).
                       // Si falta un parámetro padre (key !== paramName), asumimos que podría ser opcional.
                       if (
-                        val === undefined /*&& key === paramName*/ &&
+                        (val === undefined || val === null || val === "") &&
                         i < arr.length - 1
                       ) {
                         notValidRoute = true;
