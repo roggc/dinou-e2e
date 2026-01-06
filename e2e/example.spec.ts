@@ -1444,7 +1444,7 @@ test.describe("ISR Error Protection Shield", () => {
     "/t-isr/t-layout-client-component/t-server-component/t-time-bomb";
   const DIST_DIR = path.resolve("dist2");
   const HTML_PATH = path.join(DIST_DIR, PAGE_URL, "index.html");
-  const FLAG_FILE = path.resolve("trigger-error.txt");
+  const FLAG_FILE = path.join(DIST_DIR, "trigger-error.txt");
   test.beforeEach(() => {
     // Asegurar limpieza antes de empezar
     if (fs.existsSync(FLAG_FILE)) fs.unlinkSync(FLAG_FILE);

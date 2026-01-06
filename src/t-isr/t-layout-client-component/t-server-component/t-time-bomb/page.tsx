@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 
 export default async function IsrProtectionPage() {
-  const triggerFile = path.resolve(process.cwd(), "trigger-error.txt");
+  const triggerFile = path.resolve(process.cwd(), "dist2/trigger-error.txt");
 
   // // LOG DE DEPURACIÓN EN DISCO (Indestructible)
   // // Esto creará un archivo 'bomb-debug.log' en la raíz de tu proyecto
