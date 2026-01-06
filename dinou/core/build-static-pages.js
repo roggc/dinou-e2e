@@ -717,7 +717,7 @@ async function buildStaticPages() {
       // Set displayName for better serialization
       // if (!Page.displayName) Page.displayName = "Page";
 
-      let props = { params, searchParams: {} };
+      let props = { params /* searchParams: {}*/ };
 
       const [pageFunctionsPath] = getFilePathAndDynamicParams(
         segments,
@@ -774,7 +774,10 @@ async function buildStaticPages() {
                 __modulePath: alreadyFoundPath ?? null,
               };
             }
-            let props = { params: dParams, searchParams: {}, ...updatedSlots };
+            let props = {
+              params: dParams,
+              /*searchParams: {},*/ ...updatedSlots,
+            };
             if (index === layouts.length - 1) {
               props = { ...props, ...(pageFunctionsProps?.layout ?? {}) };
             }
@@ -992,7 +995,7 @@ async function buildStaticPage(reqPath, isDynamic = null) {
     const pageModule = await importModule(pagePath);
     const Page = pageModule.default ?? pageModule;
 
-    let props = { params: dParams, searchParams: {} };
+    let props = { params: dParams /*searchParams: {}*/ };
     const [pageFunctionsPath] = getFilePathAndDynamicParams(
       segments,
       {},
@@ -1049,7 +1052,7 @@ async function buildStaticPage(reqPath, isDynamic = null) {
           }
           let layoutProps = {
             params: dParams,
-            searchParams: {},
+            // searchParams: {},
             ...updatedSlots,
           };
           if (index === layouts.length - 1) {

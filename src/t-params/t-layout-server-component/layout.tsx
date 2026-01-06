@@ -1,15 +1,15 @@
 import type { ReactNode } from "react";
 import "@/globals.css";
+import { useSearchParams } from "dinou";
 
 export default async function Layout({
   children,
   params,
-  searchParams,
 }: {
   children: ReactNode;
   params: Record<string, string>;
-  searchParams: Record<string, string>;
 }) {
+  const searchParams = useSearchParams();
   return (
     <html lang="en">
       <head>
@@ -40,7 +40,10 @@ export default async function Layout({
       <body>
         {children}
         <div>layout params:{JSON.stringify(params, null, 2)}</div>
-        <div>layout searchParams:{JSON.stringify(searchParams, null, 2)}</div>
+        <div>
+          layout searchParams:
+          {JSON.stringify(Object.fromEntries(searchParams), null, 2)}
+        </div>
       </body>
     </html>
   );

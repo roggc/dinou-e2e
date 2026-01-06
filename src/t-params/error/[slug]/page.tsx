@@ -1,11 +1,10 @@
 "use client";
 
-export default function Page({ params, searchParams }: any) {
+export default function Page({ params }: any) {
   a;
   return (
     <>
       <div>page params: {JSON.stringify(params, null, 2)}</div>
-      <div>page searchParams: {JSON.stringify(searchParams, null, 2)}</div>
     </>
   );
 }
