@@ -108,7 +108,6 @@ async function buildStaticPages() {
           entry.name.startsWith("[[...") &&
           entry.name.endsWith("]]")
         ) {
-          // Optional catch-all
           const paramName = entry.name.slice(5, -2);
           const dynamicPath = path.join(currentPath, entry.name);
           const [pagePath] = getFilePathAndDynamicParams(
@@ -131,14 +130,16 @@ async function buildStaticPages() {
             undefined,
             segments.length
           );
-          let dynamic;
-          let getStaticPaths;
+
+          let dynamic, getStaticPaths;
           if (pageFunctionsPath) {
             const module = await importModule(pageFunctionsPath);
             getStaticPaths = module.getStaticPaths;
             dynamic = module.dynamic;
           }
-          if (pagePath && !dynamic?.()) {
+          const isLocalPage =
+            pagePath && path.dirname(pagePath) === dynamicPath;
+          if (isLocalPage && !dynamic?.()) {
             console.log(
               `Found optional catch-all route: ${
                 segments.join("/") ?? ""
@@ -147,19 +148,37 @@ async function buildStaticPages() {
             try {
               if (getStaticPaths) {
                 const paths = getStaticPaths();
-                for (const path of paths) {
-                  const isArray = Array.isArray(path);
-                  const pathSegments = isArray ? path : path[paramName] || []; // Extraemos array: ['a', 'b']
-                  const pathParams = isArray ? { [paramName]: path } : path; // Extraemos params: { slug: ['a', 'b'] }
+                for (const pathItem of paths) {
+                  // LÓGICA ROBUSTA APLICADA AQUÍ
+                  const currentStructure = [...dynamicStructure, paramName];
+                  const isObject =
+                    typeof pathItem === "object" &&
+                    pathItem !== null &&
+                    !Array.isArray(pathItem); // Ojo: Array es object, hay que distinguir
+
+                  let segmentsToAdd;
+                  if (isObject) {
+                    segmentsToAdd = currentStructure.map((key) => {
+                      const val = pathItem[key];
+                      // Nota: En optional catch-all, un valor podría ser undefined/vacío si estamos en la raíz,
+                      // pero si getStaticPaths devuelve un objeto, esperamos que cumpla la estructura.
+                      return val === undefined ? [] : val;
+                    });
+                  } else {
+                    // Si es array directo o string
+                    segmentsToAdd = [pathItem];
+                  }
+
+                  const paramsToAdd = isObject
+                    ? pathItem
+                    : { [paramName]: pathItem };
 
                   pages.push(
                     ...(await collectPages(
                       dynamicPath,
-                      [...segments, ...pathSegments], // Spread de los segmentos
-                      {
-                        ...params,
-                        ...pathParams, // Spread de los params (permite heredar id, etc.)
-                      }
+                      [...segments, ...segmentsToAdd.flat()],
+                      { ...params, ...paramsToAdd }
+                      // currentStructure (opcional, rompe recursión estática aquí)
                     ))
                   );
                 }
@@ -167,6 +186,14 @@ async function buildStaticPages() {
             } catch (err) {
               console.error(`Error loading ${pagePath}:`, err);
             }
+          } else {
+            // ⚠️ IMPORTANTE: Actualizar el historial en la recursión
+            pages.push(
+              ...(await collectPages(dynamicPath, segments, params, [
+                ...dynamicStructure,
+                paramName,
+              ]))
+            );
           }
         } else if (entry.name.startsWith("[...") && entry.name.endsWith("]")) {
           const paramName = entry.name.slice(4, -1);
@@ -191,14 +218,16 @@ async function buildStaticPages() {
             undefined,
             segments.length
           );
-          let dynamic;
-          let getStaticPaths;
+
+          let dynamic, getStaticPaths;
           if (pageFunctionsPath) {
             const module = await importModule(pageFunctionsPath);
             getStaticPaths = module.getStaticPaths;
             dynamic = module.dynamic;
           }
-          if (pagePath && !dynamic?.()) {
+          const isLocalPage =
+            pagePath && path.dirname(pagePath) === dynamicPath;
+          if (isLocalPage && !dynamic?.()) {
             console.log(
               `Found catch-all route: ${
                 segments.join("/") ?? ""
@@ -207,19 +236,37 @@ async function buildStaticPages() {
             try {
               if (getStaticPaths) {
                 const paths = getStaticPaths();
-                for (const path of paths) {
-                  const isArray = Array.isArray(path);
-                  const pathSegments = isArray ? path : path[paramName]; // ['a', 'b']
-                  const pathParams = isArray ? { [paramName]: path } : path;
+                for (const pathItem of paths) {
+                  // LÓGICA ROBUSTA
+                  const currentStructure = [...dynamicStructure, paramName];
+                  const isObject =
+                    typeof pathItem === "object" &&
+                    pathItem !== null &&
+                    !Array.isArray(pathItem);
+
+                  let segmentsToAdd;
+                  if (isObject) {
+                    segmentsToAdd = currentStructure.map((key) => {
+                      const val = pathItem[key];
+                      if (val === undefined)
+                        throw new Error(
+                          `[Dinou] Falta clave '${key}' en catch-all.`
+                        );
+                      return val;
+                    });
+                  } else {
+                    segmentsToAdd = [pathItem];
+                  }
+
+                  const paramsToAdd = isObject
+                    ? pathItem
+                    : { [paramName]: pathItem };
 
                   pages.push(
                     ...(await collectPages(
                       dynamicPath,
-                      [...segments, ...pathSegments],
-                      {
-                        ...params,
-                        ...pathParams,
-                      }
+                      [...segments, ...segmentsToAdd.flat()],
+                      { ...params, ...paramsToAdd }
                     ))
                   );
                 }
@@ -227,9 +274,16 @@ async function buildStaticPages() {
             } catch (err) {
               console.error(`Error loading ${pagePath}:`, err);
             }
+          } else {
+            // ⚠️ IMPORTANTE: Actualizar el historial
+            pages.push(
+              ...(await collectPages(dynamicPath, segments, params, [
+                ...dynamicStructure,
+                paramName,
+              ]))
+            );
           }
         } else if (entry.name.startsWith("[[") && entry.name.endsWith("]]")) {
-          // Optional dynamic param
           const paramName = entry.name.slice(2, -2);
           const dynamicPath = path.join(currentPath, entry.name);
           const [pagePath] = getFilePathAndDynamicParams(
@@ -252,14 +306,16 @@ async function buildStaticPages() {
             undefined,
             segments.length
           );
-          let dynamic;
-          let getStaticPaths;
+
+          let dynamic, getStaticPaths;
           if (pageFunctionsPath) {
             const module = await importModule(pageFunctionsPath);
             getStaticPaths = module.getStaticPaths;
             dynamic = module.dynamic;
           }
-          if (pagePath && !dynamic?.()) {
+          const isLocalPage =
+            pagePath && path.dirname(pagePath) === dynamicPath;
+          if (isLocalPage && !dynamic?.()) {
             console.log(
               `Found optional dynamic route: ${
                 segments.join("/") ?? ""
@@ -268,18 +324,37 @@ async function buildStaticPages() {
             try {
               if (getStaticPaths) {
                 const paths = getStaticPaths();
-                for (const path of paths) {
-                  const isObject = typeof path === "object" && path !== null;
-                  const segmentValue = !isObject ? path : path[paramName];
-                  const pathParams = !isObject ? { [paramName]: path } : path;
+                for (const pathItem of paths) {
+                  // LÓGICA ROBUSTA
+                  const currentStructure = [...dynamicStructure, paramName];
+                  const isObject =
+                    typeof pathItem === "object" && pathItem !== null;
+
+                  let segmentsToAdd;
+                  if (isObject) {
+                    segmentsToAdd = currentStructure.map((key) => {
+                      const val = pathItem[key];
+                      // Permitimos undefined si es el propio optional param el que falta
+                      return val;
+                    });
+                  } else {
+                    segmentsToAdd = [pathItem];
+                  }
+
+                  // Filtrar undefineds para la URL (segments), pero mantenerlos para params si vienen en el objeto
+                  const validSegmentsToAdd = segmentsToAdd
+                    .flat()
+                    .filter((s) => s !== undefined && s !== null && s !== "");
+
+                  const paramsToAdd = isObject
+                    ? pathItem
+                    : { [paramName]: pathItem };
+
                   pages.push(
                     ...(await collectPages(
                       dynamicPath,
-                      [...segments, segmentValue],
-                      {
-                        ...params,
-                        ...pathParams,
-                      }
+                      [...segments, ...validSegmentsToAdd],
+                      { ...params, ...paramsToAdd }
                     ))
                   );
                 }
@@ -287,6 +362,14 @@ async function buildStaticPages() {
             } catch (err) {
               console.error(`Error loading ${pagePath}:`, err);
             }
+          } else {
+            // ⚠️ IMPORTANTE: Actualizar el historial
+            pages.push(
+              ...(await collectPages(dynamicPath, segments, params, [
+                ...dynamicStructure,
+                paramName,
+              ]))
+            );
           }
         } else if (entry.name.startsWith("[") && entry.name.endsWith("]")) {
           const paramName = entry.name.slice(1, -1);
@@ -318,7 +401,9 @@ async function buildStaticPages() {
             getStaticPaths = module.getStaticPaths;
             dynamic = module.dynamic;
           }
-          if (pagePath && !dynamic?.()) {
+          const isLocalPage =
+            pagePath && path.dirname(pagePath) === dynamicPath;
+          if (isLocalPage && !dynamic?.()) {
             console.log(
               `Found dynamic route: ${segments.join("/") ?? ""}/[${paramName}]`
             );
@@ -420,7 +505,8 @@ async function buildStaticPages() {
       const module = await importModule(pageFunctionsPath);
       dynamic = module.dynamic;
     }
-    if (pagePath && !dynamic?.()) {
+    const isLocalPage = pagePath && path.dirname(pagePath) === currentPath;
+    if (isLocalPage && !dynamic?.()) {
       pages.push({ path: currentPath, segments, params: dParams });
       console.log(`Found static route: ${segments.join("/") || "/"}`);
     }
