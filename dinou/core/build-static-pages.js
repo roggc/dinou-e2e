@@ -88,7 +88,8 @@ async function buildStaticPages() {
     currentPath,
     segments = [],
     params = {},
-    dynamicStructure = []
+    dynamicStructure = [],
+    doNotPushAtEnd = false
   ) {
     const entries = readdirSync(currentPath, { withFileTypes: true });
     const pages = [];
@@ -101,7 +102,8 @@ async function buildStaticPages() {
               path.join(currentPath, entry.name),
               segments,
               params,
-              dynamicStructure
+              dynamicStructure,
+              doNotPushAtEnd
             ))
           );
         } else if (
@@ -189,10 +191,13 @@ async function buildStaticPages() {
           } else {
             // ⚠️ IMPORTANTE: Actualizar el historial en la recursión
             pages.push(
-              ...(await collectPages(dynamicPath, segments, params, [
-                ...dynamicStructure,
-                paramName,
-              ]))
+              ...(await collectPages(
+                dynamicPath,
+                segments,
+                params,
+                [...dynamicStructure, paramName],
+                true
+              ))
             );
           }
         } else if (entry.name.startsWith("[...") && entry.name.endsWith("]")) {
@@ -286,10 +291,13 @@ async function buildStaticPages() {
           } else {
             // ⚠️ IMPORTANTE: Actualizar el historial
             pages.push(
-              ...(await collectPages(dynamicPath, segments, params, [
-                ...dynamicStructure,
-                paramName,
-              ]))
+              ...(await collectPages(
+                dynamicPath,
+                segments,
+                params,
+                [...dynamicStructure, paramName],
+                true
+              ))
             );
           }
         } else if (entry.name.startsWith("[[") && entry.name.endsWith("]]")) {
@@ -374,10 +382,13 @@ async function buildStaticPages() {
           } else {
             // ⚠️ IMPORTANTE: Actualizar el historial
             pages.push(
-              ...(await collectPages(dynamicPath, segments, params, [
-                ...dynamicStructure,
-                paramName,
-              ]))
+              ...(await collectPages(
+                dynamicPath,
+                segments,
+                params,
+                [...dynamicStructure, paramName],
+                true
+              ))
             );
           }
         } else if (entry.name.startsWith("[") && entry.name.endsWith("]")) {
@@ -466,10 +477,13 @@ async function buildStaticPages() {
             }
           } else {
             pages.push(
-              ...(await collectPages(dynamicPath, segments, params, [
-                ...dynamicStructure,
-                paramName,
-              ]))
+              ...(await collectPages(
+                dynamicPath,
+                segments,
+                params,
+                [...dynamicStructure, paramName],
+                true
+              ))
             );
           }
         } else if (!entry.name.startsWith("@")) {
@@ -478,7 +492,8 @@ async function buildStaticPages() {
               path.join(currentPath, entry.name),
               [...segments, entry.name],
               params,
-              dynamicStructure
+              dynamicStructure,
+              false
             ))
           );
         }
@@ -511,8 +526,8 @@ async function buildStaticPages() {
       const module = await importModule(pageFunctionsPath);
       dynamic = module.dynamic;
     }
-    const isLocalPage = pagePath && path.dirname(pagePath) === currentPath;
-    if (isLocalPage && !dynamic?.()) {
+
+    if (pagePath && !dynamic?.() && !doNotPushAtEnd) {
       pages.push({ path: currentPath, segments, params: dParams });
       console.log(`Found static route: ${segments.join("/") || "/"}`);
     }
