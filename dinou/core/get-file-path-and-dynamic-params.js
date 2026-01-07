@@ -214,6 +214,25 @@ function getFilePathAndDynamicParams(
                 return [candidatePath, newParams];
               }
             }
+            const newIsFound = { value: false };
+            const result = getFilePathAndDynamicParams(
+              reqSegments,
+              query,
+              dynamicPath,
+              fileName,
+              withExtension,
+              finalDestination,
+              lastFound,
+              index + 1,
+              dParams,
+              accumulative,
+              accumulate,
+              newIsFound
+            );
+            if (newIsFound.value) {
+              isFound.value = true;
+              return result;
+            }
             if (accumulative) return accumulate;
             return finalDestination
               ? []
