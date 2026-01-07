@@ -1,3 +1,3 @@
 export function getStaticPaths() {
-  return [{ slug: "chinese", id: "zz" }];
+  return [{ id: "zz" }];
 }

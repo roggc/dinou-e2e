@@ -1,7 +1,7 @@
 export function getStaticPaths() {
   return [
     // 1. Todo undefined -> /inventory/
-    { warehouse: undefined, aisle: undefined },
+    // { warehouse: undefined, aisle: undefined },
 
     // 2. Primer nivel definido, segundo undefined -> /inventory/main/
     { warehouse: "main", aisle: undefined },
