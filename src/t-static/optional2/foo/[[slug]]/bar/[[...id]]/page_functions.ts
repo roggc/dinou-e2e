@@ -1,3 +1,3 @@
 export function getStaticPaths() {
-  return [{ id: "productsx" }];
+  return [{ id: "productsx" }, "producty"];
 }
