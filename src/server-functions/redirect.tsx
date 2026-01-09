@@ -5,7 +5,7 @@ import { ClientRedirect } from "@/components/client-redirect";
 
 export async function redirect() {
   const ctx = getContext();
-  if (!ctx) return;
+  // if (!ctx) return;
 
   await new Promise((resolve) => setTimeout(resolve, 2000));
 

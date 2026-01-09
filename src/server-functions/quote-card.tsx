@@ -5,7 +5,7 @@ import { getContext } from "dinou";
 
 export async function quoteCard() {
   const ctx = getContext();
-  if (!ctx) return;
+  // if (!ctx) return;
   // const { req, res } = ctx;
   // console.log("req", req);
   // console.log("res", res);

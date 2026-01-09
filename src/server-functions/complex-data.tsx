@@ -5,7 +5,7 @@ import ComplexData from "@/components/complex-data";
 
 export async function complexData() {
   const ctx = getContext();
-  if (!ctx) return;
+  // if (!ctx) return;
 
   await new Promise((resolve) => setTimeout(resolve, 2000));
 
