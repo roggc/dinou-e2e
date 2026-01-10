@@ -2524,7 +2524,7 @@ test.describe("Staggered Concurrency Stress Test", () => {
   test.beforeAll(() => {
     if (fs.existsSync(TRIGGER_FILE)) fs.unlinkSync(TRIGGER_FILE);
     // Empezamos limpio y estático
-    fs.writeFileSync(TRIGGER_FILE, "STATIC");
+    if (isProd) fs.writeFileSync(TRIGGER_FILE, "STATIC");
   });
 
   test.afterAll(() => {
@@ -2770,7 +2770,7 @@ test.describe("Staggered Concurrency Stress Test - Slow Network - Chromium", () 
   test.beforeAll(() => {
     if (fs.existsSync(TRIGGER_FILE)) fs.unlinkSync(TRIGGER_FILE);
     // Empezamos limpio y estático
-    fs.writeFileSync(TRIGGER_FILE, "STATIC");
+    if (isProd) fs.writeFileSync(TRIGGER_FILE, "STATIC");
   });
 
   test.afterAll(() => {
