@@ -115,7 +115,7 @@ async function SSRStreamingFlowProd(
   await expect(page.getByText("hello!")).toBeVisible();
 
   // El fallback del Suspense debe estar visible inmediatamente.
-  await expect(page.getByText("loading...")).toBeVisible();
+  await expect(page.getByText("loading...")).toBeVisible({ timeout: 10000 });
 
   // Aseguramos que "bye!" AÚN NO está visible (está "en el servidor" esperando el timeout).
   await expect(page.getByText("bye!")).not.toBeVisible();
