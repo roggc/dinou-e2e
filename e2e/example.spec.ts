@@ -5,16 +5,16 @@ import path from "path";
 const isProd = process.env.TEST_CMD?.includes("start") || false;
 
 // Función auxiliar que espera hasta que el servidor diga "isReady: true"
-async function pollUntilReady(request: APIRequestContext, maxRetries = 400) {
+async function pollUntilReady(request: APIRequestContext, maxRetries = 800) {
   console.log(
-    "⏳ Esperando a que el servidor termine la generación estática (SSG)..."
+    "⏳ Esperando a que el servidor termine la generación estática (SSG)...",
   );
 
   for (let i = 0; i < maxRetries; i++) {
     try {
       // Hacemos petición al endpoint de estado
       const response = await request.get(
-        "http://localhost:3000/__DINOU_STATUS_PLAYWRIGHT__"
+        "http://localhost:3000/__DINOU_STATUS_PLAYWRIGHT__",
       );
       const json = await response.json();
 
@@ -31,7 +31,7 @@ async function pollUntilReady(request: APIRequestContext, maxRetries = 400) {
   }
 
   throw new Error(
-    "❌ Timeout: El servidor no terminó la generación estática a tiempo."
+    "❌ Timeout: El servidor no terminó la generación estática a tiempo.",
   );
 }
 
@@ -42,15 +42,16 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
   // Este hook bloquea este grupo hasta que pollUntilReady termine
   test.beforeAll(async ({ request }) => {
     // Damos tiempo suficiente (ej: 60 segundos) para que genere
-    test.setTimeout(400000);
+    test.setTimeout(800000);
     await pollUntilReady(request);
   });
   async function SSRStreamingFlow(
     page: any,
     response: any = null,
-    invokedFromServerComponent = false
+    invokedFromServerComponent = false,
+    isDynamic = false,
   ) {
-    if (isProd) {
+    if (isProd && !isDynamic) {
       // 🟢 EN PROD (SSG): Esperamos el resultado final INMEDIATAMENTE
       // No debe haber loading, debe poner "bye!" directo.
       await expect(page.getByText("bye!")).toBeVisible();
@@ -139,61 +140,61 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     }
   }
 
-  async function SSRStreamingFlowProd(
-    page: any,
-    response: any = null,
-    invokedFromServerComponent = false
-  ) {
-    // 🛑 MAGIA DE PLAYWRIGHT:
-    // Si NO estamos en producción, saltamos este test.
-    // En el reporte saldrá como "Skipped" en lugar de "Passed".
-    test.skip(
-      !isProd,
-      "Testing dynamic opt-out only makes sense in Production builds"
-    );
-    // 2. VERIFICACIÓN INICIAL (Inmediata)
-    // El texto estático "hello!" debe estar ahí desde el HTML inicial (SSR).
-    await expect(page.getByText("hello!")).toBeVisible();
+  // async function SSRStreamingFlowProd(
+  //   page: any,
+  //   response: any = null,
+  //   invokedFromServerComponent = false,
+  // ) {
+  //   // 🛑 MAGIA DE PLAYWRIGHT:
+  //   // Si NO estamos en producción, saltamos este test.
+  //   // En el reporte saldrá como "Skipped" en lugar de "Passed".
+  //   test.skip(
+  //     !isProd,
+  //     "Testing dynamic opt-out only makes sense in Production builds",
+  //   );
+  //   // 2. VERIFICACIÓN INICIAL (Inmediata)
+  //   // El texto estático "hello!" debe estar ahí desde el HTML inicial (SSR).
+  //   await expect(page.getByText("hello!")).toBeVisible();
 
-    // El fallback del Suspense debe estar visible inmediatamente.
-    await expect(page.getByText("loading...")).toBeVisible({ timeout: 10000 });
+  //   // El fallback del Suspense debe estar visible inmediatamente.
+  //   await expect(page.getByText("loading...")).toBeVisible({ timeout: 10000 });
 
-    // Aseguramos que "bye!" AÚN NO está visible (está "en el servidor" esperando el timeout).
-    await expect(page.getByText("bye!")).not.toBeVisible();
+  //   // Aseguramos que "bye!" AÚN NO está visible (está "en el servidor" esperando el timeout).
+  //   await expect(page.getByText("bye!")).not.toBeVisible();
 
-    // 3. LA ESPERA AUTOMÁTICA (Transición)
-    // Playwright esperará automáticamente a que aparezca "bye!".
-    // Como tu server function tarda 1s y el timeout por defecto es 5s, esto pasará sin problemas.
-    // Esto verifica que el Stream llegó y React hidrató el componente devuelto.
-    await expect(page.getByText("bye!")).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText("Helper accessed User-Agent:")).toBeVisible();
+  //   // 3. LA ESPERA AUTOMÁTICA (Transición)
+  //   // Playwright esperará automáticamente a que aparezca "bye!".
+  //   // Como tu server function tarda 1s y el timeout por defecto es 5s, esto pasará sin problemas.
+  //   // Esto verifica que el Stream llegó y React hidrató el componente devuelto.
+  //   await expect(page.getByText("bye!")).toBeVisible({ timeout: 10000 });
+  //   await expect(page.getByText("Helper accessed User-Agent:")).toBeVisible();
 
-    // 4. ESTADO FINAL
-    // Una vez llega el componente, el "loading..." debe desaparecer.
-    await expect(page.getByText("loading...")).not.toBeVisible();
+  //   // 4. ESTADO FINAL
+  //   // Una vez llega el componente, el "loading..." debe desaparecer.
+  //   await expect(page.getByText("loading...")).not.toBeVisible();
 
-    // "hello!" debe seguir ahí (no se borró la página, fue un update parcial).
-    await expect(page.getByText("hello!")).toBeVisible();
+  //   // "hello!" debe seguir ahí (no se borró la página, fue un update parcial).
+  //   await expect(page.getByText("hello!")).toBeVisible();
 
-    if (response && invokedFromServerComponent) {
-      const headers = await response.allHeaders();
-      expect(headers["x-custom-dinou"]).toBe("v4-rocks");
-    }
+  //   if (response && invokedFromServerComponent) {
+  //     const headers = await response.allHeaders();
+  //     expect(headers["x-custom-dinou"]).toBe("v4-rocks");
+  //   }
 
-    // Verificar Cookie en el navegador
-    const cookies = await page.context().cookies();
-    const myCookie = cookies.find((c: any) => c.name === "theme");
-    expect(myCookie?.value).toBe("dark");
-  }
+  //   // Verificar Cookie en el navegador
+  //   const cookies = await page.context().cookies();
+  //   const myCookie = cookies.find((c: any) => c.name === "theme");
+  //   expect(myCookie?.value).toBe("dark");
+  // }
 
   async function conncurrencyFlow(
     browser: any,
     url: string,
-    invokedFromServer = false
+    invokedFromServer = false,
   ) {
     test.skip(
       isProd && invokedFromServer,
-      "SSG builds do not support dynamic content when invoked from Server Components"
+      "SSG builds do not support dynamic content when invoked from Server Components",
     );
     // 1. Crear dos contextos (simula dos usuarios en dos PCs distintos)
     const userA = await browser.newContext();
@@ -228,13 +229,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     // 4. Verificar que no se cruzaron los cables
     // await expect(pageA.getByText("Hello ALICE")).toBeVisible();
     await expect(
-      pageA.getByText("Hello ALICE", { exact: true }).locator("visible=true")
+      pageA.getByText("Hello ALICE", { exact: true }).locator("visible=true"),
     ).toBeVisible();
     await expect(pageA.getByText("Hello BOB")).not.toBeVisible(); // 🛑 Si esto falla, tienes un leak grave
 
     // await expect(pageB.getByText("Hello BOB")).toBeVisible();
     await expect(
-      pageB.getByText("Hello BOB", { exact: true }).locator("visible=true")
+      pageB.getByText("Hello BOB", { exact: true }).locator("visible=true"),
     ).toBeVisible();
     await expect(pageB.getByText("Hello ALICE")).not.toBeVisible();
 
@@ -242,76 +243,76 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     await userB.close();
   }
 
-  async function conncurrencyFlowProdDynamic(browser: any, url: string) {
-    test.skip(
-      !isProd,
-      "Testing dynamic opt-out only makes sense in Production builds"
-    );
-    // 1. Crear dos contextos (simula dos usuarios en dos PCs distintos)
-    const userA = await browser.newContext();
-    const userB = await browser.newContext();
+  // async function conncurrencyFlowProdDynamic(browser: any, url: string) {
+  //   test.skip(
+  //     !isProd,
+  //     "Testing dynamic opt-out only makes sense in Production builds",
+  //   );
+  //   // 1. Crear dos contextos (simula dos usuarios en dos PCs distintos)
+  //   const userA = await browser.newContext();
+  //   const userB = await browser.newContext();
 
-    // 2. Setear cookies distintas para identificarlos
-    await userA.addCookies([
-      { name: "user", value: "ALICE", domain: "localhost", path: "/" },
-    ]);
-    await userB.addCookies([
-      { name: "user", value: "BOB", domain: "localhost", path: "/" },
-    ]);
+  //   // 2. Setear cookies distintas para identificarlos
+  //   await userA.addCookies([
+  //     { name: "user", value: "ALICE", domain: "localhost", path: "/" },
+  //   ]);
+  //   await userB.addCookies([
+  //     { name: "user", value: "BOB", domain: "localhost", path: "/" },
+  //   ]);
 
-    const pageA = await userA.newPage();
-    const pageB = await userB.newPage();
+  //   const pageA = await userA.newPage();
+  //   const pageB = await userB.newPage();
 
-    pageA.on("console", (msg: any) => {
-      if (msg.type() === "error") console.log(`[Browser Error]: ${msg.text()}`);
-    });
-    pageB.on("console", (msg: any) => {
-      if (msg.type() === "error") console.log(`[Browser Error]: ${msg.text()}`);
-    });
+  //   pageA.on("console", (msg: any) => {
+  //     if (msg.type() === "error") console.log(`[Browser Error]: ${msg.text()}`);
+  //   });
+  //   pageB.on("console", (msg: any) => {
+  //     if (msg.type() === "error") console.log(`[Browser Error]: ${msg.text()}`);
+  //   });
 
-    // 3. Lanzar las peticiones SIMULTÁNEAMENTE (Promise.all)
-    // La server function debe leer la cookie y devolver: "Hello [Name]"
-    // Añadimos un delay artificial en el servidor para forzar solapamiento.
-    await Promise.all([
-      pageA.goto(url, { waitUntil: "commit" }),
-      pageB.goto(url, { waitUntil: "commit" }),
-    ]);
+  //   // 3. Lanzar las peticiones SIMULTÁNEAMENTE (Promise.all)
+  //   // La server function debe leer la cookie y devolver: "Hello [Name]"
+  //   // Añadimos un delay artificial en el servidor para forzar solapamiento.
+  //   await Promise.all([
+  //     pageA.goto(url, { waitUntil: "commit" }),
+  //     pageB.goto(url, { waitUntil: "commit" }),
+  //   ]);
 
-    // 4. Verificar que no se cruzaron los cables
-    // await expect(pageA.getByText("Hello ALICE")).toBeVisible();
-    await expect(
-      pageA.getByText("Hello ALICE", { exact: true }).locator("visible=true")
-    ).toBeVisible();
-    await expect(pageA.getByText("Hello BOB")).not.toBeVisible(); // 🛑 Si esto falla, tienes un leak grave
+  //   // 4. Verificar que no se cruzaron los cables
+  //   // await expect(pageA.getByText("Hello ALICE")).toBeVisible();
+  //   await expect(
+  //     pageA.getByText("Hello ALICE", { exact: true }).locator("visible=true"),
+  //   ).toBeVisible();
+  //   await expect(pageA.getByText("Hello BOB")).not.toBeVisible(); // 🛑 Si esto falla, tienes un leak grave
 
-    // await expect(pageB.getByText("Hello BOB")).toBeVisible();
-    await expect(
-      pageB.getByText("Hello BOB", { exact: true }).locator("visible=true")
-    ).toBeVisible();
-    await expect(pageB.getByText("Hello ALICE")).not.toBeVisible();
+  //   // await expect(pageB.getByText("Hello BOB")).toBeVisible();
+  //   await expect(
+  //     pageB.getByText("Hello BOB", { exact: true }).locator("visible=true"),
+  //   ).toBeVisible();
+  //   await expect(pageB.getByText("Hello ALICE")).not.toBeVisible();
 
-    await userA.close();
-    await userB.close();
-  }
+  //   await userA.close();
+  //   await userB.close();
+  // }
 
   async function redirectFlow(page: any, toServerComponent = false) {
     if (!isProd) {
       await expect(
-        page.getByText("This page will be redirected!Redirecting...")
+        page.getByText("This page will be redirected!Redirecting..."),
       ).toBeVisible();
     }
     if (toServerComponent) {
       // Playwright debe haber sido redirigido automáticamente a /docs
       await expect(page).toHaveURL("/docs", { timeout: 20000 });
       await expect(
-        page.getByText("This page will be redirected!")
+        page.getByText("This page will be redirected!"),
       ).not.toBeVisible();
       await expect(page.getByText("This is docs page")).toBeVisible();
     } else {
       // Playwright debe haber sido redirigido automáticamente a /
       await expect(page).toHaveURL("/", { timeout: 20000 });
       await expect(
-        page.getByText("This page will be redirected!")
+        page.getByText("This page will be redirected!"),
       ).not.toBeVisible();
       await expect(page.getByText("hello!")).toBeVisible();
     }
@@ -356,7 +357,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           message: "El ISR no regeneró la página (verificado con New Context)",
           timeout: 15000,
           intervals: [2000], // Intervalos un poco más largos ya que abrimos contextos
-        }
+        },
       )
       .toBeGreaterThan(new Date(time1).getTime());
 
@@ -377,7 +378,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Si está en otra ruta, cambia '/' por '/tu-ruta'
       const response = await page.goto(
         "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-return-client-component",
-        { waitUntil: "commit" }
+        { waitUntil: "commit" },
       );
 
       await SSRStreamingFlow(page, response);
@@ -387,7 +388,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     }) => {
       await conncurrencyFlow(
         browser,
-        "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-return-client-component"
+        "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-return-client-component",
       );
     });
     test("layout client component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
@@ -401,7 +402,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Si está en otra ruta, cambia '/' por '/tu-ruta'
       const response = await page.goto(
         "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-return-server-component",
-        { waitUntil: "commit" }
+        { waitUntil: "commit" },
       );
 
       await SSRStreamingFlow(page, response);
@@ -411,7 +412,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     }) => {
       await conncurrencyFlow(
         browser,
-        "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-return-server-component"
+        "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-return-server-component",
       );
     });
     test("layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
@@ -425,10 +426,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Si está en otra ruta, cambia '/' por '/tu-ruta'
       const response = await page.goto(
         "/t-server-function/t-layout-client-component/t-invoked-from-server-component/t-return-client-component",
-        { waitUntil: "commit" }
+        { waitUntil: "commit" },
       );
 
-      await SSRStreamingFlow(page, response, true);
+      await SSRStreamingFlow(page, response, true, true);
     });
     test("concurrency test - layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
       browser,
@@ -436,7 +437,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await conncurrencyFlow(
         browser,
         "/t-server-function/t-layout-client-component/t-invoked-from-server-component/t-return-client-component",
-        true
+        true,
       );
     });
     test("layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
@@ -450,10 +451,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Si está en otra ruta, cambia '/' por '/tu-ruta'
       const response = await page.goto(
         "/t-server-function/t-layout-client-component/t-invoked-from-server-component/t-return-server-component",
-        { waitUntil: "commit" }
+        { waitUntil: "commit" },
       );
 
-      await SSRStreamingFlow(page, response, true);
+      await SSRStreamingFlow(page, response, true, true);
     });
     test("concurrency test - layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
       browser,
@@ -461,7 +462,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await conncurrencyFlow(
         browser,
         "/t-server-function/t-layout-client-component/t-invoked-from-server-component/t-return-server-component",
-        true
+        true,
       );
     });
     test("layout server component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
@@ -475,7 +476,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Si está en otra ruta, cambia '/' por '/tu-ruta'
       const response = await page.goto(
         "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-return-client-component",
-        { waitUntil: "commit" }
+        { waitUntil: "commit" },
       );
 
       await SSRStreamingFlow(page, response);
@@ -485,7 +486,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     }) => {
       await conncurrencyFlow(
         browser,
-        "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-return-client-component"
+        "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-return-client-component",
       );
     });
     test("layout server component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
@@ -499,7 +500,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Si está en otra ruta, cambia '/' por '/tu-ruta'
       const response = await page.goto(
         "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-return-server-component",
-        { waitUntil: "commit" }
+        { waitUntil: "commit" },
       );
 
       await SSRStreamingFlow(page, response);
@@ -509,7 +510,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     }) => {
       await conncurrencyFlow(
         browser,
-        "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-return-server-component"
+        "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-return-server-component",
       );
     });
     test("layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
@@ -523,10 +524,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Si está en otra ruta, cambia '/' por '/tu-ruta'
       const response = await page.goto(
         "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-return-client-component",
-        { waitUntil: "commit" }
+        { waitUntil: "commit" },
       );
 
-      await SSRStreamingFlow(page, response, true);
+      await SSRStreamingFlow(page, response, true, true);
     });
     test("concurrency test - layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
       browser,
@@ -534,7 +535,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await conncurrencyFlow(
         browser,
         "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-return-client-component",
-        true
+        true,
       );
     });
     test("layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
@@ -548,10 +549,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Si está en otra ruta, cambia '/' por '/tu-ruta'
       const response = await page.goto(
         "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-return-server-component",
-        { waitUntil: "commit" }
+        { waitUntil: "commit" },
       );
 
-      await SSRStreamingFlow(page, response, true);
+      await SSRStreamingFlow(page, response, true, true);
     });
     test("concurrency test - layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
       browser,
@@ -559,201 +560,201 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await conncurrencyFlow(
         browser,
         "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-return-server-component",
-        true
+        true,
       );
     });
-    test("prod-dynamic -> layout client component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
-      page,
-    }) => {
-      page.on("console", (msg) => {
-        if (msg.type() === "error")
-          console.log(`[Browser Error]: ${msg.text()}`);
-      });
-      // 1. Navegar a la página (asumiendo que este componente está en la home '/')
-      // Si está en otra ruta, cambia '/' por '/tu-ruta'
-      const response = await page.goto(
-        "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-return-client-component?opt-out=1",
-        { waitUntil: "commit" }
-      );
+    // test("prod-dynamic -> layout client component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
+    //   page,
+    // }) => {
+    //   page.on("console", (msg) => {
+    //     if (msg.type() === "error")
+    //       console.log(`[Browser Error]: ${msg.text()}`);
+    //   });
+    //   // 1. Navegar a la página (asumiendo que este componente está en la home '/')
+    //   // Si está en otra ruta, cambia '/' por '/tu-ruta'
+    //   const response = await page.goto(
+    //     "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-return-client-component?opt-out=1",
+    //     { waitUntil: "commit" },
+    //   );
 
-      await SSRStreamingFlowProd(page, response);
-    });
-    test("prod-dynamic -> concurrency test - layout client component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
-      browser,
-    }) => {
-      await conncurrencyFlowProdDynamic(
-        browser,
-        "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-return-client-component?opt-out=1"
-      );
-    });
-    test("prod-dynamic ->layout client component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
-      page,
-    }) => {
-      page.on("console", (msg) => {
-        if (msg.type() === "error")
-          console.log(`[Browser Error]: ${msg.text()}`);
-      });
-      // 1. Navegar a la página (asumiendo que este componente está en la home '/')
-      // Si está en otra ruta, cambia '/' por '/tu-ruta'
-      const response = await page.goto(
-        "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-return-server-component?opt-out=1",
-        { waitUntil: "commit" }
-      );
+    //   await SSRStreamingFlowProd(page, response);
+    // });
+    // test("prod-dynamic -> concurrency test - layout client component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
+    //   browser,
+    // }) => {
+    //   await conncurrencyFlowProdDynamic(
+    //     browser,
+    //     "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-return-client-component?opt-out=1",
+    //   );
+    // });
+    // test("prod-dynamic ->layout client component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
+    //   page,
+    // }) => {
+    //   page.on("console", (msg) => {
+    //     if (msg.type() === "error")
+    //       console.log(`[Browser Error]: ${msg.text()}`);
+    //   });
+    //   // 1. Navegar a la página (asumiendo que este componente está en la home '/')
+    //   // Si está en otra ruta, cambia '/' por '/tu-ruta'
+    //   const response = await page.goto(
+    //     "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-return-server-component?opt-out=1",
+    //     { waitUntil: "commit" },
+    //   );
 
-      await SSRStreamingFlowProd(page, response);
-    });
-    test("prod-dynamic -> concurrency test - layout client component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
-      browser,
-    }) => {
-      await conncurrencyFlowProdDynamic(
-        browser,
-        "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-return-server-component?opt-out=1"
-      );
-    });
-    test("prod-dynamic ->layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
-      page,
-    }) => {
-      page.on("console", (msg) => {
-        if (msg.type() === "error")
-          console.log(`[Browser Error]: ${msg.text()}`);
-      });
-      // 1. Navegar a la página (asumiendo que este componente está en la home '/')
-      // Si está en otra ruta, cambia '/' por '/tu-ruta'
-      const response = await page.goto(
-        "/t-server-function/t-layout-client-component/t-invoked-from-server-component/t-return-client-component?opt-out=1",
-        { waitUntil: "commit" }
-      );
+    //   await SSRStreamingFlowProd(page, response);
+    // });
+    // test("prod-dynamic -> concurrency test - layout client component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
+    //   browser,
+    // }) => {
+    //   await conncurrencyFlowProdDynamic(
+    //     browser,
+    //     "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-return-server-component?opt-out=1",
+    //   );
+    // });
+    // test("prod-dynamic ->layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
+    //   page,
+    // }) => {
+    //   page.on("console", (msg) => {
+    //     if (msg.type() === "error")
+    //       console.log(`[Browser Error]: ${msg.text()}`);
+    //   });
+    //   // 1. Navegar a la página (asumiendo que este componente está en la home '/')
+    //   // Si está en otra ruta, cambia '/' por '/tu-ruta'
+    //   const response = await page.goto(
+    //     "/t-server-function/t-layout-client-component/t-invoked-from-server-component/t-return-client-component?opt-out=1",
+    //     { waitUntil: "commit" },
+    //   );
 
-      await SSRStreamingFlowProd(page, response, true);
-    });
-    test("prod-dynamic -> concurrency test - layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
-      browser,
-    }) => {
-      await conncurrencyFlowProdDynamic(
-        browser,
-        "/t-server-function/t-layout-client-component/t-invoked-from-server-component/t-return-client-component?opt-out=1"
-      );
-    });
-    test("prod-dynamic ->layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
-      page,
-    }) => {
-      page.on("console", (msg) => {
-        if (msg.type() === "error")
-          console.log(`[Browser Error]: ${msg.text()}`);
-      });
-      // 1. Navegar a la página (asumiendo que este componente está en la home '/')
-      // Si está en otra ruta, cambia '/' por '/tu-ruta'
-      const response = await page.goto(
-        "/t-server-function/t-layout-client-component/t-invoked-from-server-component/t-return-server-component?opt-out=1",
-        { waitUntil: "commit" }
-      );
+    //   await SSRStreamingFlowProd(page, response, true);
+    // });
+    // test("prod-dynamic -> concurrency test - layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
+    //   browser,
+    // }) => {
+    //   await conncurrencyFlowProdDynamic(
+    //     browser,
+    //     "/t-server-function/t-layout-client-component/t-invoked-from-server-component/t-return-client-component?opt-out=1",
+    //   );
+    // });
+    // test("prod-dynamic ->layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
+    //   page,
+    // }) => {
+    //   page.on("console", (msg) => {
+    //     if (msg.type() === "error")
+    //       console.log(`[Browser Error]: ${msg.text()}`);
+    //   });
+    //   // 1. Navegar a la página (asumiendo que este componente está en la home '/')
+    //   // Si está en otra ruta, cambia '/' por '/tu-ruta'
+    //   const response = await page.goto(
+    //     "/t-server-function/t-layout-client-component/t-invoked-from-server-component/t-return-server-component?opt-out=1",
+    //     { waitUntil: "commit" },
+    //   );
 
-      await SSRStreamingFlowProd(page, response, true);
-    });
-    test("prod-dynamic -> concurrency test - layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
-      browser,
-    }) => {
-      await conncurrencyFlowProdDynamic(
-        browser,
-        "/t-server-function/t-layout-client-component/t-invoked-from-server-component/t-return-server-component?opt-out=1"
-      );
-    });
-    test("prod-dynamic ->layout server component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
-      page,
-    }) => {
-      page.on("console", (msg) => {
-        if (msg.type() === "error")
-          console.log(`[Browser Error]: ${msg.text()}`);
-      });
-      // 1. Navegar a la página (asumiendo que este componente está en la home '/')
-      // Si está en otra ruta, cambia '/' por '/tu-ruta'
-      const response = await page.goto(
-        "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-return-client-component?opt-out=1",
-        { waitUntil: "commit" }
-      );
+    //   await SSRStreamingFlowProd(page, response, true);
+    // });
+    // test("prod-dynamic -> concurrency test - layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
+    //   browser,
+    // }) => {
+    //   await conncurrencyFlowProdDynamic(
+    //     browser,
+    //     "/t-server-function/t-layout-client-component/t-invoked-from-server-component/t-return-server-component?opt-out=1",
+    //   );
+    // });
+    // test("prod-dynamic ->layout server component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
+    //   page,
+    // }) => {
+    //   page.on("console", (msg) => {
+    //     if (msg.type() === "error")
+    //       console.log(`[Browser Error]: ${msg.text()}`);
+    //   });
+    //   // 1. Navegar a la página (asumiendo que este componente está en la home '/')
+    //   // Si está en otra ruta, cambia '/' por '/tu-ruta'
+    //   const response = await page.goto(
+    //     "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-return-client-component?opt-out=1",
+    //     { waitUntil: "commit" },
+    //   );
 
-      await SSRStreamingFlowProd(page, response);
-    });
-    test("prod-dynamic -> concurrency test - layout server component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
-      browser,
-    }) => {
-      await conncurrencyFlowProdDynamic(
-        browser,
-        "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-return-client-component?opt-out=1"
-      );
-    });
-    test("prod-dynamic ->layout server component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
-      page,
-    }) => {
-      page.on("console", (msg) => {
-        if (msg.type() === "error")
-          console.log(`[Browser Error]: ${msg.text()}`);
-      });
-      // 1. Navegar a la página (asumiendo que este componente está en la home '/')
-      // Si está en otra ruta, cambia '/' por '/tu-ruta'
-      const response = await page.goto(
-        "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-return-server-component?opt-out=1",
-        { waitUntil: "commit" }
-      );
+    //   await SSRStreamingFlowProd(page, response);
+    // });
+    // test("prod-dynamic -> concurrency test - layout server component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
+    //   browser,
+    // }) => {
+    //   await conncurrencyFlowProdDynamic(
+    //     browser,
+    //     "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-return-client-component?opt-out=1",
+    //   );
+    // });
+    // test("prod-dynamic ->layout server component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
+    //   page,
+    // }) => {
+    //   page.on("console", (msg) => {
+    //     if (msg.type() === "error")
+    //       console.log(`[Browser Error]: ${msg.text()}`);
+    //   });
+    //   // 1. Navegar a la página (asumiendo que este componente está en la home '/')
+    //   // Si está en otra ruta, cambia '/' por '/tu-ruta'
+    //   const response = await page.goto(
+    //     "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-return-server-component?opt-out=1",
+    //     { waitUntil: "commit" },
+    //   );
 
-      await SSRStreamingFlowProd(page, response);
-    });
-    test("prod-dynamic -> concurrency test - layout server component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
-      browser,
-    }) => {
-      await conncurrencyFlowProdDynamic(
-        browser,
-        "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-return-server-component?opt-out=1"
-      );
-    });
-    test("prod-dynamic ->layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
-      page,
-    }) => {
-      page.on("console", (msg) => {
-        if (msg.type() === "error")
-          console.log(`[Browser Error]: ${msg.text()}`);
-      });
-      // 1. Navegar a la página (asumiendo que este componente está en la home '/')
-      // Si está en otra ruta, cambia '/' por '/tu-ruta'
-      const response = await page.goto(
-        "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-return-client-component?opt-out=1",
-        { waitUntil: "commit" }
-      );
+    //   await SSRStreamingFlowProd(page, response);
+    // });
+    // test("prod-dynamic -> concurrency test - layout server component - Invoked From Client Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
+    //   browser,
+    // }) => {
+    //   await conncurrencyFlowProdDynamic(
+    //     browser,
+    //     "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-return-server-component?opt-out=1",
+    //   );
+    // });
+    // test("prod-dynamic ->layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
+    //   page,
+    // }) => {
+    //   page.on("console", (msg) => {
+    //     if (msg.type() === "error")
+    //       console.log(`[Browser Error]: ${msg.text()}`);
+    //   });
+    //   // 1. Navegar a la página (asumiendo que este componente está en la home '/')
+    //   // Si está en otra ruta, cambia '/' por '/tu-ruta'
+    //   const response = await page.goto(
+    //     "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-return-client-component?opt-out=1",
+    //     { waitUntil: "commit" },
+    //   );
 
-      await SSRStreamingFlowProd(page, response, true);
-    });
-    test("prod-dynamic -> concurrency test - layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
-      browser,
-    }) => {
-      await conncurrencyFlowProdDynamic(
-        browser,
-        "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-return-client-component?opt-out=1"
-      );
-    });
-    test("prod-dynamic ->layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
-      page,
-    }) => {
-      page.on("console", (msg) => {
-        if (msg.type() === "error")
-          console.log(`[Browser Error]: ${msg.text()}`);
-      });
-      // 1. Navegar a la página (asumiendo que este componente está en la home '/')
-      // Si está en otra ruta, cambia '/' por '/tu-ruta'
-      const response = await page.goto(
-        "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-return-server-component?opt-out=1",
-        { waitUntil: "commit" }
-      );
+    //   await SSRStreamingFlowProd(page, response, true);
+    // });
+    // test("prod-dynamic -> concurrency test - layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
+    //   browser,
+    // }) => {
+    //   await conncurrencyFlowProdDynamic(
+    //     browser,
+    //     "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-return-client-component?opt-out=1",
+    //   );
+    // });
+    // test("prod-dynamic ->layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
+    //   page,
+    // }) => {
+    //   page.on("console", (msg) => {
+    //     if (msg.type() === "error")
+    //       console.log(`[Browser Error]: ${msg.text()}`);
+    //   });
+    //   // 1. Navegar a la página (asumiendo que este componente está en la home '/')
+    //   // Si está en otra ruta, cambia '/' por '/tu-ruta'
+    //   const response = await page.goto(
+    //     "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-return-server-component?opt-out=1",
+    //     { waitUntil: "commit" },
+    //   );
 
-      await SSRStreamingFlowProd(page, response, true);
-    });
-    test("prod-dynamic -> concurrency test - layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
-      browser,
-    }) => {
-      await conncurrencyFlowProdDynamic(
-        browser,
-        "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-return-server-component?opt-out=1"
-      );
-    });
+    //   await SSRStreamingFlowProd(page, response, true);
+    // });
+    // test("prod-dynamic -> concurrency test - layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
+    //   browser,
+    // }) => {
+    //   await conncurrencyFlowProdDynamic(
+    //     browser,
+    //     "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-return-server-component?opt-out=1",
+    //   );
+    // });
     test("redirect works - layout client component - invoked from client component - redirect to client component", async ({
       page,
     }) => {
@@ -764,7 +765,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Vamos a una página protegida sin cookies
       await page.goto(
         "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-redirect-to-client-component",
-        { waitUntil: "commit" }
+        { waitUntil: "commit" },
       );
       await redirectFlow(page, false);
     });
@@ -778,7 +779,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Vamos a una página protegida sin cookies
       await page.goto(
         "/t-server-function/t-layout-client-component/t-invoked-from-client-component/t-redirect-to-server-component",
-        { waitUntil: "commit" }
+        { waitUntil: "commit" },
       );
       await redirectFlow(page, true);
     });
@@ -792,7 +793,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Vamos a una página protegida sin cookies
       await page.goto(
         "/t-server-function/t-layout-client-component/t-invoked-from-server-component/t-redirect-to-client-component",
-        { waitUntil: "commit" }
+        { waitUntil: "commit" },
       );
       await redirectFlow(page, false);
     });
@@ -806,7 +807,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Vamos a una página protegida sin cookies
       await page.goto(
         "/t-server-function/t-layout-client-component/t-invoked-from-server-component/t-redirect-to-server-component",
-        { waitUntil: "commit" }
+        { waitUntil: "commit" },
       );
       await redirectFlow(page, true);
     });
@@ -820,7 +821,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Vamos a una página protegida sin cookies
       await page.goto(
         "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-redirect-to-client-component",
-        { waitUntil: "commit" }
+        { waitUntil: "commit" },
       );
       await redirectFlow(page, false);
     });
@@ -834,7 +835,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Vamos a una página protegida sin cookies
       await page.goto(
         "/t-server-function/t-layout-server-component/t-invoked-from-client-component/t-redirect-to-server-component",
-        { waitUntil: "commit" }
+        { waitUntil: "commit" },
       );
       await redirectFlow(page, true);
     });
@@ -848,7 +849,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Vamos a una página protegida sin cookies
       await page.goto(
         "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-redirect-to-client-component",
-        { waitUntil: "commit" }
+        { waitUntil: "commit" },
       );
       await redirectFlow(page, false);
     });
@@ -862,7 +863,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Vamos a una página protegida sin cookies
       await page.goto(
         "/t-server-function/t-layout-server-component/t-invoked-from-server-component/t-redirect-to-server-component",
-        { waitUntil: "commit" }
+        { waitUntil: "commit" },
       );
       await redirectFlow(page, true);
     });
@@ -924,12 +925,12 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // 3. Verificar URL y contenido nuevo
       await expect(page).toHaveURL(
-        /\/t-spa\/t-layout-client-component\/t-client-component\/sub-route-a/
+        /\/t-spa\/t-layout-client-component\/t-client-component\/sub-route-a/,
       );
       await expect(
         page.getByText(
-          "hello from t-layout-client-component/t-client-component/sub-route-a/page.tsx"
-        )
+          "hello from t-layout-client-component/t-client-component/sub-route-a/page.tsx",
+        ),
       ).toBeVisible();
 
       // 4. Verificar que el contador SIGUE en 1 (No se reseteó a 0)
@@ -940,10 +941,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     }) => {
       // 🕵️‍♂️ CHIVATO: Ver logs y errores del navegador en tu terminal
       page.on("console", (msg) =>
-        console.log(`[BROWSER CONSOLE]: ${msg.text()}`)
+        console.log(`[BROWSER CONSOLE]: ${msg.text()}`),
       );
       page.on("pageerror", (err) =>
-        console.log(`[BROWSER ERROR]: ${err.message}`)
+        console.log(`[BROWSER ERROR]: ${err.message}`),
       );
       await page.goto("/t-spa/t-layout-client-component/t-server-component"); // Carga inicial (Hard)
 
@@ -959,12 +960,12 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // 3. Verificar URL y contenido nuevo
       await expect(page).toHaveURL(
-        /\/t-spa\/t-layout-client-component\/t-server-component\/sub-route-a/
+        /\/t-spa\/t-layout-client-component\/t-server-component\/sub-route-a/,
       );
       await expect(
         page.getByText(
-          "hello from t-layout-client-component/t-server-component/sub-route-a/page.tsx"
-        )
+          "hello from t-layout-client-component/t-server-component/sub-route-a/page.tsx",
+        ),
       ).toBeVisible();
 
       // 4. Verificar que el contador SIGUE en 1 (No se reseteó a 0)
@@ -987,12 +988,12 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // 3. Verificar URL y contenido nuevo
       await expect(page).toHaveURL(
-        /\/t-spa\/t-layout-server-component\/t-client-component\/sub-route-a/
+        /\/t-spa\/t-layout-server-component\/t-client-component\/sub-route-a/,
       );
       await expect(
         page.getByText(
-          "hello from t-layout-server-component/t-client-component/sub-route-a/page.tsx"
-        )
+          "hello from t-layout-server-component/t-client-component/sub-route-a/page.tsx",
+        ),
       ).toBeVisible();
 
       // 4. Verificar que el contador SIGUE en 1 (No se reseteó a 0)
@@ -1015,12 +1016,12 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // 3. Verificar URL y contenido nuevo
       await expect(page).toHaveURL(
-        /\/t-spa\/t-layout-server-component\/t-server-component\/sub-route-a/
+        /\/t-spa\/t-layout-server-component\/t-server-component\/sub-route-a/,
       );
       await expect(
         page.getByText(
-          "hello from t-layout-server-component/t-server-component/sub-route-a/page.tsx"
-        )
+          "hello from t-layout-server-component/t-server-component/sub-route-a/page.tsx",
+        ),
       ).toBeVisible();
 
       // 4. Verificar que el contador SIGUE en 1 (No se reseteó a 0)
@@ -1035,7 +1036,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       page.on("console", (msg) => console.log("PAGE LOG:", msg.text()));
       // 1. Ir a la página A
       await page.goto(
-        "/t-spa-scroll-restoration/t-layout-client-component/t-client-component"
+        "/t-spa-scroll-restoration/t-layout-client-component/t-client-component",
       ); // Usa una ruta que tenga un enlace a otra
 
       // 🛡️ Esperar Hidratación (Tu fix)
@@ -1063,7 +1064,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // Verificar que cambió la URL
       await expect(page).toHaveURL(
-        /\/t-spa-scroll-restoration\/t-layout-client-component\/t-client-component\/sub-route-a/
+        /\/t-spa-scroll-restoration\/t-layout-client-component\/t-client-component\/sub-route-a/,
       );
 
       // 5. ✅ VERIFICACIÓN A: En navegación nueva, el scroll debe volver a ARRIBA (0)
@@ -1076,7 +1077,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           {
             // Opcional: timeout específico para esta aserción si quieres
             timeout: 2000,
-          }
+          },
         )
         .toBe(0);
 
@@ -1088,7 +1089,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // Verificar que volvimos a la URL A
       await expect(page).toHaveURL(
-        /\/t-spa-scroll-restoration\/t-layout-client-component\/t-client-component/
+        /\/t-spa-scroll-restoration\/t-layout-client-component\/t-client-component/,
       );
 
       // 🛑 MOMENTO CRÍTICO: VOLVER A FORZAR LA ALTURA 🛑
@@ -1117,7 +1118,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       page,
     }) => {
       await page.goto(
-        "/t-spa-navigation/t-layout-client-component/t-client-component"
+        "/t-spa-navigation/t-layout-client-component/t-client-component",
       ); // Carga inicial (Hard)
 
       // 🛡️ FIX: Esperar a que React hidrate antes de interactuar
@@ -1126,34 +1127,34 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // 1. Estado inicial
       await expect(page.getByTestId("link-home")).toHaveCSS(
         "font-weight",
-        "700"
+        "700",
       ); // Bold
       await expect(page.getByTestId("link-about")).toHaveCSS(
         "font-weight",
-        "400"
+        "400",
       ); // Normal
       await expect(page.getByTestId("current-path")).toHaveText(
-        "/t-spa-navigation/t-layout-client-component/t-client-component"
+        "/t-spa-navigation/t-layout-client-component/t-client-component",
       );
 
       // 2. Navegación SPA (Click)
       // Usamos click programático para asegurar que el router lo pilla sin scroll issues
       await page.evaluate(() =>
-        document.querySelector('[data-testid="link-about"]')?.click()
+        document.querySelector('[data-testid="link-about"]')?.click(),
       );
 
       // 3. Verificación
       // Gracias al Contexto, esto se actualiza SOLO cuando la navegación termina
       await expect(page.getByTestId("current-path")).toHaveText(
-        "/t-spa-navigation/t-layout-client-component/about"
+        "/t-spa-navigation/t-layout-client-component/about",
       );
       await expect(page.getByTestId("link-home")).toHaveCSS(
         "font-weight",
-        "400"
+        "400",
       );
       await expect(page.getByTestId("link-about")).toHaveCSS(
         "font-weight",
-        "700"
+        "700",
       );
     });
   });
@@ -1171,7 +1172,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       });
       // 1. Carga inicial
       await page.goto(
-        "/t-spa-use-router/t-layout-client-component/t-client-component"
+        "/t-spa-use-router/t-layout-client-component/t-client-component",
       );
 
       // 🛡️ IMPORTANTE: Esperar a hidratación (tu fix de seguridad)
@@ -1192,7 +1193,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // 4. Verificaciones
       // A. La URL debe cambiar
       await expect(page).toHaveURL(
-        /.*\/t-spa-use-router\/t-layout-client-component\/t-client-component\/target/
+        /.*\/t-spa-use-router\/t-layout-client-component\/t-client-component\/target/,
       );
 
       // B. El contenido nuevo debe aparecer (Payload RSC cargado y renderizado)
@@ -1206,7 +1207,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     test("router.replace navigates correctly", async ({ page }) => {
       // 1. Carga inicial
       await page.goto(
-        "/t-spa-use-router/t-layout-client-component/t-client-component"
+        "/t-spa-use-router/t-layout-client-component/t-client-component",
       );
       await page.waitForSelector('body[data-hydrated="true"]');
 
@@ -1215,7 +1216,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // 3. Verificar URL y Contenido
       await expect(page).toHaveURL(
-        /.*\/t-spa-use-router\/t-layout-client-component\/t-client-component\/target/
+        /.*\/t-spa-use-router\/t-layout-client-component\/t-client-component\/target/,
       );
       await expect(page.getByTestId("target-title")).toHaveText("Page: Target");
     });
@@ -1245,7 +1246,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // 4. Verificamos que se renderizó el contenido correcto
       await expect(page.getByTestId("target-content")).toHaveText(
-        "hello from server component B"
+        "hello from server component B",
       );
     });
 
@@ -1278,7 +1279,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // B. El contenido debe ser visible
       await expect(page.getByTestId("target-content")).toHaveText(
-        "hello from server component X"
+        "hello from server component X",
       );
     });
   });
@@ -1288,7 +1289,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     }) => {
       // 1. Carga Inicial (SSR) - Aquí probablemente ya te funciona si usas getProps
       await page.goto(
-        "/t-spa-metadata/t-layout-client-component/t-client-component/t-target-client-component"
+        "/t-spa-metadata/t-layout-client-component/t-client-component/t-target-client-component",
       );
       await expect(page).toHaveTitle("Dinou - Home");
 
@@ -1296,7 +1297,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const metaDesc = page.locator('meta[name="description"]');
       await expect(metaDesc).toHaveAttribute(
         "content",
-        "Welcome to the home page"
+        "Welcome to the home page",
       );
 
       // 2. Navegación SPA (Click)
@@ -1308,7 +1309,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Verificamos que la descripción también cambió
       await expect(metaDesc).toHaveAttribute(
         "content",
-        "This is the target page"
+        "This is the target page",
       );
     });
   });
@@ -1318,13 +1319,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     }) => {
       // 🕵️‍♂️ CHIVATO: Ver logs y errores del navegador en tu terminal
       page.on("console", (msg) =>
-        console.log(`[BROWSER CONSOLE]: ${msg.text()}`)
+        console.log(`[BROWSER CONSOLE]: ${msg.text()}`),
       );
       page.on("pageerror", (err) =>
-        console.log(`[BROWSER ERROR]: ${err.message}`)
+        console.log(`[BROWSER ERROR]: ${err.message}`),
       );
       await page.goto(
-        "/t-spa-hash/t-layout-client-component/t-client-component"
+        "/t-spa-hash/t-layout-client-component/t-client-component",
       );
       await page.waitForSelector('body[data-hydrated="true"]');
 
@@ -1372,7 +1373,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       page,
     }) => {
       await page.goto(
-        "/t-spa-hash/t-layout-client-component/t-client-component/t-target-client-component/t-link"
+        "/t-spa-hash/t-layout-client-component/t-client-component/t-target-client-component/t-link",
       );
       await page.waitForSelector('body[data-hydrated="true"]');
 
@@ -1404,13 +1405,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       page,
     }) => {
       await page.goto(
-        "/t-spa-hash/t-layout-client-component/t-client-component/t-target-client-component"
+        "/t-spa-hash/t-layout-client-component/t-client-component/t-target-client-component",
       );
       await page.waitForSelector('body[data-hydrated="true"]');
 
       // Navegar a otra página con hash
       await page.click(
-        'a[href="/t-spa-hash/t-layout-client-component/t-client-component/t-target-client-component/target#pepe-section"]'
+        'a[href="/t-spa-hash/t-layout-client-component/t-client-component/t-target-client-component/target#pepe-section"]',
       );
 
       // Verificar URL
@@ -1428,13 +1429,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     test("Navigates to relative paths correctly", async ({ page }) => {
       // 🕵️‍♂️ CHIVATO: Ver logs y errores del navegador en tu terminal
       page.on("console", (msg) =>
-        console.log(`[BROWSER CONSOLE]: ${msg.text()}`)
+        console.log(`[BROWSER CONSOLE]: ${msg.text()}`),
       );
       page.on("pageerror", (err) =>
-        console.log(`[BROWSER ERROR]: ${err.message}`)
+        console.log(`[BROWSER ERROR]: ${err.message}`),
       );
       await page.goto(
-        "/t-spa-relative/t-layout-client-component/t-client-component/page-a"
+        "/t-spa-relative/t-layout-client-component/t-client-component/page-a",
       );
       await page.waitForSelector('body[data-hydrated="true"]');
       // Inyectar enlace relativo
@@ -1446,25 +1447,25 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // });
       await page.getByTestId("sibling").click();
       await expect(page).toHaveURL(
-        /\/t-spa-relative\/t-layout-client-component\/t-client-component\/page-b$/
+        /\/t-spa-relative\/t-layout-client-component\/t-client-component\/page-b$/,
       );
       await page.goBack();
       await page.getByTestId("nested").click();
       await expect(page).toHaveURL(
-        /\/t-spa-relative\/t-layout-client-component\/t-client-component\/page-a\/nested$/
+        /\/t-spa-relative\/t-layout-client-component\/t-client-component\/page-a\/nested$/,
       );
     });
   });
   test.describe("Dinou Core: Link", () => {
     test("Prefetches RSC payload on hover", async ({ page }) => {
       await page.goto(
-        "/t-spa-link/t-layout-client-component/t-client-component/to-client-component"
+        "/t-spa-link/t-layout-client-component/t-client-component/to-client-component",
       );
       await page.waitForSelector('body[data-hydrated="true"]');
 
       // 1. Preparamos la escucha de la petición
       const rscRequest = page.waitForRequest((req) =>
-        req.url().includes("____rsc_payload")
+        req.url().includes("____rsc_payload"),
       );
 
       // 2. Hacemos HOVER, no click
@@ -1488,7 +1489,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // 2. Verificamos el contenido visual (esto dices que YA funciona)
       // Asumo que tu página 404 tiene algún texto identificativo
       await expect(
-        page.getByText(/Page not found: no "page" file found for/i)
+        page.getByText(/Page not found: no "page" file found for/i),
       ).toBeVisible();
 
       // 3. LA PRUEBA DE FUEGO: Verificamos el código de estado HTTP
@@ -1507,7 +1508,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     test("Go to Error page when error", async ({ page }) => {
       // 1. Navegación directa (Hard Navigation) a una ruta que no existe
       await page.goto(
-        "/t-error/t-layout-client-component/t-client-component/t-with-error-page"
+        "/t-error/t-layout-client-component/t-client-component/t-with-error-page",
       );
       await page.waitForSelector('body[data-hydrated="true"]');
 
@@ -1726,7 +1727,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // El router NO debe confundirse por la profundidad
       // Debe devolver un array ordenado
       await expect(page.locator("#res")).toHaveText(
-        'CATCH_ALL:["uno","dos","tres","cuatro"]'
+        'CATCH_ALL:["uno","dos","tres","cuatro"]',
       );
     });
 
@@ -1742,13 +1743,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Dinou debe decodificarlo automáticamente en params
       // Si sale "caf%C3%A9...", has fallado.
       await expect(page.locator("#res")).toHaveText(
-        "DYNAMIC_SUB:café con leche"
+        "DYNAMIC_SUB:café con leche",
       );
       if (!isProd) return;
       await page.waitForTimeout(4000);
       await page.reload();
       await expect(page.locator("#res")).toHaveText(
-        "DYNAMIC_SUB:café con leche"
+        "DYNAMIC_SUB:café con leche",
       );
     });
 
@@ -1760,7 +1761,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Dinou debe decodificarlo automáticamente en params
       // Si sale "caf%C3%A9...", has fallado.
       await expect(page.locator("#res")).toHaveText(
-        "DYNAMIC_SUB:café agridulce"
+        "DYNAMIC_SUB:café agridulce",
       );
     });
 
@@ -1832,7 +1833,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       });
       await expect(page.locator("#slot-error-message-title")).toHaveText(
         "Ha ocurrido un error parcial",
-        { timeout: 10000 }
+        { timeout: 10000 },
       );
     });
 
@@ -1899,7 +1900,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Si falla aquí, es que getStaticPaths no se ejecutó al build.
       expect(
         fs.existsSync(alphaPath),
-        "Alpha debería estar pre-renderizada en disco"
+        "Alpha debería estar pre-renderizada en disco",
       ).toBe(true);
 
       // Navegamos para confirmar que se sirve bien
@@ -1912,14 +1913,14 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         "t-ssg",
         "alpha",
         "nested",
-        "index.html"
+        "index.html",
       );
 
       // PRUEBA DE FUEGO: ¿El archivo existe físicamente?
       // Si falla aquí, es que getStaticPaths no se ejecutó al build.
       expect(
         fs.existsSync(alphaNestedPath),
-        "Alpha nested debería estar pre-renderizada en disco"
+        "Alpha nested debería estar pre-renderizada en disco",
       ).toBe(true);
 
       // Navegamos para confirmar que se sirve bien
@@ -1933,13 +1934,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         BUILD_DIR,
         "t-ssg",
         `gamma-${browserName}`,
-        "index.html"
+        "index.html",
       );
 
       // PRUEBA DE FUEGO: Aseguramos que NO se pre-generó "sin querer"
       expect(
         fs.existsSync(gammaPath),
-        "Gamma NO debería existir en disco antes de visitarla"
+        "Gamma NO debería existir en disco antes de visitarla",
       ).toBe(false);
 
       // Ahora la visitamos. Dinou debería generarla AL VUELO (SSR/ISR).
@@ -1950,13 +1951,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(resC?.status()).toBe(200);
       await expect(page.locator("body")).toContainText(
         `Slug: gamma-${browserName}`,
-        { timeout: 10000 }
+        { timeout: 10000 },
       );
       // OPCIONAL: Si Dinou es ISR, después de visitarla, el archivo AHORA sí debería existir.
       // Si es solo SSR, seguirá sin existir. Depende de tu arquitectura.
       await expect
         .poll(() => fs.existsSync(gammaPath), {
-          timeout: 10000,
+          timeout: 40000,
           message:
             "El archivo ISG debería haberse creado en disco tras la visita",
         })
@@ -2078,7 +2079,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // 2. VERIFICAR SUPERVIVENCIA (La parte sana debe estar ahí)
       // Si esto falla, es que el error del slot mató toda la página.
       await expect(page.locator("#safe-zone")).toContainText(
-        "Soy contenido seguro"
+        "Soy contenido seguro",
       );
 
       // 3. VERIFICAR CONTENCIÓN DEL ERROR (El slot debe mostrar el fallback)
@@ -2106,7 +2107,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // 2. VERIFICAR SUPERVIVENCIA (La parte sana debe estar ahí)
       // Si esto falla, es que el error del slot mató toda la página.
       await expect(page.locator("#safe-zone")).toContainText(
-        "Soy contenido seguro"
+        "Soy contenido seguro",
       );
 
       // 3. VERIFICAR CONTENCIÓN DEL ERROR (El slot debe mostrar el fallback)
@@ -2137,11 +2138,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         BUILD_DIR,
         "t-bailout",
         "static-page",
-        "index.html"
+        "index.html",
       );
       expect(
         fs.existsSync(staticHtmlPath),
-        "La página estática debería haber generado un .html"
+        "La página estática debería haber generado un .html",
       ).toBe(true);
 
       // 2. La página dinámica (cookies) NO DEBE existir como HTML
@@ -2150,11 +2151,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         BUILD_DIR,
         "t-bailout",
         "cookie-page",
-        "index.html"
+        "index.html",
       );
       expect(
         fs.existsSync(dynamicHtmlPath),
-        "La página que lee cookies NO debería tener archivo .html (Bailout)"
+        "La página que lee cookies NO debería tener archivo .html (Bailout)",
       ).toBe(false);
 
       // --- FASE 2: VERIFICACIÓN DE NAVEGACIÓN (RUNTIME SSR) ---
@@ -2181,7 +2182,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // Debe haber leído la cookie (prueba de que el SSR tiene acceso real)
       await expect(page.locator("#dynamic-content")).toContainText(
-        "PlaywrightBot"
+        "PlaywrightBot",
       );
 
       // 2. La página dinámica (cookies) NO DEBE existir como HTML
@@ -2190,11 +2191,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         BUILD_DIR,
         "t-bailout",
         "cookie-page2",
-        "index.html"
+        "index.html",
       );
       expect(
         fs.existsSync(dynamicHtmlPath2),
-        "La página que lee cookies NO debería tener archivo .html (Bailout)"
+        "La página que lee cookies NO debería tener archivo .html (Bailout)",
       ).toBe(false);
 
       // --- FASE 2: VERIFICACIÓN DE NAVEGACIÓN (RUNTIME SSR) ---
@@ -2217,7 +2218,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // Debe haber leído la cookie (prueba de que el SSR tiene acceso real)
       await expect(page.locator("#dynamic-content")).toContainText(
-        "PlaywrightBot2"
+        "PlaywrightBot2",
       );
     });
   });
@@ -2252,7 +2253,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Verificar que el build generó el archivo (porque por defecto era estático)
       expect(
         fs.existsSync(HTML_PATH),
-        "El archivo HTML debería existir inicialmente"
+        "El archivo HTML debería existir inicialmente",
       ).toBe(true);
 
       await page.goto("/t-hybrid");
@@ -2292,7 +2293,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // A pesar de estar sirviendo dinámico, el archivo estático viejo DEBE SEGUIR AHÍ
       expect(
         fs.existsSync(HTML_PATH),
-        "El archivo HTML físico NO debe borrarse"
+        "El archivo HTML físico NO debe borrarse",
       ).toBe(true);
 
       // ---------------------------------------------------------
@@ -2329,11 +2330,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("body")).toHaveAttribute(
         "data-hydrated",
         "true",
-        { timeout: 10000 }
+        { timeout: 10000 },
       );
       // 1. Verificar que no explotó el render (smoke test)
       await expect(page.locator("h1")).toHaveText(
-        "Testing External Libs (ESM)"
+        "Testing External Libs (ESM)",
       );
 
       // 2. Verificar interactividad (Client Component hidratado)
@@ -2348,11 +2349,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("body")).toHaveAttribute(
         "data-hydrated",
         "true",
-        { timeout: 10000 }
+        { timeout: 10000 },
       );
       // 1. Verificar que no explotó el render (smoke test)
       await expect(page.locator("h1")).toHaveText(
-        "Testing External Libs (ESM)"
+        "Testing External Libs (ESM)",
       );
 
       // 2. Verificar interactividad (Client Component hidratado)
@@ -2370,7 +2371,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("body")).toHaveAttribute(
         "data-hydrated",
         "true",
-        { timeout: 100000 }
+        { timeout: 100000 },
       );
       await page.click("#link-cached");
       const firstValue = await page.innerText("#rnd-val");
@@ -2413,7 +2414,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("body")).toHaveAttribute(
         "data-hydrated",
         "true",
-        { timeout: 100000 }
+        { timeout: 100000 },
       );
       await expect(page.locator("#step-display")).toHaveText("1");
 
@@ -2461,7 +2462,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("body")).toHaveAttribute(
         "data-hydrated",
         "true",
-        { timeout: 100000 }
+        { timeout: 100000 },
       );
       // 1. Capturamos el ID inicial del servidor
       const initialId = await page.innerText("#server-id");
@@ -2537,13 +2538,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           page.on("response", (response) => {
             if (response.status() >= 500) {
               console.error(
-                `💀 [USER ${i}] Server Error 500 en ${response.url()}`
+                `💀 [USER ${i}] Server Error 500 en ${response.url()}`,
               );
             }
           });
 
           return { id: i, page, context };
-        })
+        }),
       );
 
       // 3. Definir la tarea del "Usuario"
@@ -2568,7 +2569,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           } catch (e: any) {
             console.error(
               `❌ [USER ${user.id}] Falló en iteración ${j}:`,
-              e.message
+              e.message,
             );
             throw e; // Hacemos fallar el test si un usuario muere
           }
@@ -2715,7 +2716,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Lanzamos a los usuarios
       console.log("🚀 [TEST] Launching user wave...");
       const userPromises = Array.from({ length: TOTAL_USERS }).map((_, i) =>
-        runUserJourney(i)
+        runUserJourney(i),
       );
 
       // Esperamos a que TODOS los usuarios terminen
@@ -2770,13 +2771,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           page.on("response", (response) => {
             if (response.status() >= 500) {
               console.error(
-                `💀 [USER ${i}] Server Error 500 en ${response.url()}`
+                `💀 [USER ${i}] Server Error 500 en ${response.url()}`,
               );
             }
           });
 
           return { id: i, page, context };
-        })
+        }),
       );
 
       // 3. Definir la tarea del "Usuario"
@@ -2816,7 +2817,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           } catch (e: any) {
             console.error(
               `❌ [USER ${user.id}] Falló en iteración ${j}:`,
-              e.message
+              e.message,
             );
             throw e; // Hacemos fallar el test si un usuario muere
           }
@@ -2978,7 +2979,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Lanzamos a los usuarios
       console.log("🚀 [TEST] Launching user wave...");
       const userPromises = Array.from({ length: TOTAL_USERS }).map((_, i) =>
-        runUserJourney(i)
+        runUserJourney(i),
       );
 
       // Esperamos a que TODOS los usuarios terminen

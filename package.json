@@ -26,7 +26,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "dinou": "^4.0.0",
+    "dinou": "file:./dinou",
     "jotai-wrapper": "^1.0.3",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
