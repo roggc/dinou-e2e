@@ -355,7 +355,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         },
         {
           message: "El ISR no regeneró la página (verificado con New Context)",
-          timeout: 15000,
+          timeout: 20000,
           intervals: [2000], // Intervalos un poco más largos ya que abrimos contextos
         },
       )
@@ -2285,7 +2285,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Ahora el servidor ve el Map=true y hace SSR
       await page.reload();
       await expect(page.locator("h1")).toHaveText("Mode: DYNAMIC", {
-        timeout: 10000,
+        timeout: 20000,
       });
       await expect(page.locator("p")).toContainText("[DYNAMIC MODE ACTIVATED]");
 

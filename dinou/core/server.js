@@ -54,11 +54,11 @@ if (isDevelopment) {
     process.cwd(),
     isWebpack
       ? `${outputFolder}/react-client-manifest.json`
-      : `react_client_manifest/react-client-manifest.json`
+      : `react_client_manifest/react-client-manifest.json`,
   );
   const manifestFolderPath = path.resolve(
     process.cwd(),
-    isWebpack ? outputFolder : "react_client_manifest"
+    isWebpack ? outputFolder : "react_client_manifest",
   );
 
   let manifestWatcher = null;
@@ -139,7 +139,7 @@ if (isDevelopment) {
         }
       } catch (err) {
         console.warn(
-          `[Server HMR] Could not resolve or clear ${modulePath}: ${err.message}`
+          `[Server HMR] Could not resolve or clear ${modulePath}: ${err.message}`,
         );
       }
     }
@@ -234,7 +234,7 @@ if (!isDevelopment) {
     process.cwd(),
     isWebpack
       ? `${outputFolder}/server-functions-manifest.json`
-      : `server_functions_manifest/server-functions-manifest.json`
+      : `server_functions_manifest/server-functions-manifest.json`,
   ); // Adjust 'dist/' to your outdir
   if (existsSync(manifestPath)) {
     serverFunctionsManifest = JSON.parse(readFileSync(manifestPath, "utf8"));
@@ -258,7 +258,7 @@ function getContext(req, res) {
   const safeResCall = (methodName, ...args) => {
     if (res.headersSent) {
       console.log(
-        `[Dinou] res.${methodName} called but headers already sent. Ignoring.`
+        `[Dinou] res.${methodName} called but headers already sent. Ignoring.`,
       );
       // console.warn(
       //   `[Dinou Warning] RSC Stream active. Ignoring res.${methodName}() to avoid crash.`
@@ -301,6 +301,12 @@ function getContext(req, res) {
         cookie: req.headers["cookie"],
         referer: req.headers["referer"],
         host: req.headers["host"],
+        authorization: req.headers["authorization"],
+        "accept-language": req.headers["accept-language"],
+        "x-forwarded-for": req.headers["x-forwarded-for"],
+        forwarded: req.headers["forwarded"],
+        "content-type": req.headers["content-type"],
+        origin: req.headers["origin"],
       },
       query: { ...req.query },
       path: req.path,
@@ -344,6 +350,12 @@ function getContextForServerFunctionEndpoint(req, res) {
         cookie: req.headers["cookie"],
         referer: req.headers["referer"],
         host: req.headers["host"],
+        authorization: req.headers["authorization"],
+        "accept-language": req.headers["accept-language"],
+        "x-forwarded-for": req.headers["x-forwarded-for"],
+        forwarded: req.headers["forwarded"],
+        "content-type": req.headers["content-type"],
+        origin: req.headers["origin"],
       },
       query: { ...req.query },
       path: req.path,
@@ -385,7 +397,7 @@ function getContextForServerFunctionEndpoint(req, res) {
         // 🛑 Security: JS cannot write HttpOnly cookies
         if (options && options.httpOnly) {
           console.error(
-            `[Dinou Error] Cannot set HttpOnly cookie '${name}' in Server Function endpoint because streaming has started.`
+            `[Dinou Error] Cannot set HttpOnly cookie '${name}' in Server Function endpoint because streaming has started.`,
           );
           return;
         }
@@ -426,7 +438,7 @@ function getContextForServerFunctionEndpoint(req, res) {
         const safePath = JSON.stringify(path);
 
         res.write(
-          `<script>document.cookie = ${safeName} + "=; Max-Age=0; path=" + ${safePath} + ";";</script>`
+          `<script>document.cookie = ${safeName} + "=; Max-Age=0; path=" + ${safePath} + ";";</script>`,
         );
       },
     },
@@ -465,10 +477,10 @@ if (!isDevelopment) {
         process.cwd(),
         isWebpack
           ? `${outputFolder}/react-client-manifest.json`
-          : `react_client_manifest/react-client-manifest.json`
+          : `react_client_manifest/react-client-manifest.json`,
       ),
-      "utf8"
-    )
+      "utf8",
+    ),
   );
 }
 
@@ -484,9 +496,9 @@ async function serveRSCPayload(req, res, isOld = false, isStatic = false) {
           ? "/____rsc_payload_old_static____"
           : "/____rsc_payload_old____"
         : isStatic
-        ? "/____rsc_payload_static____"
-        : "/____rsc_payload____",
-      ""
+          ? "/____rsc_payload_static____"
+          : "/____rsc_payload____",
+      "",
     );
     // 1. Correct Map initialization
     if (!isDynamic.has(reqPath)) {
@@ -512,7 +524,7 @@ async function serveRSCPayload(req, res, isOld = false, isStatic = false) {
       const payloadPath = path.resolve(
         "dist2",
         reqPath.replace(/^\//, ""),
-        isOld || regenerating.has(reqPath) ? "rsc._old.rsc" : "rsc.rsc"
+        isOld || regenerating.has(reqPath) ? "rsc._old.rsc" : "rsc.rsc",
       );
       const distDir = path.resolve("dist2");
 
@@ -546,7 +558,7 @@ async function serveRSCPayload(req, res, isOld = false, isStatic = false) {
         reqPath,
         { ...req.query },
         isNotFound,
-        isDevelopment
+        isDevelopment,
       );
       const manifest = isDevelopment
         ? JSON.parse(
@@ -555,10 +567,10 @@ async function serveRSCPayload(req, res, isOld = false, isStatic = false) {
                 process.cwd(),
                 isWebpack
                   ? `${outputFolder}/react-client-manifest.json`
-                  : `react_client_manifest/react-client-manifest.json`
+                  : `react_client_manifest/react-client-manifest.json`,
               ),
-              "utf8"
-            )
+              "utf8",
+            ),
           )
         : cachedClientManifest;
 
@@ -596,7 +608,7 @@ app.post(/^\/____rsc_payload_error____\/.*\/?$/, async (req, res) => {
       reqPath,
       { ...req.query },
       req.body.error,
-      isDevelopment
+      isDevelopment,
     );
     const manifest = isDevelopment
       ? JSON.parse(
@@ -605,10 +617,10 @@ app.post(/^\/____rsc_payload_error____\/.*\/?$/, async (req, res) => {
               process.cwd(),
               isWebpack
                 ? `${outputFolder}/react-client-manifest.json`
-                : `react_client_manifest/react-client-manifest.json`
+                : `react_client_manifest/react-client-manifest.json`,
             ),
-            "utf8"
-          )
+            "utf8",
+          ),
         )
       : cachedClientManifest;
     const { pipe } = renderToPipeableStream(jsx, manifest);
@@ -702,6 +714,12 @@ app.get(/^\/.*\/?$/, (req, res) => {
           cookie: req.headers["cookie"],
           referer: req.headers["referer"],
           host: req.headers["host"],
+          authorization: req.headers["authorization"],
+          "accept-language": req.headers["accept-language"],
+          "x-forwarded-for": req.headers["x-forwarded-for"],
+          forwarded: req.headers["forwarded"],
+          "content-type": req.headers["content-type"],
+          origin: req.headers["origin"],
         },
         path: req.path,
         method: req.method,
@@ -718,7 +736,7 @@ app.get(/^\/.*\/?$/, (req, res) => {
           contextForChild,
           res,
           capturedStatus,
-          isDynamic
+          isDynamic,
         );
 
         res.setHeader("Content-Type", "text/html");
@@ -785,8 +803,25 @@ function isOriginAllowed(req) {
   }
 }
 
+const multer = require("multer");
+
+const upload = multer().any();
+
+const runMiddleware = (req, res, fn) => {
+  return new Promise((resolve, reject) => {
+    fn(req, res, (result) => {
+      if (result instanceof Error) return reject(result);
+      return resolve(result);
+    });
+  });
+};
+
 app.post("/____server_function____", async (req, res) => {
   try {
+    if (req.headers["content-type"]?.includes("multipart/form-data")) {
+      await runMiddleware(req, res, upload);
+    }
+
     // 1. Check Origin (Prevent calls from other domains)
     const origin = req.headers.origin;
     const host = req.headers.host;
@@ -805,11 +840,44 @@ app.post("/____server_function____", async (req, res) => {
     // 2. Origin Check (NEW)
     if (!isDevelopment && !isOriginAllowed(req)) {
       console.error(
-        `[Security] Blocked request from origin: ${req.headers.origin}`
+        `[Security] Blocked request from origin: ${req.headers.origin}`,
       );
       return res.status(403).json({ error: "Origin not allowed" });
     }
-    const { id, args } = req.body;
+
+    let id, args;
+
+    if (req.headers["content-type"]?.includes("multipart/form-data")) {
+      id = req.body.__dinou_func_id;
+
+      const formData = new FormData();
+
+      for (const key in req.body) {
+        if (key === "__dinou_func_id" || key === "__dinou_args") continue;
+        formData.append(key, req.body[key]);
+      }
+
+      if (req.files && Array.isArray(req.files)) {
+        for (const file of req.files) {
+          const blob = new Blob([file.buffer], { type: file.mimetype });
+          formData.append(file.fieldname, blob, file.originalname);
+        }
+      }
+
+      args = [formData];
+
+      if (req.body.__dinou_args) {
+        try {
+          const extraArgs = JSON.parse(req.body.__dinou_args);
+          args.push(...extraArgs);
+        } catch (e) {
+          console.error("Error parsing extra args in multipart request");
+        }
+      }
+    } else {
+      id = req.body.id;
+      args = req.body.args;
+    }
 
     // Basic input validation: id must be string, args an array
     if (typeof id !== "string" || !Array.isArray(args)) {
@@ -932,7 +1000,7 @@ app.post("/____server_function____", async (req, res) => {
         process.cwd(),
         isWebpack
           ? `${outputFolder}/react-client-manifest.json`
-          : `react_client_manifest/react-client-manifest.json`
+          : `react_client_manifest/react-client-manifest.json`,
       );
       // Verify that the manifest exists to avoid errors
       if (!existsSync(manifestPath)) {
@@ -976,10 +1044,10 @@ const http = require("http");
     await new Promise((resolve) => {
       server.listen(port, () => {
         console.log(
-          `\n🚀 Dinou Server is ready and listening on http://localhost:${port}`
+          `\n🚀 Dinou Server is ready and listening on http://localhost:${port}`,
         );
         console.log(
-          `   Environment: ${isDevelopment ? "Development" : "Production"}`
+          `   Environment: ${isDevelopment ? "Development" : "Production"}`,
         );
         resolve();
       });
@@ -996,7 +1064,7 @@ const http = require("http");
         .catch((err) => {
           console.error(
             "❌ [Background] Static generation failed (App continues in Dynamic Mode):",
-            err
+            err,
           );
           isReady = true;
         });
