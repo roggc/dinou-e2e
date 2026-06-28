@@ -2,7 +2,7 @@ import { test, expect, APIRequestContext } from "@playwright/test";
 import fs from "fs";
 import path from "path";
 // Detectamos si estamos en un entorno de "start" (Producción)
-const isProd = process.env.TEST_CMD?.includes("start") || false;
+const isProd = (process.env.TEST_CMD || "npm run build:esbuild && npm run start:esbuild").includes("start");
 
 // Función auxiliar que espera hasta que el servidor diga "isReady: true"
 async function pollUntilReady(request: APIRequestContext, maxRetries = 800) {
