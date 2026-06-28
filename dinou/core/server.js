@@ -248,6 +248,7 @@ const appUseCookieParser = cookieParser();
 const app = express();
 app.use(appUseCookieParser);
 app.use(express.json());
+const { resolveRelativeUrl } = require("./url-resolver");
 
 function getContext(req, res) {
   // Helper to execute res methods safely
@@ -272,13 +273,14 @@ function getContext(req, res) {
       }
 
       function safeRedirect(targetUrl) {
+        const resolvedUrl = resolveRelativeUrl(targetUrl, req.path);
         // Validate it's a string before calling startsWith
         if (
-          typeof targetUrl === "string" &&
-          targetUrl.startsWith("/") &&
-          !targetUrl.startsWith("//")
+          typeof resolvedUrl === "string" &&
+          resolvedUrl.startsWith("/") &&
+          !resolvedUrl.startsWith("//")
         ) {
-          res.redirect.apply(res, [status, targetUrl]);
+          res.redirect.apply(res, [status, resolvedUrl]);
         } else {
           res.redirect.apply(res, [status, "/"]);
         }
@@ -351,11 +353,31 @@ function getContextForServerFunctionEndpoint(req, res) {
     },
     res: {
       redirect: (urlOrStatus, url) => {
-        const targetUrl = url || urlOrStatus;
+        const rawUrl = url || urlOrStatus;
+        const referer = req.headers["referer"];
+        let refererPath = "/";
+        if (referer) {
+          try {
+            refererPath = new URL(referer).pathname;
+          } catch (e) {}
+        }
+        const resolvedUrl = resolveRelativeUrl(rawUrl, refererPath);
+        let finalUrl = "/";
+        if (
+          typeof resolvedUrl === "string" &&
+          resolvedUrl.startsWith("/") &&
+          !resolvedUrl.startsWith("//")
+        ) {
+          finalUrl = resolvedUrl;
+        } else {
+          console.warn(
+            `[Dinou Security] Blocked unsafe server function redirect to: ${rawUrl}`,
+          );
+        }
         // We throw a special object that the endpoint will intercept
         throw {
           $$type: "dinou-internal-redirect",
-          url: targetUrl,
+          url: finalUrl,
         };
       },
       status: (code) => {
