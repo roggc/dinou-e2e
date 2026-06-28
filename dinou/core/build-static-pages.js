@@ -69,6 +69,12 @@ function createBailoutProxy(target, label, onBailout) {
   });
 }
 
+/**
+ * Compiles all static pages in the application.
+ * Crawls the "src/" folder to collect all routes, resolves dynamic path segments,
+ * mock-renders them inside a server context, and serializes successful static renders
+ * into RSC JSON payloads.
+ */
 async function buildStaticPages() {
   const srcFolder = path.resolve(process.cwd(), "src");
   const distFolder = path.resolve(process.cwd(), "dist");
@@ -82,6 +88,11 @@ async function buildStaticPages() {
     mkdirSync(distFolder, { recursive: true });
   }
 
+  /**
+   * Recursively traverses the page directory tree to collect all eligible static routes.
+   * Handles static folder names, route groups (e.g. "(group)"), and dynamic parameters
+   * like catch-all segments or optional segments by resolving their static paths.
+   */
   async function collectPages(
     currentPath,
     segments = [],
@@ -141,8 +152,7 @@ async function buildStaticPages() {
             pagePath && path.dirname(pagePath) === dynamicPath;
           if (isLocalPage && !dynamic?.()) {
             console.log(
-              `Found optional catch-all route: ${
-                segments.join("/") ?? ""
+              `Found optional catch-all route: ${segments.join("/") ?? ""
               }/[[...${paramName}]]`,
             );
             try {
@@ -283,8 +293,7 @@ async function buildStaticPages() {
             pagePath && path.dirname(pagePath) === dynamicPath;
           if (isLocalPage && !dynamic?.()) {
             console.log(
-              `Found catch-all route: ${
-                segments.join("/") ?? ""
+              `Found catch-all route: ${segments.join("/") ?? ""
               }/[...${paramName}]`,
             );
             try {
@@ -308,17 +317,13 @@ async function buildStaticPages() {
                       const val = pathItem[key];
 
                       // 🛡️ FIX 1: Relaxed validation.
-                      // We only throw error if the CURRENT parameter (which is mandatory catch-all) is missing.
-                      // If parent keys are missing (key !== paramName), we allow undefined (assume optional).
+                      // Mark the route as invalid (skipping its generation) if any parent parameter segment is missing.
                       if (
                         (val === undefined || val === null || val === "") &&
                         i < arr.length - 1
                       ) {
                         notValidRoute = true;
                       }
-                      // throw new Error(
-                      //   `[Dinou] The mandatory catch-all parameter '${paramName}' is undefined in ${dynamicPath}.`
-                      // );
                       return val;
                     });
                     if (notValidRoute) continue;
@@ -329,7 +334,6 @@ async function buildStaticPages() {
                   // 🛡️ FIX 2: Segment filtering.
                   // Flatten (.flat) to handle the catch-all array and filter undefineds from parents.
                   const validSegmentsToAdd = segmentsToAdd.flat();
-                  // .filter((s) => s !== undefined && s !== null && s !== "");
 
                   const paramsToAdd = isObject
                     ? pathItem
@@ -393,8 +397,7 @@ async function buildStaticPages() {
             pagePath && path.dirname(pagePath) === dynamicPath;
           if (isLocalPage && !dynamic?.()) {
             console.log(
-              `Found optional dynamic route: ${
-                segments.join("/") ?? ""
+              `Found optional dynamic route: ${segments.join("/") ?? ""
               }/[[${paramName}]]`,
             );
             try {
@@ -537,16 +540,12 @@ async function buildStaticPages() {
                       }
                       const val = pathItem[key];
 
-                      // 🛡️ CHANGE: We only throw error if the CURRENT parameter (which is mandatory) is missing.
-                      // If a parent parameter is missing (key !== paramName), we assume it could be optional.
+                      // 🛡️ CHANGE: If a parent parameter is missing, we mark the route as invalid to skip it.
                       if (
                         (val === undefined || val === null || val === "") &&
                         i < arr.length - 1
                       ) {
                         notValidRoute = true;
-                        // throw new Error(
-                        //   `[Dinou] The mandatory parameter '${paramName}' is undefined in ${dynamicPath}.`
-                        // );
                       }
                       return val;
                     });
@@ -555,9 +554,7 @@ async function buildStaticPages() {
                     segmentsToAdd = [pathItem];
                   }
 
-                  // 🛡️ CHANGE: We filter undefineds here too, because a parent could be optional
                   const validSegmentsToAdd = segmentsToAdd.flat();
-                  // .filter((s) => s !== undefined && s !== null && s !== "");
 
                   const paramsToAdd = isObject
                     ? pathItem
@@ -566,7 +563,7 @@ async function buildStaticPages() {
                   pages.push(
                     ...(await collectPages(
                       dynamicPath,
-                      [...segments, ...validSegmentsToAdd], // Use the filtered version
+                      [...segments, ...validSegmentsToAdd],
                       { ...params, ...paramsToAdd },
                     )),
                   );
@@ -639,16 +636,12 @@ async function buildStaticPages() {
                         }
                         const val = pathItem[key];
 
-                        // 🛡️ CHANGE: We only throw error if the CURRENT parameter (which is mandatory) is missing.
-                        // If a parent parameter is missing (key !== paramName), we assume it could be optional.
+                        // 🛡️ CHANGE: If a parent parameter is missing, we mark the route as invalid to skip it.
                         if (
                           (val === undefined || val === null || val === "") &&
                           i < arr.length - 1
                         ) {
                           notValidRoute = true;
-                          // throw new Error(
-                          //   `[Dinou] The mandatory parameter '${paramName}' is undefined in ${dynamicPath}.`
-                          // );
                         }
                         return val;
                       });
@@ -657,9 +650,7 @@ async function buildStaticPages() {
                       segmentsToAdd = [pathItem];
                     }
 
-                    // 🛡️ CHANGE: We filter undefineds here too, because a parent could be optional
                     const validSegmentsToAdd = segmentsToAdd.flat();
-                    // .filter((s) => s !== undefined && s !== null && s !== "");
 
                     const paramsToAdd = isObject
                       ? pathItem
@@ -668,7 +659,7 @@ async function buildStaticPages() {
                     pages.push(
                       ...(await collectPages(
                         dynamicPath,
-                        [...segments, ...validSegmentsToAdd, entry.name], // Use the filtered version
+                        [...segments, ...validSegmentsToAdd, entry.name],
                         { ...params, ...paramsToAdd },
                       )),
                     );
@@ -742,6 +733,7 @@ async function buildStaticPages() {
     return pages;
   }
 
+  // Crawl complete, start rendering and serialization loop for all discovered static pages
   const pages = await collectPages(srcFolder);
 
   for (const { path: folderPath, segments, params } of pages) {
@@ -853,10 +845,8 @@ async function buildStaticPages() {
         );
         const pageModule = await importModule(pagePath);
         const Page = pageModule.default ?? pageModule;
-        // Set displayName for better serialization
-        // if (!Page.displayName) Page.displayName = "Page";
 
-        let props = { params /* searchParams: {}*/ };
+        let props = { params };
 
         const [pageFunctionsPath] = getFilePathAndDynamicParams(
           segments,
@@ -882,6 +872,7 @@ async function buildStaticPages() {
         let jsx = React.createElement(Page, props);
         jsx = { ...jsx, __modulePath: pagePath };
 
+        // Resolve and nest layout components from the page folder up to the source root
         const noLayoutPath = path.join(folderPath, "no_layout");
         if (!existsSync(noLayoutPath)) {
           const layouts = getFilePathAndDynamicParams(
@@ -902,7 +893,14 @@ async function buildStaticPages() {
             for (const [layoutPath, dParams, slots] of layouts.reverse()) {
               const layoutModule = await importModule(layoutPath);
               const Layout = layoutModule.default ?? layoutModule;
-              // if (!Layout.displayName) Layout.displayName = "Layout";
+              const layoutFolderPath = path.dirname(layoutPath);
+              const resetLayoutPath = getFilePathAndDynamicParams(
+                [],
+                {},
+                layoutFolderPath,
+                "reset_layout",
+                false,
+              )[0];
               const updatedSlots = {};
               for (const [slotName, slotElement] of Object.entries(slots)) {
                 const alreadyFoundPath = slotElement.props?.__modulePath;
@@ -914,23 +912,14 @@ async function buildStaticPages() {
               }
               let props = {
                 params: dParams,
-                /*searchParams: {},*/ ...updatedSlots,
+                ...updatedSlots,
               };
-              if (index === layouts.length - 1) {
+              if (index === layouts.length - 1 || resetLayoutPath) {
                 props = { ...props, ...(pageFunctionsProps?.layout ?? {}) };
               }
               jsx = React.createElement(Layout, props, jsx);
               jsx = { ...jsx, __modulePath: layoutPath };
-              const layoutFolderPath = path.dirname(layoutPath);
-              if (
-                getFilePathAndDynamicParams(
-                  [],
-                  {},
-                  layoutFolderPath,
-                  "reset_layout",
-                  false,
-                )[0]
-              ) {
+              if (resetLayoutPath) {
                 break;
               }
               index++;
@@ -938,6 +927,7 @@ async function buildStaticPages() {
           }
         }
 
+        // Render the layout-nested React element tree to client-side RSC JSON format
         return await asyncRenderJSXToClientJSX(jsx);
       });
 
@@ -952,16 +942,12 @@ async function buildStaticPages() {
         continue;
       }
 
-      // const outputPath = path.join(distFolder, segments.join("/"));
-      // mkdirSync(outputPath, { recursive: true });
-
-      // const jsonPath = path.join(outputPath, "index.json");
-
       const sideEffects = {
         redirect: mockRes._redirectUrl,
         cookies: mockRes._cookies,
       };
 
+      // Store the serialized RSC JSON, revalidation timer, and side effects (cookies/redirects)
       setJSXJSON(reqPath, {
         jsx: serializeReactElement(jsx),
         revalidate: revalidate?.(),
@@ -978,6 +964,11 @@ async function buildStaticPages() {
   console.log(`Static site generated with ${pages.length} pages`);
 }
 
+/**
+ * Renders and compiles a single page dynamically on-demand at runtime.
+ * Used for Incremental Static Regeneration (ISR) or on-demand page generation.
+ * Follows the same bailout detection and RSC serialization logic as the build compiler.
+ */
 async function buildStaticPage(reqPath, isDynamic = null) {
   const srcFolder = path.resolve(process.cwd(), "src");
 
@@ -1132,7 +1123,7 @@ async function buildStaticPage(reqPath, isDynamic = null) {
       const pageModule = await importModule(pagePath);
       const Page = pageModule.default ?? pageModule;
 
-      let props = { params: dParams /*searchParams: {}*/ };
+      let props = { params: dParams };
       const [pageFunctionsPath] = getFilePathAndDynamicParams(
         segments,
         {},
@@ -1177,6 +1168,14 @@ async function buildStaticPage(reqPath, isDynamic = null) {
           for (const [layoutPath, dParams, slots] of layouts.reverse()) {
             const layoutModule = await importModule(layoutPath);
             const Layout = layoutModule.default ?? layoutModule;
+            const layoutFolderPath = path.dirname(layoutPath);
+            const resetLayoutPath = getFilePathAndDynamicParams(
+              [],
+              {},
+              layoutFolderPath,
+              "reset_layout",
+              false,
+            )[0];
             const updatedSlots = {};
             for (const [slotName, slotElement] of Object.entries(slots)) {
               const alreadyFoundPath = slotElement.props?.__modulePath;
@@ -1188,10 +1187,9 @@ async function buildStaticPage(reqPath, isDynamic = null) {
             }
             let layoutProps = {
               params: dParams,
-              // searchParams: {},
               ...updatedSlots,
             };
-            if (index === layouts.length - 1) {
+            if (index === layouts.length - 1 || resetLayoutPath) {
               layoutProps = {
                 ...layoutProps,
                 ...(pageFunctionsProps?.layout ?? {}),
@@ -1199,16 +1197,7 @@ async function buildStaticPage(reqPath, isDynamic = null) {
             }
             jsx = React.createElement(Layout, layoutProps, jsx);
             jsx = { ...jsx, __modulePath: layoutPath };
-            const layoutFolderPath = path.dirname(layoutPath);
-            if (
-              getFilePathAndDynamicParams(
-                [],
-                {},
-                layoutFolderPath,
-                "reset_layout",
-                false,
-              )[0]
-            ) {
+            if (resetLayoutPath) {
               break;
             }
             index++;
@@ -1271,6 +1260,11 @@ function filterProps(props_) {
   return props_;
 }
 
+/**
+ * Recursively serializes a React element tree into a custom JSON format.
+ * This format represents the React Server Component (RSC) payload sent to the client,
+ * mapping HTML tags, React fragments, Suspense boundaries, and Client Component stubs.
+ */
 function serializeReactElement(element) {
   if (React.isValidElement(element)) {
     let type;
@@ -1291,7 +1285,7 @@ function serializeReactElement(element) {
       }
       try {
         componentName = element.type.displayName || element.type.name;
-      } catch (e) {}
+      } catch (e) { }
 
       if (!modulePath && global.__DINOU_MODULE_MAP) {
         const meta = global.__DINOU_MODULE_MAP.get(element.type);

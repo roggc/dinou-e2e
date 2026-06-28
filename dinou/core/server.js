@@ -23,9 +23,7 @@ babelRegister({
   extensions: [".js", ".jsx", ".ts", ".tsx"],
 });
 const createScopedName = require("./createScopedName");
-require("css-modules-require-hook")({
-  generateScopedName: createScopedName,
-});
+require("./css-require-hook.js")();
 addHook({
   extensions,
   name: function (localName, filepath) {
@@ -220,13 +218,11 @@ if (isDevelopment) {
       isInitial = true;
       currentManifest = {};
     });
-    // manifestWatcher.on("all", (event) => console.log("event", event));
     manifestWatcher.on("change", onManifestChange);
   }
   startManifestWatcher();
 }
 let serverFunctionsManifest = null;
-// const devCache = new Map(); // For dev: Map<absolutePath, Set<exports>>
 
 if (!isDevelopment) {
   // In prod/build: load generated manifest
@@ -328,14 +324,6 @@ function getContext(req, res) {
 
       // 4. REDIRECT (Your existing smart wrapper)
       redirect: (...args) => safeResCall("redirect", ...args),
-      // redirect: (...args) => {
-      //   if (res.headersSent) {
-      //     // Do nothing on res object.
-      //     // We trust that your Server Function will return <ClientRedirect />
-      //     return;
-      //   }
-      //   res.redirect.apply(res, args);
-      // },
     },
   };
   return context;
@@ -392,7 +380,7 @@ function getContextForServerFunctionEndpoint(req, res) {
         }
 
         // SCENARIO B: Streaming active (Headers Sent)
-        // Inject JavaScript.
+        // Send safe stream command.
 
         // 🛑 Security: JS cannot write HttpOnly cookies
         if (options && options.httpOnly) {
@@ -416,11 +404,11 @@ function getContextForServerFunctionEndpoint(req, res) {
           if (options.sameSite) cookieStr += `; samesite=${options.sameSite}`;
         }
 
-        // Safe packaging for injection
+        // Safe packaging for stream command
         const safeCookieStr = JSON.stringify(cookieStr);
 
         // Write to stream
-        res.write(`<script>document.cookie = ${safeCookieStr};</script>`);
+        res.write(`D:{"type":"cookie","cookie":${safeCookieStr}}\n`);
       },
 
       clearCookie: (name, options) => {
@@ -433,13 +421,10 @@ function getContextForServerFunctionEndpoint(req, res) {
           return;
         }
 
-        // SCENARIO B: Script Injection
-        const safeName = JSON.stringify(name);
-        const safePath = JSON.stringify(path);
-
-        res.write(
-          `<script>document.cookie = ${safeName} + "=; Max-Age=0; path=" + ${safePath} + ";";</script>`,
-        );
+        // SCENARIO B: Custom stream command
+        const cookieStr = `${name}=; Max-Age=0; path=${path};`;
+        const safeCookieStr = JSON.stringify(cookieStr);
+        res.write(`D:{"type":"cookie","cookie":${safeCookieStr}}\n`);
       },
     },
   };
@@ -515,12 +500,7 @@ async function serveRSCPayload(req, res, isOld = false, isStatic = false) {
     //   isStatic,
     //   reqPath
     // );
-    if (
-      (!isDevelopment &&
-        /*Object.keys({ ...req.query }).length === 0 &&*/
-        !dynamicState.value) ||
-      isStatic
-    ) {
+    if ((!isDevelopment && !dynamicState.value) || isStatic) {
       const payloadPath = path.resolve(
         "dist2",
         reqPath.replace(/^\//, ""),
@@ -538,16 +518,6 @@ async function serveRSCPayload(req, res, isOld = false, isStatic = false) {
           console.error("Error reading RSC file:", err);
           res.status(500).end();
         });
-        // readStream.on("end", () => {
-        //   if (!regenerating.has(reqPath)) {
-        //     // Regeneration has finished, delete the old one
-        //     try {
-        //       unlinkSync(payloadPathOld);
-        //     } catch (err) {
-        //       console.error("Error deleting old RSC file:", err);
-        //     }
-        //   }
-        // });
         return readStream.pipe(res);
       }
     }
@@ -562,16 +532,16 @@ async function serveRSCPayload(req, res, isOld = false, isStatic = false) {
       );
       const manifest = isDevelopment
         ? JSON.parse(
-            readFileSync(
-              path.resolve(
-                process.cwd(),
-                isWebpack
-                  ? `${outputFolder}/react-client-manifest.json`
-                  : `react_client_manifest/react-client-manifest.json`,
-              ),
-              "utf8",
+          readFileSync(
+            path.resolve(
+              process.cwd(),
+              isWebpack
+                ? `${outputFolder}/react-client-manifest.json`
+                : `react_client_manifest/react-client-manifest.json`,
             ),
-          )
+            "utf8",
+          ),
+        )
         : cachedClientManifest;
 
       const { pipe } = renderToPipeableStream(jsx, manifest);
@@ -612,16 +582,16 @@ app.post(/^\/____rsc_payload_error____\/.*\/?$/, async (req, res) => {
     );
     const manifest = isDevelopment
       ? JSON.parse(
-          readFileSync(
-            path.resolve(
-              process.cwd(),
-              isWebpack
-                ? `${outputFolder}/react-client-manifest.json`
-                : `react_client_manifest/react-client-manifest.json`,
-            ),
-            "utf8",
+        readFileSync(
+          path.resolve(
+            process.cwd(),
+            isWebpack
+              ? `${outputFolder}/react-client-manifest.json`
+              : `react_client_manifest/react-client-manifest.json`,
           ),
-        )
+          "utf8",
+        ),
+      )
       : cachedClientManifest;
     const { pipe } = renderToPipeableStream(jsx, manifest);
     pipe(res);
@@ -644,11 +614,7 @@ app.get(/^\/.*\/?$/, (req, res) => {
     // Get reference to the mutable object
     const dynamicState = isDynamic.get(reqPath);
     // console.log("dynamicState.value", dynamicState.value);
-    if (
-      !isDevelopment &&
-      /*Object.keys({ ...req.query }).length === 0 &&*/
-      !dynamicState.value
-    ) {
+    if (!isDevelopment && !dynamicState.value) {
       revalidating(reqPath, dynamicState);
       let htmlPathOld;
       if (regenerating.has(reqPath)) {
@@ -688,16 +654,6 @@ app.get(/^\/.*\/?$/, (req, res) => {
 
           // 4. Manually close the response (now we do)
           res.end();
-
-          // // 5. Optional cleanup logic (async to avoid blocking)
-          // if (htmlPathOld && !regenerating.has(reqPath)) {
-          //   // It is better to use fs.promises to avoid blocking the event loop
-          //   require("fs")
-          //     .promises.unlink(htmlPathOld)
-          //     .catch((err) => {
-          //       console.error("Error deleting old HTML file:", err);
-          //     });
-          // }
         });
 
         return; // The stream is already flowing
@@ -763,7 +719,6 @@ app.get(/^\/.*\/?$/, (req, res) => {
           appHtmlStream.on("end", resolve);
           appHtmlStream.on("error", (error) => {
             console.error("Stream error:", error);
-            // resolve(); // ⚠️ WATCH OUT: If you resolve here and then try to send status 500, it might fail if headers sent
             if (!res.headersSent) res.status(500).send("Internal Server Error");
             resolve(); // Better resolve at the end
           });
@@ -794,7 +749,7 @@ function isOriginAllowed(req) {
   try {
     // Parse to ignore protocol (http/https) and port if they differ subtly
     const originHost = new URL(origin).host;
-    const serverHost = req.headers.host;
+    const serverHost = req.headers["x-forwarded-host"] || req.headers.host;
 
     // Compare host (domain:port)
     return originHost === serverHost;
@@ -824,7 +779,7 @@ app.post("/____server_function____", async (req, res) => {
 
     // 1. Check Origin (Prevent calls from other domains)
     const origin = req.headers.origin;
-    const host = req.headers.host;
+    const host = req.headers["x-forwarded-host"] || req.headers.host;
 
     // Note: Locally sometimes origin is undefined or null, allow in dev if necessary
     if (!isDevelopment && origin && !origin.includes(host)) {
@@ -893,10 +848,15 @@ app.post("/____server_function____", async (req, res) => {
 
     // Extract relativePath and normalize (remove 'file://' and potential '/')
     let relativePath = fileUrl.replace(/^file:\/\/\/?/, "").trim();
-    if (relativePath.startsWith("/") || relativePath.includes("..")) {
+    const normalizedRelative = relativePath.replace(/\\/g, "/");
+    if (
+      normalizedRelative.startsWith("/") ||
+      normalizedRelative.includes("..") ||
+      normalizedRelative.includes(":")
+    ) {
       return res
         .status(400)
-        .json({ error: "Invalid path: no absolute or traversal allowed" });
+        .json({ error: "Invalid path: no absolute, traversal, or drive letter allowed" });
     }
     // console.log("relPath", relativePath);
     // Restrict to 'src/' folder: prepend 'src/' if missing, and resolve absolutePath
@@ -923,9 +883,11 @@ app.post("/____server_function____", async (req, res) => {
       // Prod: use manifest (relativePath is already normalized)
       allowedExports = serverFunctionsManifest[relativePath];
     } else {
-      // Dev: use cache or verify file
-      // allowedExports = devCache.get(absolutePath);
-      // if (!allowedExports) {
+      if (!isDevelopment) {
+        return res
+          .status(403)
+          .json({ error: "Access denied: Manifest missing in production" });
+      }
       const fileContent = readFileSync(absolutePath, "utf8"); // Reads only once
       if (!useServerRegex.test(fileContent)) {
         return res
@@ -935,14 +897,13 @@ app.post("/____server_function____", async (req, res) => {
       // Parse exports (you need to implement parseExports on server if not present)
       const exports = parseExports(fileContent); // Assume you move parseExports to a shared util
       allowedExports = new Set(exports);
-      // devCache.set(absolutePath, allowedExports);
-      // }
     }
 
     // Validate exportName against allowedExports
     if (
       !exportName ||
-      (exportName !== "default" && !allowedExports.has(exportName))
+      !allowedExports ||
+      !allowedExports.has(exportName)
     ) {
       return res.status(400).json({ error: "Invalid export name" });
     }
@@ -971,18 +932,17 @@ app.post("/____server_function____", async (req, res) => {
       } catch (err) {
         // 💡 WE INTERCEPT THE REDIRECT
         if (err && err.$$type === "dinou-internal-redirect") {
-          // 1. Always sanitize the URL
           const safeUrl = JSON.stringify(err.url);
-          const script = `<script>window.location.href = ${safeUrl};</script>`;
 
           if (!res.headersSent) {
-            // SCENARIO A: Clean (Content-Type html)
-            res.setHeader("Content-Type", "text/html");
-            return res.send(script); // res.send calls end() and return stops the function
+            // SCENARIO A: Clean (Content-Type application/json)
+            res.setHeader("Content-Type", "application/json");
+            res.setHeader("X-Dinou-Redirect", err.url);
+            return res.status(200).json({ redirect: err.url });
           } else {
-            // SCENARIO B: Dirty/Active Stream (Content-Type already set by clearCookie)
-            // Write the script to the existing stream
-            res.write(script);
+            // SCENARIO B: Dirty/Active Stream
+            // Write a custom line-based stream command
+            res.write(`D:{"type":"redirect","url":${safeUrl}}\n`);
 
             // ⚠️ IMPORTANT:
             // 1. We close the response, since we redirected and there will be no RSC payload.

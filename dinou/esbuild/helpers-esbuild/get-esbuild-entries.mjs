@@ -33,7 +33,7 @@ export default async function getEsbuildEntries({
     code,
     baseFilePath,
     visited = new Set(),
-    isTopLevelClientComponent = false
+    isTopLevelClientComponent = false,
   ) {
     if (visited.has(baseFilePath)) {
       return { imports: [], assets: [], csss: [] };
@@ -68,25 +68,25 @@ export default async function getEsbuildEntries({
         continue;
       }
 
-      // Leer el archivo UNA sola vez
+      // Read the file ONLY once
       let importedCode;
       try {
         importedCode = readFileSync(absImportPathWithExt, "utf8");
       } catch (err) {
         console.warn(
           `[get-esbuild-entries] Could not read import: ${absImportPathWithExt}`,
-          err.message
+          err.message,
         );
         continue;
       }
 
       if (!isTopLevelClientComponent) {
-        // Verificar si es un client component
+        // Verify if it is a client component
         const isImportedFileClient = useClientRegex.test(importedCode.trim());
 
-        // Si es client component, NO procesar recursivamente
+        // If it is a client component, DO NOT process recursively
         if (isImportedFileClient) {
-          continue; // No procesar recursivamente client components
+          continue; // Do not recursively process client components
         }
       } else {
         const isImportedFileServer = useServerRegex.test(importedCode.trim());
@@ -96,7 +96,7 @@ export default async function getEsbuildEntries({
         }
       }
 
-      // Para módulos no-client, procesar normalmente
+      // For non-client modules, process normally
       if (
         absImportPathWithExt.endsWith(".css") ||
         absImportPathWithExt.endsWith(".scss") ||
@@ -111,15 +111,21 @@ export default async function getEsbuildEntries({
         continue;
       }
 
+      // 🚨 THE SOLUTION: If it is a JSON file, add it but DO NOT parse it with Babel
+      if (absImportPathWithExt.endsWith(".json")) {
+        imports.add(absImportPathWithExt);
+        continue; // This prevents it from entering Babel recursion
+      }
+
       imports.add(absImportPathWithExt);
 
-      // Procesar imports recursivamente para módulos no-client
+      // Process imports recursively for non-client modules
       try {
         const nested = await getImportsAndAssetsAndCsss(
           importedCode,
           absImportPathWithExt,
           visited,
-          isTopLevelClientComponent
+          isTopLevelClientComponent,
         );
         nested.imports.forEach((p) => imports.add(p));
         nested.assets.forEach((p) => assets.add(p));
@@ -127,7 +133,7 @@ export default async function getEsbuildEntries({
       } catch (err) {
         console.warn(
           `[get-esbuild-entries] Could not process imports of: ${absImportPathWithExt}`,
-          err.message
+          err.message,
         );
       }
     }
@@ -203,7 +209,7 @@ export default async function getEsbuildEntries({
         code,
         absPath,
         new Set(),
-        true
+        true,
       );
       const clientComponentRegex = /\.(js|jsx|ts|tsx)$/i;
       imports.forEach((imp) => {
@@ -218,14 +224,14 @@ export default async function getEsbuildEntries({
     } else if (isPageOrLayout(absPath)) {
       if (!isAsyncDefaultExport(code)) {
         console.warn(
-          `[react-client-manifest] The file ${normalizedPath} is a page or layout without "use client" directive, but its default export is not an async function.`
+          `[react-client-manifest] The file ${normalizedPath} is a page or layout without "use client" directive, but its default export is not an async function.`,
         );
       }
       serverModules.add(normalizedPath);
       try {
         const { imports, assets, csss } = await getImportsAndAssetsAndCsss(
           code,
-          absPath
+          absPath,
         );
 
         if (csss.length > 0) {
@@ -233,7 +239,7 @@ export default async function getEsbuildEntries({
             ...csss.map((cssPath) => ({
               absPath: normalizePath(cssPath),
               name: path.basename(cssPath, path.extname(cssPath)),
-            }))
+            })),
           );
         }
 
