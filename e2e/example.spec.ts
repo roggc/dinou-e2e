@@ -1469,7 +1469,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
 
       // 2. Hacemos HOVER, no click
-      await page.hover('a[href="target"]');
+      await page.hover('a[href*="target"]');
 
       // 3. Verificamos que la petición se disparó
       const request = await rscRequest;
