@@ -2992,4 +2992,84 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       console.log("✅ [TEST] Staggered test completed successfully.");
     });
   });
+
+  test.describe("🍪 Cookie Management Tests", () => {
+    test("Should set and clear standard cookies via Server Functions", async ({ page }) => {
+      await page.goto("/t-cookies");
+
+      // 1. Set cookie
+      await page.click("#btn-set-std");
+      await page.waitForSelector("text=Success: set standard");
+      
+      // Verify cookie exists
+      let cookies = await page.context().cookies();
+      let stdCookie = cookies.find(c => c.name === "cookie_std");
+      expect(stdCookie).toBeDefined();
+      expect(stdCookie?.value).toBe("val_std");
+      expect(stdCookie?.path).toBe("/");
+
+      // 2. Clear cookie
+      await page.click("#btn-clear-std");
+      await page.waitForSelector("text=Success: clear standard");
+
+      // Verify cookie was cleared
+      cookies = await page.context().cookies();
+      stdCookie = cookies.find(c => c.name === "cookie_std");
+      expect(stdCookie).toBeUndefined();
+    });
+
+    test("Should set and clear cookies with specific options (path, sameSite) via Server Functions", async ({ page }) => {
+      await page.goto("/t-cookies");
+
+      // 1. Set cookie with options
+      await page.click("#btn-set-opts");
+      await page.waitForSelector("text=Success: set options");
+
+      // Verify cookie options
+      let cookies = await page.context().cookies();
+      let optsCookie = cookies.find(c => c.name === "cookie_opts");
+      expect(optsCookie).toBeDefined();
+      expect(optsCookie?.value).toBe("val_opts");
+      expect(optsCookie?.path).toBe("/t-cookies");
+      expect(optsCookie?.sameSite).toBe("Lax");
+
+      // 2. Clear cookie with options
+      await page.click("#btn-clear-opts");
+      await page.waitForSelector("text=Success: clear options");
+
+      // Verify cookie was cleared using exact options matching scope
+      cookies = await page.context().cookies();
+      optsCookie = cookies.find(c => c.name === "cookie_opts");
+      expect(optsCookie).toBeUndefined();
+    });
+
+    test("Should clear cookies with options during streaming HTML (Scenario B)", async ({ page }) => {
+      // 1. First, set 'stream_cookie' manually using browser context
+      await page.context().addCookies([
+        {
+          name: "stream_cookie",
+          value: "val_stream",
+          domain: "localhost",
+          path: "/t-cookies",
+          sameSite: "Lax",
+        }
+      ]);
+
+      // Verify it is set
+      let cookies = await page.context().cookies();
+      let streamCookie = cookies.find(c => c.name === "stream_cookie");
+      expect(streamCookie).toBeDefined();
+
+      // 2. Load the page triggering streaming cookie clearance
+      await page.goto("/t-cookies?streamClear=true");
+
+      // Wait for the Suspense block to resolve
+      await page.waitForSelector("#stream-clear-done");
+
+      // Verify cookie was cleared successfully by the injected streaming script tag
+      cookies = await page.context().cookies();
+      streamCookie = cookies.find(c => c.name === "stream_cookie");
+      expect(streamCookie).toBeUndefined();
+    });
+  });
 });
