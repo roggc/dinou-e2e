@@ -9,8 +9,8 @@ jobs:
     name: ${{ matrix.os }} - ${{ matrix.bundler }} - ${{ matrix.mode }}
     timeout-minutes: 60
     runs-on: ${{ matrix.os }}
-    env:
-      PLAYWRIGHT_DOWNLOAD_HOST: https://cdn.npmmirror.com/binaries/playwright
+    # env:
+    #   PLAYWRIGHT_DOWNLOAD_HOST: https://cdn.npmmirror.com/binaries/playwright
     strategy:
       fail-fast: false
       matrix:
