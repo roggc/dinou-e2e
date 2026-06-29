@@ -104,6 +104,8 @@ function renderAppToHtml(
             const safeUrl = JSON.stringify(finalUrl);
             res.write(`<script>window.location.href = ${safeUrl};</script>`);
             res.end();
+            child.stdout.unpipe(res);
+            child.kill();
             return;
           }
 
@@ -223,6 +225,8 @@ function renderAppToHtml(
 
           // 3. Execute safe redirect always using (status, url)
           res.redirect.apply(res, [status, finalUrl]);
+          child.stdout.unpipe(res);
+          child.kill();
           return;
         }
 

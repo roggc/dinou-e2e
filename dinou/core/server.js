@@ -251,18 +251,21 @@ app.use(express.json());
 const { resolveRelativeUrl } = require("./url-resolver");
 
 function getContext(req, res) {
+  let hasRedirected = false;
   // Helper to execute res methods safely
   const safeResCall = (methodName, ...args) => {
+    if (hasRedirected) return;
     if (res.headersSent) {
+      if (methodName === "redirect" && req.path.includes("____rsc_payload")) {
+        return; // Silence streaming redirects during RSC payload requests
+      }
       console.log(
         `[Dinou] res.${methodName} called but headers already sent. Ignoring.`,
       );
-      // console.warn(
-      //   `[Dinou Warning] RSC Stream active. Ignoring res.${methodName}() to avoid crash.`
-      // );
       return; // Exit silently
     }
     if (methodName === "redirect") {
+      hasRedirected = true;
       // 1. Normalize arguments (Status and URL)
       let url = args[0];
       let status = 302; // Default
@@ -274,16 +277,26 @@ function getContext(req, res) {
 
       function safeRedirect(targetUrl) {
         const resolvedUrl = resolveRelativeUrl(targetUrl, req.path);
-        // Validate it's a string before calling startsWith
+        let finalUrl = "/";
         if (
           typeof resolvedUrl === "string" &&
           resolvedUrl.startsWith("/") &&
           !resolvedUrl.startsWith("//")
         ) {
-          res.redirect.apply(res, [status, resolvedUrl]);
+          finalUrl = resolvedUrl;
         } else {
-          res.redirect.apply(res, [status, "/"]);
+          console.warn(
+            `[Dinou Security] Blocked unsafe redirect to: ${targetUrl}`,
+          );
         }
+
+        if (req.path.includes("____rsc_payload")) {
+          res.setHeader("x-rsc-redirect", finalUrl);
+          res.status(200).end();
+          return;
+        }
+
+        res.redirect.apply(res, [status, finalUrl]);
       }
       return safeRedirect(url);
     }
@@ -552,6 +565,11 @@ async function serveRSCPayload(req, res, isOld = false, isStatic = false) {
         isNotFound,
         isDevelopment,
       );
+
+      if (res.headersSent) {
+        return;
+      }
+
       const manifest = isDevelopment
         ? JSON.parse(
           readFileSync(
