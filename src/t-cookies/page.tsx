@@ -1,9 +1,11 @@
 import CookieClientPage from "./CookieClientPage";
 import { StreamClearComponent } from "./StreamClear";
 import Suspense from "react-enhanced-suspense";
+import { getContext } from "dinou";
 
-export default function Page({ query }: { query?: any }) {
-  const streamClear = query?.streamClear === "true";
+export default async function Page() {
+  const ctx = getContext();
+  const streamClear = ctx?.req?.query?.streamClear === "true";
 
   return (
     <div style={{ padding: 20 }}>
