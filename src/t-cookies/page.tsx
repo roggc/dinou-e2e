@@ -12,9 +12,8 @@ export default async function Page() {
       <h1>Cookie Test Page</h1>
       <CookieClientPage />
       {streamClear && (
-        <Suspense fallback={<div id="loading-stream">Loading stream...</div>} resourceId="stream-clear">
-          {/* @ts-ignore */}
-          {() => <StreamClearComponent />}
+        <Suspense fallback={<div id="loading-stream">Loading stream...</div>}>
+          <StreamClearComponent />
         </Suspense>
       )}
     </div>
