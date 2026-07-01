@@ -24,9 +24,16 @@ function getManifest() {
   if (!isDevelopment && cachedManifest) return cachedManifest;
   try {
     const content = fs.readFileSync(manifestPath, "utf8");
-    cachedManifest = JSON.parse(content);
-    return cachedManifest;
+    const parsed = JSON.parse(content);
+    if (parsed && Object.keys(parsed).length > 0) {
+      cachedManifest = parsed;
+    }
+    return cachedManifest || parsed;
   } catch (e) {
+    if (cachedManifest) {
+      console.warn("Using cached client manifest due to read error:", e.message);
+      return cachedManifest;
+    }
     console.error("Error reading client manifest:", e);
     return {};
   }

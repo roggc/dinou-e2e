@@ -182,6 +182,7 @@ function getImportMapHtml() {
 }
 
 let cachedSsrManifest = null;
+let cachedRequireMap = null;
 function getSsrManifest() {
   if (!isDevelopment && cachedSsrManifest) return cachedSsrManifest;
   try {
@@ -213,6 +214,7 @@ function getSsrManifest() {
         }
       }
       global.__webpack_require_map__ = requireMap;
+      cachedRequireMap = requireMap;
 
       if (ssrManifest.moduleMap) {
         for (const [modId, exports] of Object.entries(ssrManifest.moduleMap)) {
@@ -232,6 +234,13 @@ function getSsrManifest() {
     cachedSsrManifest = ssrManifest;
     return cachedSsrManifest;
   } catch (e) {
+    if (cachedSsrManifest) {
+      console.warn("Using cached SSR manifest due to read error:", e.message);
+      if (cachedRequireMap) {
+        global.__webpack_require_map__ = cachedRequireMap;
+      }
+      return cachedSsrManifest;
+    }
     console.error("Error reading SSR manifest:", e);
     return {};
   }
