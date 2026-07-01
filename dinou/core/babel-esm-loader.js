@@ -90,14 +90,18 @@ exports.load = async function load(url, context, defaultLoad) {
       throw e;
     }
     const rel = path.relative(process.cwd(), filename);
-    if (ext === ".js" && !rel.startsWith("src" + path.sep))
-      return defaultLoad(url, context, defaultLoad);
     const source = fs.readFileSync(filename, "utf-8");
     const urlToReturn = pathToFileURL(filename).href;
 
     const useClientRegex = /"use client"|'use client'/;
+    const hasUseClient = useClientRegex.test(source);
+
+    if (ext === ".js" && !rel.startsWith("src" + path.sep) && !hasUseClient) {
+      return defaultLoad(url, context, defaultLoad);
+    }
+
     const isReactServer = process.execArgv.some(arg => arg.includes("react-server"));
-    if (isReactServer && useClientRegex.test(source)) {
+    if (isReactServer && hasUseClient) {
       const parseExports = require("./parse-exports.js");
       const exports = parseExports(source);
       let newSrc = "";

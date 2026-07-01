@@ -300,7 +300,7 @@ async function renderToStream(
               const errorStream = renderToPipeableStream(errorJSX, {
                 onShellReady() {
                   const isWebpack = process.env.DINOU_BUILD_TOOL === "webpack";
-                  if (!isWebpack) {
+                  if (!isWebpack && isDevelopment) {
                     const importMapHtml = getImportMapHtml();
                     process.stdout.write(importMapHtml);
                   }
@@ -327,7 +327,7 @@ async function renderToStream(
                   )};`
                   : ""
                   }${isDevelopment
-                    ? `window.HMR_WEBSOCKET_URL="ws://localhost:3001";`
+                    ? `window.HMR_WEBSOCKET_URL="ws://localhost:3001";(function(){const map=document.querySelector('script[type="importmap"]');if(map)map.remove();})();`
                     : ""
                   }`,
               });
@@ -340,7 +340,7 @@ async function renderToStream(
         },
         onShellReady() {
           const isWebpack = process.env.DINOU_BUILD_TOOL === "webpack";
-          if (!isWebpack) {
+          if (!isWebpack && isDevelopment) {
             const importMapHtml = getImportMapHtml();
             process.stdout.write(importMapHtml);
           }
@@ -354,7 +354,7 @@ async function renderToStream(
           : [getAssetFromManifest("main.js")],
         ...(isDevelopment
           ? {
-            bootstrapScriptContent: `window.HMR_WEBSOCKET_URL="ws://localhost:3001";`,
+            bootstrapScriptContent: `window.HMR_WEBSOCKET_URL="ws://localhost:3001";(function(){const map=document.querySelector('script[type="importmap"]');if(map)map.remove();})();`,
           }
           : {}),
       });

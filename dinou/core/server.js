@@ -508,12 +508,27 @@ function getContextForServerFunctionEndpoint(req, res) {
 
 app.use(express.static(path.resolve(process.cwd(), outputFolder)));
 
+const clientManifestResolvedPath = path.resolve(
+  process.cwd(),
+  isWebpack
+    ? `${outputFolder}/react-client-manifest.json`
+    : `react_client_manifest/react-client-manifest.json`,
+);
+
+function isManifestReady() {
+  try {
+    return existsSync(clientManifestResolvedPath) && readFileSync(clientManifestResolvedPath, "utf8").trim().length > 2;
+  } catch (e) {
+    return false;
+  }
+}
+
 let isReady = isDevelopment; // In dev we are always ready (or almost)
 
 app.get("/__DINOU_STATUS_PLAYWRIGHT__", (req, res) => {
   res.json({
     status: "ok",
-    isReady,
+    isReady: isDevelopment ? isManifestReady() : isReady,
     mode: isDevelopment ? "development" : "production",
   });
 });
