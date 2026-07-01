@@ -40,6 +40,7 @@ const { renderToPipeableStream } = isWebpack
   : require("@roggc/react-server-dom-esm/server");
 const express = require("express");
 const getJSX = require("./get-jsx.js");
+const { getFilePathAndDynamicParams } = require("./get-file-path-and-dynamic-params.js");
 const { getErrorJSX } = require("./get-error-jsx.js");
 const addHook = require("./asset-require-hook.js");
 const { extensions } = require("./asset-extensions.js");
@@ -691,7 +692,16 @@ app.post(/^\/____rsc_payload_error____\/.*\/?$/, async (req, res) => {
 app.get(/^\/.*\/?$/, (req, res) => {
   try {
     if (path.extname(req.path)) {
-      return res.status(404).send("Not Found");
+      const reqSegments = req.path.split("/").filter(Boolean);
+      const srcFolder = path.resolve(process.cwd(), "src");
+      const [pagePath] = getFilePathAndDynamicParams(
+        reqSegments,
+        req.query,
+        srcFolder,
+      );
+      if (!pagePath) {
+        return res.status(404).send("Not Found");
+      }
     }
     const reqPath = req.path.endsWith("/") ? req.path : req.path + "/";
     // 1. Correct Map initialization
