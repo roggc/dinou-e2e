@@ -6,7 +6,7 @@ import { ClientRedirect } from "@/components/client-redirect";
 export async function redirectSF() {
   const ctx = getContext();
   if (!ctx?.res) return;
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  await new Promise((resolve) => setTimeout(resolve, 3000));
   ctx.res.redirect("/docs");
   return <ClientRedirect to="/docs" />;
 }
