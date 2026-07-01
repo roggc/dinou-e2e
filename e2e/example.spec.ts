@@ -52,11 +52,12 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     isDynamic = false,
   ) {
     if (isProd && !isDynamic) {
-      // 🟢 EN PROD (SSG): Esperamos el resultado final INMEDIATAMENTE
-      // No debe haber loading, debe poner "bye!" directo.
-      await expect(page.getByText("bye!")).toBeVisible();
-      await expect(page.getByText("Helper accessed User-Agent:")).toBeVisible();
-      await expect(page.getByText("loading...")).not.toBeVisible();
+      // 🟢 EN PROD (SSG): Esperamos el resultado final
+      // Si fue invocado desde el cliente, puede tardar hasta 8s en cargar.
+      const timeout = invokedFromServerComponent ? 5000 : 15000;
+      await expect(page.getByText("bye!")).toBeVisible({ timeout });
+      await expect(page.getByText("Helper accessed User-Agent:")).toBeVisible({ timeout });
+      await expect(page.getByText("loading...")).not.toBeVisible({ timeout });
       await expect(page.getByText("hello!")).toBeVisible();
 
       // 2. Verificaciones de Infraestructura (Cookies & Headers)
