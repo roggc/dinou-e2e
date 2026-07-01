@@ -1,10 +1,37 @@
 const path = require("path");
-const { fork } = require("child_process"); // ⬅️ CHANGE 1: We use fork
+const { fork } = require("child_process");
 const url = require("url");
-const { getJSXJSON, hasJSXJSON } = require("./jsx-json");
+const fs = require("fs");
+const getJSX = require("./get-jsx.js");
+
+const isDevelopment = process.env.NODE_ENV !== "production";
+const isWebpack = process.env.DINOU_BUILD_TOOL === "webpack";
+
+const { renderToPipeableStream } = isWebpack
+  ? require("react-server-dom-webpack/server")
+  : require("@roggc/react-server-dom-esm/server");
+
+const manifestPath = path.resolve(
+  process.cwd(),
+  isWebpack
+    ? (isDevelopment ? "public/react-client-manifest.json" : "dist3/react-client-manifest.json")
+    : "react_client_manifest/react-client-manifest.json"
+);
+
+let cachedManifest = null;
+function getManifest() {
+  if (!isDevelopment && cachedManifest) return cachedManifest;
+  try {
+    const content = fs.readFileSync(manifestPath, "utf8");
+    cachedManifest = JSON.parse(content);
+    return cachedManifest;
+  } catch (e) {
+    console.error("Error reading client manifest:", e);
+    return {};
+  }
+}
 
 function toFileUrl(p) {
-  // Converts to file://, cross-platform
   return url.pathToFileURL(p).href;
 }
 
@@ -13,19 +40,9 @@ const registerLoaderPath = toFileUrl(
 );
 const renderHtmlPath = path.resolve(__dirname, "render-html.js");
 
-// ----------------------------------------------------
-// 💡 WHITELIST STRATEGY
-// ----------------------------------------------------
-
-// 1. Define ESSENTIAL Node.js flags that the child must have.
-//    (We leave the list empty to avoid inheriting problematic flags)
 const ESSENTIAL_NODE_ARGS = [];
-
-// 2. Add the loader --import, which is the only confirmed necessity.
 const loaderArg = `--import=${registerLoaderPath}`;
 const childExecArgv = ESSENTIAL_NODE_ARGS.concat(loaderArg);
-
-// ----------------------------------------------------
 
 const { resolveRelativeUrl } = require("./url-resolver");
 
@@ -37,29 +54,44 @@ function renderAppToHtml(
   capturedStatus = null,
   isDynamic = false,
 ) {
-  const jsxJson = getJSXJSON(reqPath);
-  const hasJsxJson = hasJSXJSON(reqPath);
-  // We replicate the array of positional arguments passed to the script
-  // [renderHtmlPath, reqPath, paramsString, cookiesString]
-  const scriptArgs = [
-    reqPath,
-    paramsString,
-    contextForChild ? JSON.stringify(contextForChild) : JSON.stringify({}),
-    isDynamic ? "true" : "false",
-    hasJsxJson ? "true" : "false",
-    JSON.stringify(hasJsxJson ? jsxJson : {}),
-  ];
-
   const child = fork(
-    renderHtmlPath, // ⬅️ CHANGE 2: The script (path) is the first argument of fork (no need for "node")
-    scriptArgs, // Positional arguments for the script (process.argv)
+    renderHtmlPath,
+    [
+      reqPath,
+      paramsString,
+      contextForChild ? JSON.stringify(contextForChild) : JSON.stringify({}),
+      isDynamic ? "true" : "false",
+    ],
     {
-      // ⬅️ CHANGE 3: Apply Whitelist to execArgv, resetting inherited options
       execArgv: childExecArgv,
-      // ⬅️ CHANGE 4: stdio needs 'ipc' for fork to work and for the future communication channel
-      stdio: ["ignore", "pipe", "pipe", "ipc"], // stdin, stdout, stderr, ipc
+      stdio: ["ignore", "pipe", "pipe", "ipc", "pipe"], // fd 4 is the RSC stream pipe
     },
   );
+
+  const query = JSON.parse(paramsString || "{}");
+  const rscPath = path.resolve(process.cwd(), "dist2", reqPath.replace(/^\//, ""), "rsc.rsc");
+  const hasStaticRsc = !isDynamic && fs.existsSync(rscPath);
+
+  if (hasStaticRsc) {
+    // Pipe pre-generated static RSC directly to fd 4
+    const rscStream = fs.createReadStream(rscPath);
+    rscStream.pipe(child.stdio[4]);
+  } else {
+    // Dynamic SSR render: render RSC in parent and pipe to fd 4
+    const isNotFound = null;
+    getJSX(reqPath, query, isNotFound, isDevelopment)
+      .then((jsx) => {
+        const manifest = getManifest();
+        const { pipe } = isWebpack
+          ? renderToPipeableStream(jsx, manifest)
+          : renderToPipeableStream(jsx, url.pathToFileURL(process.cwd()).href + "/");
+        pipe(child.stdio[4]);
+      })
+      .catch((err) => {
+        console.error("Error rendering JSX in parent renderAppToHtml:", err);
+        if (child.stdio[4]) child.stdio[4].destroy();
+      });
+  }
 
   // 💡 on('message') Implementation (IPC Channel)
   // ----------------------------------------------------

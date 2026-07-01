@@ -1,17 +1,51 @@
 require("dotenv/config");
-require("./register-paths");
-require("./register-hooks.js");
-const webpackRegister = require("react-server-dom-webpack/node-register");
+const Module = require("module");
+const originalResolveFilename = Module._resolveFilename;
+const isWebpack = process.env.DINOU_BUILD_TOOL === "webpack";
 const path = require("path");
+
+let reactServerPath, reactDomServerPath, reactJsxRuntimePath, reactJsxDevRuntimePath;
+
+if (!isWebpack) {
+  const reactPkgJson = require.resolve("react/package.json");
+  reactServerPath = path.join(path.dirname(reactPkgJson), "react.react-server.js");
+  reactJsxRuntimePath = path.join(path.dirname(reactPkgJson), "jsx-runtime.react-server.js");
+  reactJsxDevRuntimePath = path.join(path.dirname(reactPkgJson), "jsx-dev-runtime.react-server.js");
+
+  const reactDomPkgJson = require.resolve("react-dom/package.json");
+  reactDomServerPath = path.join(path.dirname(reactDomPkgJson), "react-dom.react-server.js");
+}
+
+Module._resolveFilename = function (request, parent, isMain, options) {
+  if (!isWebpack) {
+    if (request === "react") {
+      return reactServerPath;
+    } else if (request === "react-dom") {
+      return reactDomServerPath;
+    } else if (request === "react/jsx-runtime") {
+      return reactJsxRuntimePath;
+    } else if (request === "react/jsx-dev-runtime") {
+      return reactJsxDevRuntimePath;
+    }
+  }
+  return originalResolveFilename.call(this, request, parent, isMain, options);
+};
+
+require("./register-paths");
+const webpackRegister = require("react-server-dom-webpack/node-register");
 const { readFileSync, existsSync, createReadStream } = require("fs");
-const { renderToPipeableStream } = require("react-server-dom-webpack/server");
+// const isWebpack = process.env.DINOU_BUILD_TOOL === "webpack";
+const { renderToPipeableStream } = isWebpack
+  ? require("react-server-dom-webpack/server")
+  : require("@roggc/react-server-dom-esm/server");
 const express = require("express");
 const getJSX = require("./get-jsx.js");
 const { getErrorJSX } = require("./get-error-jsx.js");
 const addHook = require("./asset-require-hook.js");
 const { extensions } = require("./asset-extensions.js");
-webpackRegister();
-const babelPluginRegisterImports = require("./babel-plugin-register-imports.js");
+if (isWebpack) {
+  webpackRegister();
+}
 const babelRegister = require("@babel/register");
 babelRegister({
   ignore: [/node_modules[\\/](?!dinou)/],
@@ -19,7 +53,7 @@ babelRegister({
     ["@babel/preset-react", { runtime: "automatic" }],
     "@babel/preset-typescript",
   ],
-  plugins: [babelPluginRegisterImports, "@babel/transform-modules-commonjs"],
+  plugins: ["@babel/transform-modules-commonjs"],
   extensions: [".js", ".jsx", ".ts", ".tsx"],
 });
 const createScopedName = require("./createScopedName");
@@ -39,8 +73,7 @@ const { revalidating, regenerating } = require("./revalidating.js");
 const isDevelopment = process.env.NODE_ENV !== "production";
 const outputFolder = isDevelopment ? "public" : "dist3";
 const chokidar = require("chokidar");
-const { fileURLToPath } = require("url");
-const isWebpack = process.env.DINOU_BUILD_TOOL === "webpack";
+const { fileURLToPath, pathToFileURL } = require("url");
 const parseExports = require("./parse-exports.js");
 const { requestStorage } = require("./request-context.js");
 const { useServerRegex } = require("../constants.js");
@@ -372,7 +405,7 @@ function getContextForServerFunctionEndpoint(req, res) {
         if (referer) {
           try {
             refererPath = new URL(referer).pathname;
-          } catch (e) {}
+          } catch (e) { }
         }
         const resolvedUrl = resolveRelativeUrl(rawUrl, refererPath);
         let finalUrl = "/";
@@ -590,7 +623,9 @@ async function serveRSCPayload(req, res, isOld = false, isStatic = false) {
         )
         : cachedClientManifest;
 
-      const { pipe } = renderToPipeableStream(jsx, manifest);
+      const { pipe } = isWebpack
+        ? renderToPipeableStream(jsx, manifest)
+        : renderToPipeableStream(jsx, pathToFileURL(process.cwd()).href + "/");
       pipe(res);
     });
   } catch (error) {
@@ -639,7 +674,9 @@ app.post(/^\/____rsc_payload_error____\/.*\/?$/, async (req, res) => {
         ),
       )
       : cachedClientManifest;
-    const { pipe } = renderToPipeableStream(jsx, manifest);
+    const { pipe } = isWebpack
+      ? renderToPipeableStream(jsx, manifest)
+      : renderToPipeableStream(jsx, pathToFileURL(process.cwd()).href + "/");
     pipe(res);
   } catch (error) {
     console.error("Error rendering RSC:", error);
@@ -1016,7 +1053,9 @@ app.post("/____server_function____", async (req, res) => {
       const manifest = isDevelopment
         ? JSON.parse(readFileSync(manifestPath, "utf8"))
         : cachedClientManifest;
-      const { pipe } = renderToPipeableStream(result, manifest);
+      const { pipe } = isWebpack
+        ? renderToPipeableStream(result, manifest)
+        : renderToPipeableStream(result, pathToFileURL(process.cwd()).href + "/");
       pipe(res);
     });
   } catch (err) {
