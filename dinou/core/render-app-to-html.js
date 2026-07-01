@@ -47,6 +47,117 @@ const childExecArgv = ESSENTIAL_NODE_ARGS.concat(loaderArg);
 
 const { resolveRelativeUrl } = require("./url-resolver");
 
+function createParentResponseWrapper(reqPath, res, child) {
+  let hasRedirected = false;
+
+  const safeRedirect = (targetUrl) => {
+    if (hasRedirected) return;
+    hasRedirected = true;
+
+    const resolvedUrl = resolveRelativeUrl(targetUrl, reqPath);
+    let finalUrl = "/";
+    if (
+      typeof resolvedUrl === "string" &&
+      resolvedUrl.startsWith("/") &&
+      !resolvedUrl.startsWith("//")
+    ) {
+      finalUrl = resolvedUrl;
+    } else {
+      console.warn(
+        `[Dinou Security] Blocked unsafe redirect to: ${targetUrl}`,
+      );
+    }
+
+    if (res.headersSent) {
+      console.log(
+        `[Dinou] Streaming active. Redirecting via JavaScript to: ${finalUrl}`,
+      );
+      const safeUrl = JSON.stringify(finalUrl);
+      res.write(`<script>window.location.href = ${safeUrl};</script>`);
+      res.end();
+      child.stdout.unpipe(res);
+      child.kill();
+    } else {
+      res.redirect(302, finalUrl);
+      child.stdout.unpipe(res);
+      child.kill();
+    }
+  };
+
+  return {
+    setHeader: (name, value) => {
+      if (res.headersSent) {
+        console.warn(
+          `[Dinou Warning] Cannot set header '${name}' because streaming started.`,
+        );
+      } else {
+        res.setHeader(name, value);
+      }
+    },
+    cookie: (name, value, options) => {
+      if (res.headersSent) {
+        if (options && options.httpOnly) {
+          console.error(
+            `[Dinou Error] Cannot set HttpOnly cookie '${name}' because streaming has already started.`,
+          );
+          return;
+        }
+        console.log(
+          `[Dinou] Streaming active. Setting cookie '${name}' via JS.`,
+        );
+        let cookieStr = `${name}=${encodeURIComponent(value)}`;
+        if (options) {
+          if (options.path) cookieStr += `; path=${options.path}`;
+          if (options.domain) cookieStr += `; domain=${options.domain}`;
+          if (options.maxAge) cookieStr += `; max-age=${options.maxAge}`;
+          if (options.expires)
+            cookieStr += `; expires=${new Date(options.expires).toUTCString()}`;
+          if (options.secure) cookieStr += `; secure`;
+          if (options.sameSite)
+            cookieStr += `; samesite=${options.sameSite}`;
+        }
+        const safeCookieStr = JSON.stringify(cookieStr);
+        res.write(`<script>document.cookie = ${safeCookieStr};</script>`);
+      } else {
+        res.cookie(name, value, options);
+      }
+    },
+    clearCookie: (name, options) => {
+      if (res.headersSent) {
+        console.log(
+          `[Dinou] Streaming active. Clearing cookie '${name}' via JS.`,
+        );
+        let cookieStr = `${name}=; Max-Age=0`;
+        const path = options?.path || "/";
+        cookieStr += `; path=${path}`;
+        if (options) {
+          if (options.domain) cookieStr += `; domain=${options.domain}`;
+          if (options.secure) cookieStr += `; secure`;
+          if (options.sameSite) cookieStr += `; samesite=${options.sameSite}`;
+        }
+        cookieStr += ";";
+        const safeCookieStr = JSON.stringify(cookieStr);
+        res.write(`<script>document.cookie = ${safeCookieStr};</script>`);
+      } else {
+        res.clearCookie(name, options);
+      }
+    },
+    redirect: (arg1, arg2) => {
+      const url = arg2 || arg1;
+      safeRedirect(url);
+    },
+    status: (code) => {
+      if (res.headersSent) {
+        console.warn(
+          `[Dinou Warning] HTTP status '${code}' ignored because streaming started.`,
+        );
+      } else {
+        res.status(code);
+      }
+    },
+  };
+}
+
 function renderAppToHtml(
   reqPath,
   paramsString,
@@ -80,15 +191,16 @@ function renderAppToHtml(
   } else {
     // Dynamic SSR render: render RSC in parent and pipe to fd 4
     const isNotFound = {};
+    const parentRes = createParentResponseWrapper(reqPath, res, child);
     const context = {
       req: contextForChild ? contextForChild.req : {},
-      res,
+      res: parentRes,
     };
     requestStorage.run(context, () => {
       getJSX(reqPath, query, isNotFound, isDevelopment)
         .then((jsx) => {
           if (isNotFound.value) {
-            res.status(404);
+            parentRes.status(404);
           }
           const manifest = getManifest();
           const { pipe } = isWebpack
