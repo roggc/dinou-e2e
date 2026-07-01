@@ -3,6 +3,7 @@ const { fork } = require("child_process");
 const url = require("url");
 const fs = require("fs");
 const getJSX = require("./get-jsx.js");
+const { requestStorage } = require("./request-context.js");
 
 const isDevelopment = process.env.NODE_ENV !== "production";
 const isWebpack = process.env.DINOU_BUILD_TOOL === "webpack";
@@ -78,19 +79,28 @@ function renderAppToHtml(
     rscStream.pipe(child.stdio[4]);
   } else {
     // Dynamic SSR render: render RSC in parent and pipe to fd 4
-    const isNotFound = null;
-    getJSX(reqPath, query, isNotFound, isDevelopment)
-      .then((jsx) => {
-        const manifest = getManifest();
-        const { pipe } = isWebpack
-          ? renderToPipeableStream(jsx, manifest)
-          : renderToPipeableStream(jsx, url.pathToFileURL(process.cwd()).href + "/");
-        pipe(child.stdio[4]);
-      })
-      .catch((err) => {
-        console.error("Error rendering JSX in parent renderAppToHtml:", err);
-        if (child.stdio[4]) child.stdio[4].destroy();
-      });
+    const isNotFound = {};
+    const context = {
+      req: contextForChild ? contextForChild.req : {},
+      res,
+    };
+    requestStorage.run(context, () => {
+      getJSX(reqPath, query, isNotFound, isDevelopment)
+        .then((jsx) => {
+          if (isNotFound.value) {
+            res.status(404);
+          }
+          const manifest = getManifest();
+          const { pipe } = isWebpack
+            ? renderToPipeableStream(jsx, manifest)
+            : renderToPipeableStream(jsx, url.pathToFileURL(process.cwd()).href + "/");
+          pipe(child.stdio[4]);
+        })
+        .catch((err) => {
+          console.error("Error rendering JSX in parent renderAppToHtml:", err);
+          if (child.stdio[4]) child.stdio[4].destroy();
+        });
+    });
   }
 
   // 💡 on('message') Implementation (IPC Channel)

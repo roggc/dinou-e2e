@@ -596,7 +596,7 @@ async function serveRSCPayload(req, res, isOld = false, isStatic = false) {
       }
     }
     const context = getContext(req, res);
-    const isNotFound = null;
+    const isNotFound = {};
     await requestStorage.run(context, async () => {
       const jsx = await getJSX(
         reqPath,
@@ -604,6 +604,10 @@ async function serveRSCPayload(req, res, isOld = false, isStatic = false) {
         isNotFound,
         isDevelopment,
       );
+
+      if (isNotFound.value) {
+        res.status(404);
+      }
 
       if (res.headersSent) {
         return;
@@ -686,6 +690,9 @@ app.post(/^\/____rsc_payload_error____\/.*\/?$/, async (req, res) => {
 
 app.get(/^\/.*\/?$/, (req, res) => {
   try {
+    if (path.extname(req.path)) {
+      return res.status(404).send("Not Found");
+    }
     const reqPath = req.path.endsWith("/") ? req.path : req.path + "/";
     // 1. Correct Map initialization
     if (!isDynamic.has(reqPath)) {
