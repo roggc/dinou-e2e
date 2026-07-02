@@ -341,8 +341,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           const tempContext = await browser.newContext();
           const tempPage = await tempContext.newPage();
 
-          // B. Vamos a la URL limpia
-          await tempPage.goto(targetUrl);
+          // B. Vamos a la URL limpia con un parámetro para evitar la caché del navegador (cache busting)
+          const bypassUrl = `${targetUrl}${targetUrl.includes("?") ? "&" : "?"}t=${Date.now()}_${Math.random()}`;
+          await tempPage.goto(bypassUrl);
 
           // C. Leemos el dato
           const currentTime = await tempPage
