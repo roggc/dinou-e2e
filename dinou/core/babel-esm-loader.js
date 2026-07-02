@@ -97,7 +97,10 @@ exports.load = async function load(url, context, defaultLoad) {
       /^\s*(?:(?:\/\/[^\n]*\n\s*)|(?:\/\*[\s\S]*?\*\/\s*))*['"]use client['"]/;
     const hasUseClient = useClientRegex.test(source);
 
-    if (ext === ".js" && !rel.startsWith("src" + path.sep) && !hasUseClient) {
+    const esmSyntaxRegex = /^(?:import|export)\b/m;
+    const hasESMSyntax = esmSyntaxRegex.test(source);
+
+    if (ext === ".js" && !rel.startsWith("src" + path.sep) && !hasUseClient && !hasESMSyntax) {
       return defaultLoad(url, context, defaultLoad);
     }
 
