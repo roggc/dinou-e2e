@@ -2,6 +2,7 @@ require("dotenv/config");
 const Module = require("module");
 const originalResolveFilename = Module._resolveFilename;
 const isWebpack = process.env.DINOU_BUILD_TOOL === "webpack";
+globalThis.__dinou_require__ = require;
 const path = require("path");
 
 let reactServerPath, reactDomServerPath, reactJsxRuntimePath, reactJsxDevRuntimePath;

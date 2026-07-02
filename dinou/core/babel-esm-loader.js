@@ -93,7 +93,8 @@ exports.load = async function load(url, context, defaultLoad) {
     const source = fs.readFileSync(filename, "utf-8");
     const urlToReturn = pathToFileURL(filename).href;
 
-    const useClientRegex = /"use client"|'use client'/;
+    const useClientRegex =
+      /^\s*(?:(?:\/\/[^\n]*\n\s*)|(?:\/\*[\s\S]*?\*\/\s*))*['"]use client['"]/;
     const hasUseClient = useClientRegex.test(source);
 
     if (ext === ".js" && !rel.startsWith("src" + path.sep) && !hasUseClient) {

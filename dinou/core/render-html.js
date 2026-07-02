@@ -168,7 +168,7 @@ function getImportMapHtml() {
       imports[specifier] = val.id;
     }
 
-    return `<script type="importmap">{"imports":${JSON.stringify(imports)}}</script><script>(function(){const map=document.querySelector('script[type="importmap"]');if(map)map.remove();})();</script>`;
+    return `<script type="importmap">{"imports":${JSON.stringify(imports)}}</script><script>(function(){const map=document.querySelector('script[type="importmap"]');if(map)map.remove();if(document.currentScript)document.currentScript.remove();})();</script>`;
   } catch (err) {
     console.error("Error generating importmap:", err);
     return "";
@@ -294,10 +294,10 @@ async function renderToStream(
               const errorStream = renderToPipeableStream(errorJSX, {
                 onShellReady() {
                   const isWebpack = process.env.DINOU_BUILD_TOOL === "webpack";
-                  if (!isWebpack && isDevelopment) {
-                    const importMapHtml = getImportMapHtml();
-                    process.stdout.write(importMapHtml);
-                  }
+          if (!isWebpack) {
+            const importMapHtml = getImportMapHtml();
+            process.stdout.write(importMapHtml);
+          }
                   errorStream.pipe(process.stdout);
                 },
                 onError(err) {
@@ -334,7 +334,7 @@ async function renderToStream(
         },
         onShellReady() {
           const isWebpack = process.env.DINOU_BUILD_TOOL === "webpack";
-          if (!isWebpack && isDevelopment) {
+          if (!isWebpack) {
             const importMapHtml = getImportMapHtml();
             process.stdout.write(importMapHtml);
           }
