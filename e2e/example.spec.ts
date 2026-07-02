@@ -2998,6 +2998,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
   test.describe("🍪 Cookie Management Tests", () => {
     test("Should set and clear standard cookies via Server Functions", async ({ page }) => {
       await page.goto("/t-cookies");
+      await page.waitForSelector('body[data-hydrated="true"]');
 
       // 1. Set cookie
       await page.click("#btn-set-std");
@@ -3022,6 +3023,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
     test("Should set and clear cookies with specific options (path, sameSite) via Server Functions", async ({ page, browserName }) => {
       await page.goto("/t-cookies");
+      await page.waitForSelector('body[data-hydrated="true"]');
 
       // 1. Set cookie with options
       await page.click("#btn-set-opts");
