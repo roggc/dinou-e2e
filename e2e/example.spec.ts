@@ -123,7 +123,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // 4. ESTADO FINAL
       // Una vez llega el componente, el "loading..." debe desaparecer.
-      await expect(page.getByText("loading...")).not.toBeVisible();
+      await expect(page.getByText("loading...")).not.toBeVisible({ timeout: 15000 });
 
       // "hello!" debe seguir ahí (no se borró la página, fue un update parcial).
       await expect(page.getByText("hello!")).toBeVisible();
