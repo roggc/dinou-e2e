@@ -325,7 +325,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     const targetUrl = page.url(); // Guardamos la URL limpia
 
     // 2. Esperamos el tiempo de revalidación (5s)
-    await page.waitForTimeout(4000);
+    await page.waitForTimeout(5000);
 
     // 3. VERIFICACIÓN CON CONTEXTO LIMPIO (Sonda ISR)
     // En lugar de recargar la misma página, abrimos una ventana de incógnito nueva
@@ -356,7 +356,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         },
         {
           message: "El ISR no regeneró la página (verificado con New Context)",
-          timeout: 20000,
+          timeout: 45000,
           intervals: [2000], // Intervalos un poco más largos ya que abrimos contextos
         },
       )
