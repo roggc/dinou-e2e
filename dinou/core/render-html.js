@@ -168,13 +168,7 @@ function getImportMapHtml() {
       imports[specifier] = val.id;
     }
 
-    return `
-<script type="importmap">
-{
-  "imports": ${JSON.stringify(imports, null, 2)}
-}
-</script>
-`;
+    return `<script type="importmap">{"imports":${JSON.stringify(imports)}}</script><script>(function(){const map=document.querySelector('script[type="importmap"]');if(map)map.remove();})();</script>`;
   } catch (err) {
     console.error("Error generating importmap:", err);
     return "";
@@ -327,7 +321,7 @@ async function renderToStream(
                   )};`
                   : ""
                   }${isDevelopment
-                    ? `window.HMR_WEBSOCKET_URL="ws://localhost:3001";(function(){const map=document.querySelector('script[type="importmap"]');if(map)map.remove();})();`
+                    ? `window.HMR_WEBSOCKET_URL="ws://localhost:3001";`
                     : ""
                   }`,
               });
@@ -354,7 +348,7 @@ async function renderToStream(
           : [getAssetFromManifest("main.js")],
         ...(isDevelopment
           ? {
-            bootstrapScriptContent: `window.HMR_WEBSOCKET_URL="ws://localhost:3001";(function(){const map=document.querySelector('script[type="importmap"]');if(map)map.remove();})();`,
+            bootstrapScriptContent: `window.HMR_WEBSOCKET_URL="ws://localhost:3001";`,
           }
           : {}),
       });
