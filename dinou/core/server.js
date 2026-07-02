@@ -1038,59 +1038,56 @@ app.post("/____server_function____", async (req, res) => {
       return res.status(400).json({ error: "Export is not a function" });
     }
 
-    await processLimiter.run(async () => {
-      const context = getContextForServerFunctionEndpoint(req, res);
+    const context = getContextForServerFunctionEndpoint(req, res);
 
-      let result;
-      try {
-        result = await requestStorage.run(context, async () => {
-          return await fn(...args);
-        });
-      } catch (err) {
-        // 💡 WE INTERCEPT THE REDIRECT
-        if (err && err.$$type === "dinou-internal-redirect") {
-          const safeUrl = JSON.stringify(err.url);
+    let result;
+    try {
+      result = await requestStorage.run(context, async () => {
+        return await fn(...args);
+      });
+    } catch (err) {
+      // 💡 WE INTERCEPT THE REDIRECT
+      if (err && err.$$type === "dinou-internal-redirect") {
+        const safeUrl = JSON.stringify(err.url);
 
-          if (!res.headersSent) {
-            // SCENARIO A: Clean (Content-Type application/json)
-            res.setHeader("Content-Type", "application/json");
-            res.setHeader("X-Dinou-Redirect", err.url);
-            return res.status(200).json({ redirect: err.url });
-          } else {
-            // SCENARIO B: Dirty/Active Stream
-            // Write a custom line-based stream command
-            res.write(`D:{"type":"redirect","url":${safeUrl}}\n`);
+        if (!res.headersSent) {
+          // SCENARIO A: Clean (Content-Type application/json)
+          res.setHeader("Content-Type", "application/json");
+          res.setHeader("X-Dinou-Redirect", err.url);
+          return res.status(200).json({ redirect: err.url });
+        } else {
+          // SCENARIO B: Dirty/Active Stream
+          // Write a custom line-based stream command
+          res.write(`D:{"type":"redirect","url":${safeUrl}}\n`);
 
-            // ⚠️ IMPORTANT:
-            // 1. We close the response, since we redirected and there will be no RSC payload.
-            res.end();
-
-            // 2. WE STOP execution so it doesn't continue to res.json() below.
-            return;
-          }
+          // ⚠️ IMPORTANT:
+          // 1. We close the response, since we redirected and there will be no RSC payload.
+          // 2. WE STOP execution so it doesn't continue to res.json() below.
+          res.end();
+          return;
         }
-        throw err; // If it's another error, throw it to the outer catch
       }
+      throw err; // If it's another error, throw it to the outer catch
+    }
 
-      if (!res.headersSent) res.setHeader("Content-Type", "text/x-component");
-      const manifestPath = path.resolve(
-        process.cwd(),
-        isWebpack
-          ? `${outputFolder}/react-client-manifest.json`
-          : `react_client_manifest/react-client-manifest.json`,
-      );
-      // Verify that the manifest exists to avoid errors
-      if (!existsSync(manifestPath)) {
-        return res.status(500).json({ error: "Manifest not found" });
-      }
-      const manifest = isDevelopment
-        ? JSON.parse(readFileSync(manifestPath, "utf8"))
-        : cachedClientManifest;
-      const { pipe } = isWebpack
-        ? renderToPipeableStream(result, manifest)
-        : renderToPipeableStream(result, pathToFileURL(process.cwd()).href + "/");
-      pipe(res);
-    });
+    if (!res.headersSent) res.setHeader("Content-Type", "text/x-component");
+    const manifestPath = path.resolve(
+      process.cwd(),
+      isWebpack
+        ? `${outputFolder}/react-client-manifest.json`
+        : `react_client_manifest/react-client-manifest.json`,
+    );
+    // Verify that the manifest exists to avoid errors
+    if (!existsSync(manifestPath)) {
+      return res.status(500).json({ error: "Manifest not found" });
+    }
+    const manifest = isDevelopment
+      ? JSON.parse(readFileSync(manifestPath, "utf8"))
+      : cachedClientManifest;
+    const { pipe } = isWebpack
+      ? renderToPipeableStream(result, manifest)
+      : renderToPipeableStream(result, pathToFileURL(process.cwd()).href + "/");
+    pipe(res);
   } catch (err) {
     console.error(`Server function error [${req.body?.id}]:`, err);
     // In production, do not send full err.message to avoid leaks

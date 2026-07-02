@@ -24,7 +24,7 @@ if (commandToRun.includes("dev:webpack")) {
   // ⚠️ Asegúrate de que este archivo realmente se sirve en Webpack Dev
   // Si tu archivo real se llama 'react-client-manifest.json', pon eso.
   resourceToWaitFor = "manifest.json";
-} else if (commandToRun.includes("dev:")) {
+} else if (commandToRun.includes("dev")) {
   // Para Rollup, Esbuild (y fallback) esperamos al bundle principal
   resourceToWaitFor = "main.js";
 }
