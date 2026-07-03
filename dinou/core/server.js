@@ -739,9 +739,6 @@ const pageFunctionsConfigCache = new Map();
 
 app.get(/^\/.*\/?$/, async (req, res) => {
   try {
-    if (path.extname(req.path)) {
-      return res.status(404).send("Not Found");
-    }
     const reqSegments = req.path.split("/").filter(Boolean);
     const srcFolder = path.resolve(process.cwd(), "src");
     const [pagePath, dynamicParams] = getFilePathAndDynamicParams(
@@ -749,6 +746,12 @@ app.get(/^\/.*\/?$/, async (req, res) => {
       req.query,
       srcFolder,
     );
+
+    if (!pagePath) {
+      if (path.extname(req.path)) {
+        return res.status(404).send("Not Found");
+      }
+    }
 
     let isPathBlocked = false;
 
