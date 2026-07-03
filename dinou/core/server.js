@@ -792,11 +792,13 @@ app.get(/^\/.*\/?$/, async (req, res) => {
           cachedConfig = {
             allowISG: allowISGValue,
             staticPathsSet,
+            validateParams: pageFunctionsModule.validateParams || null,
           };
         } else {
           cachedConfig = {
             allowISG: true,
             staticPathsSet: null,
+            validateParams: null,
           };
         }
 
@@ -805,27 +807,36 @@ app.get(/^\/.*\/?$/, async (req, res) => {
         }
       }
 
-      const { allowISG: allowISGValue, staticPathsSet } = cachedConfig;
+      const { allowISG: allowISGValue, staticPathsSet, validateParams: validateParamsFn } = cachedConfig;
       const hasParams = Object.keys(dynamicParams || {}).length > 0;
-      if (allowISGValue === false && hasParams) {
-        let isPathAllowed = false;
-        if (staticPathsSet) {
-          const sortedQueryEntries = Object.entries(dynamicParams)
-            .sort((a, b) => a[0].localeCompare(b[0]))
-            .map(([k, v]) => {
-              if (Array.isArray(v)) return [k, v.join(",")];
-              return [k, String(v)];
-            });
-          const serializedQuery = JSON.stringify(sortedQueryEntries);
-          isPathAllowed = staticPathsSet.has(serializedQuery);
-        }
-        if (!isPathAllowed) {
-          if (isDevelopment) {
+      if (hasParams) {
+        if (validateParamsFn) {
+          const isValid = await validateParamsFn(dynamicParams);
+          if (!isValid) {
             isPathBlocked = true;
-          } else {
-            const htmlPath = path.join("dist2", req.path, "index.html");
-            if (!existsSync(htmlPath)) {
+          }
+        }
+
+        if (!isPathBlocked && allowISGValue === false) {
+          let isPathAllowed = false;
+          if (staticPathsSet) {
+            const sortedQueryEntries = Object.entries(dynamicParams)
+              .sort((a, b) => a[0].localeCompare(b[0]))
+              .map(([k, v]) => {
+                if (Array.isArray(v)) return [k, v.join(",")];
+                return [k, String(v)];
+              });
+            const serializedQuery = JSON.stringify(sortedQueryEntries);
+            isPathAllowed = staticPathsSet.has(serializedQuery);
+          }
+          if (!isPathAllowed) {
+            if (isDevelopment) {
               isPathBlocked = true;
+            } else {
+              const htmlPath = path.join("dist2", req.path, "index.html");
+              if (!existsSync(htmlPath)) {
+                isPathBlocked = true;
+              }
             }
           }
         }

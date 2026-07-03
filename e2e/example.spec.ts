@@ -3094,4 +3094,19 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(response?.status()).toBe(404);
     });
   });
+
+  test.describe("Dinou Core: validateParams() Route Restriction", () => {
+    test("valid param - renders successfully", async ({ page }) => {
+      const response = await page.goto("/t-validate-params/456");
+      expect(response?.status()).toBe(200);
+      await expect(page.getByTestId("id-text")).toHaveText(
+        "ID: 456"
+      );
+    });
+
+    test("invalid param - returns 404 immediately", async ({ page }) => {
+      const response = await page.goto("/t-validate-params/abc");
+      expect(response?.status()).toBe(404);
+    });
+  });
 });
