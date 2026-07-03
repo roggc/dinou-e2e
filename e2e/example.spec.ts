@@ -3084,4 +3084,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(streamCookie).toBeUndefined();
     });
   });
+
+  test("synchronous Server Component - renders successfully", async ({ page }) => {
+    await page.goto("/t-sync-server-component");
+    await expect(page.getByTestId("sync-sc-text")).toHaveText(
+      "Hello from synchronous Server Component!"
+    );
+  });
 });

@@ -176,41 +176,6 @@ function reactClientManifestPlugin({
     return fileName.startsWith("page.") || fileName.startsWith("layout.");
   }
 
-  function isAsyncDefaultExport(code) {
-    const ast = parser.parse(code, {
-      sourceType: "module",
-      plugins: ["jsx", "typescript"],
-    });
-
-    let isAsync = false;
-
-    traverse(ast, {
-      ExportDefaultDeclaration(path) {
-        let decl = path.node.declaration;
-
-        if (decl.type === "Identifier") {
-          const binding = path.scope.getBinding(decl.name);
-          if (binding && binding.path) {
-            decl = binding.path.node;
-            if (decl.type === "VariableDeclarator") {
-              decl = decl.init;
-            }
-          }
-        }
-
-        if (
-          decl &&
-          (decl.type === "FunctionDeclaration" ||
-            decl.type === "ArrowFunctionExpression" ||
-            decl.type === "FunctionExpression")
-        ) {
-          isAsync = decl.async;
-        }
-      },
-    });
-
-    return isAsync;
-  }
 
   return {
     name: "react-client-manifest",
@@ -250,11 +215,6 @@ function reactClientManifestPlugin({
             name: path.basename(absPath, path.extname(absPath)),
           });
         } else if (isPageOrLayout(absPath)) {
-          if (!isAsyncDefaultExport(code)) {
-            this.warn(
-              `[react-client-manifest] The file ${normalizedPath} is a page or layout without "use client" directive, but its default export is not an async function. Add "use client" if it's a client component, or make the default export async if it's a server component.`
-            );
-          }
           serverModules.add(normalizedPath);
           this.addWatchFile(absPath);
           const { imports, assets, csss } = await getImportsAndAssetsAndCsss(
@@ -334,11 +294,6 @@ function reactClientManifestPlugin({
       } else {
         clientModules.delete(normalizedId);
         if (isPageOrLayout(id)) {
-          if (!isAsyncDefaultExport(code)) {
-            this.warn(
-              `[react-client-manifest] The file ${normalizedId} is a page or layout without "use client" directive, but its default export is not an async function. Add "use client" if it's a client component, or make the default export async if it's a server component.`
-            );
-          }
           serverModules.add(normalizedId);
           this.addWatchFile(id);
           const { imports, assets, csss } = await getImportsAndAssetsAndCsss(
