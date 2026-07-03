@@ -3079,4 +3079,19 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       "Hello from synchronous Server Component!"
     );
   });
+
+  test.describe("Dinou Core: allowISG() Route Restriction", () => {
+    test("allowed slug - renders successfully", async ({ page }) => {
+      const response = await page.goto("/t-allow-isg/allowed-slug");
+      expect(response?.status()).toBe(200);
+      await expect(page.getByTestId("slug-text")).toHaveText(
+        "Slug: allowed-slug"
+      );
+    });
+
+    test("forbidden slug - returns 404 immediately", async ({ page }) => {
+      const response = await page.goto("/t-allow-isg/forbidden-slug");
+      expect(response?.status()).toBe(404);
+    });
+  });
 });

@@ -735,18 +735,61 @@ app.post(/^\/____rsc_payload_error____\/.*\/?$/, async (req, res) => {
   }
 });
 
-app.get(/^\/.*\/?$/, (req, res) => {
+app.get(/^\/.*\/?$/, async (req, res) => {
   try {
-    if (path.extname(req.path)) {
-      const reqSegments = req.path.split("/").filter(Boolean);
-      const srcFolder = path.resolve(process.cwd(), "src");
-      const [pagePath] = getFilePathAndDynamicParams(
-        reqSegments,
-        req.query,
-        srcFolder,
-      );
-      if (!pagePath) {
-        return res.status(404).send("Not Found");
+    const reqSegments = req.path.split("/").filter(Boolean);
+    const srcFolder = path.resolve(process.cwd(), "src");
+    const [pagePath, dynamicParams] = getFilePathAndDynamicParams(
+      reqSegments,
+      req.query,
+      srcFolder,
+    );
+
+    if (!pagePath) {
+      return res.status(404).send("Not Found");
+    }
+
+    const pageFolder = path.dirname(pagePath);
+    const [pageFunctionsPath] = getFilePathAndDynamicParams(
+      reqSegments,
+      req.query,
+      pageFolder,
+      "page_functions",
+      true,
+      true,
+      undefined,
+      reqSegments.length,
+    );
+
+    if (pageFunctionsPath) {
+      const pageFunctionsModule = await importModule(pageFunctionsPath);
+      if (pageFunctionsModule.allowISG) {
+        const allowISGValue = await pageFunctionsModule.allowISG();
+        const hasParams = Object.keys(dynamicParams || {}).length > 0;
+        if (allowISGValue === false && hasParams) {
+          let isPathAllowed = false;
+          if (pageFunctionsModule.getStaticPaths) {
+            const staticPaths = await pageFunctionsModule.getStaticPaths();
+            isPathAllowed = (staticPaths || []).some((pathObj) => {
+              return Object.entries(pathObj).every(([key, value]) => {
+                if (Array.isArray(value) && Array.isArray(dynamicParams[key])) {
+                  return value.join(",") === dynamicParams[key].join(",");
+                }
+                return String(dynamicParams[key]) === String(value);
+              });
+            });
+          }
+          if (!isPathAllowed) {
+            if (isDevelopment) {
+              return res.status(404).send("Not Found");
+            } else {
+              const htmlPath = path.join("dist2", req.path, "index.html");
+              if (!existsSync(htmlPath)) {
+                return res.status(404).send("Not Found");
+              }
+            }
+          }
+        }
       }
     }
     const reqPath = req.path.endsWith("/") ? req.path : req.path + "/";
