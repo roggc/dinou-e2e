@@ -192,9 +192,14 @@ function renderAppToHtml(
   const hasStaticRsc = !isDynamic && fs.existsSync(rscPath);
 
   if (hasStaticRsc) {
-    // Pipe pre-generated static RSC directly to fd 4
-    const rscStream = fs.createReadStream(rscPath);
-    rscStream.pipe(child.stdio[4]);
+    try {
+      const rscBuffer = fs.readFileSync(rscPath);
+      child.stdio[4].write(rscBuffer);
+      child.stdio[4].end();
+    } catch (err) {
+      console.error(`[Dinou] Failed to read static RSC from ${rscPath}:`, err.message);
+      if (child.stdio[4]) child.stdio[4].destroy();
+    }
   } else {
     // Dynamic SSR render: render RSC in parent and pipe to fd 4
     const isNotFound = {};

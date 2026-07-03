@@ -322,43 +322,31 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
   async function ISRFlow(page: any) {
     // 1. Obtenemos el timestamp inicial
     const time1 = await page.getByTestId("timestamp").innerText();
-    const targetUrl = page.url(); // Guardamos la URL limpia
+    const targetUrl = page.url().split("?")[0]; // Guardamos la URL limpia
 
     // 2. Esperamos el tiempo de revalidación (5s)
     await page.waitForTimeout(5000);
 
-    // 3. VERIFICACIÓN CON CONTEXTO LIMPIO (Sonda ISR)
-    // En lugar de recargar la misma página, abrimos una ventana de incógnito nueva
-    // repetidamente hasta que el servidor nos sirva la versión nueva.
+    // 3. VERIFICACIÓN CON CACHE BUSTING (Sonda ISR)
+    // Usamos la misma página con parámetros dinámicos para evitar crear/cerrar contextos costosos
     await expect
       .poll(
         async () => {
-          // A. Creamos un contexto nuevo (Sin caché, sin cookies previas)
-          // Usamos el browser original para no lanzar una instancia nueva de Firefox (rápido)
-          const browser = page.context().browser();
-          if (!browser) throw new Error("No browser instance found");
+          // Vamos a la URL con un parámetro para evitar la caché del navegador (cache busting)
+          const bypassUrl = `${targetUrl}?t=${Date.now()}_${Math.random()}`;
+          await page.goto(bypassUrl);
 
-          const tempContext = await browser.newContext();
-          const tempPage = await tempContext.newPage();
-
-          // B. Vamos a la URL limpia con un parámetro para evitar la caché del navegador (cache busting)
-          const bypassUrl = `${targetUrl}${targetUrl.includes("?") ? "&" : "?"}t=${Date.now()}_${Math.random()}`;
-          await tempPage.goto(bypassUrl);
-
-          // C. Leemos el dato
-          const currentTime = await tempPage
+          // Leemos el dato
+          const currentTime = await page
             .getByTestId("timestamp")
             .innerText();
-
-          // D. Cerramos el contexto para limpiar memoria
-          await tempContext.close();
 
           return new Date(currentTime).getTime();
         },
         {
-          message: "El ISR no regeneró la página (verificado con New Context)",
+          message: "El ISR no regeneró la página (verificado con Cache Busting)",
           timeout: 45000,
-          intervals: [2000], // Intervalos un poco más largos ya que abrimos contextos
+          intervals: [1000],
         },
       )
       .toBeGreaterThan(new Date(time1).getTime());

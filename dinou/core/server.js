@@ -604,12 +604,13 @@ async function serveRSCPayload(req, res, isOld = false, isStatic = false) {
       }
       if (existsSync(payloadPath)) {
         res.setHeader("Content-Type", "application/octet-stream");
-        const readStream = createReadStream(payloadPath);
-        readStream.on("error", (err) => {
+        try {
+          const buffer = readFileSync(payloadPath);
+          return res.send(buffer);
+        } catch (err) {
           console.error("Error reading RSC file:", err);
-          res.status(500).end();
-        });
-        return readStream.pipe(res);
+          return res.status(500).end();
+        }
       }
     }
     const context = getContext(req, res);
@@ -750,29 +751,19 @@ app.get(/^\/.*\/?$/, (req, res) => {
         } else {
           res.statusCode = 200; // Default
         }
-        const rStream = createReadStream(fileToRead);
-
-        rStream.on("error", (err) => {
-          console.error("Error reading HTML file:", err);
-          if (!res.headersSent) res.status(500).send("Server Error");
-        });
-
-        // 1. IMPORTANT: We use { end: false } so pipe doesn't close the response
-        rStream.pipe(res, { end: false });
-
-        // 2. When the file finishes sending...
-        rStream.on("end", () => {
-          // 3. Write our additional content
+        try {
+          const htmlContent = readFileSync(fileToRead);
+          res.write(htmlContent);
           if (htmlPathOld) {
             res.write("<script>window.__DINOU_USE_OLD_RSC__=true;</script>");
           }
           res.write("<script>window.__DINOU_USE_STATIC__=true;</script>");
-
-          // 4. Manually close the response (now we do)
           res.end();
-        });
-
-        return; // The stream is already flowing
+        } catch (err) {
+          console.error("Error reading HTML file:", err);
+          if (!res.headersSent) res.status(500).send("Server Error");
+        }
+        return;
       }
     }
 
