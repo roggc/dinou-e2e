@@ -210,17 +210,7 @@ function renderAppToHtml(
       res: parentRes,
     };
     requestStorage.run(context, () => {
-      let resolvePath = reqPath;
-      if (forceNotFound) {
-        const reqSegments = reqPath.split("/").filter(Boolean);
-        if (reqSegments.length > 0) {
-          const parentSegments = reqSegments.slice(0, -1);
-          resolvePath = "/" + parentSegments.concat("____not_found____").join("/") + "/";
-        } else {
-          resolvePath = "/____not_found____/";
-        }
-      }
-      getJSX(resolvePath, query, isNotFound, isDevelopment)
+      getJSX(reqPath, query, isNotFound, isDevelopment, forceNotFound)
         .then((jsx) => {
           if (isNotFound.value) {
             parentRes.status(404);
