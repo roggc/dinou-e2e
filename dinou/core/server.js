@@ -735,6 +735,8 @@ app.post(/^\/____rsc_payload_error____\/.*\/?$/, async (req, res) => {
   }
 });
 
+const pageFunctionsConfigCache = new Map();
+
 app.get(/^\/.*\/?$/, async (req, res) => {
   try {
     const reqSegments = req.path.split("/").filter(Boolean);
@@ -745,54 +747,82 @@ app.get(/^\/.*\/?$/, async (req, res) => {
       srcFolder,
     );
 
-    if (!pagePath) {
-      return res.status(404).send("Not Found");
-    }
+    let isPathBlocked = false;
 
-    const pageFolder = path.dirname(pagePath);
-    const [pageFunctionsPath] = getFilePathAndDynamicParams(
-      reqSegments,
-      req.query,
-      pageFolder,
-      "page_functions",
-      true,
-      true,
-      undefined,
-      reqSegments.length,
-    );
+    if (pagePath) {
+      const pageFolder = path.dirname(pagePath);
+      const [pageFunctionsPath] = getFilePathAndDynamicParams(
+        reqSegments,
+        req.query,
+        pageFolder,
+        "page_functions",
+        true,
+        true,
+        undefined,
+        reqSegments.length,
+      );
 
-    if (pageFunctionsPath) {
-      const pageFunctionsModule = await importModule(pageFunctionsPath);
-      if (pageFunctionsModule.allowISG) {
-        const allowISGValue = await pageFunctionsModule.allowISG();
+      if (pageFunctionsPath) {
+        let cachedConfig = pageFunctionsConfigCache.get(pageFunctionsPath);
+        if (!cachedConfig) {
+          const pageFunctionsModule = await importModule(pageFunctionsPath);
+          const allowISGValue = pageFunctionsModule.allowISG
+            ? await pageFunctionsModule.allowISG()
+            : true;
+
+          let staticPathsSet = null;
+          if (pageFunctionsModule.getStaticPaths) {
+            const paths = await pageFunctionsModule.getStaticPaths();
+            staticPathsSet = new Set(
+              (paths || []).map((pathObj) => {
+                const sortedEntries = Object.entries(pathObj).sort((a, b) =>
+                  a[0].localeCompare(b[0])
+                );
+                return JSON.stringify(sortedEntries);
+              })
+            );
+          }
+
+          cachedConfig = {
+            allowISG: allowISGValue,
+            staticPathsSet,
+          };
+
+          if (!isDevelopment) {
+            pageFunctionsConfigCache.set(pageFunctionsPath, cachedConfig);
+          }
+        }
+
+        const { allowISG: allowISGValue, staticPathsSet } = cachedConfig;
         const hasParams = Object.keys(dynamicParams || {}).length > 0;
         if (allowISGValue === false && hasParams) {
           let isPathAllowed = false;
-          if (pageFunctionsModule.getStaticPaths) {
-            const staticPaths = await pageFunctionsModule.getStaticPaths();
-            isPathAllowed = (staticPaths || []).some((pathObj) => {
-              return Object.entries(pathObj).every(([key, value]) => {
-                if (Array.isArray(value) && Array.isArray(dynamicParams[key])) {
-                  return value.join(",") === dynamicParams[key].join(",");
-                }
-                return String(dynamicParams[key]) === String(value);
+          if (staticPathsSet) {
+            const sortedQueryEntries = Object.entries(dynamicParams)
+              .sort((a, b) => a[0].localeCompare(b[0]))
+              .map(([k, v]) => {
+                if (Array.isArray(v)) return [k, v.join(",")];
+                return [k, String(v)];
               });
-            });
+            const serializedQuery = JSON.stringify(sortedQueryEntries);
+            isPathAllowed = staticPathsSet.has(serializedQuery);
           }
           if (!isPathAllowed) {
             if (isDevelopment) {
-              return res.status(404).send("Not Found");
+              isPathBlocked = true;
             } else {
               const htmlPath = path.join("dist2", req.path, "index.html");
               if (!existsSync(htmlPath)) {
-                return res.status(404).send("Not Found");
+                isPathBlocked = true;
               }
             }
           }
         }
       }
     }
+
     const reqPath = req.path.endsWith("/") ? req.path : req.path + "/";
+
     // 1. Correct Map initialization
     if (!isDynamic.has(reqPath)) {
       // Initialize with a mutable object.
@@ -803,7 +833,7 @@ app.get(/^\/.*\/?$/, async (req, res) => {
     // Get reference to the mutable object
     const dynamicState = isDynamic.get(reqPath);
     // console.log("dynamicState.value", dynamicState.value);
-    if (!isDevelopment && !dynamicState.value) {
+    if (!isDevelopment && !dynamicState.value && pagePath && !isPathBlocked) {
       revalidating(reqPath, dynamicState);
       let htmlPathOld;
       if (regenerating.has(reqPath)) {
@@ -872,6 +902,7 @@ app.get(/^\/.*\/?$/, async (req, res) => {
           res,
           capturedStatus,
           isDynamic,
+          isPathBlocked,
         );
 
         res.setHeader("Content-Type", "text/html");
