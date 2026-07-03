@@ -79,16 +79,6 @@ function createBailoutProxy(target, label, onBailout) {
  */
 async function buildStaticPages() {
   const srcFolder = path.resolve(process.cwd(), "src");
-  const distFolder = path.resolve(process.cwd(), "dist");
-
-  if (existsSync(distFolder)) {
-    rmSync(distFolder, { recursive: true, force: true });
-    console.log("Deleted existing dist folder");
-  }
-
-  if (!existsSync(distFolder)) {
-    mkdirSync(distFolder, { recursive: true });
-  }
 
   /**
    * Recursively traverses the page directory tree to collect all eligible static routes.
