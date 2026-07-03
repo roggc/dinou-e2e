@@ -283,6 +283,35 @@ const appUseCookieParser = cookieParser();
 const app = express();
 app.use(appUseCookieParser);
 app.use(express.json());
+
+// ============================================================
+// 🛡️ ESCUDO ANTI-BOTS (Evitar que el ISG colapse)
+// ============================================================
+const botGarbagePatterns = [
+  /\.php$/i, // Cualquier archivo PHP
+  /\.env$/i, // Intentos de robar variables de entorno
+  /\.git\b/i, // Intentos de acceder al repositorio Git
+  /wp-admin/i, // WordPress admin
+  /wp-content/i, // WordPress content
+  /wp-includes/i, // WordPress core files
+  /xmlrpc\.php/i, // Ataques DDoS de WordPress
+  /\.sql$/i, // Intentos de descargar volcados de base de datos
+  /\.asp$/i, // Páginas ASP heredadas
+  /\.jsp$/i, // Páginas JSP
+  /\.cgi$/i, // Scripts CGI antiguos
+  /\.bak$/i, // Archivos de copia de seguridad (backups)
+  /\.log$/i, // Archivos de registro (logs)
+];
+
+app.use((req, res, next) => {
+  const isGarbage = botGarbagePatterns.some((pattern) => pattern.test(req.path));
+  if (isGarbage) {
+    // Retornamos 404 de inmediato para evitar que el motor de ISG levante procesos
+    return res.status(404).send("Not Found");
+  }
+  next();
+});
+
 const { resolveRelativeUrl } = require("./url-resolver");
 
 function getContext(req, res) {
