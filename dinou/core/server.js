@@ -750,21 +750,21 @@ app.get(/^\/.*\/?$/, async (req, res) => {
     let isPathBlocked = false;
 
     if (pagePath) {
-      const pageFolder = path.dirname(pagePath);
-      const [pageFunctionsPath] = getFilePathAndDynamicParams(
-        reqSegments,
-        req.query,
-        pageFolder,
-        "page_functions",
-        true,
-        true,
-        undefined,
-        reqSegments.length,
-      );
+      let cachedConfig = pageFunctionsConfigCache.get(pagePath);
+      if (!cachedConfig) {
+        const pageFolder = path.dirname(pagePath);
+        const [pageFunctionsPath] = getFilePathAndDynamicParams(
+          reqSegments,
+          req.query,
+          pageFolder,
+          "page_functions",
+          true,
+          true,
+          undefined,
+          reqSegments.length,
+        );
 
-      if (pageFunctionsPath) {
-        let cachedConfig = pageFunctionsConfigCache.get(pageFunctionsPath);
-        if (!cachedConfig) {
+        if (pageFunctionsPath) {
           const pageFunctionsModule = await importModule(pageFunctionsPath);
           const allowISGValue = pageFunctionsModule.allowISG
             ? await pageFunctionsModule.allowISG()
@@ -787,34 +787,39 @@ app.get(/^\/.*\/?$/, async (req, res) => {
             allowISG: allowISGValue,
             staticPathsSet,
           };
-
-          if (!isDevelopment) {
-            pageFunctionsConfigCache.set(pageFunctionsPath, cachedConfig);
-          }
+        } else {
+          cachedConfig = {
+            allowISG: true,
+            staticPathsSet: null,
+          };
         }
 
-        const { allowISG: allowISGValue, staticPathsSet } = cachedConfig;
-        const hasParams = Object.keys(dynamicParams || {}).length > 0;
-        if (allowISGValue === false && hasParams) {
-          let isPathAllowed = false;
-          if (staticPathsSet) {
-            const sortedQueryEntries = Object.entries(dynamicParams)
-              .sort((a, b) => a[0].localeCompare(b[0]))
-              .map(([k, v]) => {
-                if (Array.isArray(v)) return [k, v.join(",")];
-                return [k, String(v)];
-              });
-            const serializedQuery = JSON.stringify(sortedQueryEntries);
-            isPathAllowed = staticPathsSet.has(serializedQuery);
-          }
-          if (!isPathAllowed) {
-            if (isDevelopment) {
+        if (!isDevelopment) {
+          pageFunctionsConfigCache.set(pagePath, cachedConfig);
+        }
+      }
+
+      const { allowISG: allowISGValue, staticPathsSet } = cachedConfig;
+      const hasParams = Object.keys(dynamicParams || {}).length > 0;
+      if (allowISGValue === false && hasParams) {
+        let isPathAllowed = false;
+        if (staticPathsSet) {
+          const sortedQueryEntries = Object.entries(dynamicParams)
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([k, v]) => {
+              if (Array.isArray(v)) return [k, v.join(",")];
+              return [k, String(v)];
+            });
+          const serializedQuery = JSON.stringify(sortedQueryEntries);
+          isPathAllowed = staticPathsSet.has(serializedQuery);
+        }
+        if (!isPathAllowed) {
+          if (isDevelopment) {
+            isPathBlocked = true;
+          } else {
+            const htmlPath = path.join("dist2", req.path, "index.html");
+            if (!existsSync(htmlPath)) {
               isPathBlocked = true;
-            } else {
-              const htmlPath = path.join("dist2", req.path, "index.html");
-              if (!existsSync(htmlPath)) {
-                isPathBlocked = true;
-              }
             }
           }
         }
