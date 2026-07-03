@@ -100,7 +100,7 @@ exports.load = async function load(url, context, defaultLoad) {
     const esmSyntaxRegex = /^(?:import|export)\b/m;
     const hasESMSyntax = esmSyntaxRegex.test(source);
 
-    if (ext === ".js" && !rel.startsWith("src" + path.sep) && !hasUseClient && !hasESMSyntax) {
+    if (ext === ".js" && !rel.startsWith("src" + path.sep) && !hasESMSyntax) {
       return defaultLoad(url, context, defaultLoad);
     }
 
