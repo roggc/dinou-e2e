@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import "@/globals.css";
 import { useSearchParams } from "dinou";
+import { useState, useEffect } from "react";
 
 export default function Layout({
   children,
@@ -11,7 +12,13 @@ export default function Layout({
   children: ReactNode;
   params: Record<string, string>;
 }) {
-  const searchParams = useSearchParams();
+  const rawSearchParams = useSearchParams();
+  const [searchParams, setSearchParams] = useState(new URLSearchParams());
+
+  useEffect(() => {
+    setSearchParams(rawSearchParams);
+  }, [rawSearchParams]);
+
   return (
     <html lang="en">
       <head>

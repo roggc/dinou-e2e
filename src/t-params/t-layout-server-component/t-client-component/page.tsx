@@ -1,7 +1,15 @@
 "use client";
 import { useSearchParams } from "dinou";
+import { useState, useEffect } from "react";
+
 export default function Page({ params }: any) {
-  const searchParams = useSearchParams();
+  const rawSearchParams = useSearchParams();
+  const [searchParams, setSearchParams] = useState(new URLSearchParams());
+
+  useEffect(() => {
+    setSearchParams(rawSearchParams);
+  }, [rawSearchParams]);
+
   return (
     <>
       <div>page params: {JSON.stringify(params, null, 2)}</div>

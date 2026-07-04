@@ -3109,4 +3109,25 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(response?.status()).toBe(404);
     });
   });
+
+  test.describe("Dinou Core: useSearchParams() on Static Pages (SSG)", () => {
+    test("should successfully hydrate with URL search params on client-side without mismatches", async ({ page }) => {
+      const consoleErrors: Error[] = [];
+      page.on("pageerror", (exception) => {
+        consoleErrors.push(exception);
+      });
+
+      const response = await page.goto(
+        "/t-params/t-layout-client-component/t-client-component?q=playwright&mode=headless"
+      );
+      expect(response?.status()).toBe(200);
+      
+      // The page should eventually display the query parameters hydrated from the URL
+      await expect(page.locator("body")).toContainText('"q": "playwright"');
+      await expect(page.locator("body")).toContainText('"mode": "headless"');
+
+      // Verify no hydration or other runtime console errors were thrown
+      expect(consoleErrors).toHaveLength(0);
+    });
+  });
 });
