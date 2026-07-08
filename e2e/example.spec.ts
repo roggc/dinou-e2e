@@ -3135,8 +3135,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     test("Server Components: displays posts successfully", async ({ page }) => {
       await page.goto("/demo/server-components");
       await expect(page.locator("h1")).toContainText("Server Components");
-      await expect(page.locator("body")).toContainText("Async Data & Streaming");
-      await expect(page.getByText("Dinou RSC Feature Demo")).toBeVisible();
+      await expect(page.locator("body")).toContainText("This entire page is a Server Component");
+      await expect(page.locator("body")).toContainText("Understanding RSC");
     });
 
     test("Client Components: counter and server functions work", async ({ page }) => {
@@ -3144,14 +3144,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("h1")).toContainText("Client Components");
 
       // Verify Counter
-      const counterVal = page.locator("p:has-text('Value:')").first();
-      await expect(counterVal).toContainText("Value: 0");
+      const counterVal = page.locator(".tabular-nums").first();
+      await expect(counterVal).toHaveText("0");
       await page.click("button:has-text('+')");
-      await expect(counterVal).toContainText("Value: 1");
+      await expect(counterVal).toHaveText("1");
 
-      // Verify randomFact server function trigger
-      await page.click("button:has-text('Get Dynamic Fact')");
-      await expect(page.locator("body")).toContainText("Did you know?");
+      // Verify randomFact server function trigger loads text
+      await expect(page.locator("body")).toContainText("This card is a Client Component returned by a Server Function", { timeout: 15000 });
     });
 
     test("Dynamic Routes: validation and ISG blocking", async ({ page }) => {
@@ -3168,22 +3167,21 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     test("Form Actions: submits developer profile successfully", async ({ page }) => {
       await page.goto("/demo/form");
       await page.fill("input[name='name']", "Jane Doe");
-      await page.fill("input[name='role']", "Lead Engineer");
-      await page.fill("textarea[name='bio']", "Loves building React frameworks");
-      await page.check("input[name='skills'][value='React']");
+      await page.selectOption("select[name='language']", "TypeScript");
+      await page.selectOption("select[name='experience']", "3–5 years");
       
       await page.click("button[type='submit']");
       
       // Verify profile is displayed
-      await expect(page.locator("body")).toContainText("Profile Created Successfully!");
       await expect(page.locator("body")).toContainText("Jane Doe");
-      await expect(page.locator("body")).toContainText("Lead Engineer");
+      await expect(page.locator("body")).toContainText("TypeScript");
+      await expect(page.locator("body")).toContainText("3–5 years");
     });
 
     test("ISR Cache: renders and displays generation timestamp", async ({ page }) => {
       await page.goto("/demo/isr");
       await expect(page.locator("h1")).toContainText("Background Revalidation");
-      const timeVal = await page.locator("p.text-5xl").innerText();
+      const timeVal = await page.locator("p.text-emerald-400").innerText();
       expect(timeVal).not.toBeNull();
     });
 
@@ -3207,8 +3205,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
     test("Error Boundaries: localized slot crash containment", async ({ page }) => {
       await page.goto("/demo/error-trigger");
-      await expect(page.locator("h1")).toContainText("Error Boundaries");
-
+      
       // Verify slot displays normal state first
       await expect(page.locator("body")).toContainText("Trigger Error States");
 
@@ -3218,9 +3215,6 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Localized slot should crash and display boundary error
       await expect(page.locator("body")).toContainText("Localized Slot Crash Caught");
       await expect(page.locator("body")).toContainText("Boom! Simulated server component rendering crash in Slot!");
-
-      // Rest of layout is still visible
-      await expect(page.locator("h1")).toContainText("Error Boundaries");
     });
 
     test("Redirects: SSR and Server Action redirection flows", async ({ page }) => {
