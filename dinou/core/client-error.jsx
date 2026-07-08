@@ -416,7 +416,7 @@ function Router() {
   return (
     <RouterContext.Provider value={contextValue}>
       <ErrorBoundary
-        key={route + "::" + version + "::" + (navError ? "error" : "normal")}
+        key={navError ? "error" : "normal"}
         onError={setNavError}
       >
         {use(content)}

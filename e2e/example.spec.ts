@@ -3141,6 +3141,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
     test("Client Components: counter and server functions work", async ({ page }) => {
       await page.goto("/demo/client-components");
+      await page.waitForSelector('body[data-hydrated="true"]');
       await expect(page.locator("h1")).toContainText("Client Components");
 
       // Verify Counter
@@ -3156,6 +3157,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     test("Dynamic Routes: validation and ISG blocking", async ({ page }) => {
       // Valid slug
       let response = await page.goto("/demo/dynamic/react");
+      await page.waitForSelector('body[data-hydrated="true"]');
       expect(response?.status()).toBe(200);
       await expect(page.locator("h1")).toHaveText("React");
       await expect(page.locator("body")).toContainText("A JavaScript library for building user interfaces");
@@ -3167,6 +3169,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
     test("Form Actions: submits developer profile successfully", async ({ page }) => {
       await page.goto("/demo/form");
+      await page.waitForSelector('body[data-hydrated="true"]');
       await page.fill("input[name='name']", "Jane Doe");
       await page.selectOption("select[name='language']", "TypeScript");
       await page.selectOption("select[name='experience']", "3–5 years");
@@ -3181,6 +3184,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
     test("ISR Cache: renders and displays generation timestamp", async ({ page }) => {
       await page.goto("/demo/isr");
+      await page.waitForSelector('body[data-hydrated="true"]');
       await expect(page.locator("h1")).toContainText("Background Revalidation");
       const timeVal = await page.locator("p.text-emerald-400").innerText();
       expect(timeVal).not.toBeNull();
@@ -3188,6 +3192,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
     test("Cookies & Spies: sets and clears cookie", async ({ page }) => {
       await page.goto("/demo/cookies");
+      await page.waitForSelector('body[data-hydrated="true"]');
       await expect(page.locator("h1")).toContainText("Cookies & Header Spies");
       
       // Set Cookie
@@ -3206,6 +3211,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
     test("Error Boundaries: localized slot crash containment", async ({ page }) => {
       await page.goto("/demo/error-trigger");
+      await page.waitForSelector('body[data-hydrated="true"]');
       
       // Verify slot displays normal state first
       await expect(page.locator("body")).toContainText("Trigger Error States");
@@ -3220,6 +3226,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
     test("Redirects: SSR and Server Action redirection flows", async ({ page }) => {
       await page.goto("/demo/redirects");
+      await page.waitForSelector('body[data-hydrated="true"]');
       await expect(page.locator("h1")).toContainText("Redirections");
 
       // Test 1: SSR redirect
@@ -3228,6 +3235,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // Test 2: Server Action redirect
       await page.goto("/demo/redirects");
+      await page.waitForSelector('body[data-hydrated="true"]');
       await page.selectOption("select[name='destination']", "/demo/mixed");
       await page.click("button:has-text('Submit Action & Redirect')");
       await expect(page).toHaveURL(/\/demo\/mixed/);
@@ -3235,6 +3243,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
     test("File Uploads: uploads and parses files successfully", async ({ page }) => {
       await page.goto("/demo/uploads");
+      await page.waitForSelector('body[data-hydrated="true"]');
       await expect(page.locator("h1")).toContainText("File Uploads");
 
       // Create a mock text file

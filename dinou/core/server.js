@@ -283,6 +283,10 @@ const appUseCookieParser = cookieParser();
 const app = express();
 app.use(appUseCookieParser);
 app.use(express.json());
+app.use((req, res, next) => {
+  console.log(`👉 [Server HTTP] ${req.method} ${req.url}`);
+  next();
+});
 
 // ============================================================
 // 🛡️ ANTI-BOT SHIELD (Prevent ISG from collapsing)
@@ -1236,8 +1240,11 @@ app.post("/____server_function____", async (req, res) => {
       args = req.body.args;
     }
 
+    console.log("👉 [Server HTTP] POST /____server_function____ starting validation. ID:", id, "args length:", args?.length);
+
     // Basic input validation: id must be string, args an array
     if (typeof id !== "string" || !Array.isArray(args)) {
+      console.log("❌ Validation failed: id is not string or args is not array. ID:", typeof id, "args:", typeof args);
       return res.status(400).json({ error: "Invalid request body" });
     }
 
@@ -1245,22 +1252,30 @@ app.post("/____server_function____", async (req, res) => {
 
     // Validate fileUrl: must start with 'file://' and not contain suspicious chars
     if (!fileUrl.startsWith("file://")) {
+      console.log("❌ Validation failed: fileUrl doesn't start with file://. fileUrl:", fileUrl);
       return res.status(400).json({ error: "Invalid file URL format" });
     }
 
     // Extract relativePath and normalize (remove 'file://' and potential '/')
     let relativePath = fileUrl.replace(/^file:\/\/\/?/, "").trim();
+    if (path.isAbsolute(relativePath)) {
+      const cwd = process.cwd();
+      const normalizedCwd = cwd.charAt(0).toLowerCase() + cwd.slice(1);
+      const normalizedRelativePath = relativePath.charAt(0).toLowerCase() + relativePath.slice(1);
+      relativePath = path.relative(normalizedCwd, normalizedRelativePath);
+    }
     const normalizedRelative = relativePath.replace(/\\/g, "/");
     if (
       normalizedRelative.startsWith("/") ||
       normalizedRelative.includes("..") ||
       normalizedRelative.includes(":")
     ) {
+      console.log("❌ Validation failed: path has absolute, traversal, or drive letter. path:", normalizedRelative);
       return res
         .status(400)
         .json({ error: "Invalid path: no absolute, traversal, or drive letter allowed" });
     }
-    // console.log("relPath", relativePath);
+    
     // Restrict to 'src/' folder: prepend 'src/' if missing, and resolve absolutePath
     if (!relativePath.startsWith("src/") && !relativePath.startsWith("src\\")) {
       relativePath = path.join("src", relativePath);
@@ -1270,13 +1285,15 @@ app.post("/____server_function____", async (req, res) => {
     // Verify that absolutePath is strictly inside 'src/'
     const srcDir = path.resolve(process.cwd(), "src");
     if (!absolutePath.startsWith(srcDir + path.sep)) {
+      console.log("❌ Validation failed: absolutePath is not inside src. path:", absolutePath, "srcDir:", srcDir);
       return res
         .status(403)
         .json({ error: "Access denied: file outside src directory" });
     }
-    // console.log("absPath", absolutePath);
+    
     // Verify that the file exists
     if (!existsSync(absolutePath)) {
+      console.log("❌ Validation failed: file does not exist. path:", absolutePath);
       return res.status(404).json({ error: "File not found" });
     }
 
@@ -1287,18 +1304,20 @@ app.post("/____server_function____", async (req, res) => {
       allowedExports = serverFunctionsManifest[normalizedKey];
     } else {
       if (!isDevelopment) {
+        console.log("❌ Validation failed: serverFunctionsManifest missing in production");
         return res
           .status(403)
           .json({ error: "Access denied: Manifest missing in production" });
       }
       const fileContent = readFileSync(absolutePath, "utf8"); // Reads only once
       if (!useServerRegex.test(fileContent)) {
+        console.log("❌ Validation failed: fileContent has no 'use server' directive.");
         return res
           .status(403)
           .json({ error: "Not a valid server function file" });
       }
-      // Parse exports (you need to implement parseExports on server if not present)
-      const exports = parseExports(fileContent); // Assume you move parseExports to a shared util
+      // Parse exports
+      const exports = parseExports(fileContent);
       allowedExports = new Set(exports);
     }
 
@@ -1308,19 +1327,23 @@ app.post("/____server_function____", async (req, res) => {
       !allowedExports ||
       !allowedExports.has(exportName)
     ) {
+      console.log("❌ Validation failed: allowedExports doesn't contain exportName. exportName:", exportName, "allowedExports:", Array.from(allowedExports || []));
       return res.status(400).json({ error: "Invalid export name" });
     }
 
-    // Proceed with import (using your importModule)
+    // Proceed with import
+    console.log("👉 [Server HTTP] Importing module at:", absolutePath);
     const mod = await importModule(absolutePath);
 
-    // Validate exportName: only allow 'default' or others if you define a whitelist
+    // Validate exportName
     if (!exportName || (exportName !== "default" && !mod[exportName])) {
+      console.log("❌ Validation failed: module has no export matching name. exportName:", exportName, "module keys:", Object.keys(mod || {}));
       return res.status(400).json({ error: "Invalid export name" });
     }
     const fn = exportName === "default" ? mod.default : mod[exportName];
 
     if (typeof fn !== "function") {
+      console.log("❌ Validation failed: export is not a function. type:", typeof fn);
       return res.status(400).json({ error: "Export is not a function" });
     }
 
