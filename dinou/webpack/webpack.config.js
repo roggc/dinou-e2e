@@ -61,6 +61,7 @@ module.exports = async () => {
       maxEntrypointSize: 512000,
       maxAssetSize: 512000,
     },
+    cache: false,
     mode: isDevelopment ? "development" : "production",
     entry: {
       main: [path.resolve(__dirname, "../core/client-webpack.jsx")].filter(

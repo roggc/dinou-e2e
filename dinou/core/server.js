@@ -1247,13 +1247,20 @@ app.post("/____server_function____", async (req, res) => {
       return res.status(400).json({ error: "Invalid file URL format" });
     }
 
-    // Extract relativePath and normalize (remove 'file://' and potential '/')
-    let relativePath = fileUrl.replace(/^file:\/\/\/?/, "").trim();
-    if (path.isAbsolute(relativePath)) {
-      const cwd = process.cwd();
-      const normalizedCwd = cwd.charAt(0).toLowerCase() + cwd.slice(1);
-      const normalizedRelativePath = relativePath.charAt(0).toLowerCase() + relativePath.slice(1);
-      relativePath = path.relative(normalizedCwd, normalizedRelativePath);
+    // Extract module path using native Node URL resolver
+    const resolvedPath = fileURLToPath(fileUrl);
+    let relativePath = resolvedPath;
+    
+    // Normalize drive letters for comparison
+    const cwd = process.cwd();
+    const normalizedCwd = cwd.charAt(0).toLowerCase() + cwd.slice(1);
+    const normalizedResolved = resolvedPath.charAt(0).toLowerCase() + resolvedPath.slice(1);
+
+    if (normalizedResolved.startsWith(normalizedCwd)) {
+      relativePath = path.relative(normalizedCwd, normalizedResolved);
+    } else {
+      // If it doesn't start with cwd, strip leading slashes (e.g. /src/ -> src/)
+      relativePath = relativePath.replace(/^[\\/]+/, "");
     }
     const normalizedRelative = relativePath.replace(/\\/g, "/");
     if (
