@@ -90,7 +90,10 @@ exports.load = async function load(url, context, defaultLoad) {
     } catch (e) {
       throw e;
     }
-    const rel = path.relative(process.cwd(), filename);
+    const cwd = process.cwd();
+    const normalizedCwd = cwd.charAt(0).toLowerCase() + cwd.slice(1);
+    const normalizedFilename = filename.charAt(0).toLowerCase() + filename.slice(1);
+    const rel = path.relative(normalizedCwd, normalizedFilename);
     const source = fs.readFileSync(filename, "utf-8");
     const urlToReturn = pathToFileURL(filename).href;
 
