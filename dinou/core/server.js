@@ -124,11 +124,10 @@ if (isDevelopment) {
       while (attempts < maxRetries) {
         try {
           // console.log(`Attempting to load manifest (try ${attempts + 1})...`);
-          return JSON.parse(readFileSync(manifestPath, "utf8"));
+          const text = readFileSync(manifestPath, "utf8");
+          if (!text.trim()) throw new Error("Empty JSON");
+          return JSON.parse(text);
         } catch (err) {
-          if (err.code !== "ENOENT") {
-            throw err; // Rethrow if it's not a file not found error
-          }
           attempts++;
           if (attempts >= maxRetries) {
             throw err; // Rethrow after max retries
