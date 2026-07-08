@@ -7,7 +7,7 @@ export async function setCookieAction() {
   if (ctx && ctx.res) {
     // Set a session cookie via IPC response proxy
     ctx.res.cookie("dinou_test_cookie", "active-session-token", {
-      httpOnly: true,
+      httpOnly: false,
       maxAge: 60 * 1000, // 1 minute
       path: "/",
     });

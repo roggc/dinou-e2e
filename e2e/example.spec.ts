@@ -3157,7 +3157,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Valid slug
       let response = await page.goto("/demo/dynamic/react");
       expect(response?.status()).toBe(200);
-      await expect(page.locator("body")).toContainText("Technology: react");
+      await expect(page.locator("h1")).toHaveText("React");
+      await expect(page.locator("body")).toContainText("A JavaScript library for building user interfaces");
 
       // Invalid slug format (blocked by validateParams)
       response = await page.goto("/demo/dynamic/invalid123");
