@@ -3224,6 +3224,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
 
     test("Redirects: SSR and Server Action redirection flows", async ({ page }) => {
+      page.on("console", (msg) => {
+        if (msg.type() === "error")
+          console.log(`[Browser Error]: ${msg.text()}`);
+      });
       await page.goto("/demo/redirects");
       await page.waitForSelector('body[data-hydrated="true"]');
       await expect(page.locator("h1")).toContainText("Redirections");
