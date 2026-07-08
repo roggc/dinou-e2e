@@ -797,7 +797,43 @@ async function serveRSCPayload(req, res, isOld = false, isStatic = false) {
     });
   } catch (error) {
     console.error("Error rendering RSC:", error);
-    res.status(500).send("Internal Server Error");
+    try {
+      const serializedError = {
+        message: error.message || "Unknown Error",
+        name: error.name,
+        stack: isDevelopment ? error.stack : undefined,
+      };
+      const context = getContext(req, res);
+      await requestStorage.run(context, async () => {
+        const jsx = await getErrorJSX(
+          reqPath,
+          { ...req.query },
+          serializedError,
+          isDevelopment,
+        );
+        const manifest = isDevelopment
+          ? JSON.parse(
+            readFileSync(
+              path.resolve(
+                process.cwd(),
+                isWebpack
+                  ? `${outputFolder}/react-client-manifest.json`
+                  : `react_client_manifest/react-client-manifest.json`,
+              ),
+              "utf8",
+            ),
+          )
+          : cachedClientManifest;
+        const { pipe } = isWebpack
+          ? renderToPipeableStream(jsx, manifest)
+          : renderToPipeableStream(jsx, pathToFileURL(process.cwd()).href + "/");
+        res.status(500);
+        pipe(res);
+      });
+    } catch (innerError) {
+      console.error("Fatal error rendering fallback error RSC:", innerError);
+      res.status(500).send("Internal Server Error");
+    }
   }
 }
 
@@ -822,29 +858,33 @@ app.post(/^\/____rsc_payload_error____\/.*\/?$/, async (req, res) => {
     const reqPath = (
       req.path.endsWith("/") ? req.path : req.path + "/"
     ).replace("/____rsc_payload_error____", "");
-    const jsx = await getErrorJSX(
-      reqPath,
-      { ...req.query },
-      req.body.error,
-      isDevelopment,
-    );
-    const manifest = isDevelopment
-      ? JSON.parse(
-        readFileSync(
-          path.resolve(
-            process.cwd(),
-            isWebpack
-              ? `${outputFolder}/react-client-manifest.json`
-              : `react_client_manifest/react-client-manifest.json`,
+
+    const context = getContext(req, res);
+    await requestStorage.run(context, async () => {
+      const jsx = await getErrorJSX(
+        reqPath,
+        { ...req.query },
+        req.body.error,
+        isDevelopment,
+      );
+      const manifest = isDevelopment
+        ? JSON.parse(
+          readFileSync(
+            path.resolve(
+              process.cwd(),
+              isWebpack
+                ? `${outputFolder}/react-client-manifest.json`
+                : `react_client_manifest/react-client-manifest.json`,
+            ),
+            "utf8",
           ),
-          "utf8",
-        ),
-      )
-      : cachedClientManifest;
-    const { pipe } = isWebpack
-      ? renderToPipeableStream(jsx, manifest)
-      : renderToPipeableStream(jsx, pathToFileURL(process.cwd()).href + "/");
-    pipe(res);
+        )
+        : cachedClientManifest;
+      const { pipe } = isWebpack
+        ? renderToPipeableStream(jsx, manifest)
+        : renderToPipeableStream(jsx, pathToFileURL(process.cwd()).href + "/");
+      pipe(res);
+    });
   } catch (error) {
     console.error("Error rendering RSC:", error);
     res.status(500).send("Internal Server Error");
