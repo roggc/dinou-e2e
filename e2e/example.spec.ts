@@ -3268,6 +3268,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // The server should respond with 500 status code
       expect(response?.status()).toBe(500);
 
+      // Wait for hydration so the link click handler is ready
+      await page.waitForSelector('body[data-hydrated="true"]');
+
       // Verify the custom server error page is shown
       await expect(page.locator("body")).toContainText("Dinou Page Boundary Captured an Error");
       await expect(page.locator("body")).toContainText("Simulated Critical Server Component Crash during SSR");
@@ -3280,6 +3283,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
     test("Soft Navigation Crash and recovery to parent error lab", async ({ page }) => {
       await page.goto("/error");
+      await page.waitForSelector('body[data-hydrated="true"]');
       await expect(page.locator("h2")).toContainText("Error Handling Lab");
 
       // Click soft navigation crash trigger
@@ -3298,6 +3302,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
     test("Client Component Render Crash and reset", async ({ page }) => {
       await page.goto("/error");
+      await page.waitForSelector('body[data-hydrated="true"]');
       await expect(page.locator("h2")).toContainText("Error Handling Lab");
 
       // Click client component render crash
@@ -3315,6 +3320,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
     test("Server Function Action error bubbles back to call site", async ({ page }) => {
       await page.goto("/error");
+      await page.waitForSelector('body[data-hydrated="true"]');
       await expect(page.locator("h2")).toContainText("Error Handling Lab");
 
       // Click server function crash trigger
@@ -3328,6 +3334,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
     test("Parallel Slot Rendering Crash and independent recovery", async ({ page }) => {
       await page.goto("/error");
+      await page.waitForSelector('body[data-hydrated="true"]');
       await expect(page.locator("body")).toContainText("This is the normal parallel slot component view.");
 
       // Click parallel slot crash trigger
@@ -3349,6 +3356,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
     test("Nested Route Local Error Boundary capturing and recovery", async ({ page }) => {
       await page.goto("/error");
+      await page.waitForSelector('body[data-hydrated="true"]');
       await page.click("text=Go to Nested Error Page (/error/nested)");
       await expect(page).toHaveURL("/error/nested");
       await expect(page.locator("main h3").first()).toContainText("Nested Route");
