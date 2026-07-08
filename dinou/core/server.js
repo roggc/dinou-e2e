@@ -1282,6 +1282,7 @@ app.post("/____server_function____", async (req, res) => {
     
     // Verify that the file exists
     if (!existsSync(absolutePath)) {
+      console.error("❌ [Dinou Server Function 404] File not found! id:", id, "relativePath:", relativePath, "absolutePath:", absolutePath);
       return res.status(404).json({ error: "File not found" });
     }
 
