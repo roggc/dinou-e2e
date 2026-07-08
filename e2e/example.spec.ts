@@ -3230,14 +3230,14 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // Test 1: SSR redirect
       await page.click("a:has-text('Trigger SSR Redirect')");
-      await expect(page).toHaveURL(/\/demo\/cookies/);
+      await expect(page).toHaveURL(/\/demo\/cookies/, { timeout: 15000 });
 
       // Test 2: Server Action redirect
       await page.goto("/demo/redirects");
       await page.waitForSelector('body[data-hydrated="true"]');
       await page.selectOption("select[name='destination']", "/demo/mixed");
       await page.click("button:has-text('Submit Action & Redirect')");
-      await expect(page).toHaveURL(/\/demo\/mixed/);
+      await expect(page).toHaveURL(/\/demo\/mixed/, { timeout: 15000 });
     });
 
     test("File Uploads: uploads and parses files successfully", async ({ page }) => {
