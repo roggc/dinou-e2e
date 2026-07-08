@@ -5,6 +5,8 @@ const isWebpack = process.env.DINOU_BUILD_TOOL === "webpack";
 globalThis.__dinou_require__ = require;
 const path = require("path");
 
+const { normalizePathCase } = require("./path-utils.js");
+
 let reactServerPath, reactDomServerPath, reactJsxRuntimePath, reactJsxDevRuntimePath;
 
 if (!isWebpack) {
@@ -1252,9 +1254,8 @@ app.post("/____server_function____", async (req, res) => {
     let relativePath = resolvedPath;
     
     // Normalize drive letters for comparison
-    const cwd = process.cwd();
-    const normalizedCwd = cwd.charAt(0).toLowerCase() + cwd.slice(1);
-    const normalizedResolved = resolvedPath.charAt(0).toLowerCase() + resolvedPath.slice(1);
+    const normalizedCwd = normalizePathCase(process.cwd());
+    const normalizedResolved = normalizePathCase(resolvedPath);
 
     if (normalizedResolved.startsWith(normalizedCwd)) {
       relativePath = path.relative(normalizedCwd, normalizedResolved);

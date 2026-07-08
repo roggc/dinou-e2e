@@ -14,12 +14,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        #os: [ubuntu-latest, windows-latest] # Linux cubre Mac para lógica de Node
-        #bundler: [webpack, rollup, esbuild]
-        #mode: [dev, prod]
-        os: [ubuntu-latest] # Linux cubre Mac para lógica de Node
-        bundler: [webpack]
-        mode: [dev]
+        os: [ubuntu-latest, windows-latest] # Linux cubre Mac para lógica de Node
+        bundler: [webpack, rollup, esbuild]
+        mode: [dev, prod]
+        #os: [ubuntu-latest] # Linux cubre Mac para lógica de Node
+        #bundler: [webpack]
+        #mode: [dev]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6

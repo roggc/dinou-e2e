@@ -6,6 +6,8 @@ const createScopedName = require("./createScopedName");
 const { extensionsWithDot } = require("./asset-extensions.js");
 const { getAbsPathWithExt } = require("./get-abs-path-with-ext.js");
 
+const { normalizePathCase } = require("./path-utils.js");
+
 const Module = require("module");
 const originalResolveFilename = Module._resolveFilename;
 const isWebpack = process.env.DINOU_BUILD_TOOL === "webpack";
@@ -90,10 +92,10 @@ exports.load = async function load(url, context, defaultLoad) {
     } catch (e) {
       throw e;
     }
-    const cwd = process.cwd();
-    const normalizedCwd = cwd.charAt(0).toLowerCase() + cwd.slice(1);
-    const normalizedFilename = filename.charAt(0).toLowerCase() + filename.slice(1);
-    const rel = path.relative(normalizedCwd, normalizedFilename);
+    const rel = path.relative(
+      normalizePathCase(process.cwd()),
+      normalizePathCase(filename)
+    );
     const source = fs.readFileSync(filename, "utf-8");
     const urlToReturn = pathToFileURL(filename).href;
 
