@@ -3260,4 +3260,124 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       }
     });
   });
+
+  test.describe("Error Lab Features", () => {
+    test("SSR Crash and recovery via sidebar soft-nav", async ({ page }) => {
+      // 1. Load the page with SSR crash query parameter
+      const response = await page.goto("/error?ssr_crash=true");
+      // The server should respond with 500 status code
+      expect(response?.status()).toBe(500);
+
+      // Verify the custom server error page is shown
+      await expect(page.locator("body")).toContainText("Dinou Page Boundary Captured an Error");
+      await expect(page.locator("body")).toContainText("Simulated Critical Server Component Crash during SSR");
+
+      // Verify layout is still functional: navigate to Home
+      await page.click("text=← Back to Home");
+      await expect(page).toHaveURL("/");
+      await expect(page.locator("h1")).toContainText("Welcome to Dinou");
+    });
+
+    test("Soft Navigation Crash and recovery to parent error lab", async ({ page }) => {
+      await page.goto("/error");
+      await expect(page.locator("h2")).toContainText("Error Handling Lab");
+
+      // Click soft navigation crash trigger
+      await page.click("text=2. Trigger Soft Navigation Crash");
+      await expect(page).toHaveURL(/\/error\?soft_crash=true/);
+
+      // Page boundary should catch it and render error
+      await expect(page.locator("body")).toContainText("Dinou Page Boundary Captured an Error");
+      await expect(page.locator("body")).toContainText("Simulated Server Component Crash during Client-Side Soft Navigation");
+
+      // Click Reset Demo Page
+      await page.click("text=Reset Demo Page");
+      await expect(page).toHaveURL("/error");
+      await expect(page.locator("h2")).toContainText("Error Handling Lab");
+    });
+
+    test("Client Component Render Crash and reset", async ({ page }) => {
+      await page.goto("/error");
+      await expect(page.locator("h2")).toContainText("Error Handling Lab");
+
+      // Click client component render crash
+      await page.click("text=3. Trigger Client Render Crash");
+
+      // The client-side ErrorBoundary catches the error and fetches the error RSC
+      await expect(page.locator("body")).toContainText("Dinou Page Boundary Captured an Error");
+      await expect(page.locator("body")).toContainText("Client Component crashed during render pass");
+
+      // Recover
+      await page.click("text=Reset Demo Page");
+      await expect(page).toHaveURL("/error");
+      await expect(page.locator("h2")).toContainText("Error Handling Lab");
+    });
+
+    test("Server Function Action error bubbles back to call site", async ({ page }) => {
+      await page.goto("/error");
+      await expect(page.locator("h2")).toContainText("Error Handling Lab");
+
+      // Click server function crash trigger
+      await page.click("text=5. Call Server Function Action");
+
+      // Message should show in target element
+      await expect(page.locator("body")).toContainText("Action Rejected: 💥 Rejection from 'use server' Server Function action");
+      // Main page should not crash
+      await expect(page.locator("h2")).toContainText("Error Handling Lab");
+    });
+
+    test("Parallel Slot Rendering Crash and independent recovery", async ({ page }) => {
+      await page.goto("/error");
+      await expect(page.locator("body")).toContainText("This is the normal parallel slot component view.");
+
+      // Click parallel slot crash trigger
+      await page.click("text=Trigger Slot Rendering Crash");
+      await expect(page).toHaveURL(/\/error\?slot_crash=true/);
+
+      // Only the slot should show the error
+      await expect(page.locator("body")).toContainText("Slot Error Caught");
+      await expect(page.locator("body")).toContainText("Parallel Slot component crashed during layout render pass");
+
+      // Main content is intact
+      await expect(page.locator("h2")).toContainText("Error Handling Lab");
+
+      // Recover the slot
+      await page.click("text=Reset Slot");
+      await expect(page.locator("body")).toContainText("This is the normal parallel slot component view.");
+      await expect(page).toHaveURL("/error");
+    });
+
+    test("Nested Route Local Error Boundary capturing and recovery", async ({ page }) => {
+      await page.goto("/error");
+      await page.click("text=Go to Nested Error Page (/error/nested)");
+      await expect(page).toHaveURL("/error/nested");
+      await expect(page.locator("h3")).toContainText("Nested Route");
+
+      // Trigger nested server crash
+      await page.click("text=Trigger Nested Server Crash");
+      await expect(page).toHaveURL(/\/error\/nested\?nested_crash=true/);
+
+      // Nested error boundary should catch it locally
+      await expect(page.locator("body")).toContainText("Nested Local Error Boundary Captured");
+      await expect(page.locator("body")).toContainText("Crash inside nested route page component");
+
+      // Retry nested page
+      await page.click("text=Retry Nested Page");
+      await expect(page).toHaveURL("/error/nested");
+      await expect(page.locator("h3")).toContainText("Nested Route");
+    });
+
+    test("Double Crash displays generic last-resort fallback UI", async ({ page }) => {
+      // Hard reload on page with double_crash parameter
+      await page.goto("/error?ssr_crash=true&double_crash=true");
+
+      // It should display the generic fallback UI
+      await expect(page.locator("body")).toContainText("Application Error");
+      await expect(page.locator("body")).toContainText("Double Crash! The custom error boundary component itself has crashed");
+
+      // The layout (navbar logo) is still loaded
+      await expect(page.locator("body")).toContainText("Dinou Error Testing Lab");
+    });
+  });
 });
+
