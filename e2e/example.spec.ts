@@ -2991,7 +2991,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // 1. Set cookie
       await page.click("#btn-set-std");
       await page.waitForSelector("text=Success: set standard");
-      
+
       // Verify cookie exists
       let cookies = await page.context().cookies();
       let stdCookie = cookies.find(c => c.name === "cookie_std");
@@ -3120,7 +3120,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         "/t-params/t-layout-client-component/t-client-component?q=playwright&mode=headless"
       );
       expect(response?.status()).toBe(200);
-      
+
       // The page should eventually display the query parameters hydrated from the URL
       await expect(page.locator("body")).toContainText('"q": "playwright"');
       await expect(page.locator("body")).toContainText('"mode": "headless"');
@@ -3172,9 +3172,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.fill("input[name='name']", "Jane Doe");
       await page.selectOption("select[name='language']", "TypeScript");
       await page.selectOption("select[name='experience']", "3–5 years");
-      
+
       await page.click("button[type='submit']");
-      
+
       // Verify profile is displayed
       await expect(page.locator("body")).toContainText("Jane Doe");
       await expect(page.locator("body")).toContainText("TypeScript");
@@ -3193,12 +3193,12 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.goto("/demo/cookies");
       await page.waitForSelector('body[data-hydrated="true"]');
       await expect(page.locator("h1")).toContainText("Cookies & Header Spies");
-      
+
       // Set Cookie
       await page.click("button:has-text('Set Session Cookie')");
       // Wait a bit for transition
       await page.waitForTimeout(1000);
-      
+
       // Verify active cookie in JSON output
       await expect(page.locator("pre.text-emerald-400")).toContainText("dinou_test_cookie");
 
@@ -3211,7 +3211,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     test("Error Boundaries: localized slot crash containment", async ({ page }) => {
       await page.goto("/demo/error-trigger");
       await page.waitForSelector('body[data-hydrated="true"]');
-      
+
       // Verify slot displays normal state first
       await expect(page.locator("body")).toContainText("Trigger Error States");
 
@@ -3226,7 +3226,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     test("Redirects: SSR and Server Action redirection flows", async ({ page }) => {
       page.on("console", (msg) => {
         if (msg.type() === "error")
-          console.log(`[Browser Error]: ${msg.text()}`);
+          console.log(`[Redirects Browser Error]: ${msg.text()}`);
       });
       await page.goto("/demo/redirects");
       await page.waitForSelector('body[data-hydrated="true"]');
