@@ -174,9 +174,16 @@ class ErrorBoundary extends Component {
           <h2>Application Error</h2>
           <p>An unexpected error occurred on the client.</p>
           <pre style={{ backgroundColor: "#f5f5f5", padding: "15px", borderRadius: "5px", overflowX: "auto" }}>
-            {isDev
-              ? this.state.error?.stack || this.state.error?.message || String(this.state.error)
-              : this.state.error?.message || String(this.state.error)}
+            {isDev ? (
+              <>
+                <div style={{ fontWeight: "bold", marginBottom: "10px" }}>
+                  {this.state.error?.name || "Error"}: {this.state.error?.message || String(this.state.error)}
+                </div>
+                <div>{this.state.error?.stack}</div>
+              </>
+            ) : (
+              this.state.error?.message || String(this.state.error)
+            )}
           </pre>
         </div>
       );

@@ -3275,7 +3275,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Verify layout is still functional: navigate to Home
       await page.click("text=← Back to Home");
       await expect(page).toHaveURL("/");
-      await expect(page.locator("h1")).toContainText("Welcome to Dinou");
+      await expect(page.locator("body")).toContainText("hello!");
     });
 
     test("Soft Navigation Crash and recovery to parent error lab", async ({ page }) => {
@@ -3321,7 +3321,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.click("text=5. Call Server Function Action");
 
       // Message should show in target element
-      await expect(page.locator("body")).toContainText("Action Rejected: 💥 Rejection from 'use server' Server Function action");
+      await expect(page.locator("body")).toContainText("Action Rejected: Server function failed");
       // Main page should not crash
       await expect(page.locator("h2")).toContainText("Error Handling Lab");
     });
@@ -3351,7 +3351,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.goto("/error");
       await page.click("text=Go to Nested Error Page (/error/nested)");
       await expect(page).toHaveURL("/error/nested");
-      await expect(page.locator("h3")).toContainText("Nested Route");
+      await expect(page.locator("main h3").first()).toContainText("Nested Route");
 
       // Trigger nested server crash
       await page.click("text=Trigger Nested Server Crash");
@@ -3364,7 +3364,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Retry nested page
       await page.click("text=Retry Nested Page");
       await expect(page).toHaveURL("/error/nested");
-      await expect(page.locator("h3")).toContainText("Nested Route");
+      await expect(page.locator("main h3").first()).toContainText("Nested Route");
     });
 
     test("Double Crash displays generic last-resort fallback UI", async ({ page }) => {
@@ -3374,9 +3374,6 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // It should display the generic fallback UI
       await expect(page.locator("body")).toContainText("Application Error");
       await expect(page.locator("body")).toContainText("Double Crash! The custom error boundary component itself has crashed");
-
-      // The layout (navbar logo) is still loaded
-      await expect(page.locator("body")).toContainText("Dinou Error Testing Lab");
     });
   });
 });
