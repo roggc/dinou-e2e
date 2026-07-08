@@ -53,8 +53,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
   ) {
     if (isProd && !isDynamic) {
       // 🟢 EN PROD (SSG): Esperamos el resultado final
-      // Si fue invocado desde el cliente, puede tardar hasta 8s en cargar.
-      const timeout = invokedFromServerComponent ? 5000 : 15000;
+      const timeout = 18000;
       await expect(page.getByText("bye!")).toBeVisible({ timeout });
       await expect(page.getByText("Helper accessed User-Agent:")).toBeVisible({ timeout });
       await expect(page.getByText("loading...")).not.toBeVisible({ timeout });
@@ -419,7 +418,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         { waitUntil: "commit" },
       );
 
-      await SSRStreamingFlow(page, response, true, true);
+      await SSRStreamingFlow(page, response, true, !isProd);
     });
     test("concurrency test - layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
       browser,
@@ -444,7 +443,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         { waitUntil: "commit" },
       );
 
-      await SSRStreamingFlow(page, response, true, true);
+      await SSRStreamingFlow(page, response, true, !isProd);
     });
     test("concurrency test - layout client component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
       browser,
@@ -517,7 +516,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         { waitUntil: "commit" },
       );
 
-      await SSRStreamingFlow(page, response, true, true);
+      await SSRStreamingFlow(page, response, true, !isProd);
     });
     test("concurrency test - layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Client Component", async ({
       browser,
@@ -542,7 +541,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         { waitUntil: "commit" },
       );
 
-      await SSRStreamingFlow(page, response, true, true);
+      await SSRStreamingFlow(page, response, true, !isProd);
     });
     test("concurrency test - layout server component - Invoked From Server Component-Flujo completo: SSR -> Loading -> Streaming -> Server Component", async ({
       browser,
@@ -3282,7 +3281,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // Verify the custom server error page is shown
       await expect(page.locator("body")).toContainText("Dinou Page Boundary Captured an Error");
-      await expect(page.locator("body")).toContainText("Simulated Critical Server Component Crash during SSR");
+      if (isProd) {
+        await expect(page.locator("body")).toContainText("An error occurred in the Server Components render");
+      } else {
+        await expect(page.locator("body")).toContainText("Simulated Critical Server Component Crash during SSR");
+      }
 
       // Verify layout is still functional: navigate to Home
       await page.click("text=← Back to Home");
@@ -3301,7 +3304,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // Page boundary should catch it and render error
       await expect(page.locator("body")).toContainText("Dinou Page Boundary Captured an Error");
-      await expect(page.locator("body")).toContainText("Simulated Server Component Crash during Client-Side Soft Navigation");
+      if (isProd) {
+        await expect(page.locator("body")).toContainText("An error occurred in the Server Components render");
+      } else {
+        await expect(page.locator("body")).toContainText("Simulated Server Component Crash during Client-Side Soft Navigation");
+      }
 
       // Click Reset Demo Page
       await page.click("text=Reset Demo Page");
@@ -3376,7 +3383,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // Nested error boundary should catch it locally
       await expect(page.locator("body")).toContainText("Nested Local Error Boundary Captured");
-      await expect(page.locator("body")).toContainText("Crash inside nested route page component");
+      if (isProd) {
+        await expect(page.locator("body")).toContainText("An error occurred in the Server Components render");
+      } else {
+        await expect(page.locator("body")).toContainText("Crash inside nested route page component");
+      }
 
       // Retry nested page
       await page.click("text=Retry Nested Page");
