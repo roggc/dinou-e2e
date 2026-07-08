@@ -3130,4 +3130,139 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(consoleErrors).toHaveLength(0);
     });
   });
+
+  test.describe("Demo Application Features", () => {
+    test("Server Components: displays posts successfully", async ({ page }) => {
+      await page.goto("/demo/server-components");
+      await expect(page.locator("h1")).toContainText("Server Components");
+      await expect(page.locator("body")).toContainText("Async Data & Streaming");
+      await expect(page.getByText("Dinou RSC Feature Demo")).toBeVisible();
+    });
+
+    test("Client Components: counter and server functions work", async ({ page }) => {
+      await page.goto("/demo/client-components");
+      await expect(page.locator("h1")).toContainText("Client Components");
+
+      // Verify Counter
+      const counterVal = page.locator("p:has-text('Value:')").first();
+      await expect(counterVal).toContainText("Value: 0");
+      await page.click("button:has-text('+')");
+      await expect(counterVal).toContainText("Value: 1");
+
+      // Verify randomFact server function trigger
+      await page.click("button:has-text('Get Dynamic Fact')");
+      await expect(page.locator("body")).toContainText("Did you know?");
+    });
+
+    test("Dynamic Routes: validation and ISG blocking", async ({ page }) => {
+      // Valid slug
+      let response = await page.goto("/demo/dynamic/react");
+      expect(response?.status()).toBe(200);
+      await expect(page.locator("body")).toContainText("Technology: react");
+
+      // Invalid slug format (blocked by validateParams)
+      response = await page.goto("/demo/dynamic/invalid123");
+      expect(response?.status()).toBe(404);
+    });
+
+    test("Form Actions: submits developer profile successfully", async ({ page }) => {
+      await page.goto("/demo/form");
+      await page.fill("input[name='name']", "Jane Doe");
+      await page.fill("input[name='role']", "Lead Engineer");
+      await page.fill("textarea[name='bio']", "Loves building React frameworks");
+      await page.check("input[name='skills'][value='React']");
+      
+      await page.click("button[type='submit']");
+      
+      // Verify profile is displayed
+      await expect(page.locator("body")).toContainText("Profile Created Successfully!");
+      await expect(page.locator("body")).toContainText("Jane Doe");
+      await expect(page.locator("body")).toContainText("Lead Engineer");
+    });
+
+    test("ISR Cache: renders and displays generation timestamp", async ({ page }) => {
+      await page.goto("/demo/isr");
+      await expect(page.locator("h1")).toContainText("Background Revalidation");
+      const timeVal = await page.locator("p.text-5xl").innerText();
+      expect(timeVal).not.toBeNull();
+    });
+
+    test("Cookies & Spies: sets and clears cookie", async ({ page }) => {
+      await page.goto("/demo/cookies");
+      await expect(page.locator("h1")).toContainText("Cookies & Header Spies");
+      
+      // Set Cookie
+      await page.click("button:has-text('Set Session Cookie')");
+      // Wait a bit for transition
+      await page.waitForTimeout(1000);
+      
+      // Verify active cookie in JSON output
+      await expect(page.locator("pre.text-emerald-400")).toContainText("dinou_test_cookie");
+
+      // Clear Cookie
+      await page.click("button:has-text('Clear Cookie')");
+      await page.waitForTimeout(1000);
+      await expect(page.locator("pre.text-emerald-400")).not.toContainText("dinou_test_cookie");
+    });
+
+    test("Error Boundaries: localized slot crash containment", async ({ page }) => {
+      await page.goto("/demo/error-trigger");
+      await expect(page.locator("h1")).toContainText("Error Boundaries");
+
+      // Verify slot displays normal state first
+      await expect(page.locator("body")).toContainText("Trigger Error States");
+
+      // Click crash trigger link
+      await page.click("a:has-text('Trigger Simulated Crash')");
+
+      // Localized slot should crash and display boundary error
+      await expect(page.locator("body")).toContainText("Localized Slot Crash Caught");
+      await expect(page.locator("body")).toContainText("Boom! Simulated server component rendering crash in Slot!");
+
+      // Rest of layout is still visible
+      await expect(page.locator("h1")).toContainText("Error Boundaries");
+    });
+
+    test("Redirects: SSR and Server Action redirection flows", async ({ page }) => {
+      await page.goto("/demo/redirects");
+      await expect(page.locator("h1")).toContainText("Redirections");
+
+      // Test 1: SSR redirect
+      await page.click("a:has-text('Trigger SSR Redirect')");
+      await expect(page).toHaveURL(/\/demo\/cookies/);
+
+      // Test 2: Server Action redirect
+      await page.goto("/demo/redirects");
+      await page.selectOption("select[name='destination']", "/demo/mixed");
+      await page.click("button:has-text('Submit Action & Redirect')");
+      await expect(page).toHaveURL(/\/demo\/mixed/);
+    });
+
+    test("File Uploads: uploads and parses files successfully", async ({ page }) => {
+      await page.goto("/demo/uploads");
+      await expect(page.locator("h1")).toContainText("File Uploads");
+
+      // Create a mock text file
+      const mockFilePath = path.join(process.cwd(), "mock-upload-test.txt");
+      fs.writeFileSync(mockFilePath, "Hello, this is a mock upload validation text content!");
+
+      try {
+        // Upload the file
+        await page.setInputFiles("input[type='file']", mockFilePath);
+        await page.fill("input[name='notes']", "Verification notes");
+        await page.click("button:has-text('Upload File')");
+
+        // Verify result is displayed
+        await expect(page.locator("body")).toContainText("Success");
+        await expect(page.locator("body")).toContainText("mock-upload-test.txt");
+        await expect(page.locator("body")).toContainText("Verification notes");
+        await expect(page.locator("body")).toContainText("Hello, this is a mock upload validation text content!");
+      } finally {
+        // Clean up mock file
+        if (fs.existsSync(mockFilePath)) {
+          fs.unlinkSync(mockFilePath);
+        }
+      }
+    });
+  });
 });
