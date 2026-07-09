@@ -36,6 +36,11 @@ jobs:
             ~/.cache/ms-playwright
             ~\AppData\Local\ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
+      - name: Fix slow Ubuntu APT mirrors & set timeouts
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo sed -i 's/azure.archive.ubuntu.com/archive.ubuntu.com/g' /etc/apt/sources.list /etc/apt/sources.list.d/* || true
+          sudo sh -c 'echo "Acquire::http::Timeout \"15\";\nAcquire::http::Retries \"3\";" > /etc/apt/apt.conf.d/99timeout'
       - name: Install Playwright Browsers & Deps
         timeout-minutes: 15
         run: npx playwright install --with-deps
