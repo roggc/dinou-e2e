@@ -14,7 +14,7 @@ class ManifestGeneratorPlugin {
       compilation.hooks.processAssets.tap(
         {
           name: pluginName,
-          stage: Compilation.PROCESS_ASSETS_STAGE_SUMMARIZE,
+          stage: Compilation.PROCESS_ASSETS_STAGE_ANALYSE,
         },
         (assets) => {
           // Traverse chunks to generate manifest
