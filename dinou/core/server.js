@@ -1249,19 +1249,26 @@ app.post("/____server_function____", async (req, res) => {
       return res.status(400).json({ error: "Invalid file URL format" });
     }
 
-    // Extract module path using native Node URL resolver
-    const resolvedPath = fileURLToPath(fileUrl);
-    let relativePath = resolvedPath;
+    let relativePath;
     
-    // Normalize drive letters for comparison
-    const normalizedCwd = normalizePathCase(process.cwd());
-    const normalizedResolved = normalizePathCase(resolvedPath);
-
-    if (normalizedResolved.startsWith(normalizedCwd)) {
-      relativePath = path.relative(normalizedCwd, normalizedResolved);
+    // Check if the URL is a relative reference (e.g. file:///src/...)
+    // If so, extract it directly without using fileURLToPath (which throws on Windows without a drive letter)
+    const isRelativeSrc = fileUrl.startsWith("file:///src/") || fileUrl.startsWith("file:///src\\");
+    
+    if (isRelativeSrc) {
+      relativePath = fileUrl.replace(/^file:\/\/\/?/, "").trim();
     } else {
-      // If it doesn't start with cwd, strip leading slashes (e.g. /src/ -> src/)
-      relativePath = relativePath.replace(/^[\\/]+/, "");
+      const resolvedPath = fileURLToPath(fileUrl);
+      relativePath = resolvedPath;
+      
+      const normalizedCwd = normalizePathCase(process.cwd());
+      const normalizedResolved = normalizePathCase(resolvedPath);
+
+      if (normalizedResolved.startsWith(normalizedCwd)) {
+        relativePath = path.relative(normalizedCwd, normalizedResolved);
+      } else {
+        relativePath = relativePath.replace(/^[\\/]+/, "");
+      }
     }
     const normalizedRelative = relativePath.replace(/\\/g, "/");
     if (
