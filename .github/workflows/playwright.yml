@@ -36,18 +36,9 @@ jobs:
             ~/.cache/ms-playwright
             ~\AppData\Local\ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
-      - name: Install Playwright Browsers & Deps (Ubuntu - Cache Miss)
-        if: matrix.os == 'ubuntu-latest' && steps.playwright-cache.outputs.cache-hit != 'true'
-        timeout-minutes: 10
+      - name: Install Playwright Browsers & Deps
+        timeout-minutes: 15
         run: npx playwright install --with-deps
-      - name: Install Playwright Deps Only (Ubuntu - Cache Hit)
-        if: matrix.os == 'ubuntu-latest' && steps.playwright-cache.outputs.cache-hit == 'true'
-        timeout-minutes: 5
-        run: npx playwright install-deps
-      - name: Install Playwright Browsers (Windows - Cache Miss)
-        if: matrix.os == 'windows-latest' && steps.playwright-cache.outputs.cache-hit != 'true'
-        timeout-minutes: 10
-        run: npx playwright install
       # Construimos si estamos en modo PROD
       - name: Build App (if prod)
         if: matrix.mode == 'prod'
