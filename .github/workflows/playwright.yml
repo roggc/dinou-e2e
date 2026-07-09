@@ -42,7 +42,7 @@ jobs:
           sudo sed -i 's/azure.archive.ubuntu.com/archive.ubuntu.com/g' /etc/apt/sources.list /etc/apt/sources.list.d/* || true
           sudo sh -c 'echo "Acquire::http::Timeout \"15\";\nAcquire::http::Retries \"3\";" > /etc/apt/apt.conf.d/99timeout'
       - name: Install Playwright Browsers & Deps
-        timeout-minutes: 15
+        timeout-minutes: 20
         run: npx playwright install --with-deps
       # Construimos si estamos en modo PROD
       - name: Build App (if prod)
