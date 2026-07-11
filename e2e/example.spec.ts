@@ -896,6 +896,114 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await ISRFlow(page);
     });
   });
+
+  test.describe("Dinou Core: On-Demand Revalidation API", () => {
+    test("revalidatePath using absolute path refreshes static cache", async ({
+      page,
+    }) => {
+      if (!isProd) test.skip();
+
+      // 1. Go to page and read initial timestamp
+      await page.goto("/t-revalidate-api");
+      await page.waitForSelector('body[data-hydrated="true"]');
+      const time1 = await page.getByTestId("timestamp").innerText();
+      const targetUrl = page.url().split("?")[0];
+
+      // 2. Click absolute revalidate button
+      await page.getByTestId("reval-path-btn").click();
+      
+      // Give the server 500ms to complete background compilation
+      await page.waitForTimeout(500);
+
+      // 3. Verify it has updated (poll using cache busting)
+      await expect
+        .poll(
+          async () => {
+            const bypassUrl = `${targetUrl}?t=${Date.now()}_${Math.random()}`;
+            await page.goto(bypassUrl);
+            const currentTime = await page.getByTestId("timestamp").innerText();
+            return new Date(currentTime).getTime();
+          },
+          {
+            message: "Absolute path revalidation did not refresh the page cache",
+            timeout: 10000,
+            intervals: [500],
+          }
+        )
+        .toBeGreaterThan(new Date(time1).getTime());
+    });
+
+    test("revalidatePath using relative path './' resolves context and refreshes static cache", async ({
+      page,
+    }) => {
+      if (!isProd) test.skip();
+
+      // 1. Go to page and read initial timestamp
+      await page.goto("/t-revalidate-api");
+      await page.waitForSelector('body[data-hydrated="true"]');
+      const time1 = await page.getByTestId("timestamp").innerText();
+      const targetUrl = page.url().split("?")[0];
+
+      // 2. Click relative revalidate button
+      await page.getByTestId("reval-rel-btn").click();
+
+      // Give the server 500ms to complete background compilation
+      await page.waitForTimeout(500);
+
+      // 3. Verify it has updated (poll using cache busting)
+      await expect
+        .poll(
+          async () => {
+            const bypassUrl = `${targetUrl}?t=${Date.now()}_${Math.random()}`;
+            await page.goto(bypassUrl);
+            const currentTime = await page.getByTestId("timestamp").innerText();
+            return new Date(currentTime).getTime();
+          },
+          {
+            message: "Relative path revalidation did not refresh the page cache",
+            timeout: 10000,
+            intervals: [500],
+          }
+        )
+        .toBeGreaterThan(new Date(time1).getTime());
+    });
+
+    test("revalidateTag invalidates and regenerates matching pages", async ({
+      page,
+    }) => {
+      if (!isProd) test.skip();
+
+      // 1. Go to page and read initial timestamp
+      await page.goto("/t-revalidate-api");
+      await page.waitForSelector('body[data-hydrated="true"]');
+      const time1 = await page.getByTestId("timestamp").innerText();
+      const targetUrl = page.url().split("?")[0];
+
+      // 2. Click revalidate tag button
+      await page.getByTestId("reval-tag-btn").click();
+
+      // Give the server 500ms to complete background compilation
+      await page.waitForTimeout(500);
+
+      // 3. Verify it has updated (poll using cache busting)
+      await expect
+        .poll(
+          async () => {
+            const bypassUrl = `${targetUrl}?t=${Date.now()}_${Math.random()}`;
+            await page.goto(bypassUrl);
+            const currentTime = await page.getByTestId("timestamp").innerText();
+            return new Date(currentTime).getTime();
+          },
+          {
+            message: "Tag-based revalidation did not refresh the page cache",
+            timeout: 10000,
+            intervals: [500],
+          }
+        )
+        .toBeGreaterThan(new Date(time1).getTime());
+    });
+  });
+
   test.describe("Dinou Core: Soft navigation (SPA)", () => {
     test("SPA Navigation preserves Layout State - layout client component - client component", async ({
       page,
