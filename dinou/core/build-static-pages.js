@@ -852,11 +852,19 @@ async function buildStaticPages() {
         );
 
         let pageFunctionsProps;
+        let cacheTags = [];
 
         if (pageFunctionsPath) {
           const pageFunctionsModule = await importModule(pageFunctionsPath);
           const getProps = pageFunctionsModule.getProps;
           revalidate = pageFunctionsModule.revalidate;
+          if (pageFunctionsModule.getCacheTags) {
+            try {
+              cacheTags = await pageFunctionsModule.getCacheTags(params);
+            } catch (e) {
+              console.error("Error running getCacheTags in buildStaticPages:", e);
+            }
+          }
           pageFunctionsProps = await getProps?.(params);
           props = { ...props, ...(pageFunctionsProps?.page ?? {}) };
         }
@@ -943,6 +951,7 @@ async function buildStaticPages() {
       staticMetadata.set(reqPath, {
         revalidate: revalidate?.(),
         effects: sideEffects,
+        tags: cacheTags,
       });
       console.log(`Registered static page at ${reqPath}`);
     } catch (err) {
