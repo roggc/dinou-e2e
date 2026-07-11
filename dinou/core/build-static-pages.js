@@ -904,11 +904,60 @@ async function buildStaticPages() {
               const updatedSlots = {};
               for (const [slotName, slotElement] of Object.entries(slots)) {
                 const alreadyFoundPath = slotElement.props?.__modulePath;
-
-                updatedSlots[slotName] = {
+                const slotElementWithModule = {
                   ...slotElement,
                   __modulePath: alreadyFoundPath ?? null,
                 };
+
+                let updatedSlotElement;
+                try {
+                  await asyncRenderJSXToClientJSX(slotElementWithModule);
+                  updatedSlotElement = slotElementWithModule;
+                } catch (e) {
+                  const slotFilePath = alreadyFoundPath;
+                  if (slotFilePath) {
+                    const realSlotFolder = path.dirname(slotFilePath);
+                    const [slotErrorPath, slotErrorParams] =
+                      getFilePathAndDynamicParams(
+                        segments,
+                        {},
+                        realSlotFolder,
+                        "error",
+                        true,
+                        true,
+                        undefined,
+                        segments.length,
+                      );
+
+                    if (slotErrorPath) {
+                      const slotErrorModule = await importModule(slotErrorPath);
+                      const SlotError = slotErrorModule.default ?? slotErrorModule;
+
+                      const serializedError = {
+                        message: e.message || "Unknown Error",
+                        name: e.name,
+                        stack: process.env.NODE_ENV !== "production" ? e.stack : undefined,
+                      };
+
+                      updatedSlotElement = React.createElement(SlotError, {
+                        params: slotErrorParams,
+                        key: slotName,
+                        error: serializedError,
+                      });
+                    } else {
+                      console.warn(
+                        `[Dinou Build] Slot @${slotName} failed and does not have error.tsx`,
+                      );
+                      updatedSlotElement = null;
+                    }
+                  } else {
+                    console.error(
+                      `[Dinou Build] Slot @${slotName} failed and has no module path`,
+                    );
+                    updatedSlotElement = null;
+                  }
+                }
+                updatedSlots[slotName] = updatedSlotElement;
               }
               let props = {
                 params: dParams,
