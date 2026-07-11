@@ -94,6 +94,7 @@ async function generateStaticPage(reqPath) {
           revalidate: metadata.revalidate,
           generatedAt: Date.now(),
           effects: metadata.effects,
+          tags: metadata.tags || [],
         }, null, 2),
         "utf8"
       );
