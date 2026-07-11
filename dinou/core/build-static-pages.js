@@ -824,6 +824,7 @@ async function buildStaticPages() {
       };
 
       let revalidate;
+      let cacheTags = [];
       const jsx = await requestStorage.run(mockContext, async () => {
         const [pagePath] = getFilePathAndDynamicParams(
           segments,
@@ -852,7 +853,6 @@ async function buildStaticPages() {
         );
 
         let pageFunctionsProps;
-        let cacheTags = [];
 
         if (pageFunctionsPath) {
           const pageFunctionsModule = await importModule(pageFunctionsPath);
