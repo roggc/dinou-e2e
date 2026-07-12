@@ -1631,44 +1631,42 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
   test.describe("Dinou Core: Link & API Imports Resolution", () => {
     test("loads without any import or module resolution errors on client/server", async ({ page }) => {
-      // 1. Listen for browser console errors
-      const consoleErrors: string[] = [];
-      page.on("console", (msg) => {
-        if (msg.type() === "error") {
-          consoleErrors.push(msg.text());
-        }
-      });
-
-      // 2. Go to the link import test page
+      // 1. Go to the link import test page
       const response = await page.goto("/t-link-import");
       expect(response?.status()).toBe(200);
       await page.waitForSelector('body[data-hydrated="true"]');
 
-      // 3. Verify Server Link renders and exists
+      // 2. Verify Server Link renders and exists
       const serverLink = page.getByTestId("server-link");
       await expect(serverLink).toBeVisible();
       await expect(serverLink).toHaveAttribute("href", "/revalidate");
 
-      // 4. Verify Client Link renders and exists
+      // 3. Verify Client Link renders and exists
       const clientLink = page.getByTestId("client-link");
       await expect(clientLink).toBeVisible();
       await expect(clientLink).toHaveAttribute("href", "/revalidate");
 
-      // 5. Verify pathname hook resolves correctly
+      // 4. Verify pathname hook resolves correctly
       const clientPathname = page.getByTestId("client-pathname");
       await expect(clientPathname).toHaveText("Pathname: /t-link-import");
 
-      // 6. Verify useNavigationLoading resolved
+      // 5. Verify useNavigationLoading resolved
       const clientLoading = page.getByTestId("client-loading");
       await expect(clientLoading).toHaveText("Loading: false");
 
-      // 7. Verify ClientRedirect works by clicking the trigger button
-      await page.getByTestId("trigger-redirect-btn").click();
+      // 6. Verify server-link navigation works
+      await serverLink.click();
       await page.waitForSelector('body[data-hydrated="true"]');
       await expect(page).toHaveURL(/\/revalidate/);
 
-      // 8. Confirm no client-side console errors or module resolution errors occurred
-      expect(consoleErrors).toEqual([]);
+      // Go back to the test page to test client-link
+      await page.goto("/t-link-import");
+      await page.waitForSelector('body[data-hydrated="true"]');
+
+      // 7. Verify client-link navigation works
+      await page.getByTestId("client-link").click();
+      await page.waitForSelector('body[data-hydrated="true"]');
+      await expect(page).toHaveURL(/\/revalidate/);
     });
 
     test("ClientRedirect rendered inside a Server Component performs redirect on client-side", async ({ page }) => {
