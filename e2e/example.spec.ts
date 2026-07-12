@@ -1002,6 +1002,58 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         )
         .toBeGreaterThan(new Date(time1).getTime());
     });
+
+    test("revalidatePath handles non-existent paths gracefully without throwing or causing client errors", async ({
+      page,
+    }) => {
+      // 1. Go to page
+      await page.goto("/t-revalidate-api");
+      await page.waitForSelector('body[data-hydrated="true"]');
+
+      // 2. Track browser console errors
+      const consoleErrors: string[] = [];
+      page.on("console", (msg) => {
+        if (msg.type() === "error" || msg.text().toLowerCase().includes("hydration")) {
+          consoleErrors.push(msg.text());
+        }
+      });
+
+      // 3. Click non-existent path revalidation button
+      await page.getByTestId("reval-nonexistent-path-btn").click();
+
+      // 4. Wait for the transition to resolve (button becomes enabled again)
+      const btn = page.getByTestId("reval-nonexistent-path-btn");
+      await expect(btn).toBeEnabled({ timeout: 10000 });
+
+      // 5. Verify no client errors or hydration mismatches occurred
+      expect(consoleErrors).toEqual([]);
+    });
+
+    test("revalidateTag handles non-existent tags gracefully without throwing or causing client errors", async ({
+      page,
+    }) => {
+      // 1. Go to page
+      await page.goto("/t-revalidate-api");
+      await page.waitForSelector('body[data-hydrated="true"]');
+
+      // 2. Track browser console errors
+      const consoleErrors: string[] = [];
+      page.on("console", (msg) => {
+        if (msg.type() === "error") {
+          consoleErrors.push(msg.text());
+        }
+      });
+
+      // 3. Click non-existent tag revalidation button
+      await page.getByTestId("reval-nonexistent-tag-btn").click();
+
+      // 4. Wait for the transition to resolve (button becomes enabled again)
+      const btn = page.getByTestId("reval-nonexistent-tag-btn");
+      await expect(btn).toBeEnabled({ timeout: 10000 });
+
+      // 5. Verify no client errors occurred
+      expect(consoleErrors).toEqual([]);
+    });
   });
 
   test.describe("Dinou Core: Soft navigation (SPA)", () => {

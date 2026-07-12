@@ -13,3 +13,11 @@ export async function triggerRevalidateTag() {
 export async function triggerRevalidatePathRelative() {
   await revalidatePath("./");
 }
+
+export async function triggerRevalidatePathNonExistent() {
+  await revalidatePath("/this-route-does-not-exist");
+}
+
+export async function triggerRevalidateTagNonExistent() {
+  await revalidateTag("this-tag-does-not-exist");
+}
