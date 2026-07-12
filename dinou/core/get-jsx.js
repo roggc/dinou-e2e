@@ -6,6 +6,7 @@ const {
 } = require("./get-file-path-and-dynamic-params");
 const importModule = require("./import-module");
 const { asyncRenderJSXToClientJSX } = require("./render-jsx-to-client-jsx");
+const { getContext } = require("./request-context.js");
 
 async function getJSX(
   reqPath,
@@ -178,6 +179,10 @@ async function getJSX(
           await asyncRenderJSXToClientJSX(slotElement);
           updatedSlotElement = slotElement;
         } catch (e) {
+          const ctx = getContext();
+          if (ctx && ctx.res) {
+            ctx.res.status(500);
+          }
           const slotFilePath = slotElement.props?.__modulePath;
 
           if (slotFilePath) {
