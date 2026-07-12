@@ -914,6 +914,7 @@ async function buildStaticPages() {
                   await asyncRenderJSXToClientJSX(slotElementWithModule);
                   updatedSlotElement = slotElementWithModule;
                 } catch (e) {
+                  mockRes.status(500);
                   const slotFilePath = alreadyFoundPath;
                   if (slotFilePath) {
                     const realSlotFolder = path.dirname(slotFilePath);
@@ -1245,6 +1246,7 @@ async function buildStaticPage(reqPath, isDynamic = null) {
                 await asyncRenderJSXToClientJSX(slotElementWithModule);
                 updatedSlotElement = slotElementWithModule;
               } catch (e) {
+                mockRes.status(500);
                 const slotFilePath = alreadyFoundPath;
                 if (slotFilePath) {
                   const realSlotFolder = path.dirname(slotFilePath);
