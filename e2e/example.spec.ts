@@ -911,7 +911,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // 2. Click absolute revalidate button
       await page.getByTestId("reval-path-btn").click();
-      
+
       // Give the server 500ms to complete background compilation
       await page.waitForTimeout(500);
 
@@ -1719,7 +1719,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
   test.describe("ISR Error Protection Shield", () => {
     const PAGE_URL =
       "/t-isr/t-layout-client-component/t-server-component/t-time-bomb";
-    const DIST_DIR = path.resolve("dist2");
+    const DIST_DIR = path.resolve(".dinou/dist2");
     const HTML_PATH = path.join(DIST_DIR, PAGE_URL, "index.html");
     const FLAG_FILE = path.join(DIST_DIR, "trigger-error.txt");
     test.beforeEach(() => {
@@ -1806,7 +1806,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
   // test.describe("ISR Status Updates", () => {
   //   const PAGE_URL =
   //     "/t-isr/t-layout-client-component/t-server-component/t-redirect";
-  //   const OUT_DIR = path.resolve("dist2");
+  //   const OUT_DIR = path.resolve(".dinou/dist2");
   //   const MANIFEST_PATH = path.join(OUT_DIR, "status-manifest.json");
   //   const FLAG_FILE = path.resolve("exists.flag");
   //   // Empezamos limpios
@@ -2084,7 +2084,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     // });
   });
   test.describe("Dinou SSG (getStaticPaths)", () => {
-    const BUILD_DIR = path.resolve(process.cwd(), "dist2");
+    const BUILD_DIR = path.resolve(process.cwd(), ".dinou/dist2");
     test("Should verify SSG for defined paths and fallback for undefined ones", async ({
       page,
       browserName,
@@ -2325,7 +2325,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
   test.describe("Static Bailout (Cookie Access Detection)", () => {
     // Ajusta esto a donde tu framework genere los archivos
-    const BUILD_DIR = path.resolve(process.cwd(), "dist2");
+    const BUILD_DIR = path.resolve(process.cwd(), ".dinou/dist2");
     test("Should generate HTML for pure static pages BUT skip generation for pages accessing cookies", async ({
       page,
     }) => {
@@ -2422,7 +2422,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
   });
   test.describe("Hybrid Static/Dynamic Switching (Concurrency Safe)", () => {
-    const DIST_DIR = path.resolve(process.cwd(), "dist2");
+    const DIST_DIR = path.resolve(process.cwd(), ".dinou/dist2");
     const TRIGGER_FILE = path.join(DIST_DIR, "hybrid.mode");
     const HTML_PATH = path.join(DIST_DIR, "t-hybrid", "index.html");
 
@@ -2697,7 +2697,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
   });
 
   test.describe("Concurrency Stress Test", () => {
-    const DIST_DIR = path.resolve(process.cwd(), "dist2");
+    const DIST_DIR = path.resolve(process.cwd(), ".dinou/dist2");
     const TRIGGER_FILE = path.join(DIST_DIR, "hybrid-chaos.mode");
     // Configuración
     const CONCURRENT_USERS = 10; // No subas mucho esto si no tienes una RAM bestial
@@ -2810,7 +2810,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     const STAGGER_DELAY_MS = 1500; // Un usuario nuevo entra cada 1.5 segundos
     const RELOADS_PER_USER = 15; // Cada usuario recargará varias veces para mantenerse activo
     const PAGE_URL = "/t-hybrid-staggered";
-    const DIST_DIR = path.resolve(process.cwd(), "dist2");
+    const DIST_DIR = path.resolve(process.cwd(), ".dinou/dist2");
     const TRIGGER_FILE = path.join(DIST_DIR, "hybrid-staggered.mode");
 
     // Limpieza
@@ -2929,7 +2929,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
   });
   test.describe("Concurrency Stress Test - Slow Network (Chrome)", () => {
-    const DIST_DIR = path.resolve(process.cwd(), "dist2");
+    const DIST_DIR = path.resolve(process.cwd(), ".dinou/dist2");
     const TRIGGER_FILE = path.join(DIST_DIR, "hybrid-chaos-slow.mode");
     // Configuración
     const CONCURRENT_USERS = 10; // No subas mucho esto si no tienes una RAM bestial
@@ -3058,7 +3058,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     const STAGGER_DELAY_MS = 1500; // Un usuario nuevo entra cada 1.5 segundos
     const RELOADS_PER_USER = 15; // Cada usuario recargará varias veces para mantenerse activo
     const PAGE_URL = "/t-hybrid-staggered-slow";
-    const DIST_DIR = path.resolve(process.cwd(), "dist2");
+    const DIST_DIR = path.resolve(process.cwd(), ".dinou/dist2");
     const TRIGGER_FILE = path.join(DIST_DIR, "hybrid-staggered-slow.mode");
 
     // Limpieza

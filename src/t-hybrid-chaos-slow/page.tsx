@@ -11,7 +11,7 @@ export default async function Page() {
   // Esto NO activa el proxy porque es fs, no context.
   const triggerFile = path.resolve(
     process.cwd(),
-    "dist2",
+    ".dinou/dist2",
     "hybrid-chaos-slow.mode"
   );
 

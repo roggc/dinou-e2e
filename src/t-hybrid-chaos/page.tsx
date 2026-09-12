@@ -9,7 +9,7 @@ export default async function Page() {
 
   // 1. Leemos el "Interruptor Externo"
   // Esto NO activa el proxy porque es fs, no context.
-  const triggerFile = path.resolve(process.cwd(), "dist2", "hybrid-chaos.mode");
+  const triggerFile = path.resolve(process.cwd(), ".dinou/dist2", "hybrid-chaos.mode");
 
   try {
     if (fs.existsSync(triggerFile)) {
