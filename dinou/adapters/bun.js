@@ -25,9 +25,6 @@ if (fs.existsSync(routeModulesPath)) {
 const PORT = Number(process.env.PORT || 3000);
 const cwd = process.cwd();
 const dist3Dir = path.resolve(cwd, ".dinou/dist3");
-const clientDir = path.resolve(cwd, ".dinou/dist1/client");
-const dinouPublicDir = path.resolve(cwd, ".dinou/public");
-const userPublicDir = path.resolve(cwd, "public");
 
 export async function fetch(req) {
   const url = new URL(req.url);
@@ -35,13 +32,10 @@ export async function fetch(req) {
 
   // Static assets delivery (Zero-copy with Bun.file)
   if (pathname !== "/") {
-    const staticDirs = [dist3Dir, clientDir, dinouPublicDir, userPublicDir];
-    for (const dir of staticDirs) {
-      const filePath = path.join(dir, pathname);
-      const file = Bun.file(filePath);
-      if (await file.exists()) {
-        return new Response(file);
-      }
+    const filePath = path.join(dist3Dir, pathname);
+    const file = Bun.file(filePath);
+    if (await file.exists()) {
+      return new Response(file);
     }
   }
 

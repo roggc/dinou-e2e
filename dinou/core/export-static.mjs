@@ -9,7 +9,6 @@ const projectRoot = process.cwd();
 const outDir = path.resolve(projectRoot, "out");
 const dist3Dir = path.resolve(projectRoot, ".dinou/dist3");
 const dist2Dir = path.resolve(projectRoot, ".dinou/dist2");
-const rootPublicDir = path.resolve(projectRoot, "public");
 
 console.log("📦 [Dinou Export] Preparing standalone static export...");
 
@@ -54,12 +53,6 @@ if (fs.existsSync(dist2Dir)) {
   console.log(`   Copied ${pageCount} static page/payload file(s) from .dinou/dist2`);
 } else {
   console.warn("⚠️ [Dinou Export] Warning: .dinou/dist2 not found. Ensure your app has static routes.");
-}
-
-// 4. Copy user's root public/ directory if it exists
-if (fs.existsSync(rootPublicDir)) {
-  const publicCount = copyRecursive(rootPublicDir, outDir);
-  console.log(`   Copied ${publicCount} static file(s) from public/`);
 }
 
 console.log(`\n🎉 [Dinou Export] Static site exported successfully to: ${outDir}`);

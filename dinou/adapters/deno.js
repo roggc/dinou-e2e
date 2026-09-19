@@ -43,9 +43,6 @@ const PORT = Number(
 
 const cwd = typeof Deno !== "undefined" ? Deno.cwd() : process.cwd();
 const dist3Dir = path.resolve(cwd, ".dinou/dist3");
-const clientDir = path.resolve(cwd, ".dinou/dist1/client");
-const dinouPublicDir = path.resolve(cwd, ".dinou/public");
-const userPublicDir = path.resolve(cwd, "public");
 
 export async function fetch(req) {
   const url = new URL(req.url);
@@ -53,26 +50,23 @@ export async function fetch(req) {
 
   // Static assets delivery (if running with disk access)
   if (pathname !== "/" && typeof Deno !== "undefined" && typeof Deno.readFile === "function") {
-    const staticDirs = [dist3Dir, clientDir, dinouPublicDir, userPublicDir];
-    for (const dir of staticDirs) {
-      try {
-        const filePath = path.join(dir, pathname);
-        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-          const content = await Deno.readFile(filePath);
-          // Optional content-type header detection
-          const ext = path.extname(filePath).toLowerCase();
-          const headers = {};
-          if (ext === ".js" || ext === ".mjs") headers["content-type"] = "application/javascript; charset=utf-8";
-          else if (ext === ".css") headers["content-type"] = "text/css; charset=utf-8";
-          else if (ext === ".json") headers["content-type"] = "application/json";
-          else if (ext === ".svg") headers["content-type"] = "image/svg+xml";
-          else if (ext === ".png") headers["content-type"] = "image/png";
-          else if (ext === ".ico") headers["content-type"] = "image/x-icon";
-          return new Response(content, { headers });
-        }
-      } catch (e) {
-        // Fallback to Dinou handler
+    try {
+      const filePath = path.join(dist3Dir, pathname);
+      if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+        const content = await Deno.readFile(filePath);
+        // Content-type header detection
+        const ext = path.extname(filePath).toLowerCase();
+        const headers = {};
+        if (ext === ".js" || ext === ".mjs") headers["content-type"] = "application/javascript; charset=utf-8";
+        else if (ext === ".css") headers["content-type"] = "text/css; charset=utf-8";
+        else if (ext === ".json") headers["content-type"] = "application/json";
+        else if (ext === ".svg") headers["content-type"] = "image/svg+xml";
+        else if (ext === ".png") headers["content-type"] = "image/png";
+        else if (ext === ".ico") headers["content-type"] = "image/x-icon";
+        return new Response(content, { headers });
       }
+    } catch (e) {
+      // Fallback to Dinou handler
     }
   }
 
