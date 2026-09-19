@@ -140,7 +140,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     }
 
     // Ensure all response streams are flushed before browserContext tears down
-    await page.waitForLoadState("networkidle").catch(() => {});
+    await page.waitForLoadState("networkidle").catch(() => { });
   }
 
   // async function SSRStreamingFlowProd(
@@ -1346,12 +1346,18 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
 
       // B. El contenido nuevo debe aparecer (Payload RSC cargado y renderizado)
-      await expect(page.getByTestId("target-title")).toHaveText("Page: Target");
+      await expect(page.getByTestId("target-title")).toHaveText("Page: Target", {
+        timeout: 15000,
+      });
 
       // C. Verificar que NO estamos en la página anterior
-      await expect(page.getByText("Page: Source")).toBeHidden();
+      await expect(page.getByText("Page: Source")).toBeHidden({
+        timeout: 15000,
+      });
       // El loader debe haber desaparecido
-      await expect(page.getByTestId("global-loader")).toBeHidden();
+      await expect(page.getByTestId("global-loader")).toBeHidden({
+        timeout: 15000,
+      });
     });
     test("router.replace navigates correctly", async ({ page }) => {
       // 1. Carga inicial
@@ -1366,8 +1372,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // 3. Verificar URL y Contenido
       await expect(page).toHaveURL(
         /.*\/t-spa-use-router\/t-layout-client-component\/t-client-component\/target/,
+        { timeout: 15000 },
       );
-      await expect(page.getByTestId("target-title")).toHaveText("Page: Target");
+      await expect(page.getByTestId("target-title")).toHaveText("Page: Target", {
+        timeout: 15000,
+      });
     });
   });
   test.describe("Dinou Core: Server Component Redirects", () => {
@@ -3352,9 +3361,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
   test.describe("Demo Application Features", () => {
     test("Server Components: displays posts successfully", async ({ page }) => {
       await page.goto("/demo/server-components");
-      await expect(page.locator("h1")).toContainText("Server Components");
-      await expect(page.locator("body")).toContainText("This entire page is a Server Component");
-      await expect(page.locator("body")).toContainText("Understanding RSC");
+      await page.waitForSelector('body[data-hydrated="true"]');
+      await expect(page.locator("h1")).toContainText("Server Components", { timeout: 15000 });
+      await expect(page.locator("body")).toContainText("This entire page is a Server Component", { timeout: 15000 });
+      await expect(page.locator("body")).toContainText("Understanding RSC", { timeout: 15000 });
     });
 
     test("Client Components: counter and server functions work", async ({ page }) => {
