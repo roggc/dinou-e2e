@@ -4,19 +4,28 @@ const DINOU_CONTEXT_KEY = Symbol.for("dinou.request.context.storage");
 let requestStorage;
 
 if (typeof window === "undefined") {
-  const nodeRequire =
-    typeof module !== "undefined" && typeof module.require === "function"
-      ? module.require.bind(module)
-      : null;
-
-  if (nodeRequire) {
-    const { AsyncLocalStorage } = nodeRequire("node:async_hooks");
-
-    if (!global[DINOU_CONTEXT_KEY]) {
-      global[DINOU_CONTEXT_KEY] = new AsyncLocalStorage();
+  let AsyncLocalStorageClass;
+  try {
+    if (typeof require === "function") {
+      const asyncHooks = require("node:async_hooks");
+      AsyncLocalStorageClass = asyncHooks.AsyncLocalStorage;
     }
+  } catch (e) {}
 
-    requestStorage = global[DINOU_CONTEXT_KEY];
+  if (!AsyncLocalStorageClass && typeof globalThis.AsyncLocalStorage !== "undefined") {
+    AsyncLocalStorageClass = globalThis.AsyncLocalStorage;
+  }
+
+  if (AsyncLocalStorageClass) {
+    if (!globalThis[DINOU_CONTEXT_KEY]) {
+      globalThis[DINOU_CONTEXT_KEY] = new AsyncLocalStorageClass();
+    }
+    requestStorage = globalThis[DINOU_CONTEXT_KEY];
+  } else {
+    requestStorage = {
+      run: (store, callback) => callback(),
+      getStore: () => undefined,
+    };
   }
 } else {
   requestStorage = {

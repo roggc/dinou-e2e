@@ -1,7 +1,6 @@
 const { pathToFileURL } = require("url");
 const path = require("path");
 const fs = require("fs");
-const isWebpack = process.env.DINOU_BUILD_TOOL === "webpack";
 
 function getMtimeParam(absPath) {
   try {
@@ -17,37 +16,13 @@ async function importModule(modulePath) {
     ? modulePath
     : path.resolve(process.cwd(), modulePath);
 
-  if (!isWebpack) {
-    let fileUrl = pathToFileURL(absPath).href;
-    if (process.env.NODE_ENV !== "production") {
-      fileUrl += `?mtime=${getMtimeParam(absPath)}`;
-    }
-    const mod = await import(fileUrl);
-    return mod;
+  let fileUrl = pathToFileURL(absPath).href;
+  if (process.env.NODE_ENV !== "production") {
+    fileUrl += `?mtime=${getMtimeParam(absPath)}`;
   }
 
-  try {
-    if (process.env.NODE_ENV !== "production") {
-      try {
-        const resolved = require.resolve(absPath);
-        delete require.cache[resolved];
-      } catch (e) {}
-    }
-    return require(absPath);
-  } catch (err) {
-    if (
-      err.code === "ERR_REQUIRE_ESM" ||
-      /require\(\) of ES Module/.test(err.message)
-    ) {
-      let fileUrl = pathToFileURL(absPath).href;
-      if (process.env.NODE_ENV !== "production") {
-        fileUrl += `?mtime=${getMtimeParam(absPath)}`;
-      }
-      const mod = await import(fileUrl);
-      return mod;
-    }
-    throw err;
-  }
+  const mod = await import(/* webpackIgnore: true */ fileUrl);
+  return mod;
 }
 
 module.exports = importModule;
