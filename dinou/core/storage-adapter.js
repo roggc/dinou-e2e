@@ -194,6 +194,63 @@ class RedisStorage extends StorageAdapter {
   }
 }
 
+/**
+ * Deno KV Storage Adapter for Deno Deploy & Edge.
+ */
+class DenoKVStorage extends StorageAdapter {
+  constructor(kvInstance = null) {
+    super();
+    this.kv = kvInstance;
+  }
+
+  async _getKV() {
+    if (!this.kv) {
+      if (typeof Deno !== "undefined" && typeof Deno.openKv === "function") {
+        this.kv = await Deno.openKv();
+      }
+    }
+    return this.kv;
+  }
+
+  _cleanKey(key) {
+    return key.replace(/^\/+/, "").replace(/\\/g, "/");
+  }
+
+  async get(key) {
+    const kv = await this._getKV();
+    if (!kv) return null;
+    const cleanKey = this._cleanKey(key);
+    const res = await kv.get(["dinou_cache", cleanKey]);
+    if (!res || res.value === null) return null;
+    return {
+      content: res.value.content,
+      metadata: res.value.metadata || null,
+    };
+  }
+
+  async set(key, content, metadata = null) {
+    const kv = await this._getKV();
+    if (!kv) return;
+    const cleanKey = this._cleanKey(key);
+    await kv.set(["dinou_cache", cleanKey], { content, metadata });
+  }
+
+  async has(key) {
+    const kv = await this._getKV();
+    if (!kv) return false;
+    const cleanKey = this._cleanKey(key);
+    const res = await kv.get(["dinou_cache", cleanKey]);
+    return res && res.value !== null;
+  }
+
+  async delete(key) {
+    const kv = await this._getKV();
+    if (!kv) return;
+    const cleanKey = this._cleanKey(key);
+    await kv.delete(["dinou_cache", cleanKey]);
+  }
+}
+
 let activeStorageAdapter = null;
 
 function getStorageAdapter() {
@@ -211,6 +268,7 @@ module.exports = {
   StorageAdapter,
   FileSystemStorage,
   CloudflareKVStorage,
+  DenoKVStorage,
   MemoryStorage,
   RedisStorage,
   getStorageAdapter,

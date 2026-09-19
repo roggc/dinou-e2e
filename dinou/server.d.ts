@@ -43,6 +43,14 @@ export class CloudflareKVStorage extends StorageAdapter {
   delete(key: string): Promise<void>;
 }
 
+export class DenoKVStorage extends StorageAdapter {
+  constructor(kvInstance?: any);
+  get(key: string): Promise<StorageItem | null>;
+  set(key: string, content: string, metadata?: any): Promise<void>;
+  has(key: string): Promise<boolean>;
+  delete(key: string): Promise<void>;
+}
+
 export class MemoryStorage extends StorageAdapter {
   constructor();
   get(key: string): Promise<StorageItem | null>;

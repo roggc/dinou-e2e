@@ -21,7 +21,10 @@
     "dev:express:webpack": "cross-env DINOU_BUILD_TOOL=webpack node --conditions react-server --import ./dinou/core/register-loader.mjs ./dinou/core/server.js",
     "build:esbuild": "cross-env NODE_ENV=production node dinou/esbuild/build.mjs",
     "start:esbuild": "cross-env NODE_ENV=production node ./dinou/core/server.js",
-    "build:cloudflare": "node ./dinou/cloudflare/build.mjs"
+    "build:cloudflare": "node ./dinou/cloudflare/build.mjs",
+    "build:deno": "node ./dinou/deno/build.mjs",
+    "start:bun": "bun dinou/adapters/bun.js",
+    "start:deno": "deno run --allow-net --allow-read --allow-env dinou/adapters/deno.js"
   },
   "keywords": [],
   "author": "",

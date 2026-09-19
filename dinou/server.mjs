@@ -12,6 +12,7 @@ export {
   StorageAdapter,
   FileSystemStorage,
   CloudflareKVStorage,
+  DenoKVStorage,
   MemoryStorage,
   RedisStorage,
   getStorageAdapter,
