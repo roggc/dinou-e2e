@@ -9,3 +9,6 @@ out
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+# documentacion
+doc.md
