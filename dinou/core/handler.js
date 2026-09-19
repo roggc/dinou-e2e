@@ -26,111 +26,13 @@ const { requestStorage } = require("./request-context.js");
 const processLimiter = require("./concurrency-manager.js");
 const { getStatus } = require("./status-manifest.js");
 
-const { renderToPipeableStream } = isWebpack
-  ? require("react-server-dom-webpack/server")
-  : require("@roggc/react-server-dom-esm/server");
-
-// Load Dinou configuration and plugins
-let dinouConfig = { plugins: [] };
-const dinouConfigPath = path.resolve(process.cwd(), "dinou.config.js");
-if (existsSync(dinouConfigPath)) {
-  try {
-    dinouConfig = require(dinouConfigPath);
-  } catch (err) {
-    console.error("[Dinou] Error loading dinou.config.js in handler:", err);
-  }
-}
-
-// Client manifest handling
-const clientManifestResolvedPath = path.resolve(
-  process.cwd(),
-  isWebpack
-    ? `${outputFolder}/react-client-manifest.json`
-    : `.dinou/react_client_manifest/react-client-manifest.json`,
-);
-
-function isManifestReady() {
-  try {
-    return existsSync(clientManifestResolvedPath) && readFileSync(clientManifestResolvedPath, "utf8").trim().length > 2;
-  } catch (e) {
-    return false;
-  }
-}
-
-let cachedClientManifest = null;
-if (!isDevelopment && existsSync(clientManifestResolvedPath)) {
-  try {
-    cachedClientManifest = JSON.parse(readFileSync(clientManifestResolvedPath, "utf8"));
-  } catch (e) {
-    cachedClientManifest = null;
-  }
-}
-
-function getClientManifest() {
-  if (isDevelopment) {
-    try {
-      return JSON.parse(readFileSync(clientManifestResolvedPath, "utf8"));
-    } catch (e) {
-      return {};
-    }
-  }
-  if (!cachedClientManifest && existsSync(clientManifestResolvedPath)) {
-    try {
-      cachedClientManifest = JSON.parse(readFileSync(clientManifestResolvedPath, "utf8"));
-    } catch (e) { }
-  }
-  return cachedClientManifest || {};
-}
-
-// Server functions manifest handling
-const serverFunctionsManifestPath = path.resolve(
-  process.cwd(),
-  isWebpack
-    ? `${outputFolder}/server-functions-manifest.json`
-    : `.dinou/server_functions_manifest/server-functions-manifest.json`,
-);
-
-let cachedServerFunctionsManifest = null;
-if (!isDevelopment && existsSync(serverFunctionsManifestPath)) {
-  try {
-    const raw = JSON.parse(readFileSync(serverFunctionsManifestPath, "utf8"));
-    cachedServerFunctionsManifest = {};
-    for (const key in raw) {
-      cachedServerFunctionsManifest[key] = new Set(raw[key]);
-    }
-    console.log("[Dinou Handler] Loaded server functions manifest");
-  } catch (e) {
-    cachedServerFunctionsManifest = null;
-  }
-}
-
-function getServerFunctionsManifest() {
-  if (isDevelopment) {
-    if (existsSync(serverFunctionsManifestPath)) {
-      try {
-        const raw = JSON.parse(readFileSync(serverFunctionsManifestPath, "utf8"));
-        const manifest = {};
-        for (const key in raw) {
-          manifest[key] = new Set(raw[key]);
-        }
-        return manifest;
-      } catch (e) {
-        return null;
-      }
-    }
-    return null;
-  }
-  if (!cachedServerFunctionsManifest && existsSync(serverFunctionsManifestPath)) {
-    try {
-      const raw = JSON.parse(readFileSync(serverFunctionsManifestPath, "utf8"));
-      cachedServerFunctionsManifest = {};
-      for (const key in raw) {
-        cachedServerFunctionsManifest[key] = new Set(raw[key]);
-      }
-    } catch (e) {}
-  }
-  return cachedServerFunctionsManifest;
-}
+const {
+  isManifestReady,
+  getClientManifest,
+  getServerFunctionsManifest,
+} = require("./manifest-provider.js");
+const { pipeRSC, isEdgeRuntime } = require("./rsc-renderer.js");
+const { getStorageAdapter } = require("./storage-adapter.js");
 
 // Anti-Bot Shield patterns
 const botGarbagePatterns = [
@@ -394,6 +296,20 @@ class WebResponseBridge extends PassThrough {
     return super.end(chunk, encoding, callback);
   }
 
+  setEdgeStream(readableStream) {
+    this.headersSent = true;
+    for (const c of this.cookies) {
+      this.headers.append("Set-Cookie", c);
+    }
+    const res = new Response(readableStream, {
+      status: this.statusCode,
+      statusText: this.statusMessage || undefined,
+      headers: this.headers,
+    });
+    this._resolved = true;
+    this._resolveResponse(res);
+  }
+
   toResponse() {
     return this._responsePromise;
   }
@@ -402,7 +318,7 @@ class WebResponseBridge extends PassThrough {
 /**
  * Creates the Dinou request context object.
  */
-function createRequestContext(simReq, resBridge) {
+function createRequestContext(simReq, resBridge, platformContext = {}) {
   let hasRedirected = false;
 
   const safeResCall = (methodName, ...args) => {
@@ -443,6 +359,8 @@ function createRequestContext(simReq, resBridge) {
       query: { ...simReq.query },
       path: simReq.path,
       method: simReq.method,
+      env: platformContext.env || {},
+      ctx: platformContext.ctx || null,
     },
     res: {
       status: (code) => safeResCall("status", code),
@@ -451,6 +369,8 @@ function createRequestContext(simReq, resBridge) {
       cookie: (name, value, options) => safeResCall("cookie", name, value, options),
       redirect: (...args) => safeResCall("redirect", ...args),
     },
+    env: platformContext.env || {},
+    ctx: platformContext.ctx || null,
   };
 
   if (dinouConfig.plugins && Array.isArray(dinouConfig.plugins)) {
@@ -471,7 +391,7 @@ function createRequestContext(simReq, resBridge) {
 /**
  * Context for Server Function endpoints.
  */
-function createServerFunctionContext(simReq, resBridge) {
+function createServerFunctionContext(simReq, resBridge, platformContext = {}) {
   const context = {
     req: {
       cookies: { ...simReq.cookies },
@@ -479,6 +399,8 @@ function createServerFunctionContext(simReq, resBridge) {
       query: { ...simReq.query },
       path: simReq.path,
       method: simReq.method,
+      env: platformContext.env || {},
+      ctx: platformContext.ctx || null,
     },
     res: {
       redirect: (urlOrStatus, url) => {
@@ -538,11 +460,12 @@ function createServerFunctionContext(simReq, resBridge) {
 }
 
 /**
- * Universal request handler: (Request) => Promise<Response>
+ * Universal request handler: (Request, platformContext?) => Promise<Response>
  * @param {Request} request 
+ * @param {object} platformContext Optional runtime context ({ env, ctx, runtime })
  * @returns {Promise<Response>}
  */
-async function handleRequest(request) {
+async function handleRequest(request, platformContext = {}) {
   const url = new URL(request.url);
   const pathname = url.pathname;
 
@@ -682,7 +605,7 @@ async function handleRequest(request) {
         return Response.json({ error: `Function '${exportName}' not found` }, { status: 404 });
       }
 
-      const context = createServerFunctionContext(simReq, bridge);
+      const context = createServerFunctionContext(simReq, bridge, platformContext);
       let returnValue;
       try {
         await requestStorage.run(context, async () => {
@@ -711,11 +634,7 @@ async function handleRequest(request) {
       bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
 
       const manifest = getClientManifest();
-      const { pipe } = isWebpack
-        ? renderToPipeableStream(returnValue, manifest)
-        : renderToPipeableStream(returnValue, pathToFileURL(process.cwd()).href + "/");
-
-      pipe(bridge);
+      pipeRSC(returnValue, bridge, manifest, platformContext);
       return bridge.toResponse();
     } catch (err) {
       console.error("[Dinou] Error executing server function:", err);
@@ -735,7 +654,7 @@ async function handleRequest(request) {
       } catch (e) {}
 
       const clientError = body?.error || { message: "Unknown Error" };
-      const context = createRequestContext(simReq, bridge);
+      const context = createRequestContext(simReq, bridge, platformContext);
 
       await requestStorage.run(context, async () => {
         const jsx = await getErrorJSX(
@@ -748,11 +667,7 @@ async function handleRequest(request) {
         bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
 
         const manifest = getClientManifest();
-        const { pipe } = isWebpack
-          ? renderToPipeableStream(jsx, manifest)
-          : renderToPipeableStream(jsx, pathToFileURL(process.cwd()).href + "/");
-
-        pipe(bridge);
+        pipeRSC(jsx, bridge, manifest, platformContext);
       });
       return bridge.toResponse();
     } catch (err) {
@@ -831,7 +746,7 @@ async function handleRequest(request) {
       reqPath,
     );
 
-    const context = createRequestContext(simReq, bridge);
+    const context = createRequestContext(simReq, bridge, platformContext);
     const isNotFound = {};
 
     await requestStorage.run(context, async () => {
@@ -844,21 +759,14 @@ async function handleRequest(request) {
         bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
 
         const manifest = getClientManifest();
-        const { pipe } = isWebpack
-          ? renderToPipeableStream(jsx, manifest)
-          : renderToPipeableStream(jsx, pathToFileURL(process.cwd()).href + "/");
-
-        pipe(bridge);
+        pipeRSC(jsx, bridge, manifest, platformContext);
       } catch (err) {
         console.error("[Dinou] Error rendering RSC payload:", err);
         const serializedError = { message: err.message || "Unknown Error", name: err.name };
         const errJsx = await getErrorJSX(cleanPath, queryObj, serializedError, isDevelopment);
         bridge.status(500);
         const manifest = getClientManifest();
-        const { pipe } = isWebpack
-          ? renderToPipeableStream(errJsx, manifest)
-          : renderToPipeableStream(errJsx, pathToFileURL(process.cwd()).href + "/");
-        pipe(bridge);
+        pipeRSC(errJsx, bridge, manifest, platformContext);
       }
     });
 

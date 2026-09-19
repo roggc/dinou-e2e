@@ -1,0 +1,22 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "dinou-cloudflare-app"
+main = ".dinou/cloudflare/worker.js"
+compatibility_date = "2024-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ====================================================================
+# Cloudflare Workers Static Assets
+# ====================================================================
+# Serves client JS/CSS bundles and pre-rendered SSG pages directly from
+# Cloudflare's global edge network before requests hit the worker.
+[assets]
+directory = ".dinou/dist3"
+binding = "ASSETS"
+
+# ====================================================================
+# Incremental Static Regeneration (ISR / ISG) Cache
+# ====================================================================
+# Un-comment to enable edge-cached pages across all Cloudflare POPs
+# [[kv_namespaces]]
+# binding = "DINOU_CACHE"
+# id = "<YOUR_KV_NAMESPACE_ID>"
