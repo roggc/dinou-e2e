@@ -42,6 +42,7 @@ const PORT = Number(
 );
 
 const cwd = typeof Deno !== "undefined" ? Deno.cwd() : process.cwd();
+const dist3Dir = path.resolve(cwd, ".dinou/dist3");
 const clientDir = path.resolve(cwd, ".dinou/dist1/client");
 const dinouPublicDir = path.resolve(cwd, ".dinou/public");
 const userPublicDir = path.resolve(cwd, "public");
@@ -52,7 +53,7 @@ export async function fetch(req) {
 
   // Static assets delivery (if running with disk access)
   if (pathname !== "/" && typeof Deno !== "undefined" && typeof Deno.readFile === "function") {
-    const staticDirs = [clientDir, dinouPublicDir, userPublicDir];
+    const staticDirs = [dist3Dir, clientDir, dinouPublicDir, userPublicDir];
     for (const dir of staticDirs) {
       try {
         const filePath = path.join(dir, pathname);
