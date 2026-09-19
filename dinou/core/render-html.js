@@ -227,7 +227,12 @@ function getSsrManifest() {
       cachedRequireMap = requireMap;
 
       if (ssrManifest.moduleMap) {
+        const extraEntries = {};
         for (const [modId, exports] of Object.entries(ssrManifest.moduleMap)) {
+          const altId = modId.startsWith("./") ? modId.slice(2) : "./" + modId;
+          if (!ssrManifest.moduleMap[altId]) {
+            extraEntries[altId] = exports;
+          }
           for (const [expName, expData] of Object.entries(exports)) {
             if (expData && expData.specifier) {
               const clientEntry = clientManifest[expData.specifier];
@@ -238,6 +243,7 @@ function getSsrManifest() {
             }
           }
         }
+        Object.assign(ssrManifest.moduleMap, extraEntries);
       }
     }
 

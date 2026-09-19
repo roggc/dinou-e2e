@@ -691,8 +691,12 @@ async function handleRequest(request, platformContext = {}) {
 
   // 6. RSC Payload Endpoints (GET /____rsc_payload____/*)
   if (pathname.includes("____rsc_payload")) {
-    const isOld = pathname.includes("old");
-    const isStatic = pathname.includes("static");
+    const isOld =
+      pathname.startsWith("/____rsc_payload_old_static____") ||
+      pathname.startsWith("/____rsc_payload_old____");
+    const isStatic =
+      pathname.startsWith("/____rsc_payload_old_static____") ||
+      pathname.startsWith("/____rsc_payload_static____");
     const cleanPath = (pathname.endsWith("/") ? pathname : pathname + "/")
       .replace("/____rsc_payload_old_static____", "")
       .replace("/____rsc_payload_old____", "")
@@ -708,7 +712,7 @@ async function handleRequest(request, platformContext = {}) {
     }
     const dynamicState = isDynamic.get(cleanPath);
 
-    if ((!isDevelopment && !dynamicState.value) || isStatic) {
+    if (!isDevelopment && (!dynamicState.value || isStatic)) {
       let currentGeneratedAt = null;
       try {
         const metadataPath = path.join(".dinou/dist2", cleanPath, "metadata.json");

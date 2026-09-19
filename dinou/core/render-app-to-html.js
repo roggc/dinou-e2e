@@ -193,7 +193,7 @@ function renderAppToHtml(
 
   const query = JSON.parse(paramsString || "{}");
   const rscPath = path.resolve(process.cwd(), ".dinou/dist2", reqPath.replace(/^\//, ""), "rsc.rsc");
-  const hasStaticRsc = !isDynamic && fs.existsSync(rscPath);
+  const hasStaticRsc = !isDevelopment && !isDynamic && fs.existsSync(rscPath);
 
   if (hasStaticRsc) {
     try {

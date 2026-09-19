@@ -2061,8 +2061,15 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Escenario: /shadow/[...slug] vs /shadow/deep/very/deep/static
       await page.goto("/t-router/shadow/deep/very/deep/static");
 
+      // Aseguramos que el componente cliente se ha hidratado completamente sin el problema de visibilidad de <body> en WebKit
+      await expect(page.locator("body")).toHaveAttribute("data-hydrated", "true", {
+        timeout: 15000,
+      });
+
       // Si tu algoritmo de "puntuación" de rutas es correcto, ganará la estática
-      await expect(page.locator("#res")).toHaveText("STATIC_DEEP");
+      await expect(page.locator("#res")).toHaveText("STATIC_DEEP", {
+        timeout: 10000,
+      });
     });
 
     test("Should handle dots in dynamic parameters correctly", async ({
@@ -2518,6 +2525,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.reload();
       await expect(page.locator("h1")).toHaveText("Mode: STATIC");
 
+      // Permitir que la sesión de navegación se estabilice antes del cierre del contexto (evita flakiness en Firefox SessionStore)
+      await page.waitForLoadState("load");
+      await page.waitForTimeout(500);
       // Verificamos que el timestamp es reciente (opcional)
     });
   });

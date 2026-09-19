@@ -51,15 +51,19 @@ function getClientManifest() {
   if (typeof globalThis !== "undefined" && globalThis.__DINOU_CLIENT_MANIFEST__) {
     return globalThis.__DINOU_CLIENT_MANIFEST__;
   }
-  if (!cachedClientManifest) {
-    try {
-      const p = getClientManifestPath();
-      if (fs.existsSync(p)) {
-        cachedClientManifest = JSON.parse(fs.readFileSync(p, "utf8"));
-      }
-    } catch (e) {}
+  const isDevelopment = process.env.NODE_ENV !== "production";
+  if (!isDevelopment && cachedClientManifest) {
+    return cachedClientManifest;
   }
-  return cachedClientManifest;
+  try {
+    const p = getClientManifestPath();
+    if (fs.existsSync(p)) {
+      const parsed = JSON.parse(fs.readFileSync(p, "utf8"));
+      if (!isDevelopment) cachedClientManifest = parsed;
+      return parsed;
+    }
+  } catch (e) {}
+  return cachedClientManifest || {};
 }
 
 function setClientManifest(manifest) {
