@@ -106,7 +106,7 @@ Dinou main features are:
 
   - [Error Handling](#error-handling)
 
-- [`favicons` folder](#favicons-folder)
+- [`public` folder](#public-folder)
 
 - [`.env` file](#env-file)
 
@@ -961,9 +961,9 @@ The routing system is file-based and supports static routes, dynamic routes, opt
   }
   ```
 
-## `favicons` folder
+## `public` folder
 
-If you want to show a favicon, generate one with an online tool (e.g. [favicon.io](https://favicon.io/)), unzip the downloaded folder with the favicons, paste it in the root of the project and rename it to `favicons`. Then update your `layout` or `page` to include this in the `head` tag:
+If you want to serve static files directly at the root URL (e.g. `favicon.ico`, `robots.txt`, `site.webmanifest`, images, etc.), place them in a `public` folder in the root of the project. Then update your `layout` or `page` to include this in the `head` tag:
 
 ```typescript
 "use client";

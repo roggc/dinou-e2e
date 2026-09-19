@@ -228,6 +228,11 @@ module.exports = async () => {
       new CopyWebpackPlugin({
         patterns: [
           {
+            from: "public",
+            to: ".",
+            noErrorOnMissing: true,
+          },
+          {
             from: "favicons",
             to: ".",
             noErrorOnMissing: true,

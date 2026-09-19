@@ -148,11 +148,15 @@ module.exports = async function () {
       }),
       copy({
         targets: [
-          {
+          fs.existsSync("public") && {
+            src: "public/*",
+            dest: outputDirectory,
+          },
+          fs.existsSync("favicons") && {
             src: "favicons/*",
             dest: outputDirectory,
           },
-        ],
+        ].filter(Boolean),
         flatten: true,
       }),
       reactClientManifest({
