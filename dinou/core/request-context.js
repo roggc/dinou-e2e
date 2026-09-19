@@ -6,8 +6,12 @@ let requestStorage;
 if (typeof window === "undefined") {
   let AsyncLocalStorageClass;
   try {
-    if (typeof require === "function") {
-      const asyncHooks = require("node:async_hooks");
+    const nodeRequire =
+      typeof module !== "undefined" && typeof module.require === "function"
+        ? module.require.bind(module)
+        : (typeof eval === "function" ? eval("require") : null);
+    if (nodeRequire) {
+      const asyncHooks = nodeRequire("node:async_hooks");
       AsyncLocalStorageClass = asyncHooks.AsyncLocalStorage;
     }
   } catch (e) {}

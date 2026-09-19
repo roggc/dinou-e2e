@@ -139,7 +139,7 @@ module.exports = async () => {
       rules: [
         {
           test: /\.[jt]sx?$/,
-          exclude: [/node_modules\/(?!dinou)/, ...outputDirs],
+          exclude: [/[\\/]node_modules[\\/](?!dinou)/, ...outputDirs],
           use: [
             {
               loader: "babel-loader",
