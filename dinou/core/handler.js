@@ -34,6 +34,19 @@ const {
 const { pipeRSC, isEdgeRuntime } = require("./rsc-renderer.js");
 const { getStorageAdapter } = require("./storage-adapter.js");
 
+// Load Dinou configuration and plugins
+let dinouConfig = { plugins: [] };
+const dinouConfigPath = typeof process !== "undefined" && typeof process.cwd === "function"
+  ? path.resolve(process.cwd(), "dinou.config.js")
+  : null;
+if (dinouConfigPath && existsSync(dinouConfigPath)) {
+  try {
+    dinouConfig = require(dinouConfigPath);
+  } catch (err) {
+    console.error("[Dinou] Error loading dinou.config.js in handler:", err);
+  }
+}
+
 // Anti-Bot Shield patterns
 const botGarbagePatterns = [
   /\.php$/i,
