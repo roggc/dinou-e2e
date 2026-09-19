@@ -20,23 +20,31 @@ fs.writeFileSync(routeModulesPath, routeModulesCode, "utf8");
 
 console.log("📦 [Dinou Cloudflare] Preparing worker entry point...");
 
-// Check manifests
-const dist3Dir = path.resolve(projectRoot, ".dinou/dist3");
-const clientManifestPath = path.join(dist3Dir, "react-client-manifest.json");
-const sfManifestPath = path.join(dist3Dir, "server-functions-manifest.json");
+// Check manifests from build (supports Esbuild, Rollup, and Webpack output locations)
+function findManifest(filename, fallbackFolder) {
+  const candidates = [
+    path.resolve(projectRoot, ".dinou", fallbackFolder, filename),
+    path.resolve(projectRoot, ".dinou/dist3", filename),
+    path.resolve(projectRoot, ".dinou/public", filename),
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return null;
+}
 
-const hasClientManifest = fs.existsSync(clientManifestPath);
-const hasSfManifest = fs.existsSync(sfManifestPath);
+const clientManifestPath = findManifest("react-client-manifest.json", "react_client_manifest");
+const sfManifestPath = findManifest("server-functions-manifest.json", "server_functions_manifest");
 
 let manifestInlines = "";
-if (hasClientManifest) {
+if (clientManifestPath) {
   const content = fs.readFileSync(clientManifestPath, "utf8");
   manifestInlines += `\nglobalThis.__DINOU_CLIENT_MANIFEST__ = ${content};\n`;
 } else {
   manifestInlines += `\nglobalThis.__DINOU_CLIENT_MANIFEST__ = {};\n`;
 }
 
-if (hasSfManifest) {
+if (sfManifestPath) {
   const content = fs.readFileSync(sfManifestPath, "utf8");
   manifestInlines += `\nglobalThis.__DINOU_SERVER_FUNCTIONS_MANIFEST__ = ${content};\n`;
 } else {
