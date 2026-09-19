@@ -884,8 +884,7 @@ async function handleRequest(request) {
     if (existsSync(fileToRead) && !dynamicState.value) {
       bridge.setHeader("Content-Type", "text/html; charset=utf-8");
       bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-      const status = getStatus(reqPath) || 200;
-      bridge.status(status);
+      let status = getStatus(reqPath);
       try {
         let htmlContent = readFileSync(fileToRead, "utf8");
         let buildId = "";
@@ -894,8 +893,13 @@ async function handleRequest(request) {
           if (existsSync(metadataPath)) {
             const metaObj = JSON.parse(readFileSync(metadataPath, "utf8"));
             buildId = metaObj.generatedAt || "";
+            if (!status && metaObj.status) {
+              status = metaObj.status;
+            }
           }
         } catch (e) {}
+
+        bridge.status(status || 200);
 
         let scripts = `<script>window.__DINOU_USE_STATIC__=true;</script>`;
         if (htmlPathOld && existsSync(htmlPathOld)) {
