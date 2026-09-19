@@ -268,6 +268,10 @@ module.exports = async () => {
       alias: {
         ...(isEjected ? { dinou: localDinouPath } : {}),
       },
+      fallback: {
+        async_hooks: false,
+        "node:async_hooks": false,
+      },
       plugins: configFile
         ? [
           new TsconfigPathsPlugin({
@@ -386,7 +390,7 @@ module.exports = async () => {
     ],
     plugins: [
       new webpack.BannerPlugin({
-        banner: "import { createRequire as ___createRequire } from 'node:module'; import { fileURLToPath as ___fileURLToPath } from 'node:url'; import ___path from 'node:path'; const require = ___createRequire(import.meta.url || ___path.resolve(process.cwd(), 'package.json')); const __filename = import.meta.url ? ___fileURLToPath(import.meta.url) : ___path.resolve(process.cwd(), 'index.js'); const __dirname = ___path.dirname(__filename); process.env.NODE_ENV = process.env.NODE_ENV || 'production';",
+        banner: "import { createRequire as ___createRequire } from 'node:module'; import { fileURLToPath as ___fileURLToPath } from 'node:url'; import ___path from 'node:path'; const require = ___createRequire(import.meta.url || ___path.resolve(process.cwd(), 'package.json')); globalThis.__dinou_require__ = require; const __filename = import.meta.url ? ___fileURLToPath(import.meta.url) : ___path.resolve(process.cwd(), 'index.js'); const __dirname = ___path.dirname(__filename); process.env.NODE_ENV = process.env.NODE_ENV || 'production';",
         raw: true,
         entryOnly: false,
       }),

@@ -3,6 +3,7 @@
 const { pathToFileURL } = require("url");
 const path = require("path");
 const { register } = require("node:module");
+globalThis.__dinou_require__ = require;
 
 const { dinouCoreDir } = require("./dinou-paths.js");
 

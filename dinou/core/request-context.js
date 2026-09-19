@@ -5,19 +5,24 @@ let requestStorage;
 
 if (typeof window === "undefined") {
   let AsyncLocalStorageClass;
-  try {
-    const nodeRequire =
-      typeof module !== "undefined" && typeof module.require === "function"
-        ? module.require.bind(module)
-        : (typeof eval === "function" ? eval("require") : null);
-    if (nodeRequire) {
-      const asyncHooks = nodeRequire("node:async_hooks");
-      AsyncLocalStorageClass = asyncHooks.AsyncLocalStorage;
-    }
-  } catch (e) {}
 
-  if (!AsyncLocalStorageClass && typeof globalThis.AsyncLocalStorage !== "undefined") {
+  if (typeof globalThis.AsyncLocalStorage !== "undefined") {
     AsyncLocalStorageClass = globalThis.AsyncLocalStorage;
+  }
+
+  if (!AsyncLocalStorageClass) {
+    try {
+      const reqFn =
+        typeof globalThis.__dinou_require__ === "function"
+          ? globalThis.__dinou_require__
+          : typeof eval === "function"
+            ? eval("require")
+            : null;
+      if (typeof reqFn === "function") {
+        const asyncHooks = reqFn("node:async_hooks") || reqFn("async_hooks");
+        AsyncLocalStorageClass = asyncHooks?.AsyncLocalStorage;
+      }
+    } catch (e) {}
   }
 
   if (AsyncLocalStorageClass) {
