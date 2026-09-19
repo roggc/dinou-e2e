@@ -22,10 +22,18 @@ const scenarios = [
 for (const scenario of scenarios) {
   console.log(`\n🔵 TESTING SCENARIO: ${scenario.name}`);
   try {
-    if (fs.existsSync(publicDir) && scenario.name.includes("DEV")) {
-      console.log(`   🧹 Limpiando carpeta public antigua...`);
-      // { recursive: true, force: true } es el equivalente a rm -rf
-      fs.rmSync(publicDir, { recursive: true, force: true });
+    if (scenario.name.includes("DEV")) {
+      console.log(`   🧹 Limpiando artefactos antiguos de compilación...`);
+      if (fs.existsSync(publicDir)) {
+        fs.rmSync(publicDir, { recursive: true, force: true });
+      }
+      const dinouDir = path.join(__dirname, ".dinou");
+      const dinouPublic = path.join(dinouDir, "public");
+      const dinouManifest = path.join(dinouDir, "react_client_manifest");
+      const dinouServerFuncs = path.join(dinouDir, "server_functions_manifest");
+      if (fs.existsSync(dinouPublic)) fs.rmSync(dinouPublic, { recursive: true, force: true });
+      if (fs.existsSync(dinouManifest)) fs.rmSync(dinouManifest, { recursive: true, force: true });
+      if (fs.existsSync(dinouServerFuncs)) fs.rmSync(dinouServerFuncs, { recursive: true, force: true });
     }
     // Llamamos a Playwright pasándole el comando del servidor
     // cross-env es útil para compatibilidad Windows/Mac en la definición de variables
