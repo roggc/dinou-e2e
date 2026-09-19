@@ -389,6 +389,16 @@ const http = require("http");
     });
 
     if (!isDevelopment) {
+      const routeModulesPath = path.resolve(process.cwd(), ".dinou/route-modules.js");
+      if (existsSync(routeModulesPath)) {
+        try {
+          await import(pathToFileURL(routeModulesPath).href);
+          console.log("⚡ [Startup] Loaded route modules into memory (0 ms disk access)");
+        } catch (e) {
+          console.warn("⚠️ [Startup] Could not load route modules into memory:", e);
+        }
+      }
+
       const dist2Path = path.resolve(process.cwd(), ".dinou/dist2");
       if (existsSync(dist2Path)) {
         console.log("⚡ [Startup] Pre-rendered static pages found at .dinou/dist2");

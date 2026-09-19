@@ -151,6 +151,49 @@ class MemoryStorage extends StorageAdapter {
   }
 }
 
+/**
+ * Redis storage adapter for multi-server / clustered deployments.
+ * Shares ISR / ISG cache across multiple Node instances.
+ */
+class RedisStorage extends StorageAdapter {
+  constructor(redisClient, prefix = "dinou:cache:") {
+    super();
+    this.redis = redisClient;
+    this.prefix = prefix;
+  }
+
+  _k(key) {
+    return this.prefix + key.replace(/^\/+/, "").replace(/\\/g, "/");
+  }
+
+  async get(key) {
+    if (!this.redis) return null;
+    const raw = await this.redis.get(this._k(key));
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch (e) {
+      return { content: raw, metadata: null };
+    }
+  }
+
+  async set(key, content, metadata = null) {
+    if (!this.redis) return;
+    const value = JSON.stringify({ content, metadata });
+    await this.redis.set(this._k(key), value);
+  }
+
+  async has(key) {
+    if (!this.redis) return false;
+    return (await this.redis.exists(this._k(key))) === 1;
+  }
+
+  async delete(key) {
+    if (!this.redis) return;
+    await this.redis.del(this._k(key));
+  }
+}
+
 let activeStorageAdapter = null;
 
 function getStorageAdapter() {
@@ -169,6 +212,7 @@ module.exports = {
   FileSystemStorage,
   CloudflareKVStorage,
   MemoryStorage,
+  RedisStorage,
   getStorageAdapter,
   setStorageAdapter,
 };

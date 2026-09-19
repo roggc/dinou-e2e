@@ -32,7 +32,7 @@ const {
   getServerFunctionsManifest,
 } = require("./manifest-provider.js");
 const { pipeRSC, isEdgeRuntime } = require("./rsc-renderer.js");
-const { getStorageAdapter } = require("./storage-adapter.js");
+const { getStorageAdapter, setStorageAdapter } = require("./storage-adapter.js");
 
 // Load Dinou configuration and plugins
 let dinouConfig = { plugins: [] };
@@ -42,6 +42,9 @@ const dinouConfigPath = typeof process !== "undefined" && typeof process.cwd ===
 if (dinouConfigPath && existsSync(dinouConfigPath)) {
   try {
     dinouConfig = require(dinouConfigPath);
+    if (dinouConfig && dinouConfig.storage) {
+      setStorageAdapter(dinouConfig.storage);
+    }
   } catch (err) {
     console.error("[Dinou] Error loading dinou.config.js in handler:", err);
   }
@@ -712,7 +715,9 @@ async function handleRequest(request, platformContext = {}) {
     }
     const dynamicState = isDynamic.get(cleanPath);
 
-    if (!isDevelopment && (!dynamicState.value || isStatic)) {
+    const hasQueryParams = Object.keys(queryObj).some((k) => k !== "buildId");
+
+    if (!isDevelopment && (!dynamicState.value || isStatic) && (!hasQueryParams || isStatic)) {
       let currentGeneratedAt = null;
       try {
         const metadataPath = path.join(".dinou/dist2", cleanPath, "metadata.json");
@@ -813,8 +818,10 @@ async function handleRequest(request, platformContext = {}) {
     reqPath,
   );
 
+  const hasQueryParams = Object.keys(queryObj).some((k) => k !== "buildId");
+
   // Serve static pre-rendered HTML if available in production
-  if (!isDevelopment && !dynamicState.value && pagePath && !isPathBlocked) {
+  if (!isDevelopment && !dynamicState.value && pagePath && !isPathBlocked && !hasQueryParams) {
     revalidating(reqPath, dynamicState);
     let htmlPathOld;
     if (regenerating.has(reqPath)) {
