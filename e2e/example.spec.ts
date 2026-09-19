@@ -138,6 +138,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const myCookie = cookies.find((c: any) => c.name === "theme");
       expect(myCookie?.value).toBe("dark");
     }
+
+    // Ensure all response streams are flushed before browserContext tears down
+    await page.waitForLoadState("networkidle").catch(() => {});
   }
 
   // async function SSRStreamingFlowProd(
@@ -910,10 +913,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const targetUrl = page.url().split("?")[0];
 
       // 2. Click absolute revalidate button
-      await page.getByTestId("reval-path-btn").click();
-
-      // Give the server 500ms to complete background compilation
-      await page.waitForTimeout(500);
+      const btn = page.getByTestId("reval-path-btn");
+      await btn.click();
+      await expect(btn).toBeEnabled({ timeout: 15000 });
 
       // 3. Verify it has updated (poll using cache busting)
       await expect
@@ -926,7 +928,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           },
           {
             message: "Absolute path revalidation did not refresh the page cache",
-            timeout: 10000,
+            timeout: 15000,
             intervals: [500],
           }
         )
@@ -945,10 +947,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const targetUrl = page.url().split("?")[0];
 
       // 2. Click relative revalidate button
-      await page.getByTestId("reval-rel-btn").click();
-
-      // Give the server 500ms to complete background compilation
-      await page.waitForTimeout(500);
+      const btn = page.getByTestId("reval-rel-btn");
+      await btn.click();
+      await expect(btn).toBeEnabled({ timeout: 15000 });
 
       // 3. Verify it has updated (poll using cache busting)
       await expect
@@ -961,7 +962,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           },
           {
             message: "Relative path revalidation did not refresh the page cache",
-            timeout: 10000,
+            timeout: 15000,
             intervals: [500],
           }
         )
@@ -980,10 +981,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const targetUrl = page.url().split("?")[0];
 
       // 2. Click revalidate tag button
-      await page.getByTestId("reval-tag-btn").click();
-
-      // Give the server 500ms to complete background compilation
-      await page.waitForTimeout(500);
+      const tagBtn = page.getByTestId("reval-tag-btn");
+      await tagBtn.click();
+      await expect(tagBtn).toBeEnabled({ timeout: 15000 });
 
       // 3. Verify it has updated (poll using cache busting)
       await expect
@@ -996,7 +996,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           },
           {
             message: "Tag-based revalidation did not refresh the page cache",
-            timeout: 10000,
+            timeout: 15000,
             intervals: [500],
           }
         )

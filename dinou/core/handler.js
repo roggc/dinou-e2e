@@ -715,9 +715,7 @@ async function handleRequest(request, platformContext = {}) {
     }
     const dynamicState = isDynamic.get(cleanPath);
 
-    const hasQueryParams = Object.keys(queryObj).some((k) => k !== "buildId");
-
-    if (!isDevelopment && (!dynamicState.value || isStatic) && (!hasQueryParams || isStatic)) {
+    if (!isDevelopment && (!dynamicState.value || isStatic)) {
       let currentGeneratedAt = null;
       try {
         const metadataPath = path.join(".dinou/dist2", cleanPath, "metadata.json");
@@ -818,10 +816,8 @@ async function handleRequest(request, platformContext = {}) {
     reqPath,
   );
 
-  const hasQueryParams = Object.keys(queryObj).some((k) => k !== "buildId");
-
   // Serve static pre-rendered HTML if available in production
-  if (!isDevelopment && !dynamicState.value && pagePath && !isPathBlocked && !hasQueryParams) {
+  if (!isDevelopment && !dynamicState.value && pagePath && !isPathBlocked) {
     revalidating(reqPath, dynamicState);
     let htmlPathOld;
     if (regenerating.has(reqPath)) {
