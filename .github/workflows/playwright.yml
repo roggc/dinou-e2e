@@ -63,13 +63,14 @@ jobs:
           retention-days: 30
 
   cloudflare-tests:
-    name: ${{ matrix.os }} - Cloudflare Worker
+    name: ${{ matrix.os }} - Cloudflare Worker - ${{ matrix.bundler }}
     timeout-minutes: 60
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        bundler: [esbuild, rollup, webpack]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -94,8 +95,8 @@ jobs:
       - name: Install Playwright Browsers & Deps
         timeout-minutes: 20
         run: npx playwright install --with-deps
-      - name: Build Cloudflare Worker
-        run: npm run build:cloudflare
+      - name: Build Cloudflare Worker (${{ matrix.bundler }})
+        run: npm run build:cloudflare:${{ matrix.bundler }}
       - name: Run Playwright Tests on Cloudflare
         env:
           TEST_CMD: npx wrangler dev --port 3000
@@ -103,7 +104,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
-          name: report-${{ matrix.os }}-cloudflare
+          name: report-${{ matrix.os }}-cloudflare-${{ matrix.bundler }}
           path: playwright-report/
           retention-days: 30
 
