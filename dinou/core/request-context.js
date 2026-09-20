@@ -43,6 +43,19 @@ if (typeof window === "undefined") {
   };
 }
 
+function setCurrentContext(ctx) {
+  if (typeof globalThis !== "undefined") {
+    globalThis[Symbol.for("dinou.request.context.current")] = ctx;
+  }
+}
+
+function getCurrentContext() {
+  if (typeof globalThis !== "undefined") {
+    return globalThis[Symbol.for("dinou.request.context.current")];
+  }
+  return undefined;
+}
+
 function getContext() {
   if (typeof window !== "undefined") {
     console.error(
@@ -50,12 +63,13 @@ function getContext() {
     );
     return {};
   }
-  if (!requestStorage) return undefined;
-  const store = requestStorage.getStore();
-  return store;
+  const store = requestStorage?.getStore();
+  return store || getCurrentContext() || {};
 }
 
 module.exports = {
   requestStorage,
   getContext,
+  setCurrentContext,
+  getCurrentContext,
 };

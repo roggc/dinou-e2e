@@ -172,6 +172,10 @@ class MemoryStorage extends StorageAdapter {
     this.store.delete(cleanKey);
     this.store.delete(cleanKey ? `${cleanKey}/index.html` : "index.html");
   }
+
+  keys() {
+    return Array.from(this.store.keys());
+  }
 }
 
 /**

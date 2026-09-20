@@ -43,47 +43,6 @@ export default {
     const isRSCPayload = url.pathname.includes("____rsc_payload");
     const isServerFunction = url.pathname.includes("____server_function____") || request.headers.get("x-server-function-call") === "1";
 
-    if (isRSCPayload) {
-      const cleanPath = url.pathname
-        .replace("/____rsc_payload_old_static____", "")
-        .replace("/____rsc_payload_old____", "")
-        .replace("/____rsc_payload_static____", "")
-        .replace("/____rsc_payload____", "")
-        .replace(/^\/+/, "")
-        .replace(/\/+$/, "");
-
-      const rscKey = cleanPath ? `${cleanPath}/rsc.rsc` : "rsc.rsc";
-      const storage = getStorageAdapter();
-      try {
-        const cachedRsc = await storage.get(rscKey);
-        if (cachedRsc && cachedRsc.content) {
-          return new Response(cachedRsc.content, {
-            status: 200,
-            headers: {
-              "Content-Type": "text/x-component",
-              "Cache-Control": "no-store, no-cache, must-revalidate",
-            },
-          });
-        }
-      } catch (e) {}
-
-      if (env && env.ASSETS) {
-        const rscAssetPath = cleanPath ? `/${cleanPath}/rsc.rsc` : "/rsc.rsc";
-        const assetUrl = new URL(rscAssetPath, request.url);
-        try {
-          const rscRes = await env.ASSETS.fetch(new Request(assetUrl, request));
-          if (rscRes && rscRes.status === 200) {
-            const headers = new Headers(rscRes.headers);
-            headers.set("Content-Type", "text/x-component");
-            return new Response(rscRes.body, {
-              status: 200,
-              headers,
-            });
-          }
-        } catch (e) {}
-      }
-    }
-
     // Static assets: files with extensions like .js, .css, .png, etc. (excluding document .html and RSC/server-functions)
     const staticExtRegex = /\.(js|mjs|cjs|css|png|jpg|jpeg|gif|svg|ico|webp|avif|woff|woff2|ttf|eot|otf|wasm|map|txt|webmanifest)$/i;
     const isStaticAsset = staticExtRegex.test(url.pathname) || url.pathname.startsWith("/assets/") || url.pathname.startsWith("/_dinou/");

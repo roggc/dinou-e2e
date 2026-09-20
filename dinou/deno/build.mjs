@@ -160,6 +160,35 @@ const clientReferencesPlugin = {
   },
 };
 
+const reactServerShimPlugin = {
+  name: "react-server-shim",
+  setup(build) {
+    build.onLoad({ filter: /react\.react-server(\.production|\.development)?\.js$/ }, async (args) => {
+      let contents = await fs.promises.readFile(args.path, "utf8");
+      contents += `
+if (typeof exports !== 'undefined') {
+  if (!exports.Component) {
+    exports.Component = class Component {
+      constructor(props, context, updater) {
+        this.props = props;
+        this.context = context;
+        this.refs = {};
+        this.updater = updater || {};
+      }
+    };
+    exports.Component.prototype.isReactComponent = {};
+  }
+  if (!exports.PureComponent) {
+    exports.PureComponent = class PureComponent extends exports.Component {};
+    exports.PureComponent.prototype.isPureReactComponent = true;
+  }
+}
+`;
+      return { contents, loader: "js" };
+    });
+  },
+};
+
 const outfile = path.join(denoDir, "main.js");
 
 try {
@@ -173,9 +202,17 @@ try {
     mainFields: ["module", "main"],
     conditions: ["deno", "worker", "react-server", "browser"],
     external: externalList,
-    plugins: [clientReferencesPlugin],
+    plugins: [reactServerShimPlugin, clientReferencesPlugin],
     banner: {
-      js: "import { createRequire as ___createRequire } from 'node:module'; const require = ___createRequire(import.meta.url || 'file:///deno-entry.js'); const __dirname = ''; const __filename = ''; globalThis.__dinou_require__ = require;",
+      js: `import { createRequire as ___createRequire } from 'node:module';
+import { AsyncLocalStorage as ___AsyncLocalStorage } from 'node:async_hooks';
+const require = ___createRequire(import.meta.url || 'file:///deno-entry.js');
+const __dirname = '';
+const __filename = '';
+globalThis.__dinou_require__ = require;
+if (typeof globalThis.AsyncLocalStorage === 'undefined' && typeof ___AsyncLocalStorage !== 'undefined') {
+  globalThis.AsyncLocalStorage = ___AsyncLocalStorage;
+}`,
     },
     alias: {
       "@": path.resolve(projectRoot, "src"),

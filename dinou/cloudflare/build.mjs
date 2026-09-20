@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const { generateRouteModulesCode } = require("../core/route-generator.js");
 const parseExports = require("../core/parse-exports.js");
-const { useClientRegex } = require("../constants.js");
+const { useClientRegex, useServerRegex } = require("../constants.js");
 
 const projectRoot = process.cwd();
 const cloudflareDir = path.resolve(projectRoot, ".dinou/cloudflare");
@@ -178,9 +178,75 @@ const externalList = [
 
 const shimsDir = path.resolve(__dirname, "shims");
 
+const reactServerShimPlugin = {
+  name: "react-server-shim",
+  setup(build) {
+    build.onLoad({ filter: /react\.react-server(\.production|\.development)?\.js$/ }, async (args) => {
+      let contents = await fs.promises.readFile(args.path, "utf8");
+      contents += `
+if (typeof exports !== 'undefined') {
+  if (!exports.Component) {
+    exports.Component = class Component {
+      constructor(props, context, updater) {
+        this.props = props;
+        this.context = context;
+        this.refs = {};
+        this.updater = updater || {};
+      }
+    };
+    exports.Component.prototype.isReactComponent = {};
+  }
+  if (!exports.PureComponent) {
+    exports.PureComponent = class PureComponent extends exports.Component {};
+    exports.PureComponent.prototype.isPureReactComponent = true;
+  }
+  if (!exports.useState) exports.useState = (init) => [typeof init === 'function' ? init() : init, () => {}];
+  if (!exports.useEffect) exports.useEffect = () => {};
+  if (!exports.useLayoutEffect) exports.useLayoutEffect = () => {};
+  if (!exports.useInsertionEffect) exports.useInsertionEffect = () => {};
+  if (!exports.useRef) exports.useRef = (v) => ({ current: v });
+  if (!exports.useMemo) exports.useMemo = (fn) => fn();
+  if (!exports.useCallback) exports.useCallback = (fn) => fn;
+  if (!exports.useReducer) exports.useReducer = (r, init) => [init, () => {}];
+  if (!exports.useContext) exports.useContext = (ctx) => (ctx ? ctx._currentValue : undefined);
+  if (!exports.useId) exports.useId = () => ":r0:";
+  if (!exports.useTransition) exports.useTransition = () => [false, (fn) => fn()];
+}
+`;
+      return { contents, loader: "js" };
+    });
+  },
+};
+
 const clientReferencesPlugin = {
   name: "dinou-client-references",
   setup(build) {
+    build.onResolve({ filter: /\?dinou-ssr$/ }, (args) => {
+      const cleanPath = path.isAbsolute(args.path.replace(/\?dinou-ssr$/, ""))
+        ? args.path.replace(/\?dinou-ssr$/, "")
+        : path.resolve(args.resolveDir, args.path.replace(/\?dinou-ssr$/, ""));
+      return {
+        path: cleanPath,
+        namespace: "dinou-client-ssr",
+      };
+    });
+
+    build.onLoad({ filter: /.*/, namespace: "dinou-client-ssr" }, async (args) => {
+      let code;
+      try {
+        code = fs.readFileSync(args.path, "utf8");
+      } catch (e) {
+        return null;
+      }
+      code = `import * as React from "react";\n` + code;
+      const ext = path.extname(args.path).slice(1);
+      return {
+        contents: code,
+        loader: ext === "ts" ? "ts" : ext === "tsx" ? "tsx" : ext === "jsx" ? "jsx" : "js",
+        resolveDir: path.dirname(args.path),
+      };
+    });
+
     build.onLoad({ filter: /\.[jt]sx?$/ }, async (args) => {
       if (args.path.includes("node_modules")) return null;
       const normalizedPath = args.path.replace(/\\/g, "/");
@@ -198,9 +264,22 @@ const clientReferencesPlugin = {
       const exports = parseExports(code);
       const absPath = path.resolve(args.path);
       const fileUrl = pathToFileURL(absPath).href;
+      const importPath = absPath.replace(/\\/g, "/") + "?dinou-ssr";
 
       let proxyCode = `import { createClientModuleProxy } from "react-server-dom-webpack/server.edge";\n`;
+      proxyCode += `import * as __dinou_ssr_mod__ from ${JSON.stringify(importPath)};\n`;
       proxyCode += `const proxy = createClientModuleProxy(${JSON.stringify(fileUrl)});\n`;
+      proxyCode += `if (typeof globalThis !== 'undefined') {\n`;
+      proxyCode += `  globalThis.__DINOU_CLIENT_SSR__ = globalThis.__DINOU_CLIENT_SSR__ || {};\n`;
+      proxyCode += `  for (const k of Object.keys(__dinou_ssr_mod__)) {\n`;
+      proxyCode += `    if (typeof __dinou_ssr_mod__[k] === 'function') {\n`;
+      proxyCode += `      globalThis.__DINOU_CLIENT_SSR__[${JSON.stringify(fileUrl)} + '#' + k] = __dinou_ssr_mod__[k];\n`;
+      proxyCode += `    }\n`;
+      proxyCode += `  }\n`;
+      proxyCode += `  if ('default' in __dinou_ssr_mod__ && typeof __dinou_ssr_mod__.default === 'function') {\n`;
+      proxyCode += `    globalThis.__DINOU_CLIENT_SSR__[${JSON.stringify(fileUrl)} + '#default'] = __dinou_ssr_mod__.default;\n`;
+      proxyCode += `  }\n`;
+      proxyCode += `}\n`;
 
       for (const name of exports) {
         if (name === "default") {
@@ -222,6 +301,46 @@ const clientReferencesPlugin = {
   },
 };
 
+const serverReferencesPlugin = {
+  name: "dinou-server-references",
+  setup(build) {
+    build.onLoad({ filter: /\.[jt]sx?$/ }, async (args) => {
+      if (args.path.includes("node_modules")) return null;
+
+      let code;
+      try {
+        code = fs.readFileSync(args.path, "utf8");
+      } catch (e) {
+        return null;
+      }
+
+      if (!useServerRegex.test(code.trim())) return null;
+
+      const exports = parseExports(code);
+      const absPath = path.resolve(args.path);
+      const relPath = path.relative(projectRoot, absPath).replace(/\\/g, "/");
+      const relativeFileUrl = "file:///" + relPath;
+
+      let transformed = code + "\n\n";
+      transformed += `import { registerServerReference } from "react-server-dom-webpack/server.edge";\n`;
+
+      for (const name of exports) {
+        if (name !== "default") {
+          transformed += `registerServerReference(${name}, ${JSON.stringify(relativeFileUrl)}, ${JSON.stringify(name)});\n`;
+        }
+      }
+
+      const ext = path.extname(args.path);
+      const loader = ext === ".ts" ? "ts" : ext === ".tsx" ? "tsx" : ext === ".jsx" ? "jsx" : "js";
+
+      return {
+        contents: transformed,
+        loader,
+      };
+    });
+  },
+};
+
 const outfile = path.join(cloudflareDir, "worker.js");
 
 try {
@@ -235,9 +354,17 @@ try {
     mainFields: ["module", "main"],
     conditions: ["workerd", "worker", "react-server", "browser"],
     external: externalList,
-    plugins: [clientReferencesPlugin],
+    plugins: [reactServerShimPlugin, clientReferencesPlugin, serverReferencesPlugin],
     banner: {
-      js: "import { createRequire as ___createRequire } from 'node:module'; const require = ___createRequire(import.meta.url || 'file:///worker.js'); const __dirname = ''; const __filename = ''; globalThis.__dinou_require__ = require;",
+      js: `import { createRequire as ___createRequire } from 'node:module';
+import { AsyncLocalStorage as ___AsyncLocalStorage } from 'node:async_hooks';
+const require = ___createRequire(import.meta.url || 'file:///worker.js');
+const __dirname = '';
+const __filename = '';
+globalThis.__dinou_require__ = require;
+if (typeof globalThis.AsyncLocalStorage === 'undefined' && typeof ___AsyncLocalStorage !== 'undefined') {
+  globalThis.AsyncLocalStorage = ___AsyncLocalStorage;
+}`,
     },
     alias: {
       "@": path.resolve(projectRoot, "src"),
