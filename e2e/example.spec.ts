@@ -902,6 +902,96 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
   });
 
+  test.describe("Dinou Core: Concurrency - ISR & ISG", () => {
+    test("ISR Concurrency - multiple simultaneous users during cache expiration", async ({
+      browser,
+    }) => {
+      if (!isProd) test.skip();
+      test.setTimeout(60000);
+
+      const targetUrl = "/t-isr/t-layout-client-component/t-client-component";
+
+      // 1. Obtener timestamp inicial
+      const initContext = await browser.newContext();
+      const initPage = await initContext.newPage();
+      await initPage.goto(targetUrl);
+      const initialTimestamp = await initPage.getByTestId("timestamp").innerText();
+      await initContext.close();
+
+      // 2. Esperar a que expire la caché de revalidación (3000ms en page_functions.ts)
+      await new Promise((r) => setTimeout(r, 3500));
+
+      // 3. Peticiones simultáneas concurrentes con múltiples contextos de usuario
+      const CONCURRENT_USERS = 6;
+      const contexts = await Promise.all(
+        Array.from({ length: CONCURRENT_USERS }).map(() => browser.newContext())
+      );
+      const pages = await Promise.all(contexts.map((ctx) => ctx.newPage()));
+
+      const responses = await Promise.all(
+        pages.map((p) => p.goto(`${targetUrl}?concurrency=true&t=${Date.now()}_${Math.random()}`))
+      );
+
+      // Todas las peticiones deben responder 200 OK sin errores 500 ni colisiones de lock
+      for (const res of responses) {
+        expect(res?.status()).toBe(200);
+      }
+
+      for (const p of pages) {
+        await expect(p.getByTestId("timestamp")).toBeVisible({ timeout: 15000 });
+      }
+
+      await Promise.all(contexts.map((ctx) => ctx.close()));
+
+      // 4. Verificar que la regeneración asíncrona generó un nuevo timestamp
+      const verifyContext = await browser.newContext();
+      const verifyPage = await verifyContext.newPage();
+      await expect
+        .poll(
+          async () => {
+            const bypassUrl = `${targetUrl}?t=${Date.now()}_${Math.random()}`;
+            await verifyPage.goto(bypassUrl);
+            const current = await verifyPage.getByTestId("timestamp").innerText();
+            return current !== initialTimestamp;
+          },
+          { intervals: [500, 1000], timeout: 20000 }
+        )
+        .toBe(true);
+      await verifyContext.close();
+    });
+
+    test("ISG Concurrency - multiple simultaneous users requesting an ungenerated dynamic route", async ({
+      browser,
+    }) => {
+      if (!isProd) test.skip();
+      test.setTimeout(60000);
+
+      const uniqueSlug = `concurrent-isg-${Date.now()}`;
+      const targetUrl = `/t-ssg/${uniqueSlug}`;
+
+      // N usuarios piden a la vez un slug dinámico que NUNCA antes se ha generado
+      const CONCURRENT_USERS = 6;
+      const contexts = await Promise.all(
+        Array.from({ length: CONCURRENT_USERS }).map(() => browser.newContext())
+      );
+      const pages = await Promise.all(contexts.map((ctx) => ctx.newPage()));
+
+      const responses = await Promise.all(
+        pages.map((p) => p.goto(targetUrl))
+      );
+
+      // Todas deben responder 200 OK y renderizar el slug correcto sin colisiones de generación en vuelo
+      for (let i = 0; i < CONCURRENT_USERS; i++) {
+        expect(responses[i]?.status()).toBe(200);
+        await expect(pages[i].getByTestId("res")).toHaveText(`Slug: ${uniqueSlug}`, {
+          timeout: 20000,
+        });
+      }
+
+      await Promise.all(contexts.map((ctx) => ctx.close()));
+    });
+  });
+
   test.describe("Dinou Core: On-Demand Revalidation API", () => {
     test("revalidatePath using absolute path refreshes static cache", async ({
       page,
@@ -2113,12 +2203,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Dependiendo de tu estructura, ajusta la ruta del archivo (ej: /alpha/index.html)
       const alphaPath = path.join(BUILD_DIR, "t-ssg", "alpha", "index.html");
 
-      // PRUEBA DE FUEGO: ¿El archivo existe físicamente?
-      // Si falla aquí, es que getStaticPaths no se ejecutó al build.
-      expect(
-        fs.existsSync(alphaPath),
-        "Alpha debería estar pre-renderizada en disco",
-      ).toBe(true);
+      // PRUEBA DE FUEGO: ¿El archivo existe físicamente en Node?
+      if (!isCloudflare) {
+        expect(
+          fs.existsSync(alphaPath),
+          "Alpha debería estar pre-renderizada en disco",
+        ).toBe(true);
+      }
 
       // Navegamos para confirmar que se sirve bien
       const resA = await page.goto("/t-ssg/alpha");
@@ -2133,12 +2224,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         "index.html",
       );
 
-      // PRUEBA DE FUEGO: ¿El archivo existe físicamente?
-      // Si falla aquí, es que getStaticPaths no se ejecutó al build.
-      expect(
-        fs.existsSync(alphaNestedPath),
-        "Alpha nested debería estar pre-renderizada en disco",
-      ).toBe(true);
+      // PRUEBA DE FUEGO: ¿El archivo existe físicamente en Node?
+      if (!isCloudflare) {
+        expect(
+          fs.existsSync(alphaNestedPath),
+          "Alpha nested debería estar pre-renderizada en disco",
+        ).toBe(true);
+      }
 
       // Navegamos para confirmar que se sirve bien
       const resANested = await page.goto("/t-ssg/alpha/nested");
@@ -2155,10 +2247,12 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
 
       // PRUEBA DE FUEGO: Aseguramos que NO se pre-generó "sin querer"
-      expect(
-        fs.existsSync(gammaPath),
-        "Gamma NO debería existir en disco antes de visitarla",
-      ).toBe(false);
+      if (!isCloudflare) {
+        expect(
+          fs.existsSync(gammaPath),
+          "Gamma NO debería existir en disco antes de visitarla",
+        ).toBe(false);
+      }
 
       // Ahora la visitamos. Dinou debería generarla AL VUELO (SSR/ISR).
       console.log("Navegando a ruta no estática (Gamma)...");
@@ -2170,15 +2264,16 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         `Slug: gamma-${browserName}`,
         { timeout: 10000 },
       );
-      // OPCIONAL: Si Dinou es ISR, después de visitarla, el archivo AHORA sí debería existir.
-      // Si es solo SSR, seguirá sin existir. Depende de tu arquitectura.
-      await expect
-        .poll(() => fs.existsSync(gammaPath), {
-          timeout: 40000,
-          message:
-            "El archivo ISG debería haberse creado en disco tras la visita",
-        })
-        .toBe(true);
+      // En Node (con disco físico), verificamos que el archivo se creó tras la visita
+      if (!isCloudflare) {
+        await expect
+          .poll(() => fs.existsSync(gammaPath), {
+            timeout: 40000,
+            message:
+              "El archivo ISG debería haberse creado en disco tras la visita",
+          })
+          .toBe(true);
+      }
     });
   });
   test.describe("Dinou Data Fetching (getProps)", () => {
