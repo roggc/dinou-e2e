@@ -10,9 +10,6 @@ out
 /playwright/.cache/
 /playwright/.auth/
 
-# documentacion
-doc.md
-
 # deploy artifacts
 .wrangler/
 
