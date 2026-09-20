@@ -278,12 +278,23 @@ let activeStorageAdapter = null;
 
 function getStorageAdapter() {
   if (!activeStorageAdapter) {
+    const runtime =
+      (typeof globalThis !== "undefined" && globalThis.__DINOU_RUNTIME__) ||
+      (typeof process !== "undefined" && process.env && process.env.DINOU_RUNTIME) ||
+      "";
+
     const isEdge =
-      (typeof globalThis !== "undefined" && globalThis.__DINOU_RUNTIME__ === "edge") ||
-      (typeof process !== "undefined" && process.env && process.env.DINOU_RUNTIME === "edge");
+      runtime === "edge" ||
+      runtime === "deno-edge" ||
+      (typeof runtime === "string" && runtime.includes("edge")) ||
+      (typeof Deno !== "undefined" && !runtime.includes("node"));
 
     if (isEdge) {
-      activeStorageAdapter = new MemoryStorage();
+      if (typeof Deno !== "undefined" && typeof Deno.openKv === "function") {
+        activeStorageAdapter = new DenoKVStorage();
+      } else {
+        activeStorageAdapter = new MemoryStorage();
+      }
     } else {
       activeStorageAdapter = new FileSystemStorage();
     }

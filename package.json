@@ -23,6 +23,8 @@
     "build:cloudflare:webpack": "npm run build:webpack && node ./dinou/cloudflare/build.mjs",
     "start:cloudflare": "wrangler dev --port 3000",
     "test:cloudflare": "npx cross-env TEST_CMD=\"npm run build:cloudflare && npx wrangler dev --port 3000\" npx playwright test",
+    "test:cloudflare:rollup": "npx cross-env TEST_CMD=\"npm run build:cloudflare:rollup && npx wrangler dev --port 3000\" npx playwright test",
+    "test:cloudflare:webpack": "npx cross-env TEST_CMD=\"npm run build:cloudflare:webpack && npx wrangler dev --port 3000\" npx playwright test",
     "build:deno": "npm run build && node ./dinou/deno/build.mjs",
     "build:deno:rollup": "npm run build:rollup && node ./dinou/deno/build.mjs",
     "build:deno:webpack": "npm run build:webpack && node ./dinou/deno/build.mjs",
