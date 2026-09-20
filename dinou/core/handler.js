@@ -848,7 +848,13 @@ async function handleRequest(request, platformContext = {}) {
     // 2. If not in storageAdapter, check env.ASSETS for pre-rendered build static page
     if (!cachedItem && platformContext && platformContext.env && platformContext.env.ASSETS) {
       try {
-        const assetRes = await platformContext.env.ASSETS.fetch(new Request(new URL(`/${htmlKey}`, request.url)));
+        let assetRes = await platformContext.env.ASSETS.fetch(new Request(new URL(`/${cleanPath}/`, request.url)));
+        if (!assetRes || assetRes.status !== 200) {
+          assetRes = await platformContext.env.ASSETS.fetch(new Request(new URL(`/${htmlKey}`, request.url)));
+        }
+        if (!assetRes || assetRes.status !== 200) {
+          assetRes = await platformContext.env.ASSETS.fetch(new Request(new URL(`/${cleanPath}`, request.url)));
+        }
         if (assetRes && assetRes.status === 200) {
           const html = await assetRes.text();
           let metadata = null;

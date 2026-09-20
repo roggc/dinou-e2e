@@ -1,4 +1,4 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as playwrightRequest } from "@playwright/test";
 import fs from "fs";
 import path from "path";
 // Detectamos si estamos en un entorno de "start" (Producción) o Cloudflare
@@ -989,6 +989,190 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       }
 
       await Promise.all(contexts.map((ctx) => ctx.close()));
+    });
+
+    test("ISG Multi-Route Wave - 20 concurrent users requesting 5 distinct ungenerated dynamic routes", async ({
+      browser,
+    }) => {
+      if (!isProd) test.skip();
+      test.setTimeout(60000);
+
+      const timestamp = Date.now();
+      const SLUGS = [
+        `wave-alpha-${timestamp}`,
+        `wave-beta-${timestamp}`,
+        `wave-gamma-${timestamp}`,
+        `wave-delta-${timestamp}`,
+        `wave-epsilon-${timestamp}`,
+      ];
+
+      // 20 clientes concurrentes (4 usuarios para cada uno de los 5 slugs simultáneos)
+      const USERS_PER_SLUG = 4;
+      const tasks: Array<{ slug: string; clientPromise: Promise<any> }> = [];
+
+      for (const slug of SLUGS) {
+        for (let i = 0; i < USERS_PER_SLUG; i++) {
+          tasks.push({
+            slug,
+            clientPromise: (async () => {
+              const apiCtx = await playwrightRequest.newContext();
+              try {
+                const res = await apiCtx.get(`http://localhost:3000/t-ssg/${slug}`);
+                const status = res.status();
+                const body = await res.text();
+                return { status, body, slug };
+              } finally {
+                await apiCtx.dispose();
+              }
+            })(),
+          });
+        }
+      }
+
+      // Disparar las 20 peticiones a la vez
+      const results = await Promise.all(tasks.map((t) => t.clientPromise));
+
+      // Todos los 20 clientes deben recibir 200 OK y el slug correspondiente
+      for (const r of results) {
+        expect(r.status).toBe(200);
+        expect(r.body).toContain(r.slug);
+      }
+
+      // Verificación E2E con navegador Chromium real en uno de los slugs
+      const verifyContext = await browser.newContext();
+      const verifyPage = await verifyContext.newPage();
+      await verifyPage.goto(`/t-ssg/${SLUGS[0]}`);
+      await expect(verifyPage.getByTestId("res")).toHaveText(`Slug: ${SLUGS[0]}`, {
+        timeout: 20000,
+      });
+      await verifyContext.close();
+    });
+
+    test("ISR Mixed Concurrency - 20 simultaneous users requesting HTML and RSC payloads during TTL expiration", async ({
+      browser,
+    }) => {
+      if (!isProd) test.skip();
+      test.setTimeout(60000);
+
+      const targetUrl = "/t-isr/t-layout-client-component/t-client-component";
+
+      // 1. Obtener timestamp inicial
+      const initContext = await browser.newContext();
+      const initPage = await initContext.newPage();
+      await initPage.goto(targetUrl);
+      const initialTimestamp = await initPage.getByTestId("timestamp").innerText();
+      await initContext.close();
+
+      // 2. Esperar expiración de TTL (3000ms en page_functions.ts)
+      await new Promise((r) => setTimeout(r, 3500));
+
+      // 3. 20 peticiones simultáneas mixtas: 10 de HTML + 10 de RSC Payload
+      const HTML_USERS = 10;
+      const RSC_USERS = 10;
+
+      const htmlTasks = Array.from({ length: HTML_USERS }).map(async () => {
+        const apiCtx = await playwrightRequest.newContext();
+        try {
+          const res = await apiCtx.get(`http://localhost:3000${targetUrl}?mix_html=${Date.now()}_${Math.random()}`);
+          return { type: "html", status: res.status(), body: await res.text() };
+        } finally {
+          await apiCtx.dispose();
+        }
+      });
+
+      const rscTasks = Array.from({ length: RSC_USERS }).map(async () => {
+        const apiCtx = await playwrightRequest.newContext();
+        try {
+          const res = await apiCtx.get(`http://localhost:3000/____rsc_payload_static____${targetUrl}?mix_rsc=${Date.now()}_${Math.random()}`);
+          return { type: "rsc", status: res.status(), body: await res.text() };
+        } finally {
+          await apiCtx.dispose();
+        }
+      });
+
+      const allResponses = await Promise.all([...htmlTasks, ...rscTasks]);
+
+      // Todas deben devolver 200 OK sin errores de colisión
+      for (const res of allResponses) {
+        expect(res.status).toBe(200);
+      }
+
+      // 4. Verificación de regeneración con nuevo timestamp
+      const verifyContext = await browser.newContext();
+      const verifyPage = await verifyContext.newPage();
+      await expect
+        .poll(
+          async () => {
+            const bypassUrl = `${targetUrl}?t=${Date.now()}_${Math.random()}`;
+            await verifyPage.goto(bypassUrl);
+            const current = await verifyPage.getByTestId("timestamp").innerText();
+            return current !== initialTimestamp;
+          },
+          { intervals: [500, 1000], timeout: 20000 }
+        )
+        .toBe(true);
+      await verifyContext.close();
+    });
+
+    test("ISR Burst Stress - repeated reloads across multiple TTL expiration cycles", async ({
+      browser,
+    }) => {
+      if (!isProd) test.skip();
+      test.setTimeout(90000);
+
+      const targetUrl = "/t-isr/t-layout-client-component/t-client-component";
+
+      // Contexto de navegador real con bucle de ráfagas
+      const context = await browser.newContext();
+      const page = await context.newPage();
+
+      await page.goto(targetUrl);
+      const initialTimestamp = await page.getByTestId("timestamp").innerText();
+
+      // Bucle de ráfagas: 3 rondas donde cada ronda hace varias peticiones y espera que la revalidación progrese
+      let lastTimestamp = initialTimestamp;
+      const TOTAL_ROUNDS = 3;
+
+      for (let round = 1; round <= TOTAL_ROUNDS; round++) {
+        // Esperamos a que venza el TTL
+        await new Promise((r) => setTimeout(r, 3200));
+
+        // Ráfaga concurrente de 8 peticiones en paralelo en este ciclo
+        const burstContexts = await Promise.all(
+          Array.from({ length: 8 }).map(() => playwrightRequest.newContext())
+        );
+
+        const burstResults = await Promise.all(
+          burstContexts.map(async (ctx) => {
+            try {
+              const res = await ctx.get(`http://localhost:3000${targetUrl}?burst_round=${round}&t=${Date.now()}_${Math.random()}`);
+              return res.status();
+            } finally {
+              await ctx.dispose();
+            }
+          })
+        );
+
+        for (const status of burstResults) {
+          expect(status).toBe(200);
+        }
+
+        // El timestamp debe actualizarse tras la ráfaga
+        await expect
+          .poll(
+            async () => {
+              await page.goto(`${targetUrl}?probe_round=${round}&t=${Date.now()}_${Math.random()}`);
+              const current = await page.getByTestId("timestamp").innerText();
+              return current !== lastTimestamp;
+            },
+            { intervals: [500, 1000], timeout: 20000 }
+          )
+          .toBe(true);
+
+        lastTimestamp = await page.getByTestId("timestamp").innerText();
+      }
+
+      await context.close();
     });
   });
 
