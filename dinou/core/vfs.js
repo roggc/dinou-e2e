@@ -2,8 +2,13 @@ const fs = require("fs");
 const path = require("path");
 
 const isDevelopment = process.env.NODE_ENV !== "production";
+const localVfs = {};
+
 function getVfs() {
-  return (typeof globalThis !== "undefined" && globalThis.__DINOU_VFS__) || {};
+  if (typeof globalThis !== "undefined" && globalThis.__DINOU_VFS__) {
+    return globalThis.__DINOU_VFS__;
+  }
+  return localVfs;
 }
 
 function normalizeKey(p) {
@@ -13,7 +18,7 @@ function normalizeKey(p) {
   return s;
 }
 
-function buildVfs(dir) {
+function buildVfs(dir, baseDir = dir) {
   const vfs = getVfs();
   if (!fs.existsSync(dir)) return;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -26,24 +31,32 @@ function buildVfs(dir) {
       name: entry.name,
       isDirectory
     });
+    const slashPath = fullPath.replace(/\\/g, "/");
+    const relFromSrc = path.relative(baseDir, fullPath).replace(/\\/g, "/");
     if (isDirectory) {
-      buildVfs(fullPath);
+      buildVfs(fullPath, baseDir);
     } else {
       vfs[normalizeKey(fullPath)] = { type: "file" };
+      vfs[slashPath] = { type: "file" };
+      vfs["src/" + relFromSrc] = { type: "file" };
+      vfs["/src/" + relFromSrc] = { type: "file" };
     }
   }
 
-  vfs[normalizeKey(dir)] = {
-    type: "directory",
-    children
-  };
+  const slashDir = dir.replace(/\\/g, "/");
+  const relDir = path.relative(baseDir, dir).replace(/\\/g, "/");
+  const entry = { type: "directory", children };
+  vfs[normalizeKey(dir)] = entry;
+  vfs[slashDir] = entry;
+  vfs[relDir ? "src/" + relDir : "src"] = entry;
+  vfs[relDir ? "/src/" + relDir : "/src"] = entry;
 }
 
 if (!isDevelopment) {
   try {
     const srcDir = path.resolve(process.cwd(), "src");
     if (Object.keys(getVfs()).length === 0 && fs.existsSync && fs.existsSync(srcDir)) {
-      buildVfs(srcDir);
+      buildVfs(srcDir, srcDir);
     }
   } catch (e) {}
 }
@@ -79,37 +92,40 @@ function lookupVfs(vfs, p) {
 }
 
 function existsSync(filePath) {
+  const vfs = getVfs();
+  if (lookupVfs(vfs, filePath) !== null) {
+    return true;
+  }
   try {
     if (typeof fs.existsSync === "function" && fs.existsSync(filePath)) {
       return true;
     }
   } catch (e) {}
-  const vfs = getVfs();
-  return lookupVfs(vfs, filePath) !== null;
+  return false;
 }
 
 function readdirSync(dirPath, options) {
-  try {
-    if (typeof fs.readdirSync === "function") {
-      const res = fs.readdirSync(dirPath, options);
-      if (res && res.length > 0) return res;
-    }
-  } catch (e) {}
   const vfs = getVfs();
   const entry = lookupVfs(vfs, dirPath);
 
-  if (!entry || entry.type !== "directory" || !Array.isArray(entry.children)) {
-    return [];
+  if (entry && entry.type === "directory" && Array.isArray(entry.children)) {
+    if (options && options.withFileTypes) {
+      return entry.children.map(child => ({
+        name: child.name,
+        isDirectory: () => child.isDirectory,
+        isFile: () => !child.isDirectory
+      }));
+    }
+    return entry.children.map(child => child.name);
   }
 
-  if (options && options.withFileTypes) {
-    return entry.children.map(child => ({
-      name: child.name,
-      isDirectory: () => child.isDirectory,
-      isFile: () => !child.isDirectory
-    }));
-  }
-  return entry.children.map(child => child.name);
+  try {
+    if (typeof fs.readdirSync === "function") {
+      const res = fs.readdirSync(dirPath, options);
+      if (res) return res;
+    }
+  } catch (e) {}
+  return [];
 }
 
 module.exports = {
