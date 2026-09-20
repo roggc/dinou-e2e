@@ -99,25 +99,40 @@ function walkVfs(dir) {
     const fullPath = path.join(dir, entry.name);
     const relFromSrc = path.relative(srcDir, fullPath).replace(/\\/g, "/");
     const edgePath = "/src/" + relFromSrc;
+    const slashPath = fullPath.replace(/\\/g, "/");
     if (isDir) {
       walkVfs(fullPath);
     } else {
       vfsSnapshot[edgePath] = { type: "file" };
-      vfsSnapshot[fullPath.replace(/\\/g, "/")] = { type: "file" };
+      vfsSnapshot[slashPath] = { type: "file" };
+      if (slashPath.length > 2 && slashPath[1] === ":") {
+        vfsSnapshot[slashPath.slice(2)] = { type: "file" };
+      }
+      vfsSnapshot["src/" + relFromSrc] = { type: "file" };
     }
   }
   const dirRel = path.relative(srcDir, dir).replace(/\\/g, "/");
   const edgeDir = dirRel ? "/src/" + dirRel : "/src";
+  const dirSlash = dir.replace(/\\/g, "/");
   vfsSnapshot[edgeDir] = { type: "directory", children };
-  vfsSnapshot[dir.replace(/\\/g, "/")] = { type: "directory", children };
+  vfsSnapshot[dirSlash] = { type: "directory", children };
+  if (dirSlash.length > 2 && dirSlash[1] === ":") {
+    vfsSnapshot[dirSlash.slice(2)] = { type: "directory", children };
+  }
+  vfsSnapshot[dirRel ? "src/" + dirRel : "src"] = { type: "directory", children };
 }
 walkVfs(srcDir);
-const vfsInline = `\nglobalThis.__DINOU_VFS__ = ${JSON.stringify(vfsSnapshot)};\n`;
+
+const envSetupContent = `// Auto-generated environment setup
+${manifestInlines}
+globalThis.__DINOU_VFS__ = ${JSON.stringify(vfsSnapshot)};
+`;
+const envSetupPath = path.join(cloudflareDir, "env-setup.js");
+fs.writeFileSync(envSetupPath, envSetupContent, "utf8");
 
 const workerEntryContent = `// Auto-generated worker entry for Cloudflare Workers
+import "./env-setup.js";
 import "./route-modules.js";
-${manifestInlines}
-${vfsInline}
 import worker from "${cloudflareAdapterPath}";
 
 export default worker;

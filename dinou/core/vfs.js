@@ -2,13 +2,19 @@ const fs = require("fs");
 const path = require("path");
 
 const isDevelopment = process.env.NODE_ENV !== "production";
-const vfs = (typeof globalThis !== "undefined" && globalThis.__DINOU_VFS__) || {};
+function getVfs() {
+  return (typeof globalThis !== "undefined" && globalThis.__DINOU_VFS__) || {};
+}
 
 function normalizeKey(p) {
-  return path.resolve(p).replace(/\\/g, "/");
+  if (!p) return "";
+  let s = String(p).replace(/\\/g, "/");
+  if (s.length > 2 && s[1] === ":") s = s.slice(2);
+  return s;
 }
 
 function buildVfs(dir) {
+  const vfs = getVfs();
   if (!fs.existsSync(dir)) return;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   const children = [];
@@ -33,38 +39,61 @@ function buildVfs(dir) {
   };
 }
 
-if (!isDevelopment && Object.keys(vfs).length === 0) {
+if (!isDevelopment) {
   try {
     const srcDir = path.resolve(process.cwd(), "src");
-    buildVfs(srcDir);
+    if (Object.keys(getVfs()).length === 0 && fs.existsSync && fs.existsSync(srcDir)) {
+      buildVfs(srcDir);
+    }
   } catch (e) {}
+}
+
+function lookupVfs(vfs, p) {
+  if (!vfs || !p) return null;
+  if (vfs[p]) return vfs[p];
+
+  const s = String(p).split("\\").join("/");
+  if (vfs[s]) return vfs[s];
+
+  if (s.length > 2 && s[1] === ":") {
+    const noDrive = s.slice(2);
+    if (vfs[noDrive]) return vfs[noDrive];
+  }
+
+  const idx = s.indexOf("/src");
+  if (idx !== -1) {
+    const fromSlash = s.slice(idx);
+    if (vfs[fromSlash]) return vfs[fromSlash];
+    const noSlash = fromSlash.slice(1);
+    if (vfs[noSlash]) return vfs[noSlash];
+  } else if (s.startsWith("src/") || s === "src") {
+    if (vfs[s]) return vfs[s];
+    if (vfs["/" + s]) return vfs["/" + s];
+  }
+
+  const trimmed = s.replace(/^\/+/, "");
+  if (vfs[trimmed]) return vfs[trimmed];
+  if (vfs["/" + trimmed]) return vfs["/" + trimmed];
+
+  return null;
 }
 
 function existsSync(filePath) {
   if (isDevelopment) {
     return fs.existsSync(filePath);
   }
-  const normalized = normalizeKey(filePath);
-  if (vfs[normalized]) return true;
-  if (normalized.startsWith("/src") || normalized.includes("/src/")) {
-    const srcRelative = normalized.slice(normalized.indexOf("/src"));
-    if (vfs[srcRelative]) return true;
-  }
-  return false;
+  const vfs = getVfs();
+  return lookupVfs(vfs, filePath) !== null;
 }
 
 function readdirSync(dirPath, options) {
   if (isDevelopment) {
     return fs.readdirSync(dirPath, options);
   }
-  const normalized = normalizeKey(dirPath);
-  let entry = vfs[normalized];
-  if (!entry && (normalized.startsWith("/src") || normalized.includes("/src/"))) {
-    const srcRelative = normalized.slice(normalized.indexOf("/src"));
-    entry = vfs[srcRelative];
-  }
+  const vfs = getVfs();
+  const entry = lookupVfs(vfs, dirPath);
 
-  if (!entry || entry.type !== "directory") {
+  if (!entry || entry.type !== "directory" || !Array.isArray(entry.children)) {
     return [];
   }
 
@@ -82,5 +111,5 @@ module.exports = {
   existsSync,
   readdirSync,
   buildVfs,
-  vfs
+  getVfs,
 };

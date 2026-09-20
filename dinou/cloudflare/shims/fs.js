@@ -3,28 +3,44 @@ function getVfs() {
   return (typeof globalThis !== "undefined" && globalThis.__DINOU_VFS__) || {};
 }
 
-function normalizeKey(p) {
-  if (!p) return "";
-  let s = String(p).replace(/\\/g, "/");
-  if (s.length > 2 && s[1] === ":") s = s.slice(2);
-  return s;
+function lookupVfs(vfs, p) {
+  if (!vfs || !p) return null;
+  if (vfs[p]) return vfs[p];
+
+  const s = String(p).split("\\").join("/");
+  if (vfs[s]) return vfs[s];
+
+  if (s.length > 2 && s[1] === ":") {
+    const noDrive = s.slice(2);
+    if (vfs[noDrive]) return vfs[noDrive];
+  }
+
+  const idx = s.indexOf("/src");
+  if (idx !== -1) {
+    const fromSlash = s.slice(idx);
+    if (vfs[fromSlash]) return vfs[fromSlash];
+    const noSlash = fromSlash.slice(1);
+    if (vfs[noSlash]) return vfs[noSlash];
+  } else if (s.startsWith("src/") || s === "src") {
+    if (vfs[s]) return vfs[s];
+    if (vfs["/" + s]) return vfs["/" + s];
+  }
+
+  const trimmed = s.replace(/^\/+/, "");
+  if (vfs[trimmed]) return vfs[trimmed];
+  if (vfs["/" + trimmed]) return vfs["/" + trimmed];
+
+  return null;
 }
 
 export const existsSync = (p) => {
   const vfs = getVfs();
-  const k = normalizeKey(p);
-  if (vfs[k]) return true;
-  if (k.includes("/src/")) {
-    const rel = k.slice(k.indexOf("/src/"));
-    if (vfs[rel]) return true;
-  }
-  return false;
+  return lookupVfs(vfs, p) !== null;
 };
 
 export const readFileSync = (p) => {
   const vfs = getVfs();
-  const k = normalizeKey(p);
-  const entry = vfs[k] || (k.includes("/src/") ? vfs[k.slice(k.indexOf("/src/"))] : null);
+  const entry = lookupVfs(vfs, p);
   if (entry && typeof entry.content === "string") {
     return entry.content;
   }
@@ -33,8 +49,7 @@ export const readFileSync = (p) => {
 
 export const readdirSync = (p, options) => {
   const vfs = getVfs();
-  const k = normalizeKey(p);
-  const entry = vfs[k] || (k.includes("/src/") ? vfs[k.slice(k.indexOf("/src/"))] : null);
+  const entry = lookupVfs(vfs, p);
   if (!entry || entry.type !== "directory" || !Array.isArray(entry.children)) {
     return [];
   }
@@ -50,8 +65,7 @@ export const readdirSync = (p, options) => {
 
 export const statSync = (p) => {
   const vfs = getVfs();
-  const k = normalizeKey(p);
-  const entry = vfs[k] || (k.includes("/src/") ? vfs[k.slice(k.indexOf("/src/"))] : null);
+  const entry = lookupVfs(vfs, p);
   const isDir = entry && entry.type === "directory";
   const isF = entry && entry.type === "file";
   return {

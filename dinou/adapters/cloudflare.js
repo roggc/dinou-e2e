@@ -35,29 +35,26 @@ export default {
     const isServerFunction = url.pathname.includes("____server_function____") || request.headers.get("x-server-function-call") === "1";
 
     if (isRSCPayload && env && env.ASSETS) {
-      const isStatic =
-        url.pathname.startsWith("/____rsc_payload_old_static____") ||
-        url.pathname.startsWith("/____rsc_payload_static____");
-      if (isStatic) {
-        const cleanPath = url.pathname
-          .replace("/____rsc_payload_old_static____", "")
-          .replace("/____rsc_payload_static____", "")
-          .replace(/^\/+/, "")
-          .replace(/\/+$/, "");
-        const rscAssetPath = cleanPath ? `/${cleanPath}/rsc.rsc` : "/rsc.rsc";
-        const assetUrl = new URL(rscAssetPath, request.url);
-        try {
-          const rscRes = await env.ASSETS.fetch(new Request(assetUrl, request));
-          if (rscRes && rscRes.status === 200) {
-            const headers = new Headers(rscRes.headers);
-            headers.set("Content-Type", "text/x-component");
-            return new Response(rscRes.body, {
-              status: 200,
-              headers,
-            });
-          }
-        } catch (e) {}
-      }
+      const cleanPath = url.pathname
+        .replace("/____rsc_payload_old_static____", "")
+        .replace("/____rsc_payload_old____", "")
+        .replace("/____rsc_payload_static____", "")
+        .replace("/____rsc_payload____", "")
+        .replace(/^\/+/, "")
+        .replace(/\/+$/, "");
+      const rscAssetPath = cleanPath ? `/${cleanPath}/rsc.rsc` : "/rsc.rsc";
+      const assetUrl = new URL(rscAssetPath, request.url);
+      try {
+        const rscRes = await env.ASSETS.fetch(new Request(assetUrl, request));
+        if (rscRes && rscRes.status === 200) {
+          const headers = new Headers(rscRes.headers);
+          headers.set("Content-Type", "text/x-component");
+          return new Response(rscRes.body, {
+            status: 200,
+            headers,
+          });
+        }
+      } catch (e) {}
     }
 
     if (!isRSCPayload && !isServerFunction && env && env.ASSETS && (request.method === "GET" || request.method === "HEAD")) {
