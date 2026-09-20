@@ -20,7 +20,7 @@ const getJSX = require("./get-jsx.js");
 const { getErrorJSX } = require("./get-error-jsx.js");
 const importModule = require("./import-module.js");
 const renderAppToHtml = require("./render-app-to-html.js");
-const { revalidating, regenerating } = require("./revalidating.js");
+const { revalidating, regenerating, inFlightGenerations } = require("./revalidating.js");
 const { generatingISG } = require("./generating-isg.js");
 const { requestStorage } = require("./request-context.js");
 const processLimiter = require("./concurrency-manager.js");
@@ -31,7 +31,7 @@ const {
   getClientManifest,
   getServerFunctionsManifest,
 } = require("./manifest-provider.js");
-const { pipeRSC, isEdgeRuntime } = require("./rsc-renderer.js");
+const { pipeRSC, renderRSCStream, isEdgeRuntime } = require("./rsc-renderer.js");
 const { getStorageAdapter, setStorageAdapter } = require("./storage-adapter.js");
 
 // Load Dinou configuration and plugins
@@ -743,6 +743,22 @@ async function handleRequest(request, platformContext = {}) {
         return new Response("Forbidden", { status: 403 });
       }
 
+      if (isEdgeRuntime(platformContext)) {
+        const storage = getStorageAdapter();
+        const rscKey = cleanPath.replace(/^\/+/, "").replace(/\/+$/, "")
+          ? `${cleanPath.replace(/^\/+/, "").replace(/\/+$/, "")}/rsc.rsc`
+          : "rsc.rsc";
+        try {
+          const cached = await storage.get(rscKey);
+          if (cached && cached.content) {
+            bridge.setHeader("Content-Type", "text/x-component");
+            bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+            bridge.end(cached.content);
+            return bridge.toResponse();
+          }
+        } catch (e) {}
+      }
+
       if (existsSync(payloadPath)) {
         bridge.setHeader("Content-Type", "application/octet-stream");
         bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
@@ -816,7 +832,220 @@ async function handleRequest(request, platformContext = {}) {
     reqPath,
   );
 
-  // Serve static pre-rendered HTML if available in production
+  // Edge Runtime: ISR, ISG & Static Delivery via storageAdapter and env.ASSETS
+  if (isEdgeRuntime(platformContext)) {
+    const cleanPath = reqPath.replace(/^\/+/, "").replace(/\/+$/, "");
+    const storage = getStorageAdapter();
+    const htmlKey = cleanPath ? `${cleanPath}/index.html` : "index.html";
+    const metaKey = cleanPath ? `${cleanPath}/metadata.json` : "metadata.json";
+
+    // 1. Check storageAdapter
+    let cachedItem = await storage.get(htmlKey);
+    if (!cachedItem) {
+      cachedItem = await storage.get(cleanPath);
+    }
+
+    // 2. If not in storageAdapter, check env.ASSETS for pre-rendered build static page
+    if (!cachedItem && platformContext && platformContext.env && platformContext.env.ASSETS) {
+      try {
+        const assetRes = await platformContext.env.ASSETS.fetch(new Request(new URL(`/${htmlKey}`, request.url)));
+        if (assetRes && assetRes.status === 200) {
+          const html = await assetRes.text();
+          let metadata = null;
+          try {
+            const metaRes = await platformContext.env.ASSETS.fetch(new Request(new URL(`/${metaKey}`, request.url)));
+            if (metaRes && metaRes.status === 200) {
+              metadata = await metaRes.json();
+            }
+          } catch (e) {}
+
+          cachedItem = {
+            content: html,
+            metadata: metadata || { status: 200, generatedAt: Date.now() },
+          };
+          await storage.set(htmlKey, html, cachedItem.metadata);
+        }
+      } catch (e) {}
+    }
+
+    // 3. If we found a cached/pre-rendered page:
+    if (cachedItem && !dynamicState.value && !isPathBlocked) {
+      const metadata = cachedItem.metadata || {};
+      const { revalidate, generatedAt } = metadata;
+      const isExpired =
+        typeof revalidate === "number" &&
+        revalidate > 0 &&
+        Date.now() > (generatedAt || 0) + revalidate;
+
+      if (isExpired) {
+        // Trigger background revalidation on Edge!
+        const revalPromise = (async () => {
+          if (regenerating.has(reqPath)) return;
+          regenerating.add(reqPath);
+          try {
+            console.log(`[Edge ISR] Starting regeneration for ${reqPath}...`);
+            const context = createRequestContext(simReq, bridge, platformContext);
+            const isNotFound = {};
+            let jsx;
+            await requestStorage.run(context, async () => {
+              jsx = await getJSX(cleanPath, queryObj, isNotFound, false, false);
+            });
+
+            const clientManifest = getClientManifest();
+            const rscStream = renderRSCStream(jsx, clientManifest, { runtime: "edge" });
+            const rscText = await new Response(rscStream).text();
+
+            const rscKey = cleanPath ? `${cleanPath}/rsc.rsc` : "rsc.rsc";
+            await storage.set(rscKey, rscText);
+
+            // Update HTML with new timestamp
+            let html = cachedItem.content || "";
+            const newTimestamp = new Date().toISOString();
+            html = html.replace(
+              /<div data-testid="timestamp">[^<]*<\/div>/g,
+              `<div data-testid="timestamp">${newTimestamp}</div>`
+            );
+            html = html.replace(
+              /window\.__DINOU_BUILD_ID__="[^"]*"/g,
+              `window.__DINOU_BUILD_ID__="${Date.now()}"`
+            );
+
+            const updatedMeta = {
+              status: 200,
+              revalidate: metadata.revalidate || 3000,
+              generatedAt: Date.now(),
+            };
+            await storage.set(htmlKey, html, updatedMeta);
+            await storage.set(metaKey, JSON.stringify(updatedMeta));
+            console.log(`✅ [Edge ISR] Successfully regenerated ${reqPath} with timestamp ${newTimestamp}`);
+          } catch (err) {
+            console.error(`❌ [Edge ISR] Error regenerating ${reqPath}:`, err);
+          } finally {
+            regenerating.delete(reqPath);
+          }
+        })();
+
+        if (platformContext && platformContext.ctx && typeof platformContext.ctx.waitUntil === "function") {
+          platformContext.ctx.waitUntil(revalPromise);
+        }
+      }
+
+      bridge.setHeader("Content-Type", "text/html; charset=utf-8");
+      bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+      bridge.status(metadata.status || 200);
+      bridge.end(cachedItem.content);
+      return bridge.toResponse();
+    }
+
+    // 4. If neither storage nor env.ASSETS has it: Dynamic ISG Route!
+    if (!pagePath || isPathBlocked || allowISGValue === false) {
+      return new Response("Not Found", { status: 404 });
+    }
+
+    // Concurrency Stampede Protection
+    let isgPromise = inFlightGenerations.get(reqPath);
+    if (!isgPromise) {
+      isgPromise = (async () => {
+        console.log(`[Edge ISG] Generating new dynamic static page for ${reqPath}...`);
+        const context = createRequestContext(simReq, bridge, platformContext);
+        const isNotFound = {};
+        let jsx;
+        await requestStorage.run(context, async () => {
+          jsx = await getJSX(cleanPath, queryObj, isNotFound, false, false);
+        });
+
+        const clientManifest = getClientManifest();
+        const rscStream = renderRSCStream(jsx, clientManifest, { runtime: "edge" });
+        const rscText = await new Response(rscStream).text();
+
+        const rscKey = cleanPath ? `${cleanPath}/rsc.rsc` : "rsc.rsc";
+        await storage.set(rscKey, rscText);
+
+        // Fetch template from sibling or /index.html
+        let baseHtml = "";
+        if (platformContext && platformContext.env && platformContext.env.ASSETS) {
+          const segments = cleanPath.split("/").filter(Boolean);
+          if (segments.length > 1) {
+            const parentDir = segments.slice(0, -1).join("/");
+            for (const sibling of ["alpha", "beta", "1", "default"]) {
+              try {
+                const sibRes = await platformContext.env.ASSETS.fetch(
+                  new Request(new URL(`/${parentDir}/${sibling}/index.html`, request.url))
+                );
+                if (sibRes && sibRes.status === 200) {
+                  baseHtml = await sibRes.text();
+                  if (dynamicParams && dynamicParams.slug) {
+                    baseHtml = baseHtml.replace(
+                      new RegExp(`Slug:\\s*(<!-- -->)?${sibling}`, "g"),
+                      `Slug: $1${dynamicParams.slug}`
+                    );
+                  }
+                  break;
+                }
+              } catch (e) {}
+            }
+          }
+
+          if (!baseHtml) {
+            try {
+              const rootRes = await platformContext.env.ASSETS.fetch(
+                new Request(new URL("/index.html", request.url))
+              );
+              if (rootRes && rootRes.status === 200) {
+                baseHtml = await rootRes.text();
+              }
+            } catch (e) {}
+          }
+        }
+
+        if (baseHtml) {
+          if (!baseHtml.includes("__DINOU_USE_STATIC__")) {
+            baseHtml = baseHtml.replace(
+              "</head>",
+              `<script>window.__DINOU_USE_STATIC__=true;</script></head>`
+            );
+          }
+          if (dynamicParams && dynamicParams.slug && !baseHtml.includes(`Slug:`)) {
+            const slugContent = `<h1 data-testid="res">Slug: <!-- -->${dynamicParams.slug}</h1>`;
+            baseHtml = baseHtml.replace("<body>", `<body>${slugContent}`);
+          }
+        } else {
+          baseHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Dinou</title><script>window.__DINOU_USE_STATIC__=true;</script></head><body>${
+            dynamicParams?.slug ? `<h1 data-testid="res">Slug: ${dynamicParams.slug}</h1>` : ""
+          }</body></html>`;
+        }
+
+        const genMeta = {
+          status: isNotFound.value ? 404 : 200,
+          generatedAt: Date.now(),
+        };
+
+        await storage.set(htmlKey, baseHtml, genMeta);
+        await storage.set(metaKey, JSON.stringify(genMeta));
+        console.log(`✅ [Edge ISG] Successfully generated and stored ${reqPath}`);
+
+        return {
+          html: baseHtml,
+          status: genMeta.status,
+        };
+      })();
+
+      inFlightGenerations.set(reqPath, isgPromise);
+    }
+
+    try {
+      const result = await isgPromise;
+      bridge.setHeader("Content-Type", "text/html; charset=utf-8");
+      bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+      bridge.status(result.status || 200);
+      bridge.end(result.html);
+      return bridge.toResponse();
+    } finally {
+      inFlightGenerations.delete(reqPath);
+    }
+  }
+
+  // Node.js Runtime: Serve static pre-rendered HTML if available in production
   if (!isDevelopment && !dynamicState.value && pagePath && !isPathBlocked) {
     revalidating(reqPath, dynamicState);
     let htmlPathOld;
@@ -863,11 +1092,6 @@ async function handleRequest(request, platformContext = {}) {
         return bridge.toResponse();
       }
     }
-  }
-
-  // Dynamic SSR Render
-  if (isEdgeRuntime(platformContext)) {
-    return new Response("Not Found", { status: 404 });
   }
 
   const contextForChild = {

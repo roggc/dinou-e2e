@@ -12,6 +12,7 @@ compatibility_flags = ["nodejs_compat"]
 [assets]
 directory = ".dinou/dist3"
 binding = "ASSETS"
+run_worker_first = true
 
 # ====================================================================
 # Incremental Static Regeneration (ISR / ISG) Cache
