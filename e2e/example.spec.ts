@@ -1,8 +1,9 @@
 import { test, expect, APIRequestContext } from "@playwright/test";
 import fs from "fs";
 import path from "path";
-// Detectamos si estamos en un entorno de "start" (Producción)
-const isProd = (process.env.TEST_CMD || "npm run build:esbuild && npm run start:esbuild").includes("start");
+// Detectamos si estamos en un entorno de "start" (Producción) o Cloudflare
+const isCloudflare = (process.env.TEST_CMD || "").includes("cloudflare") || (process.env.TEST_CMD || "").includes("wrangler");
+const isProd = (process.env.TEST_CMD || "npm run build:esbuild && npm run start:esbuild").includes("start") || isCloudflare;
 
 // Función auxiliar que espera hasta que el servidor diga "isReady: true"
 async function pollUntilReady(request: APIRequestContext, maxRetries = 800) {
@@ -2455,7 +2456,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     test("Should switch from Static to Dynamic and back without crashing", async ({
       page,
     }) => {
-      if (!isProd) test.skip(); // Asumiendo que tienes un flag para prod
+      if (!isProd || isCloudflare) test.skip(); // Asumiendo que tienes un flag para prod
       // // 🔥 1. FORZAR "DISABLE CACHE" (Como tener DevTools abiertas)
       // // Esto obliga al navegador a preguntar al servidor en cada reload
       // const client = await page.context().newCDPSession(page);
@@ -2735,7 +2736,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     test(`Should survive ${CONCURRENT_USERS} concurrent users switching modes`, async ({
       browser,
     }) => {
-      if (!isProd) test.skip();
+      if (!isProd || isCloudflare) test.skip();
       test.setTimeout(340000);
       // 1. Inicializar estado STATIC
       fs.writeFileSync(TRIGGER_FILE, "STATIC");
@@ -2847,7 +2848,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     test(`Should survive staggered load (ramp-up) while switching modes`, async ({
       browser,
     }) => {
-      if (!isProd) test.skip();
+      if (!isProd || isCloudflare) test.skip();
       // Aumentamos el timeout del test porque este va a durar más
       test.setTimeout(340000);
 
@@ -2968,7 +2969,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       browser,
       browserName,
     }) => {
-      if (!isProd || browserName !== "chromium") test.skip();
+      if (!isProd || isCloudflare || browserName !== "chromium") test.skip();
       test.setTimeout(340000);
       // 1. Inicializar estado STATIC
       fs.writeFileSync(TRIGGER_FILE, "STATIC");
@@ -3096,7 +3097,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       browser,
       browserName,
     }) => {
-      if (!isProd || browserName !== "chromium") test.skip();
+      if (!isProd || isCloudflare || browserName !== "chromium") test.skip();
       // Aumentamos el timeout del test porque este va a durar más
       test.setTimeout(340000);
 

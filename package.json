@@ -21,6 +21,8 @@
     "build:cloudflare": "dinou build:cloudflare",
     "build:cloudflare:rollup": "dinou build:cloudflare:rollup",
     "build:cloudflare:webpack": "dinou build:cloudflare:webpack",
+    "start:cloudflare": "wrangler dev --port 3000",
+    "test:cloudflare": "npx cross-env TEST_CMD=\"npm run build:cloudflare && npx wrangler dev --port 3000\" npx playwright test",
     "build:deno": "dinou build:deno",
     "build:deno:rollup": "dinou build:deno:rollup",
     "build:deno:webpack": "dinou build:deno:webpack",
@@ -44,6 +46,7 @@
     "@playwright/test": "^1.61.1",
     "@types/node": "^25.0.3",
     "@types/react": "^19.1.10",
-    "@types/react-dom": "^19.1.7"
+    "@types/react-dom": "^19.1.7",
+    "wrangler": "^4.135.0"
   }
 }

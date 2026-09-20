@@ -19,7 +19,12 @@ const port = 3000;
  */
 let resourceToWaitFor = "";
 
-if (commandToRun.includes("dev:webpack")) {
+const isCloudflare = commandToRun.includes("cloudflare") || commandToRun.includes("wrangler");
+
+if (isCloudflare) {
+  // En Cloudflare Workers (Wrangler) esperamos directamente a la raíz '/'
+  resourceToWaitFor = "";
+} else if (commandToRun.includes("dev:webpack")) {
   // Si estamos en Webpack (dev o prod), esperamos al manifest
   // ⚠️ Asegúrate de que este archivo realmente se sirve en Webpack Dev
   // Si tu archivo real se llama 'react-client-manifest.json', pon eso.

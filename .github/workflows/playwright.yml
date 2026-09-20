@@ -61,3 +61,49 @@ jobs:
           name: report-${{ matrix.os }}-${{ matrix.bundler }}-${{ matrix.mode }}
           path: playwright-report/
           retention-days: 30
+
+  cloudflare-tests:
+    name: ${{ matrix.os }} - Cloudflare Worker
+    timeout-minutes: 60
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Cache Playwright Browsers
+        id: playwright-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~\AppData\Local\ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
+      - name: Fix slow Ubuntu APT mirrors & set timeouts
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo sed -i 's/azure.archive.ubuntu.com/archive.ubuntu.com/g' /etc/apt/sources.list /etc/apt/sources.list.d/* || true
+          sudo sh -c 'echo "Acquire::http::Timeout \"15\";\nAcquire::http::Retries \"3\";" > /etc/apt/apt.conf.d/99timeout'
+      - name: Install Playwright Browsers & Deps
+        timeout-minutes: 20
+        run: npx playwright install --with-deps
+      - name: Build Cloudflare Worker
+        run: npm run build:cloudflare
+      - name: Run Playwright Tests on Cloudflare
+        env:
+          TEST_CMD: npx wrangler dev --port 3000
+        run: npx playwright test
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: report-${{ matrix.os }}-cloudflare
+          path: playwright-report/
+          retention-days: 30
+
