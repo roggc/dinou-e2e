@@ -79,17 +79,22 @@ function lookupVfs(vfs, p) {
 }
 
 function existsSync(filePath) {
-  if (isDevelopment) {
-    return fs.existsSync(filePath);
-  }
+  try {
+    if (typeof fs.existsSync === "function" && fs.existsSync(filePath)) {
+      return true;
+    }
+  } catch (e) {}
   const vfs = getVfs();
   return lookupVfs(vfs, filePath) !== null;
 }
 
 function readdirSync(dirPath, options) {
-  if (isDevelopment) {
-    return fs.readdirSync(dirPath, options);
-  }
+  try {
+    if (typeof fs.readdirSync === "function") {
+      const res = fs.readdirSync(dirPath, options);
+      if (res && res.length > 0) return res;
+    }
+  } catch (e) {}
   const vfs = getVfs();
   const entry = lookupVfs(vfs, dirPath);
 
