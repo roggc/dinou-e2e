@@ -34,7 +34,6 @@ const {
 const { pipeRSC, renderRSCStream, isEdgeRuntime } = require("./rsc-renderer.js");
 const { getStorageAdapter, setStorageAdapter } = require("./storage-adapter.js");
 const { createBailoutProxy } = require("./bailout-proxy.js");
-const { renderJsxToHtml } = require("./jsx-to-html.js");
 const getAssetFromManifest = require("./get-asset-from-manifest.js");
 
 // Load Dinou configuration and plugins
@@ -1279,96 +1278,9 @@ async function handleRequest(request, platformContext = {}) {
           };
         }
 
-        // Fallback to legacy jsx-to-html if renderHtmlStream is not provided
-        const [rscRes, htmlBody] = await Promise.all([
-          new Response(rscStream).text(),
-          renderJsxToHtml(jsx),
-        ]);
-        rscText = rscRes;
-        pageBody = htmlBody;
-
-        if (shouldCacheISG) {
-          const rscKey = cleanPath ? `${cleanPath}/rsc.rsc` : "rsc.rsc";
-          await storage.set(rscKey, rscText);
-        }
-
-        if (isError && !pageBody) {
-          const errMsg = isDevelopment
-            ? (caughtError?.message || "Error")
-            : "An error occurred in the Server Components render";
-          pageBody = `
-            <div class="min-h-screen bg-slate-950 text-slate-100 p-6">
-              <header class="py-4"><a href="/">← Back to Home</a></header>
-              <h2>Dinou Page Boundary Captured an Error</h2>
-              <p>[Error]: ${errMsg}</p>
-              ${queryObj.double_crash === "true" ? "<h2>Application Error</h2><pre>Double Crash! The custom error boundary component itself has crashed!</pre>" : ""}
-            </div>
-          `;
-        }
-
-        // Fetch HTML template shell from /index.html
-        let baseHtml = "";
-        if (platformContext && platformContext.env && platformContext.env.ASSETS) {
-          try {
-            const rootRes = await platformContext.env.ASSETS.fetch(
-              new Request(new URL("/index.html", request.url))
-            );
-            if (rootRes && rootRes.status === 200) {
-              baseHtml = await rootRes.text();
-            }
-          } catch (e) {}
-        }
-
-        if (baseHtml) {
-          if (shouldCacheISG && !baseHtml.includes("__DINOU_USE_STATIC__")) {
-            baseHtml = baseHtml.replace(
-              "</head>",
-              `<script>window.__DINOU_USE_STATIC__=true;</script></head>`
-            );
-          } else if (!shouldCacheISG) {
-            baseHtml = baseHtml.replace(/<script>window\.__DINOU_USE_STATIC__=true;<\/script>/g, "");
-            baseHtml = baseHtml.replace(/window\.__DINOU_USE_STATIC__=true;/g, "window.__DINOU_USE_STATIC__=false;");
-          }
-          if (pageBody) {
-            let bodyContent = pageBody;
-            const bodyMatch = pageBody.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-            if (bodyMatch) {
-              bodyContent = bodyMatch[1];
-            }
-            // Preserve client entry module scripts and helper scripts from baseHtml body
-            let preservedScripts = "";
-            const baseBodyMatch = baseHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-            if (baseBodyMatch) {
-              const scriptTags = baseBodyMatch[1].match(/<script\b[^>]*>[\s\S]*?<\/script>/gi);
-              if (scriptTags) {
-                preservedScripts = scriptTags.filter((s) => !s.includes("$RC(") && !s.includes("$RV=")).join("\n");
-              }
-            }
-            baseHtml = baseHtml.replace(
-              /<body[^>]*>[\s\S]*?<\/body>/i,
-              `<body${isError ? ' data-hydrated="true"' : ""}>${bodyContent}${preservedScripts}</body>`
-            );
-          }
-          if (bridge._injectedScripts && baseHtml.includes("</body>")) {
-            baseHtml = baseHtml.replace("</body>", `${bridge._injectedScripts}</body>`);
-          }
-        } else {
-          baseHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Dinou</title>${shouldCacheISG ? '<script>window.__DINOU_USE_STATIC__=true;</script>' : ""}</head><body${isError ? ' data-hydrated="true"' : ""}>${pageBody}${bridge._injectedScripts || ""}</body></html>`;
-        }
-
-        if (shouldCacheISG) {
-          await storage.set(htmlKey, baseHtml, genMeta);
-          await storage.set(metaKey, JSON.stringify(genMeta));
-          console.log(`✅ [Edge ISG] Successfully generated and stored ${reqPath}`);
-        }
-
-        return {
-          type: "html",
-          html: baseHtml,
-          status: genMeta.status,
-          headers: new Headers(bridge.headers),
-          cookies: [...bridge.cookies],
-        };
+        throw new Error(
+          "[Dinou Edge] platformContext.renderHtmlStream is required for Edge rendering. Ensure your adapter is using the dual-bundle architecture with edge-ssr."
+        );
       })();
 
       inFlightGenerations.set(inFlightKey, isgPromise);
