@@ -237,7 +237,7 @@ try {
     external: externalList,
     plugins: [clientReferencesPlugin],
     banner: {
-      js: "import { createRequire as ___createRequire } from 'node:module'; const require = ___createRequire(import.meta.url || 'file:///worker.js'); globalThis.__dinou_require__ = require;",
+      js: "import { createRequire as ___createRequire } from 'node:module'; const require = ___createRequire(import.meta.url || 'file:///worker.js'); const __dirname = ''; const __filename = ''; globalThis.__dinou_require__ = require;",
     },
     alias: {
       "@": path.resolve(projectRoot, "src"),
