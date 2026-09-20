@@ -12,3 +12,6 @@ out
 
 # documentacion
 doc.md
+
+# deploy artifacts
+.wrangler/
