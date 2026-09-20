@@ -12,15 +12,11 @@ if (typeof window === "undefined") {
 
   if (!AsyncLocalStorageClass) {
     try {
-      if (typeof __non_webpack_require__ === "function") {
-        const asyncHooks = __non_webpack_require__("node:async_hooks");
-        AsyncLocalStorageClass = asyncHooks?.AsyncLocalStorage;
-      } else if (typeof globalThis.__dinou_require__ === "function") {
-        const asyncHooks = globalThis.__dinou_require__("node:async_hooks");
-        AsyncLocalStorageClass = asyncHooks?.AsyncLocalStorage;
-      } else if (typeof require === "function") {
-        const asyncHooks = require("node:async_hooks");
-        AsyncLocalStorageClass = asyncHooks?.AsyncLocalStorage;
+      if (typeof globalThis.__dinou_require__ === "function") {
+        AsyncLocalStorageClass = globalThis.__dinou_require__("node:async_hooks")?.AsyncLocalStorage;
+      } else if (typeof process !== "undefined" && process.versions && process.versions.node) {
+        const nodeRequire = (0, eval)("require");
+        AsyncLocalStorageClass = nodeRequire("node:async_hooks")?.AsyncLocalStorage;
       }
     } catch (e) {}
   }

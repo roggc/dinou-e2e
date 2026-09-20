@@ -2,7 +2,6 @@ const { execSync } = require("child_process");
 const fs = require("fs"); // 1. Importamos FileSystem
 const path = require("path"); // 2. Importamos Path
 
-const publicDir = path.join(__dirname, "public");
 
 const scenarios = [
   { name: "Webpack DEV", cmd: "npm run dev:webpack" },
@@ -24,9 +23,6 @@ for (const scenario of scenarios) {
   try {
     if (scenario.name.includes("DEV")) {
       console.log(`   🧹 Limpiando artefactos antiguos de compilación...`);
-      if (fs.existsSync(publicDir)) {
-        fs.rmSync(publicDir, { recursive: true, force: true });
-      }
       const dinouDir = path.join(__dirname, ".dinou");
       const dinouPublic = path.join(dinouDir, "public");
       const dinouManifest = path.join(dinouDir, "react_client_manifest");
