@@ -266,6 +266,7 @@ const clientReferencesPlugin = {
       const fileUrl = pathToFileURL(absPath).href;
       const importPath = absPath.replace(/\\/g, "/") + "?dinou-ssr";
 
+      const altFileUrl = fileUrl.replace(/file:\/\/\/([a-zA-Z]):/, (m, d) => 'file:///' + (d === d.toLowerCase() ? d.toUpperCase() : d.toLowerCase()) + ':');
       let proxyCode = `import { createClientModuleProxy } from "react-server-dom-webpack/server.edge";\n`;
       proxyCode += `import * as __dinou_ssr_mod__ from ${JSON.stringify(importPath)};\n`;
       proxyCode += `const proxy = createClientModuleProxy(${JSON.stringify(fileUrl)});\n`;
@@ -274,10 +275,8 @@ const clientReferencesPlugin = {
       proxyCode += `  for (const k of Object.keys(__dinou_ssr_mod__)) {\n`;
       proxyCode += `    if (typeof __dinou_ssr_mod__[k] === 'function') {\n`;
       proxyCode += `      globalThis.__DINOU_CLIENT_SSR__[${JSON.stringify(fileUrl)} + '#' + k] = __dinou_ssr_mod__[k];\n`;
+      proxyCode += `      globalThis.__DINOU_CLIENT_SSR__[${JSON.stringify(altFileUrl)} + '#' + k] = __dinou_ssr_mod__[k];\n`;
       proxyCode += `    }\n`;
-      proxyCode += `  }\n`;
-      proxyCode += `  if ('default' in __dinou_ssr_mod__ && typeof __dinou_ssr_mod__.default === 'function') {\n`;
-      proxyCode += `    globalThis.__DINOU_CLIENT_SSR__[${JSON.stringify(fileUrl)} + '#default'] = __dinou_ssr_mod__.default;\n`;
       proxyCode += `  }\n`;
       proxyCode += `}\n`;
 

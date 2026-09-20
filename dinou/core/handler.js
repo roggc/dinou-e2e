@@ -1081,13 +1081,18 @@ async function handleRequest(request, platformContext = {}) {
         let jsx;
         let rscText = "";
 
+        let pageBody = "";
         try {
           if (!isError) {
             await requestStorage.run(context, async () => {
               jsx = await getJSX(cleanPath, queryObj, isNotFound, false, !pagePath);
               const clientManifest = getClientManifest();
-              const rscStream = renderRSCStream(jsx, clientManifest, { runtime: "edge" });
-              rscText = await new Response(rscStream).text();
+              const [rscRes, htmlBody] = await Promise.all([
+                new Response(renderRSCStream(jsx, clientManifest, { runtime: "edge" })).text(),
+                renderJsxToHtml(jsx),
+              ]);
+              rscText = rscRes;
+              pageBody = htmlBody;
             });
           }
         } catch (err) {
@@ -1105,8 +1110,12 @@ async function handleRequest(request, platformContext = {}) {
             await requestStorage.run(context, async () => {
               jsx = await getErrorJSX(cleanPath, queryObj, serializedError, isDevelopment);
               const clientManifest = getClientManifest();
-              const errStream = renderRSCStream(jsx, clientManifest, { runtime: "edge" });
-              rscText = await new Response(errStream).text();
+              const [errRes, errBody] = await Promise.all([
+                new Response(renderRSCStream(jsx, clientManifest, { runtime: "edge" })).text(),
+                renderJsxToHtml(jsx),
+              ]);
+              rscText = errRes;
+              pageBody = errBody;
             });
           } catch (e) {
             console.error("[Edge ISG] Failed to render error JSX:", e);
@@ -1128,16 +1137,6 @@ async function handleRequest(request, platformContext = {}) {
         if (shouldCacheISG) {
           const rscKey = cleanPath ? `${cleanPath}/rsc.rsc` : "rsc.rsc";
           await storage.set(rscKey, rscText);
-        }
-
-        // Render real body content from resolved JSX
-        let pageBody = "";
-        if (jsx) {
-          try {
-            pageBody = renderJsxToHtml(jsx);
-          } catch (e) {
-            console.warn("[Edge ISG] renderJsxToHtml warning:", e);
-          }
         }
 
         if (isError && !pageBody) {
@@ -1183,7 +1182,19 @@ async function handleRequest(request, platformContext = {}) {
             if (bodyMatch) {
               bodyContent = bodyMatch[1];
             }
-            baseHtml = baseHtml.replace(/<body[^>]*>[\s\S]*?<\/body>/i, `<body${isError ? ' data-hydrated="true"' : ""}>${bodyContent}</body>`);
+            // Preserve client entry module scripts and helper scripts from baseHtml body
+            let preservedScripts = "";
+            const baseBodyMatch = baseHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+            if (baseBodyMatch) {
+              const scriptTags = baseBodyMatch[1].match(/<script\b[^>]*>[\s\S]*?<\/script>/gi);
+              if (scriptTags) {
+                preservedScripts = scriptTags.filter((s) => !s.includes("$RC(") && !s.includes("$RV=")).join("\n");
+              }
+            }
+            baseHtml = baseHtml.replace(
+              /<body[^>]*>[\s\S]*?<\/body>/i,
+              `<body${isError ? ' data-hydrated="true"' : ""}>${bodyContent}${preservedScripts}</body>`
+            );
           }
           if (bridge._injectedScripts && baseHtml.includes("</body>")) {
             baseHtml = baseHtml.replace("</body>", `${bridge._injectedScripts}</body>`);

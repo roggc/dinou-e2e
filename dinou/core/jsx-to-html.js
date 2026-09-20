@@ -38,12 +38,22 @@ function styleObjectToString(style) {
  * Serializes a React JSX element tree into an HTML string.
  * Works seamlessly in Edge/Workers without requiring Node child_process.
  * 
- * @param {*} node React Element or primitive
- * @returns {string} HTML string
+ * @param {*} node React Element or primitive or Promise
+ * @returns {Promise<string>} HTML string
  */
-function renderJsxToHtml(node) {
+async function renderJsxToHtml(node) {
   if (node == null || typeof node === "boolean") {
     return "";
+  }
+
+  // If node is a Promise (e.g. from async component or server function)
+  if (typeof node === "object" && typeof node.then === "function") {
+    try {
+      const resolved = await node;
+      return await renderJsxToHtml(resolved);
+    } catch (e) {
+      return "";
+    }
   }
 
   if (typeof node === "string" || typeof node === "number") {
@@ -51,16 +61,30 @@ function renderJsxToHtml(node) {
   }
 
   if (Array.isArray(node)) {
-    return node.map(renderJsxToHtml).join("");
+    const renderedItems = await Promise.all(node.map((child) => renderJsxToHtml(child)));
+    return renderedItems.join("");
   }
 
   if (typeof node === "object" && node !== null) {
-    // React Fragment or Suspense
+    // React Fragment
+    if (node.type === Symbol.for("react.fragment")) {
+      return await renderJsxToHtml(node.props?.children);
+    }
+
+    // Suspense
     if (
-      node.type === Symbol.for("react.fragment") ||
-      node.type === Symbol.for("react.suspense")
+      node.type === Symbol.for("react.suspense") ||
+      node.type === "Suspense"
     ) {
-      return renderJsxToHtml(node.props?.children);
+      try {
+        let child = node.props?.children;
+        if (child && typeof child.then === "function") {
+          child = await child;
+        }
+        return await renderJsxToHtml(child);
+      } catch (e) {
+        return await renderJsxToHtml(node.props?.fallback);
+      }
     }
 
     // HTML Elements (string type)
@@ -93,7 +117,7 @@ function renderJsxToHtml(node) {
         return `<${tag}${attrs}/>`;
       }
 
-      const inner = renderJsxToHtml(children);
+      const inner = await renderJsxToHtml(children);
       return `<${tag}${attrs}>${inner}</${tag}>`;
     }
 
@@ -101,7 +125,11 @@ function renderJsxToHtml(node) {
     let clientRefId = "";
     try {
       if (node.type) {
-        clientRefId = node.type.$$id || node.type.name || "";
+        if (typeof node.type.$$id === "string") {
+          clientRefId = node.type.$$id;
+        } else if (typeof node.type.name === "string") {
+          clientRefId = node.type.name;
+        }
       }
     } catch (e) {
       clientRefId = "";
@@ -110,27 +138,46 @@ function renderJsxToHtml(node) {
     if (
       clientRefId &&
       typeof globalThis !== "undefined" &&
-      globalThis.__DINOU_CLIENT_SSR__ &&
-      globalThis.__DINOU_CLIENT_SSR__[clientRefId]
+      globalThis.__DINOU_CLIENT_SSR__
     ) {
-      try {
-        const ssrFn = globalThis.__DINOU_CLIENT_SSR__[clientRefId];
-        const rendered = ssrFn(node.props || {});
-        if (rendered != null) {
-          return renderJsxToHtml(rendered);
+      const ssrMap = globalThis.__DINOU_CLIENT_SSR__;
+      let ssrFn = ssrMap[clientRefId];
+      if (!ssrFn) {
+        const altId = clientRefId.replace(/\\/g, "/");
+        ssrFn = ssrMap[altId];
+        if (!ssrFn) {
+          const driveSwapped = altId.replace(/file:\/\/\/([a-zA-Z]):/, (m, d) =>
+            'file:///' + (d === d.toLowerCase() ? d.toUpperCase() : d.toLowerCase()) + ':'
+          );
+          ssrFn = ssrMap[driveSwapped];
         }
-      } catch (e) {
-        console.warn(`[Edge ISG SSR] Component failed in ${clientRefId}:`, e);
-        // Fall back to children if SSR function throws
+      }
+
+      if (typeof ssrFn === "function") {
+        try {
+          let rendered = ssrFn(node.props || {});
+          if (rendered && typeof rendered.then === "function") {
+            rendered = await rendered;
+          }
+          if (rendered != null) {
+            return await renderJsxToHtml(rendered);
+          }
+        } catch (e) {
+          console.warn(`[Edge ISG SSR] Component failed in ${clientRefId}:`, e);
+          // Fall back to children if SSR function throws
+        }
       }
     }
 
     // Callable function component (e.g. Server Component or normal function)
     if (typeof node.type === "function") {
       try {
-        const rendered = node.type(node.props || {});
+        let rendered = node.type(node.props || {});
+        if (rendered && typeof rendered.then === "function") {
+          rendered = await rendered;
+        }
         if (rendered != null) {
-          return renderJsxToHtml(rendered);
+          return await renderJsxToHtml(rendered);
         }
       } catch (e) {
         // Fall back to children
@@ -139,7 +186,11 @@ function renderJsxToHtml(node) {
 
     // Functional / Client Component references: render their children
     if (node.props && "children" in node.props) {
-      return renderJsxToHtml(node.props.children);
+      let children = node.props.children;
+      if (children && typeof children.then === "function") {
+        children = await children;
+      }
+      return await renderJsxToHtml(children);
     }
   }
 
