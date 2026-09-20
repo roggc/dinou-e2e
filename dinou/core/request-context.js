@@ -12,14 +12,14 @@ if (typeof window === "undefined") {
 
   if (!AsyncLocalStorageClass) {
     try {
-      const reqFn =
-        typeof globalThis.__dinou_require__ === "function"
-          ? globalThis.__dinou_require__
-          : typeof require === "function"
-            ? require
-            : null;
-      if (typeof reqFn === "function") {
-        const asyncHooks = reqFn("node:async_hooks") || reqFn("async_hooks");
+      if (typeof __non_webpack_require__ === "function") {
+        const asyncHooks = __non_webpack_require__("node:async_hooks");
+        AsyncLocalStorageClass = asyncHooks?.AsyncLocalStorage;
+      } else if (typeof globalThis.__dinou_require__ === "function") {
+        const asyncHooks = globalThis.__dinou_require__("node:async_hooks");
+        AsyncLocalStorageClass = asyncHooks?.AsyncLocalStorage;
+      } else if (typeof require === "function") {
+        const asyncHooks = require("node:async_hooks");
         AsyncLocalStorageClass = asyncHooks?.AsyncLocalStorage;
       }
     } catch (e) {}

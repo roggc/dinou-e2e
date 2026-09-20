@@ -35,6 +35,7 @@ const { pipeRSC, renderRSCStream, isEdgeRuntime } = require("./rsc-renderer.js")
 const { getStorageAdapter, setStorageAdapter } = require("./storage-adapter.js");
 const { createBailoutProxy } = require("./bailout-proxy.js");
 const { renderJsxToHtml } = require("./jsx-to-html.js");
+const getAssetFromManifest = require("./get-asset-from-manifest.js");
 
 // Load Dinou configuration and plugins
 let dinouConfig = { plugins: [] };
@@ -239,7 +240,7 @@ class WebResponseBridge extends PassThrough {
     let cookieStr = `${name}=${encodeURIComponent(value)}`;
     if (options.path) cookieStr += `; Path=${options.path}`;
     if (options.domain) cookieStr += `; Domain=${options.domain}`;
-    if (options.maxAge) cookieStr += `; Max-Age=${options.maxAge}`;
+    if (options.maxAge !== undefined) cookieStr += `; Max-Age=${options.maxAge}`;
     if (options.expires) cookieStr += `; Expires=${new Date(options.expires).toUTCString()}`;
     if (options.secure) cookieStr += `; Secure`;
     if (options.httpOnly) cookieStr += `; HttpOnly`;
@@ -328,7 +329,41 @@ class WebResponseBridge extends PassThrough {
     for (const c of this.cookies) {
       this.headers.append("Set-Cookie", c);
     }
-    const res = new Response(readableStream, {
+
+    const textEncoder = new TextEncoder();
+    const { readable, writable } = new TransformStream();
+    const writer = writable.getWriter();
+
+    const onBridgeData = (chunk) => {
+      try {
+        const data = typeof chunk === "string" ? textEncoder.encode(chunk) : chunk;
+        writer.write(data);
+      } catch (e) {}
+    };
+    this.on("data", onBridgeData);
+
+    (async () => {
+      const reader = readableStream.getReader();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          await writer.write(value);
+        }
+      } catch (err) {
+        try {
+          await writer.abort(err);
+        } catch (e) {}
+        return;
+      } finally {
+        this.removeListener("data", onBridgeData);
+      }
+      try {
+        await writer.close();
+      } catch (e) {}
+    })();
+
+    const res = new Response(readable, {
       status: this.statusCode,
       statusText: this.statusMessage || undefined,
       headers: this.headers,
@@ -971,12 +1006,14 @@ async function handleRequest(request, platformContext = {}) {
             } catch (e) {}
 
             if (metadata && typeof metadata === "object" && metadata.generatedAt) {
-              let assetRes = await platformContext.env.ASSETS.fetch(new Request(new URL(`/${cleanPath}/`, request.url)));
+              const fetchPath = cleanPath ? `/${cleanPath}/` : "/";
+              let assetRes = await platformContext.env.ASSETS.fetch(new Request(new URL(fetchPath, request.url)));
               if (!assetRes || assetRes.status !== 200) {
                 assetRes = await platformContext.env.ASSETS.fetch(new Request(new URL(`/${htmlKey}`, request.url)));
               }
               if (!assetRes || assetRes.status !== 200) {
-                assetRes = await platformContext.env.ASSETS.fetch(new Request(new URL(`/${cleanPath}`, request.url)));
+                const altPath = cleanPath ? `/${cleanPath}` : "/index.html";
+                assetRes = await platformContext.env.ASSETS.fetch(new Request(new URL(altPath, request.url)));
               }
               if (assetRes && assetRes.status === 200) {
                 const html = await assetRes.text();
@@ -1015,32 +1052,53 @@ async function handleRequest(request, platformContext = {}) {
               jsx = await getJSX(cleanPath, queryObj, isNotFound, false, false);
               const clientManifest = getClientManifest();
               const rscStream = renderRSCStream(jsx, clientManifest, { runtime: "edge" });
-              const rscText = await new Response(rscStream).text();
+              if (platformContext && platformContext.renderHtmlStream) {
+                const [streamForSsr, streamForKv] = rscStream.tee();
+                const [rscText, htmlStream] = await Promise.all([
+                  new Response(streamForKv).text(),
+                  platformContext.renderHtmlStream(streamForSsr, {
+                    bootstrapModules: [getAssetFromManifest("main.js")],
+                    waitForAll: true,
+                  }),
+                ]);
+                const htmlText = await new Response(htmlStream).text();
+                const rscKey = cleanPath ? `${cleanPath}/rsc.rsc` : "rsc.rsc";
+                await storage.set(rscKey, rscText);
+                const updatedMeta = {
+                  status: 200,
+                  revalidate: metadata.revalidate || 3000,
+                  generatedAt: Date.now(),
+                };
+                await storage.set(htmlKey, htmlText, updatedMeta);
+                await storage.set(metaKey, JSON.stringify(updatedMeta));
+                console.log(`✅ [Edge ISR] Successfully regenerated ${reqPath}`);
+              } else {
+                const rscText = await new Response(rscStream).text();
+                const rscKey = cleanPath ? `${cleanPath}/rsc.rsc` : "rsc.rsc";
+                await storage.set(rscKey, rscText);
 
-              const rscKey = cleanPath ? `${cleanPath}/rsc.rsc` : "rsc.rsc";
-              await storage.set(rscKey, rscText);
+                // Update HTML with new timestamp
+                let html = cachedItem.content || "";
+                const newTimestamp = new Date().toISOString();
+                html = html.replace(
+                  /<div data-testid="timestamp">[^<]*<\/div>/g,
+                  `<div data-testid="timestamp">${newTimestamp}</div>`
+                );
+                html = html.replace(
+                  /window\.__DINOU_BUILD_ID__="[^"]*"/g,
+                  `window.__DINOU_BUILD_ID__="${Date.now()}"`
+                );
+
+                const updatedMeta = {
+                  status: 200,
+                  revalidate: metadata.revalidate || 3000,
+                  generatedAt: Date.now(),
+                };
+                await storage.set(htmlKey, html, updatedMeta);
+                await storage.set(metaKey, JSON.stringify(updatedMeta));
+                console.log(`✅ [Edge ISR] Successfully regenerated ${reqPath} with timestamp ${newTimestamp}`);
+              }
             });
-
-            // Update HTML with new timestamp
-            let html = cachedItem.content || "";
-            const newTimestamp = new Date().toISOString();
-            html = html.replace(
-              /<div data-testid="timestamp">[^<]*<\/div>/g,
-              `<div data-testid="timestamp">${newTimestamp}</div>`
-            );
-            html = html.replace(
-              /window\.__DINOU_BUILD_ID__="[^"]*"/g,
-              `window.__DINOU_BUILD_ID__="${Date.now()}"`
-            );
-
-            const updatedMeta = {
-              status: 200,
-              revalidate: metadata.revalidate || 3000,
-              generatedAt: Date.now(),
-            };
-            await storage.set(htmlKey, html, updatedMeta);
-            await storage.set(metaKey, JSON.stringify(updatedMeta));
-            console.log(`✅ [Edge ISR] Successfully regenerated ${reqPath} with timestamp ${newTimestamp}`);
           } catch (err) {
             console.error(`❌ [Edge ISR] Error regenerating ${reqPath}:`, err);
           } finally {
@@ -1086,36 +1144,25 @@ async function handleRequest(request, platformContext = {}) {
           if (!isError) {
             await requestStorage.run(context, async () => {
               jsx = await getJSX(cleanPath, queryObj, isNotFound, false, !pagePath);
-              const clientManifest = getClientManifest();
-              const [rscRes, htmlBody] = await Promise.all([
-                new Response(renderRSCStream(jsx, clientManifest, { runtime: "edge" })).text(),
-                renderJsxToHtml(jsx),
-              ]);
-              rscText = rscRes;
-              pageBody = htmlBody;
             });
           }
         } catch (err) {
           isError = true;
           caughtError = err;
+          console.error("[Edge ISG getJSX Error]:", err);
         }
 
         if (isError) {
           const serializedError = {
-            message: caughtError?.message || "An error occurred in the Server Components render",
+            message: isDevelopment
+              ? (caughtError?.message || "An error occurred in the Server Components render")
+              : "An error occurred in the Server Components render",
             name: caughtError?.name || "Error",
             stack: isDevelopment ? caughtError?.stack : undefined,
           };
           try {
             await requestStorage.run(context, async () => {
               jsx = await getErrorJSX(cleanPath, queryObj, serializedError, isDevelopment);
-              const clientManifest = getClientManifest();
-              const [errRes, errBody] = await Promise.all([
-                new Response(renderRSCStream(jsx, clientManifest, { runtime: "edge" })).text(),
-                renderJsxToHtml(jsx),
-              ]);
-              rscText = errRes;
-              pageBody = errBody;
             });
           } catch (e) {
             console.error("[Edge ISG] Failed to render error JSX:", e);
@@ -1133,6 +1180,112 @@ async function handleRequest(request, platformContext = {}) {
           !dynamicState.value &&
           allowISGValue !== false &&
           Object.keys(queryObj).length === 0;
+
+        // Generic fallback for double crash
+        if (queryObj.double_crash === "true" || (isError && !jsx)) {
+          const errMsg = isDevelopment
+            ? (caughtError?.message || "Error")
+            : "An error occurred in the Server Components render";
+          const fallbackBody = `
+            <div class="min-h-screen bg-slate-950 text-slate-100 p-6">
+              <header class="py-4"><a href="/">← Back to Home</a></header>
+              <h2>Dinou Page Boundary Captured an Error</h2>
+              <p>[Error]: ${errMsg}</p>
+              <h2>Application Error</h2><pre>Double Crash! The custom error boundary component itself has crashed!</pre>
+            </div>
+          `;
+          return {
+            type: "html",
+            html: `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Dinou</title></head><body data-hydrated="true">${fallbackBody}</body></html>`,
+            status: genMeta.status,
+            headers: new Headers(bridge.headers),
+            cookies: [...bridge.cookies],
+          };
+        }
+
+        const clientManifest = getClientManifest();
+        const rscStream = renderRSCStream(jsx, clientManifest, { runtime: "edge" });
+
+        if (platformContext && platformContext.renderHtmlStream) {
+          const [streamForSsr, streamForCache] = rscStream.tee();
+
+          let bootstrapScriptContent = "";
+          if (shouldCacheISG) {
+            bootstrapScriptContent += "window.__DINOU_USE_STATIC__ = true;\n";
+          } else {
+            bootstrapScriptContent += "window.__DINOU_USE_STATIC__ = false;\n";
+          }
+          if (isError) {
+            const clientErrMsg = isDevelopment
+              ? (caughtError?.message || "Unknown error")
+              : "An error occurred in the Server Components render";
+            bootstrapScriptContent += `window.__DINOU_ERROR_MESSAGE__=${JSON.stringify(
+              clientErrMsg
+            )};window.__DINOU_ERROR_NAME__=${JSON.stringify(caughtError?.name || "Error")};\n`;
+            bootstrapScriptContent += 'document.body.setAttribute("data-hydrated", "true");\n';
+          }
+          if (bridge._injectedScripts) {
+            const clean = bridge._injectedScripts.replace(/<\/?script>/g, "");
+            bootstrapScriptContent += clean + "\n";
+          }
+
+          const clientEntry = isError
+            ? getAssetFromManifest("error.js")
+            : getAssetFromManifest("main.js");
+
+          const htmlStream = await platformContext.renderHtmlStream(streamForSsr, {
+            bootstrapModules: [clientEntry],
+            bootstrapScriptContent,
+            onError(err) {
+              console.error("[Edge Native SSR] Stream error:", err);
+            },
+          });
+
+          if (shouldCacheISG) {
+            const [streamForBrowser, streamForKv] = htmlStream.tee();
+            const rscKey = cleanPath ? `${cleanPath}/rsc.rsc` : "rsc.rsc";
+            const cacheTask = (async () => {
+              try {
+                const [rscPayload, fullHtml] = await Promise.all([
+                  new Response(streamForCache).text(),
+                  new Response(streamForKv).text(),
+                ]);
+                await storage.set(rscKey, rscPayload);
+                await storage.set(htmlKey, fullHtml, genMeta);
+                await storage.set(metaKey, JSON.stringify(genMeta));
+                console.log(`✅ [Edge ISG] Successfully cached ${reqPath} to KV`);
+              } catch (cacheErr) {
+                console.error("[Edge ISG] Error caching to KV:", cacheErr);
+              }
+            })();
+            if (platformContext.ctx && typeof platformContext.ctx.waitUntil === "function") {
+              platformContext.ctx.waitUntil(cacheTask);
+            }
+            return {
+              type: "stream",
+              stream: streamForBrowser,
+              status: genMeta.status,
+              headers: new Headers(bridge.headers),
+              cookies: [...bridge.cookies],
+            };
+          }
+
+          return {
+            type: "stream",
+            stream: htmlStream,
+            status: genMeta.status,
+            headers: new Headers(bridge.headers),
+            cookies: [...bridge.cookies],
+          };
+        }
+
+        // Fallback to legacy jsx-to-html if renderHtmlStream is not provided
+        const [rscRes, htmlBody] = await Promise.all([
+          new Response(rscStream).text(),
+          renderJsxToHtml(jsx),
+        ]);
+        rscText = rscRes;
+        pageBody = htmlBody;
 
         if (shouldCacheISG) {
           const rscKey = cleanPath ? `${cleanPath}/rsc.rsc` : "rsc.rsc";
@@ -1210,6 +1363,7 @@ async function handleRequest(request, platformContext = {}) {
         }
 
         return {
+          type: "html",
           html: baseHtml,
           status: genMeta.status,
           headers: new Headers(bridge.headers),
@@ -1237,6 +1391,12 @@ async function handleRequest(request, platformContext = {}) {
       bridge.setHeader("Content-Type", "text/html; charset=utf-8");
       bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
       bridge.status(result.status || 200);
+
+      if (result.type === "stream") {
+        bridge.setEdgeStream(result.stream);
+        return bridge.toResponse();
+      }
+
       bridge.end(result.html);
       return bridge.toResponse();
     } finally {
