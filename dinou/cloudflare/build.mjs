@@ -94,6 +94,36 @@ if (sfManifestPath && fs.existsSync(sfManifestPath)) {
 console.log("🔍 [Dinou Cloudflare] Discovering client components for SSR Engine...");
 const srcDir = path.resolve(projectRoot, "src");
 
+function isSupportedClientModule(filePath, content) {
+  const norm = filePath.replace(/\\/g, "/");
+  // User code and Dinou framework code outside node_modules are always supported
+  if (!norm.includes("node_modules")) {
+    return true;
+  }
+
+  if (content === undefined && fs.existsSync(filePath)) {
+    try {
+      content = fs.readFileSync(filePath, "utf8");
+    } catch (e) {
+      return false;
+    }
+  }
+
+  if (typeof content !== "string") return false;
+
+  // SystemJS bundles (contain System.register) cannot run in ESM environments without the System loader
+  if (content.includes("System.register(") || content.includes("System.registerDynamic(")) {
+    return false;
+  }
+
+  // Legacy UMD/AMD wrappers lacking ES module or CommonJS exports
+  if (content.includes("define.amd") && !content.includes("export ") && !content.includes("module.exports")) {
+    return false;
+  }
+
+  return true;
+}
+
 function findClientComponents() {
   const clientFiles = new Set();
   function walk(dir) {
@@ -102,14 +132,12 @@ function findClientComponents() {
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "system" || entry.name === "umd") continue;
+        if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "tests" || entry.name === "test" || entry.name === "__tests__" || entry.name === "docs") continue;
         walk(full);
       } else if (/\.[jt]sx?$/.test(entry.name)) {
-        const norm = full.replace(/\\/g, "/");
-        if (norm.includes("/system/") || norm.includes("/umd/")) continue;
         try {
           const content = fs.readFileSync(full, "utf8");
-          if (useClientRegex.test(content.trim())) {
+          if (useClientRegex.test(content.trim()) && isSupportedClientModule(full, content)) {
             clientFiles.add(path.resolve(full));
           }
         } catch (e) {}
@@ -142,19 +170,15 @@ function findClientComponents() {
   } catch (e) {}
 
   for (const k of Object.keys(parsedClientManifest)) {
-    const normK = k.replace(/\\/g, "/");
-    if (normK.includes("/system/") || normK.includes("/umd/")) continue;
     const fileUrl = k.split("#")[0];
     if (fileUrl.startsWith("file:///")) {
       try {
         const filePath = fileURLToPath(fileUrl);
-        const normPath = filePath.replace(/\\/g, "/");
-        if (normPath.includes("/system/") || normPath.includes("/umd/")) continue;
         const baseName = path.basename(filePath);
         if (baseName === "client.jsx" || baseName === "client-error.jsx" || baseName === "client-webpack.jsx" || baseName === "client-error-webpack.jsx") {
           continue;
         }
-        if (fs.existsSync(filePath)) {
+        if (fs.existsSync(filePath) && isSupportedClientModule(filePath)) {
           clientFiles.add(path.resolve(filePath));
         }
       } catch (e) {}
@@ -311,9 +335,13 @@ clientComponents.forEach((compPath, index) => {
 });
 
 for (const [k, v] of Object.entries(parsedClientManifest)) {
-  const normK = k.replace(/\\/g, "/");
-  if (normK.includes("/system/") || normK.includes("/umd/")) continue;
   const fileUrl = k.split("#")[0];
+  if (fileUrl.startsWith("file:///")) {
+    try {
+      const filePath = fileURLToPath(fileUrl);
+      if (fs.existsSync(filePath) && !isSupportedClientModule(filePath)) continue;
+    } catch (e) {}
+  }
   const compIndex = clientComponents.findIndex(
     (c) => pathToFileURL(c).href === fileUrl || pathToFileURL(c).href.toLowerCase() === fileUrl.toLowerCase()
   );
@@ -348,9 +376,13 @@ clientComponents.forEach((compPath) => {
 });
 
 for (const [k, v] of Object.entries(parsedClientManifest)) {
-  const normK = k.replace(/\\/g, "/");
-  if (normK.includes("/system/") || normK.includes("/umd/")) continue;
   const fileUrl = k.split("#")[0];
+  if (fileUrl.startsWith("file:///")) {
+    try {
+      const filePath = fileURLToPath(fileUrl);
+      if (fs.existsSync(filePath) && !isSupportedClientModule(filePath)) continue;
+    } catch (e) {}
+  }
   if (v && v.id) {
     ssrManifestCode += `    ${JSON.stringify(v.id)}: { "*": { id: ${JSON.stringify(fileUrl)}, chunks: [], name: "*" } },\n`;
   }
@@ -588,7 +620,6 @@ const clientReferencesPlugin = {
         }
       }
       const normalizedPath = args.path.replace(/\\/g, "/");
-      if (normalizedPath.includes("/system/") || normalizedPath.includes("/umd/")) return null;
       if (normalizedPath.includes("dinou/core/navigation")) return null;
 
       let code;
@@ -598,6 +629,7 @@ const clientReferencesPlugin = {
         return null;
       }
 
+      if (!isSupportedClientModule(args.path, code)) return null;
       if (!useClientRegex.test(code.trim())) return null;
 
       const exports = parseExports(code);
