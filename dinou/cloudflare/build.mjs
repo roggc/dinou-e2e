@@ -102,9 +102,11 @@ function findClientComponents() {
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        if (entry.name === "node_modules" || entry.name === ".git") continue;
+        if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "system" || entry.name === "umd") continue;
         walk(full);
       } else if (/\.[jt]sx?$/.test(entry.name)) {
+        const norm = full.replace(/\\/g, "/");
+        if (norm.includes("/system/") || norm.includes("/umd/")) continue;
         try {
           const content = fs.readFileSync(full, "utf8");
           if (useClientRegex.test(content.trim())) {
@@ -140,10 +142,14 @@ function findClientComponents() {
   } catch (e) {}
 
   for (const k of Object.keys(parsedClientManifest)) {
+    const normK = k.replace(/\\/g, "/");
+    if (normK.includes("/system/") || normK.includes("/umd/")) continue;
     const fileUrl = k.split("#")[0];
     if (fileUrl.startsWith("file:///")) {
       try {
         const filePath = fileURLToPath(fileUrl);
+        const normPath = filePath.replace(/\\/g, "/");
+        if (normPath.includes("/system/") || normPath.includes("/umd/")) continue;
         const baseName = path.basename(filePath);
         if (baseName === "client.jsx" || baseName === "client-error.jsx" || baseName === "client-webpack.jsx" || baseName === "client-error-webpack.jsx") {
           continue;
@@ -299,10 +305,14 @@ clientComponents.forEach((compPath, index) => {
   const fileUrl = pathToFileURL(compPath).href;
   const altFileUrl = fileUrl.replace(/file:\/\/\/([a-zA-Z]):/, (m, d) => 'file:///' + (d === d.toLowerCase() ? d.toUpperCase() : d.toLowerCase()) + ':');
   ssrManifestCode += `  ${JSON.stringify(fileUrl)}: mod_${index},\n`;
-  ssrManifestCode += `  ${JSON.stringify(altFileUrl)}: mod_${index},\n`;
+  if (altFileUrl !== fileUrl) {
+    ssrManifestCode += `  ${JSON.stringify(altFileUrl)}: mod_${index},\n`;
+  }
 });
 
 for (const [k, v] of Object.entries(parsedClientManifest)) {
+  const normK = k.replace(/\\/g, "/");
+  if (normK.includes("/system/") || normK.includes("/umd/")) continue;
   const fileUrl = k.split("#")[0];
   const compIndex = clientComponents.findIndex(
     (c) => pathToFileURL(c).href === fileUrl || pathToFileURL(c).href.toLowerCase() === fileUrl.toLowerCase()
@@ -321,7 +331,9 @@ serverFunctionFiles.forEach((relPath, index) => {
 
   ssrManifestCode += `  ${JSON.stringify(relFileUrl)}: sf_${index},\n`;
   ssrManifestCode += `  ${JSON.stringify(fullFileUrl)}: sf_${index},\n`;
-  ssrManifestCode += `  ${JSON.stringify(altFullFileUrl)}: sf_${index},\n`;
+  if (altFullFileUrl !== fullFileUrl) {
+    ssrManifestCode += `  ${JSON.stringify(altFullFileUrl)}: sf_${index},\n`;
+  }
 });
 ssrManifestCode += `};\n\n`;
 
@@ -330,10 +342,14 @@ clientComponents.forEach((compPath) => {
   const fileUrl = pathToFileURL(compPath).href;
   const altFileUrl = fileUrl.replace(/file:\/\/\/([a-zA-Z]):/, (m, d) => 'file:///' + (d === d.toLowerCase() ? d.toUpperCase() : d.toLowerCase()) + ':');
   ssrManifestCode += `    ${JSON.stringify(fileUrl)}: { "*": { id: ${JSON.stringify(fileUrl)}, chunks: [], name: "*" } },\n`;
-  ssrManifestCode += `    ${JSON.stringify(altFileUrl)}: { "*": { id: ${JSON.stringify(fileUrl)}, chunks: [], name: "*" } },\n`;
+  if (altFileUrl !== fileUrl) {
+    ssrManifestCode += `    ${JSON.stringify(altFileUrl)}: { "*": { id: ${JSON.stringify(fileUrl)}, chunks: [], name: "*" } },\n`;
+  }
 });
 
 for (const [k, v] of Object.entries(parsedClientManifest)) {
+  const normK = k.replace(/\\/g, "/");
+  if (normK.includes("/system/") || normK.includes("/umd/")) continue;
   const fileUrl = k.split("#")[0];
   if (v && v.id) {
     ssrManifestCode += `    ${JSON.stringify(v.id)}: { "*": { id: ${JSON.stringify(fileUrl)}, chunks: [], name: "*" } },\n`;
@@ -350,13 +366,17 @@ serverFunctionFiles.forEach((relPath) => {
 
   ssrManifestCode += `    ${JSON.stringify(relFileUrl)}: { id: ${JSON.stringify(relFileUrl)}, chunks: [], name: "*" },\n`;
   ssrManifestCode += `    ${JSON.stringify(fullFileUrl)}: { id: ${JSON.stringify(relFileUrl)}, chunks: [], name: "*" },\n`;
-  ssrManifestCode += `    ${JSON.stringify(altFullFileUrl)}: { id: ${JSON.stringify(relFileUrl)}, chunks: [], name: "*" },\n`;
+  if (altFullFileUrl !== fullFileUrl) {
+    ssrManifestCode += `    ${JSON.stringify(altFullFileUrl)}: { id: ${JSON.stringify(relFileUrl)}, chunks: [], name: "*" },\n`;
+  }
 
   const fns = parsedServerFunctionsManifest[relPath] || [];
   for (const fn of fns) {
     ssrManifestCode += `    ${JSON.stringify(relFileUrl + "#" + fn)}: { id: ${JSON.stringify(relFileUrl)}, chunks: [], name: ${JSON.stringify(fn)} },\n`;
     ssrManifestCode += `    ${JSON.stringify(fullFileUrl + "#" + fn)}: { id: ${JSON.stringify(relFileUrl)}, chunks: [], name: ${JSON.stringify(fn)} },\n`;
-    ssrManifestCode += `    ${JSON.stringify(altFullFileUrl + "#" + fn)}: { id: ${JSON.stringify(relFileUrl)}, chunks: [], name: ${JSON.stringify(fn)} },\n`;
+    if (altFullFileUrl !== fullFileUrl) {
+      ssrManifestCode += `    ${JSON.stringify(altFullFileUrl + "#" + fn)}: { id: ${JSON.stringify(relFileUrl)}, chunks: [], name: ${JSON.stringify(fn)} },\n`;
+    }
   }
 });
 
@@ -568,6 +588,7 @@ const clientReferencesPlugin = {
         }
       }
       const normalizedPath = args.path.replace(/\\/g, "/");
+      if (normalizedPath.includes("/system/") || normalizedPath.includes("/umd/")) return null;
       if (normalizedPath.includes("dinou/core/navigation")) return null;
 
       let code;
