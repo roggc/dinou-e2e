@@ -227,14 +227,7 @@ function generateAllUrlVariants(absPath) {
   return Array.from(urls);
 }
 
-const isWebpackBuild =
-  process.env.DINOU_BUILD_TOOL === "webpack" ||
-  Boolean(
-    parsedClientManifest &&
-    Object.values(parsedClientManifest).some(
-      (v) => typeof v?.id === "number" || Array.isArray(v?.chunks)
-    )
-  );
+const isWebpackBuild = process.env.DINOU_BUILD_TOOL === "webpack";
 
 let linkChunkId = null;
 let redirectChunkId = null;
