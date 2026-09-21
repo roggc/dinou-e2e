@@ -324,12 +324,20 @@ serverFunctionFiles.forEach((relPath, index) => {
 });
 
 ssrManifestCode += `\nexport const clientModules = {\n`;
+const emittedClientModules = new Set();
+function addClientModule(key, valueExpr) {
+  if (!emittedClientModules.has(key)) {
+    emittedClientModules.add(key);
+    ssrManifestCode += `  ${JSON.stringify(key)}: ${valueExpr},\n`;
+  }
+}
+
 clientComponents.forEach((compPath, index) => {
   const fileUrl = pathToFileURL(compPath).href;
   const altFileUrl = fileUrl.replace(/file:\/\/\/([a-zA-Z]):/, (m, d) => 'file:///' + (d === d.toLowerCase() ? d.toUpperCase() : d.toLowerCase()) + ':');
-  ssrManifestCode += `  ${JSON.stringify(fileUrl)}: mod_${index},\n`;
+  addClientModule(fileUrl, `mod_${index}`);
   if (altFileUrl !== fileUrl) {
-    ssrManifestCode += `  ${JSON.stringify(altFileUrl)}: mod_${index},\n`;
+    addClientModule(altFileUrl, `mod_${index}`);
   }
 });
 
@@ -345,7 +353,7 @@ for (const [k, v] of Object.entries(parsedClientManifest)) {
     (c) => pathToFileURL(c).href === fileUrl || pathToFileURL(c).href.toLowerCase() === fileUrl.toLowerCase()
   );
   if (compIndex !== -1 && v && v.id) {
-    ssrManifestCode += `  ${JSON.stringify(v.id)}: mod_${compIndex},\n`;
+    addClientModule(v.id, `mod_${compIndex}`);
   }
 }
 
@@ -356,21 +364,29 @@ serverFunctionFiles.forEach((relPath, index) => {
   const fullFileUrl = pathToFileURL(absPath).href;
   const altFullFileUrl = fullFileUrl.replace(/file:\/\/\/([a-zA-Z]):/, (m, d) => 'file:///' + (d === d.toLowerCase() ? d.toUpperCase() : d.toLowerCase()) + ':');
 
-  ssrManifestCode += `  ${JSON.stringify(relFileUrl)}: sf_${index},\n`;
-  ssrManifestCode += `  ${JSON.stringify(fullFileUrl)}: sf_${index},\n`;
+  addClientModule(relFileUrl, `sf_${index}`);
+  addClientModule(fullFileUrl, `sf_${index}`);
   if (altFullFileUrl !== fullFileUrl) {
-    ssrManifestCode += `  ${JSON.stringify(altFullFileUrl)}: sf_${index},\n`;
+    addClientModule(altFullFileUrl, `sf_${index}`);
   }
 });
 ssrManifestCode += `};\n\n`;
 
 ssrManifestCode += `export const ssrConsumerManifest = {\n  moduleMap: {\n`;
+const emittedModuleMap = new Set();
+function addModuleMap(key, valueObjStr) {
+  if (!emittedModuleMap.has(key)) {
+    emittedModuleMap.add(key);
+    ssrManifestCode += `    ${JSON.stringify(key)}: ${valueObjStr},\n`;
+  }
+}
+
 clientComponents.forEach((compPath) => {
   const fileUrl = pathToFileURL(compPath).href;
   const altFileUrl = fileUrl.replace(/file:\/\/\/([a-zA-Z]):/, (m, d) => 'file:///' + (d === d.toLowerCase() ? d.toUpperCase() : d.toLowerCase()) + ':');
-  ssrManifestCode += `    ${JSON.stringify(fileUrl)}: { "*": { id: ${JSON.stringify(fileUrl)}, chunks: [], name: "*" } },\n`;
+  addModuleMap(fileUrl, `{ "*": { id: ${JSON.stringify(fileUrl)}, chunks: [], name: "*" } }`);
   if (altFileUrl !== fileUrl) {
-    ssrManifestCode += `    ${JSON.stringify(altFileUrl)}: { "*": { id: ${JSON.stringify(fileUrl)}, chunks: [], name: "*" } },\n`;
+    addModuleMap(altFileUrl, `{ "*": { id: ${JSON.stringify(fileUrl)}, chunks: [], name: "*" } }`);
   }
 });
 
@@ -383,10 +399,18 @@ for (const [k, v] of Object.entries(parsedClientManifest)) {
     } catch (e) {}
   }
   if (v && v.id) {
-    ssrManifestCode += `    ${JSON.stringify(v.id)}: { "*": { id: ${JSON.stringify(fileUrl)}, chunks: [], name: "*" } },\n`;
+    addModuleMap(v.id, `{ "*": { id: ${JSON.stringify(fileUrl)}, chunks: [], name: "*" } }`);
   }
 }
 ssrManifestCode += `  },\n  serverModuleMap: {\n`;
+
+const emittedServerModuleMap = new Set();
+function addServerModuleMap(key, valueObjStr) {
+  if (!emittedServerModuleMap.has(key)) {
+    emittedServerModuleMap.add(key);
+    ssrManifestCode += `    ${JSON.stringify(key)}: ${valueObjStr},\n`;
+  }
+}
 
 serverFunctionFiles.forEach((relPath) => {
   const normRel = relPath.replace(/\\/g, "/");
@@ -395,18 +419,18 @@ serverFunctionFiles.forEach((relPath) => {
   const fullFileUrl = pathToFileURL(absPath).href;
   const altFullFileUrl = fullFileUrl.replace(/file:\/\/\/([a-zA-Z]):/, (m, d) => 'file:///' + (d === d.toLowerCase() ? d.toUpperCase() : d.toLowerCase()) + ':');
 
-  ssrManifestCode += `    ${JSON.stringify(relFileUrl)}: { id: ${JSON.stringify(relFileUrl)}, chunks: [], name: "*" },\n`;
-  ssrManifestCode += `    ${JSON.stringify(fullFileUrl)}: { id: ${JSON.stringify(relFileUrl)}, chunks: [], name: "*" },\n`;
+  addServerModuleMap(relFileUrl, `{ id: ${JSON.stringify(relFileUrl)}, chunks: [], name: "*" }`);
+  addServerModuleMap(fullFileUrl, `{ id: ${JSON.stringify(relFileUrl)}, chunks: [], name: "*" }`);
   if (altFullFileUrl !== fullFileUrl) {
-    ssrManifestCode += `    ${JSON.stringify(altFullFileUrl)}: { id: ${JSON.stringify(relFileUrl)}, chunks: [], name: "*" },\n`;
+    addServerModuleMap(altFullFileUrl, `{ id: ${JSON.stringify(relFileUrl)}, chunks: [], name: "*" }`);
   }
 
   const fns = parsedServerFunctionsManifest[relPath] || [];
   for (const fn of fns) {
-    ssrManifestCode += `    ${JSON.stringify(relFileUrl + "#" + fn)}: { id: ${JSON.stringify(relFileUrl)}, chunks: [], name: ${JSON.stringify(fn)} },\n`;
-    ssrManifestCode += `    ${JSON.stringify(fullFileUrl + "#" + fn)}: { id: ${JSON.stringify(relFileUrl)}, chunks: [], name: ${JSON.stringify(fn)} },\n`;
+    addServerModuleMap(relFileUrl + "#" + fn, `{ id: ${JSON.stringify(relFileUrl)}, chunks: [], name: ${JSON.stringify(fn)} }`);
+    addServerModuleMap(fullFileUrl + "#" + fn, `{ id: ${JSON.stringify(relFileUrl)}, chunks: [], name: ${JSON.stringify(fn)} }`);
     if (altFullFileUrl !== fullFileUrl) {
-      ssrManifestCode += `    ${JSON.stringify(altFullFileUrl + "#" + fn)}: { id: ${JSON.stringify(relFileUrl)}, chunks: [], name: ${JSON.stringify(fn)} },\n`;
+      addServerModuleMap(altFullFileUrl + "#" + fn, `{ id: ${JSON.stringify(relFileUrl)}, chunks: [], name: ${JSON.stringify(fn)} }`);
     }
   }
 });
