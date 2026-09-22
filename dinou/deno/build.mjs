@@ -692,7 +692,18 @@ export async function fetch(req) {
   if (!storageInitialized) {
     if (typeof Deno !== "undefined" && typeof Deno.openKv === "function") {
       try {
-        setStorageAdapter(new DenoKVStorage());
+        const kvUrl = Deno.env.get("DENO_KV_URL");
+        let kvInstance;
+        if (kvUrl) {
+          kvInstance = await Deno.openKv(kvUrl);
+        } else if (Deno.env.get("DENO_DEPLOYMENT_ID")) {
+          kvInstance = await Deno.openKv();
+        } else {
+          const cwd = typeof Deno.cwd === "function" ? Deno.cwd() : process.cwd();
+          const kvPath = Deno.env.get("DENO_KV_PATH") || path.resolve(cwd, ".dinou/kv.db");
+          kvInstance = await Deno.openKv(kvPath);
+        }
+        setStorageAdapter(new DenoKVStorage(kvInstance));
       } catch (e) {
         setStorageAdapter(new MemoryStorage());
       }
@@ -734,7 +745,7 @@ export async function fetch(req) {
   });
 }
 
-if (typeof Deno !== "undefined" && typeof Deno.serve === "function") {
+if (typeof Deno !== "undefined" && typeof Deno.serve === "function" && import.meta.main) {
   const port = Number(Deno.env.get("PORT") || 8000);
   Deno.serve({ port }, fetch);
 }

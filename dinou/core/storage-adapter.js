@@ -233,7 +233,16 @@ class DenoKVStorage extends StorageAdapter {
   async _getKV() {
     if (!this.kv) {
       if (typeof Deno !== "undefined" && typeof Deno.openKv === "function") {
-        this.kv = await Deno.openKv();
+        const kvUrl = Deno.env.get("DENO_KV_URL");
+        if (kvUrl) {
+          this.kv = await Deno.openKv(kvUrl);
+        } else if (Deno.env.get("DENO_DEPLOYMENT_ID")) {
+          this.kv = await Deno.openKv();
+        } else {
+          const cwd = typeof Deno.cwd === "function" ? Deno.cwd() : process.cwd();
+          const kvPath = Deno.env.get("DENO_KV_PATH") || path.resolve(cwd, ".dinou/kv.db");
+          this.kv = await Deno.openKv(kvPath);
+        }
       }
     }
     return this.kv;
