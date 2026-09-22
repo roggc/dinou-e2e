@@ -1,9 +1,10 @@
 import { test, expect, APIRequestContext, request as playwrightRequest } from "@playwright/test";
 import fs from "fs";
 import path from "path";
-// Detectamos si estamos en un entorno de "start" (Producción) o Cloudflare
+// Detectamos si estamos en un entorno de "start" (Producción) o Cloudflare / Deno
 const isCloudflare = (process.env.TEST_CMD || "").includes("cloudflare") || (process.env.TEST_CMD || "").includes("wrangler");
-const isProd = (process.env.TEST_CMD || "npm run build:esbuild && npm run start:esbuild").includes("start") || isCloudflare;
+const isDeno = (process.env.TEST_CMD || "").includes("deno");
+const isProd = (process.env.TEST_CMD || "npm run build:esbuild && npm run start:esbuild").includes("start") || isCloudflare || isDeno;
 
 // Función auxiliar que espera hasta que el servidor diga "isReady: true"
 async function pollUntilReady(request: APIRequestContext, maxRetries = 800) {
@@ -2449,7 +2450,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         { timeout: 10000 },
       );
       // En Node (con disco físico), verificamos que el archivo se creó tras la visita
-      if (!isCloudflare) {
+      if (!isCloudflare && !isDeno) {
         await expect
           .poll(() => fs.existsSync(gammaPath), {
             timeout: 40000,
@@ -2735,7 +2736,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     test("Should switch from Static to Dynamic and back without crashing", async ({
       page,
     }) => {
-      if (!isProd || isCloudflare) test.skip(); // Asumiendo que tienes un flag para prod
+      if (!isProd || isCloudflare || isDeno) test.skip(); // Asumiendo que tienes un flag para prod
       // // 🔥 1. FORZAR "DISABLE CACHE" (Como tener DevTools abiertas)
       // // Esto obliga al navegador a preguntar al servidor en cada reload
       // const client = await page.context().newCDPSession(page);
@@ -3015,7 +3016,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     test(`Should survive ${CONCURRENT_USERS} concurrent users switching modes`, async ({
       browser,
     }) => {
-      if (!isProd || isCloudflare) test.skip();
+      if (!isProd || isCloudflare || isDeno) test.skip();
       test.setTimeout(340000);
       // 1. Inicializar estado STATIC
       fs.writeFileSync(TRIGGER_FILE, "STATIC");
@@ -3127,7 +3128,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     test(`Should survive staggered load (ramp-up) while switching modes`, async ({
       browser,
     }) => {
-      if (!isProd || isCloudflare) test.skip();
+      if (!isProd || isCloudflare || isDeno) test.skip();
       // Aumentamos el timeout del test porque este va a durar más
       test.setTimeout(340000);
 
@@ -3248,7 +3249,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       browser,
       browserName,
     }) => {
-      if (!isProd || isCloudflare || browserName !== "chromium") test.skip();
+      if (!isProd || isCloudflare || isDeno || browserName !== "chromium") test.skip();
       test.setTimeout(340000);
       // 1. Inicializar estado STATIC
       fs.writeFileSync(TRIGGER_FILE, "STATIC");
@@ -3376,7 +3377,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       browser,
       browserName,
     }) => {
-      if (!isProd || isCloudflare || browserName !== "chromium") test.skip();
+      if (!isProd || isCloudflare || isDeno || browserName !== "chromium") test.skip();
       // Aumentamos el timeout del test porque este va a durar más
       test.setTimeout(340000);
 

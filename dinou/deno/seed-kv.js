@@ -25,6 +25,29 @@ if (kvUrl) {
   kv = await Deno.openKv(kvPath);
 }
 
+const KV_CHUNK_SIZE = 16384;
+
+async function setKvCache(kvInstance, key, content, metadata = null) {
+  if (typeof content === "string" && content.length > KV_CHUNK_SIZE) {
+    const totalChunks = Math.ceil(content.length / KV_CHUNK_SIZE);
+    await kvInstance.set(["dinou_cache", key], {
+      chunked: true,
+      totalChunks,
+      metadata,
+    });
+    for (let i = 0; i < totalChunks; i++) {
+      const chunk = content.slice(i * KV_CHUNK_SIZE, (i + 1) * KV_CHUNK_SIZE);
+      await kvInstance.set(["dinou_cache_chunk", key, i], chunk);
+    }
+  } else {
+    await kvInstance.set(["dinou_cache", key], {
+      chunked: false,
+      content,
+      metadata,
+    });
+  }
+}
+
 let seededCount = 0;
 
 async function processDir(dir, relPrefix = "") {
@@ -46,19 +69,19 @@ async function processDir(dir, relPrefix = "") {
         } catch (e) {}
       }
 
-      await kv.set(["dinou_cache", cleanRelPath], { content: html, metadata });
+      await setKvCache(kv, cleanRelPath, html, metadata);
       seededCount++;
       console.log(`   ✅ Cached HTML: ${cleanRelPath}`);
 
       if (cleanRelPath.endsWith("/index.html")) {
         const folderKey = cleanRelPath.slice(0, -11);
-        await kv.set(["dinou_cache", folderKey], { content: html, metadata });
+        await setKvCache(kv, folderKey, html, metadata);
       } else if (cleanRelPath === "index.html") {
-        await kv.set(["dinou_cache", ""], { content: html, metadata });
+        await setKvCache(kv, "", html, metadata);
       }
     } else if (entry.name === "rsc.rsc") {
       const rsc = fs.readFileSync(fullPath, "utf8");
-      await kv.set(["dinou_cache", cleanRelPath], { content: rsc, metadata: null });
+      await setKvCache(kv, cleanRelPath, rsc, null);
       seededCount++;
       console.log(`   ✅ Cached RSC:  ${cleanRelPath}`);
     }

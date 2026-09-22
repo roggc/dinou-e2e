@@ -258,9 +258,23 @@ class DenoKVStorage extends StorageAdapter {
     const cleanKey = this._cleanKey(key);
     const res = await kv.get(["dinou_cache", cleanKey]);
     if (!res || res.value === null) return null;
+    const val = res.value;
+    if (val && val.chunked) {
+      let fullContent = "";
+      for (let i = 0; i < val.totalChunks; i++) {
+        const chunkRes = await kv.get(["dinou_cache_chunk", cleanKey, i]);
+        if (chunkRes && typeof chunkRes.value === "string") {
+          fullContent += chunkRes.value;
+        }
+      }
+      return {
+        content: fullContent,
+        metadata: val.metadata || null,
+      };
+    }
     return {
-      content: res.value.content,
-      metadata: res.value.metadata || null,
+      content: val.content,
+      metadata: val.metadata || null,
     };
   }
 
@@ -268,7 +282,25 @@ class DenoKVStorage extends StorageAdapter {
     const kv = await this._getKV();
     if (!kv) return;
     const cleanKey = this._cleanKey(key);
-    await kv.set(["dinou_cache", cleanKey], { content, metadata });
+    const KV_CHUNK_SIZE = 16384;
+    if (typeof content === "string" && content.length > KV_CHUNK_SIZE) {
+      const totalChunks = Math.ceil(content.length / KV_CHUNK_SIZE);
+      await kv.set(["dinou_cache", cleanKey], {
+        chunked: true,
+        totalChunks,
+        metadata,
+      });
+      for (let i = 0; i < totalChunks; i++) {
+        const chunk = content.slice(i * KV_CHUNK_SIZE, (i + 1) * KV_CHUNK_SIZE);
+        await kv.set(["dinou_cache_chunk", cleanKey, i], chunk);
+      }
+    } else {
+      await kv.set(["dinou_cache", cleanKey], {
+        chunked: false,
+        content,
+        metadata,
+      });
+    }
   }
 
   async has(key) {
@@ -283,6 +315,12 @@ class DenoKVStorage extends StorageAdapter {
     const kv = await this._getKV();
     if (!kv) return;
     const cleanKey = this._cleanKey(key);
+    const res = await kv.get(["dinou_cache", cleanKey]);
+    if (res && res.value && res.value.chunked) {
+      for (let i = 0; i < res.value.totalChunks; i++) {
+        await kv.delete(["dinou_cache_chunk", cleanKey, i]);
+      }
+    }
     await kv.delete(["dinou_cache", cleanKey]);
   }
 }

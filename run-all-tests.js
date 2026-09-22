@@ -16,6 +16,18 @@ const scenarios = [
     name: "Esbuild PROD",
     cmd: "npm run build:esbuild && npm run start:esbuild",
   },
+  {
+    name: "Deno (Esbuild)",
+    cmd: "npm run build:deno:esbuild && npm run start:deno",
+  },
+  {
+    name: "Deno (Rollup)",
+    cmd: "npm run build:deno:rollup && npm run start:deno",
+  },
+  {
+    name: "Deno (Webpack)",
+    cmd: "npm run build:deno:webpack && npm run start:deno",
+  },
 ];
 
 for (const scenario of scenarios) {
