@@ -21,6 +21,11 @@ if (kvUrl) {
   const defaultDbPath = path.resolve(cwd, ".dinou/kv.db");
   const kvPath = (typeof Deno !== "undefined" ? Deno.env.get("DENO_KV_PATH") : process.env.DENO_KV_PATH) || defaultDbPath;
   fs.mkdirSync(path.dirname(kvPath), { recursive: true });
+  try {
+    if (fs.existsSync(kvPath)) fs.unlinkSync(kvPath);
+    if (fs.existsSync(kvPath + "-wal")) fs.unlinkSync(kvPath + "-wal");
+    if (fs.existsSync(kvPath + "-shm")) fs.unlinkSync(kvPath + "-shm");
+  } catch (e) {}
   console.log(`💾 [Deno KV Seed] Pre-seeding local Deno KV at ${kvPath}...`);
   kv = await Deno.openKv(kvPath);
 }

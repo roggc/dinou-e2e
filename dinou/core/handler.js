@@ -336,29 +336,37 @@ class WebResponseBridge extends PassThrough {
     const onBridgeData = (chunk) => {
       try {
         const data = typeof chunk === "string" ? textEncoder.encode(chunk) : chunk;
-        writer.write(data);
+        writer.write(data).catch(() => {});
       } catch (e) {}
     };
     this.on("data", onBridgeData);
 
     (async () => {
-      const reader = readableStream.getReader();
+      let reader;
+      try {
+        reader = readableStream.getReader();
+      } catch (err) {
+        try {
+          await writer.abort(err).catch(() => {});
+        } catch (_) {}
+        return;
+      }
       try {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          await writer.write(value);
+          await writer.write(value).catch(() => {});
         }
       } catch (err) {
         try {
-          await writer.abort(err);
+          await writer.abort(err).catch(() => {});
         } catch (e) {}
         return;
       } finally {
         this.removeListener("data", onBridgeData);
       }
       try {
-        await writer.close();
+        await writer.close().catch(() => {});
       } catch (e) {}
     })();
 
@@ -408,7 +416,9 @@ function createRequestContext(simReq, resBridge, platformContext = {}, dynamicSt
       const scriptTag = `<script>document.cookie = ${safeCookieStr};</script>`;
       resBridge._injectedScripts = (resBridge._injectedScripts || "") + scriptTag;
       if (resBridge.headersSent) {
-        resBridge.write(scriptTag);
+        if (!simReq.path.includes("____rsc_payload")) {
+          resBridge.write(scriptTag);
+        }
         return;
       }
       return resBridge.clearCookie(name, options);
@@ -429,7 +439,9 @@ function createRequestContext(simReq, resBridge, platformContext = {}, dynamicSt
         const scriptTag = `<script>document.cookie = ${safeCookieStr};</script>`;
         resBridge._injectedScripts = (resBridge._injectedScripts || "") + scriptTag;
         if (resBridge.headersSent) {
-          resBridge.write(scriptTag);
+          if (!simReq.path.includes("____rsc_payload")) {
+            resBridge.write(scriptTag);
+          }
           return;
         }
       } else if (resBridge.headersSent) {
@@ -1262,33 +1274,34 @@ async function handleRequest(request, platformContext = {}) {
           }
 
           if (shouldCacheISG) {
-            const [streamForBrowser, streamForKv] = htmlStream.tee();
             const rscKey = cleanPath ? `${cleanPath}/rsc.rsc` : "rsc.rsc";
-            const cacheTask = (async () => {
-              try {
-                const [rscPayload, fullHtml] = await Promise.all([
-                  new Response(streamForCache).text(),
-                  new Response(streamForKv).text(),
-                ]);
+            try {
+              const [rscPayload, fullHtml] = await Promise.all([
+                new Response(streamForCache).text(),
+                new Response(htmlStream).text(),
+              ]);
+              if (!dynamicState.value) {
                 await storage.set(rscKey, rscPayload);
                 await storage.set(htmlKey, fullHtml, genMeta);
                 await storage.set(metaKey, JSON.stringify(genMeta));
                 console.log(`✅ [Edge ISG] Successfully cached ${reqPath} to KV`);
-              } catch (cacheErr) {
-                console.error("[Edge ISG] Error caching to KV:", cacheErr);
+              } else {
+                console.log(`ℹ️ [Edge ISG] Dynamic bailout detected during render for ${reqPath}, skipping KV cache`);
               }
-            })();
-            if (platformContext.ctx && typeof platformContext.ctx.waitUntil === "function") {
-              platformContext.ctx.waitUntil(cacheTask);
+              return {
+                type: "html",
+                html: fullHtml,
+                status: genMeta.status,
+                headers: new Headers(bridge.headers),
+                cookies: [...bridge.cookies],
+              };
+            } catch (cacheErr) {
+              console.error("[Edge ISG] Error caching to KV:", cacheErr);
             }
-            return {
-              type: "stream",
-              stream: streamForBrowser,
-              status: genMeta.status,
-              headers: new Headers(bridge.headers),
-              cookies: [...bridge.cookies],
-            };
           }
+
+          // Dynamic streaming responses cannot be shared across multiple requests in inFlightGenerations
+          inFlightGenerations.delete(inFlightKey);
 
           return {
             type: "stream",
