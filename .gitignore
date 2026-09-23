@@ -2,6 +2,8 @@ node_modules
 .dinou
 .env
 out
+dist/
+
 
 # Playwright
 /test-results/

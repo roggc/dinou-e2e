@@ -10,7 +10,10 @@ function isEdgeRuntime(options = {}) {
     (options && options.runtime) ||
     (typeof globalThis !== "undefined" && globalThis.__DINOU_RUNTIME__) ||
     (typeof process !== "undefined" && process.env && process.env.DINOU_RUNTIME);
-  if (typeof rt === "string" && (rt === "edge" || rt === "deno-edge" || rt.includes("edge"))) {
+  if (
+    typeof rt === "string" &&
+    (rt === "edge" || rt === "deno-edge" || rt === "bun-bundle" || rt.includes("edge"))
+  ) {
     return true;
   }
   return false;
