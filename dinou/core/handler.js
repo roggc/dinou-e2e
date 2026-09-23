@@ -10,7 +10,10 @@ const FormData = globalThis.FormData;
 const Blob = globalThis.Blob;
 
 const isWebpack = process.env.DINOU_BUILD_TOOL === "webpack";
-const isDevelopment = process.env.NODE_ENV !== "production";
+const isDevelopment =
+  process.env.DINOU_DEV === "true" ||
+  (typeof globalThis !== "undefined" && Boolean(globalThis.__DINOU_DEV__)) ||
+  process.env.NODE_ENV !== "production";
 const outputFolder = isDevelopment ? ".dinou/public" : ".dinou/dist3";
 
 const { normalizePathCase } = require("./path-utils.js");
@@ -1031,14 +1034,17 @@ async function handleRequest(request, platformContext = {}) {
     const htmlKey = cleanPath ? `${cleanPath}/index.html` : "index.html";
     const metaKey = cleanPath ? `${cleanPath}/metadata.json` : "metadata.json";
 
-    // 1. Check storageAdapter
-    let cachedItem = await storage.get(htmlKey);
-    if (!cachedItem) {
-      cachedItem = await storage.get(cleanPath);
+    // 1. Check storageAdapter (production only)
+    let cachedItem = null;
+    if (!isDevelopment) {
+      cachedItem = await storage.get(htmlKey);
+      if (!cachedItem) {
+        cachedItem = await storage.get(cleanPath);
+      }
     }
 
     // 2. If not in storageAdapter, check env.ASSETS for pre-rendered build static page
-    if (!cachedItem && platformContext && platformContext.env && platformContext.env.ASSETS) {
+    if (!isDevelopment && !cachedItem && platformContext && platformContext.env && platformContext.env.ASSETS) {
       try {
         const metaRes = await platformContext.env.ASSETS.fetch(new Request(new URL(`/${metaKey}`, request.url)));
         if (metaRes && metaRes.status === 200) {
@@ -1074,7 +1080,7 @@ async function handleRequest(request, platformContext = {}) {
     }
 
     // 3. If we found a cached/pre-rendered page:
-    if (cachedItem && !dynamicState.value && !isPathBlocked && queryObj.ssr_crash !== "true") {
+    if (!isDevelopment && cachedItem && !dynamicState.value && !isPathBlocked && queryObj.ssr_crash !== "true") {
       const metadata = cachedItem.metadata || {};
       const { revalidate, generatedAt } = metadata;
       const isExpired =
@@ -1286,8 +1292,19 @@ async function handleRequest(request, platformContext = {}) {
             ? getAssetFromManifest("error.js")
             : getAssetFromManifest("main.js");
 
+          const bootstrapModules = isDevelopment
+            ? [
+                clientEntry,
+                isWebpack ? undefined : getAssetFromManifest("runtime.js"),
+              ].filter(Boolean)
+            : [clientEntry];
+
+          if (isDevelopment && !isWebpack) {
+            bootstrapScriptContent += `window.HMR_WEBSOCKET_URL="ws://localhost:3001";\n`;
+          }
+
           const htmlStream = await platformContext.renderHtmlStream(streamForSsr, {
-            bootstrapModules: [clientEntry],
+            bootstrapModules,
             bootstrapScriptContent,
             onError(err) {
               console.error("[Edge Native SSR] Stream error:", err);
