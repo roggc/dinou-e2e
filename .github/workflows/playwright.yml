@@ -159,4 +159,55 @@ jobs:
           path: playwright-report/
           retention-days: 30
 
+  bun-tests:
+    name: ${{ matrix.os }} - Bun - ${{ matrix.bundler }}
+    timeout-minutes: 60
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        bundler: [esbuild, rollup, webpack]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: 'npm'
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install dependencies
+        run: npm ci
+      - name: Cache Playwright Browsers
+        id: playwright-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~\AppData\Local\ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
+      - name: Fix slow Ubuntu APT mirrors & set timeouts
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo sed -i 's/azure.archive.ubuntu.com/archive.ubuntu.com/g' /etc/apt/sources.list /etc/apt/sources.list.d/* || true
+          sudo sh -c 'echo "Acquire::http::Timeout \"15\";\nAcquire::http::Retries \"3\";" > /etc/apt/apt.conf.d/99timeout'
+      - name: Install Playwright Browsers & Deps
+        timeout-minutes: 20
+        run: npx playwright install --with-deps
+      - name: Build App (${{ matrix.bundler }})
+        run: npm run build:${{ matrix.bundler }}
+      - name: Run Playwright Tests on Bun
+        env:
+          TEST_CMD: ${{ matrix.bundler == 'webpack' && 'npm run start:bun:webpack' || 'npm run start:bun' }}
+        run: npx playwright test
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: report-${{ matrix.os }}-bun-${{ matrix.bundler }}
+          path: playwright-report/
+          retention-days: 30
+
+
 

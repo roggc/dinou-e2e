@@ -55,7 +55,7 @@ Bun es ideal si buscas el máximo rendimiento en un servidor propio con un consu
 2. Arranca el servidor de Bun:
    ```bash
    npm run start:bun
-   # o directamente: bun dinou/adapters/bun.js
+   # o directamente: cross-env NODE_ENV=production bun --conditions=react-server dinou/adapters/bun.js
    ```
    *Puerto por defecto: `3000` (configurable con la variable de entorno `PORT`).*
 
@@ -194,7 +194,7 @@ Dinou v7 estructura sus comandos de forma clara y modular por familias:
   "scripts": {
     "// --- Runtimes Standalone ---": "",
     "start": "npm run start:esbuild",
-    "start:bun": "bun dinou/adapters/bun.js",
+    "start:bun": "cross-env NODE_ENV=production bun --conditions=react-server dinou/adapters/bun.js",
     "start:deno": "deno run --allow-net --allow-read --allow-env dinou/adapters/deno.js",
 
     "// --- Edge Builds (Cloudflare & Deno Deploy) ---": "",
