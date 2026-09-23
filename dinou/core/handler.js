@@ -319,6 +319,26 @@ class WebResponseBridge extends PassThrough {
       if (typeof callback === "function") callback();
       return this;
     }
+    if (!this.headersSent) {
+      this.headersSent = true;
+      for (const c of this.cookies) {
+        this.headers.append("Set-Cookie", c);
+      }
+      let body = null;
+      if (chunk !== undefined && chunk !== null) {
+        body = chunk;
+      }
+      const res = new Response(body, {
+        status: this.statusCode,
+        statusText: this.statusMessage || undefined,
+        headers: this.headers,
+      });
+      this._resolved = true;
+      this._resolveResponse(res);
+      super.end();
+      if (typeof callback === "function") callback();
+      return this;
+    }
     this._commitHeaders();
     return super.end(chunk, encoding, callback);
   }
@@ -1278,16 +1298,29 @@ async function handleRequest(request, platformContext = {}) {
 
           if (shouldCacheISG) {
             const rscKey = cleanPath ? `${cleanPath}/rsc.rsc` : "rsc.rsc";
+            let fullHtml = "";
+            let rscPayload = "";
             try {
-              const [rscPayload, fullHtml] = await Promise.all([
+              const [rsc, html] = await Promise.all([
                 new Response(streamForCache).text(),
                 new Response(htmlStream).text(),
               ]);
+              rscPayload = rsc;
+              fullHtml = html;
+            } catch (drainErr) {
+              console.error("[Edge ISG] Error reading streams:", drainErr);
+            }
+
+            if (fullHtml) {
               if (!dynamicState.value) {
-                await storage.set(rscKey, rscPayload);
-                await storage.set(htmlKey, fullHtml, genMeta);
-                await storage.set(metaKey, JSON.stringify(genMeta));
-                console.log(`✅ [Edge ISG] Successfully cached ${reqPath} to KV`);
+                try {
+                  await storage.set(rscKey, rscPayload);
+                  await storage.set(htmlKey, fullHtml, genMeta);
+                  await storage.set(metaKey, JSON.stringify(genMeta));
+                  console.log(`✅ [Edge ISG] Successfully cached ${reqPath} to KV`);
+                } catch (cacheErr) {
+                  console.error("[Edge ISG] Error caching to KV:", cacheErr);
+                }
               } else {
                 console.log(`ℹ️ [Edge ISG] Dynamic bailout detected during render for ${reqPath}, skipping KV cache`);
               }
@@ -1298,8 +1331,6 @@ async function handleRequest(request, platformContext = {}) {
                 headers: new Headers(bridge.headers),
                 cookies: [...bridge.cookies],
               };
-            } catch (cacheErr) {
-              console.error("[Edge ISG] Error caching to KV:", cacheErr);
             }
           }
 

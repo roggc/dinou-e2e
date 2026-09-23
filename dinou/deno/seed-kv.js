@@ -35,15 +35,17 @@ const KV_CHUNK_SIZE = 16384;
 async function setKvCache(kvInstance, key, content, metadata = null) {
   if (typeof content === "string" && content.length > KV_CHUNK_SIZE) {
     const totalChunks = Math.ceil(content.length / KV_CHUNK_SIZE);
-    await kvInstance.set(["dinou_cache", key], {
+    const atomic = kvInstance.atomic();
+    atomic.set(["dinou_cache", key], {
       chunked: true,
       totalChunks,
       metadata,
     });
     for (let i = 0; i < totalChunks; i++) {
       const chunk = content.slice(i * KV_CHUNK_SIZE, (i + 1) * KV_CHUNK_SIZE);
-      await kvInstance.set(["dinou_cache_chunk", key, i], chunk);
+      atomic.set(["dinou_cache_chunk", key, i], chunk);
     }
+    await atomic.commit();
   } else {
     await kvInstance.set(["dinou_cache", key], {
       chunked: false,

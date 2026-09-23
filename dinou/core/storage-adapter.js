@@ -267,16 +267,22 @@ class DenoKVStorage extends StorageAdapter {
     const kv = await this._getKV();
     if (!kv) return null;
     const cleanKey = this._cleanKey(key);
+    let matchedKey = cleanKey;
     let res = await kv.get(["dinou_cache", cleanKey]);
     if ((!res || res.value === null) && !cleanKey.includes(".")) {
-      res = await kv.get(["dinou_cache", cleanKey ? `${cleanKey}/index.html` : "index.html"]);
+      matchedKey = cleanKey ? `${cleanKey}/index.html` : "index.html";
+      res = await kv.get(["dinou_cache", matchedKey]);
     }
     if (!res || res.value === null) return null;
     const val = res.value;
     if (val && val.chunked) {
-      let fullContent = "";
+      const chunkPromises = [];
       for (let i = 0; i < val.totalChunks; i++) {
-        const chunkRes = await kv.get(["dinou_cache_chunk", cleanKey, i]);
+        chunkPromises.push(kv.get(["dinou_cache_chunk", matchedKey, i]));
+      }
+      const chunkResults = await Promise.all(chunkPromises);
+      let fullContent = "";
+      for (const chunkRes of chunkResults) {
         if (chunkRes && typeof chunkRes.value === "string") {
           fullContent += chunkRes.value;
         }
@@ -287,8 +293,8 @@ class DenoKVStorage extends StorageAdapter {
       };
     }
     return {
-      content: val.content,
-      metadata: val.metadata || null,
+      content: typeof val === "string" ? val : (val && val.content !== undefined ? val.content : ""),
+      metadata: val && typeof val === "object" && val.metadata ? val.metadata : null,
     };
   }
 
@@ -297,30 +303,37 @@ class DenoKVStorage extends StorageAdapter {
     if (!kv) return;
     const cleanKey = this._cleanKey(key);
     const KV_CHUNK_SIZE = 16384;
-    if (typeof content === "string" && content.length > KV_CHUNK_SIZE) {
-      const totalChunks = Math.ceil(content.length / KV_CHUNK_SIZE);
-      await kv.set(["dinou_cache", cleanKey], {
-        chunked: true,
-        totalChunks,
-        metadata,
-      });
-      for (let i = 0; i < totalChunks; i++) {
-        const chunk = content.slice(i * KV_CHUNK_SIZE, (i + 1) * KV_CHUNK_SIZE);
-        await kv.set(["dinou_cache_chunk", cleanKey, i], chunk);
+
+    const writeKey = async (targetKey) => {
+      if (typeof content === "string" && content.length > KV_CHUNK_SIZE) {
+        const totalChunks = Math.ceil(content.length / KV_CHUNK_SIZE);
+        const atomic = kv.atomic();
+        atomic.set(["dinou_cache", targetKey], {
+          chunked: true,
+          totalChunks,
+          metadata,
+        });
+        for (let i = 0; i < totalChunks; i++) {
+          const chunk = content.slice(i * KV_CHUNK_SIZE, (i + 1) * KV_CHUNK_SIZE);
+          atomic.set(["dinou_cache_chunk", targetKey, i], chunk);
+        }
+        await atomic.commit();
+      } else {
+        await kv.set(["dinou_cache", targetKey], {
+          chunked: false,
+          content,
+          metadata,
+        });
       }
-    } else {
-      await kv.set(["dinou_cache", cleanKey], {
-        chunked: false,
-        content,
-        metadata,
-      });
-    }
+    };
+
+    await writeKey(cleanKey);
 
     if (cleanKey.endsWith("/index.html")) {
       const folderKey = cleanKey.slice(0, -11);
-      await this.set(folderKey, content, metadata);
+      await writeKey(folderKey);
     } else if (cleanKey === "index.html") {
-      await this.set("", content, metadata);
+      await writeKey("");
     }
   }
 
@@ -341,19 +354,28 @@ class DenoKVStorage extends StorageAdapter {
     const kv = await this._getKV();
     if (!kv) return;
     const cleanKey = this._cleanKey(key);
-    const res = await kv.get(["dinou_cache", cleanKey]);
-    if (res && res.value && res.value.chunked) {
-      for (let i = 0; i < res.value.totalChunks; i++) {
-        await kv.delete(["dinou_cache_chunk", cleanKey, i]);
+
+    const delKey = async (targetKey) => {
+      const res = await kv.get(["dinou_cache", targetKey]);
+      if (res && res.value && res.value.chunked) {
+        const atomic = kv.atomic();
+        for (let i = 0; i < res.value.totalChunks; i++) {
+          atomic.delete(["dinou_cache_chunk", targetKey, i]);
+        }
+        atomic.delete(["dinou_cache", targetKey]);
+        await atomic.commit();
+      } else {
+        await kv.delete(["dinou_cache", targetKey]);
       }
-    }
-    await kv.delete(["dinou_cache", cleanKey]);
+    };
+
+    await delKey(cleanKey);
 
     if (cleanKey.endsWith("/index.html")) {
       const folderKey = cleanKey.slice(0, -11);
-      await this.delete(folderKey);
+      await delKey(folderKey);
     } else if (cleanKey === "index.html") {
-      await this.delete("");
+      await delKey("");
     }
   }
 
