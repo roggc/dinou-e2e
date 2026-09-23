@@ -34,28 +34,28 @@ const scenarios = [
     cmd: "npm run build:deno:webpack && npm run start:deno",
   },
   {
-    name: "Bun JIT (Esbuild)",
+    name: "Bun (Esbuild)",
     cmd: "npm run build:bun:esbuild && npm run start:bun:esbuild",
   },
   {
-    name: "Bun JIT (Rollup)",
+    name: "Bun (Rollup)",
     cmd: "npm run build:bun:rollup && npm run start:bun:rollup",
   },
   {
-    name: "Bun JIT (Webpack)",
+    name: "Bun (Webpack)",
     cmd: "npm run build:bun:webpack && npm run start:bun:webpack",
   },
   {
-    name: "Bun Bundle (Esbuild)",
-    cmd: "npm run build:bun:bundle:esbuild && npm run start:bun:bundle:esbuild",
+    name: "Node AOT (Esbuild)",
+    cmd: "npm run build:node:esbuild && npm run start:node:esbuild",
   },
   {
-    name: "Bun Bundle (Rollup)",
-    cmd: "npm run build:bun:bundle:rollup && npm run start:bun:bundle:rollup",
+    name: "Node AOT (Rollup)",
+    cmd: "npm run build:node:rollup && npm run start:node:rollup",
   },
   {
-    name: "Bun Bundle (Webpack)",
-    cmd: "npm run build:bun:bundle:webpack && npm run start:bun:bundle:webpack",
+    name: "Node AOT (Webpack)",
+    cmd: "npm run build:node:webpack && npm run start:node:webpack",
   },
 ];
 
