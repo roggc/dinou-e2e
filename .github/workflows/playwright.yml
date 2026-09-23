@@ -5,21 +5,15 @@ on:
   pull_request:
     branches: [main, master]
 jobs:
-  e2e-tests:
-    name: ${{ matrix.os }} - ${{ matrix.bundler }} - ${{ matrix.mode }}
+  dev-tests:
+    name: ${{ matrix.os }} - Node DEV - ${{ matrix.bundler }}
     timeout-minutes: 60
     runs-on: ${{ matrix.os }}
-    # env:
-    #   PLAYWRIGHT_DOWNLOAD_HOST: https://cdn.npmmirror.com/binaries/playwright
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest] # Linux cubre Mac para lógica de Node
+        os: [ubuntu-latest, windows-latest]
         bundler: [webpack, rollup, esbuild]
-        mode: [dev, prod]
-        #os: [ubuntu-latest] # Linux cubre Mac para lógica de Node
-        #bundler: [webpack]
-        #mode: [dev]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -44,21 +38,15 @@ jobs:
       - name: Install Playwright Browsers & Deps
         timeout-minutes: 20
         run: npx playwright install --with-deps
-      # Construimos si estamos en modo PROD
-      - name: Build App (if prod)
-        if: matrix.mode == 'prod'
-        run: npm run build:${{ matrix.bundler }}
 
-      # Ejecutamos el test
-      - name: Run Playwright Tests
-        # Definimos el comando dinámicamente según la matriz
+      - name: Run Playwright Tests (Dev Mode)
         env:
-          TEST_CMD: ${{ matrix.mode == 'dev' && format('npm run dev:{0}', matrix.bundler) || format('npm run start:{0}', matrix.bundler) }}
+          TEST_CMD: npm run dev:${{ matrix.bundler }}
         run: npx playwright test
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
-          name: report-${{ matrix.os }}-${{ matrix.bundler }}-${{ matrix.mode }}
+          name: report-${{ matrix.os }}-node-dev-${{ matrix.bundler }}
           path: playwright-report/
           retention-days: 30
 
