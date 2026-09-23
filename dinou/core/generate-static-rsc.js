@@ -17,7 +17,7 @@ function getRenderToPipeableStream() {
 const { requestStorage } = require("./request-context.js");
 
 const OUT_DIR = path.resolve(".dinou/dist2");
-// const isWebpack = process.env.DINOU_BUILD_TOOL === "webpack";
+const isWebpack = process.env.DINOU_BUILD_TOOL === "webpack";
 
 async function generateStaticRSC(reqPath) {
   const finalReqPath = reqPath.endsWith("/") ? reqPath : reqPath + "/";
@@ -105,7 +105,6 @@ async function generateStaticRSC(reqPath) {
 
     await requestStorage.run(mockContext, async () => {
       const jsx = await getJSX(finalReqPath, {}, null, false);
-      const isWebpack = process.env.DINOU_BUILD_TOOL === "webpack";
       const renderToPipeableStream = getRenderToPipeableStream();
       const { pipe } = isWebpack
         ? renderToPipeableStream(jsx, manifest)

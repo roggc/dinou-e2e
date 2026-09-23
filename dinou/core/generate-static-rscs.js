@@ -19,7 +19,7 @@ function getRenderToPipeableStream() {
 const { requestStorage } = require("./request-context.js");
 
 const OUT_DIR = path.resolve(".dinou/dist2");
-// const isWebpack = process.env.DINOU_BUILD_TOOL === "webpack";
+const isWebpack = process.env.DINOU_BUILD_TOOL === "webpack";
 
 async function generateStaticRSCs(routes) {
   const manifest = JSON.parse(
