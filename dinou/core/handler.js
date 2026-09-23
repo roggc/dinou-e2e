@@ -1482,7 +1482,7 @@ async function handleRequest(request, platformContext = {}) {
         appHtmlStream.pipe(bridge);
 
         await new Promise((resolve) => {
-          appHtmlStream.on("end", () => {
+          const onDone = () => {
             if (
               !isDevelopment &&
               bridge.statusCode === 200 &&
@@ -1494,8 +1494,14 @@ async function handleRequest(request, platformContext = {}) {
             ) {
               generatingISG(reqPath, dynamicState);
             }
+            if (!bridge.headersSent) {
+              bridge.status(500).send("Internal Server Error");
+            }
             resolve();
-          });
+          };
+
+          appHtmlStream.on("end", onDone);
+          appHtmlStream.on("close", onDone);
           appHtmlStream.on("error", (error) => {
             console.error("[Dinou] Stream error:", error);
             if (!bridge.headersSent) bridge.status(500).send("Internal Server Error");
