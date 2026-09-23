@@ -719,9 +719,24 @@ var __webpack_chunk_load__ = function(chunkId) {
     name: "dinou-client-references",
     setup(build) {
       build.onLoad({ filter: /\.[jt]sx?$/ }, async (args) => {
-        if (args.path.includes("node_modules")) return null;
+        if (args.path.includes("node_modules")) {
+          if (
+            args.path.includes("react-server-dom") ||
+            args.path.includes("@roggc/react-server-dom-esm") ||
+            args.path.includes("node_modules/react/") ||
+            args.path.includes("node_modules\\react\\") ||
+            args.path.includes("node_modules/react-dom/") ||
+            args.path.includes("node_modules\\react-dom\\")
+          ) {
+            return null;
+          }
+        }
+        const normalizedPath = args.path.replace(/\\/g, "/");
+        if (normalizedPath.includes("dinou/core/navigation")) return null;
+
         let code;
         try { code = fs.readFileSync(args.path, "utf8"); } catch (e) { return null; }
+        if (!isSupportedClientModule(args.path, code)) return null;
         if (!useClientRegex.test(code.trim())) return null;
 
         const exports = parseExports(code);
@@ -752,7 +767,18 @@ var __webpack_chunk_load__ = function(chunkId) {
     name: "dinou-server-references",
     setup(build) {
       build.onLoad({ filter: /\.[jt]sx?$/ }, async (args) => {
-        if (args.path.includes("node_modules")) return null;
+        if (args.path.includes("node_modules")) {
+          if (
+            args.path.includes("react-server-dom") ||
+            args.path.includes("@roggc/react-server-dom-esm") ||
+            args.path.includes("node_modules/react/") ||
+            args.path.includes("node_modules\\react\\") ||
+            args.path.includes("node_modules/react-dom/") ||
+            args.path.includes("node_modules\\react-dom\\")
+          ) {
+            return null;
+          }
+        }
         let code;
         try { code = fs.readFileSync(args.path, "utf8"); } catch (e) { return null; }
         if (!useServerRegex.test(code.trim())) return null;
@@ -781,7 +807,18 @@ var __webpack_chunk_load__ = function(chunkId) {
     name: "dinou-server-references-ssr",
     setup(build) {
       build.onLoad({ filter: /\.[jt]sx?$/ }, async (args) => {
-        if (args.path.includes("node_modules")) return null;
+        if (args.path.includes("node_modules")) {
+          if (
+            args.path.includes("react-server-dom") ||
+            args.path.includes("@roggc/react-server-dom-esm") ||
+            args.path.includes("node_modules/react/") ||
+            args.path.includes("node_modules\\react\\") ||
+            args.path.includes("node_modules/react-dom/") ||
+            args.path.includes("node_modules\\react-dom\\")
+          ) {
+            return null;
+          }
+        }
         let code;
         try { code = fs.readFileSync(args.path, "utf8"); } catch (e) { return null; }
         if (!useServerRegex.test(code.trim())) return null;

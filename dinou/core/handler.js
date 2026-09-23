@@ -133,9 +133,10 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
         let revalidateVal = typeof pageFunctionsModule.revalidate === "function"
           ? await pageFunctionsModule.revalidate()
           : pageFunctionsModule.revalidate;
-        let tagsVal = typeof pageFunctionsModule.cacheTags === "function"
-          ? await pageFunctionsModule.cacheTags()
-          : (pageFunctionsModule.tags || pageFunctionsModule.cacheTags || []);
+        const getTagsFn = pageFunctionsModule.getCacheTags || pageFunctionsModule.cacheTags;
+        let tagsVal = typeof getTagsFn === "function"
+          ? await getTagsFn()
+          : (pageFunctionsModule.tags || pageFunctionsModule.cacheTags || pageFunctionsModule.getCacheTags || []);
 
         cachedConfig = {
           allowISG: resolvedAllowISG,
@@ -1402,7 +1403,7 @@ async function handleRequest(request, platformContext = {}) {
             });
           }
 
-          if (!bridge.headersSent && (bridge.headers.has("Location") || (bridge.statusCode >= 300 && bridge.statusCode < 400))) {
+          if (bridge.headers.has("Location") || (bridge.statusCode >= 300 && bridge.statusCode < 400)) {
             return {
               type: "redirect",
               status: bridge.statusCode || 302,
@@ -1427,7 +1428,7 @@ async function handleRequest(request, platformContext = {}) {
             }
 
             if (fullHtml) {
-              if (!dynamicState.value) {
+              if (!dynamicState.value || platformContext.isSSG === true) {
                 try {
                   await storage.set(rscKey, rscPayload);
                   await storage.set(htmlKey, fullHtml, genMeta);
