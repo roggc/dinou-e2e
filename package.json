@@ -34,10 +34,7 @@
     "dev_rollup": "rollup -c ./dinou/rollup/rollup.config.js -w",
     "dev_esbuild": "node dinou/esbuild/dev.mjs",
     "dev_webpack": "webpack serve --config dinou/webpack/webpack.config.js",
-    "dev:express:webpack": "cross-env DINOU_BUILD_TOOL=webpack node --conditions react-server --import ./dinou/core/register-loader.mjs ./dinou/core/server.js",
-    "test": "playwright test",
-    "test:deno": "cross-env TEST_CMD=\"npm run start:deno\" playwright test",
-    "test:deno:build": "npm run build:deno && cross-env TEST_CMD=\"npm run start:deno\" playwright test"
+    "dev:express:webpack": "cross-env DINOU_BUILD_TOOL=webpack node --conditions react-server --import ./dinou/core/register-loader.mjs ./dinou/core/server.js"
   },
   "keywords": [],
   "author": "",
