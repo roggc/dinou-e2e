@@ -2383,6 +2383,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       browserName,
     }) => {
       if (!isProd) test.skip();
+      // Ensure test idempotency if rerun without rebuilding
+      const gammaResidualDir = path.join(BUILD_DIR, "t-ssg", `gamma-${browserName}`);
+      if (fs.existsSync(gammaResidualDir)) {
+        try {
+          fs.rmSync(gammaResidualDir, { recursive: true, force: true });
+        } catch (e) {}
+      }
       // --- PARTE 1: RUTAS PRE-GENERADAS (Alpha) ---
       // Verificamos que 'alpha' fue generada por getStaticPaths
       // Dependiendo de tu estructura, ajusta la ruta del archivo (ej: /alpha/index.html)
