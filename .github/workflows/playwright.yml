@@ -160,7 +160,7 @@ jobs:
           retention-days: 30
 
   bun-tests:
-    name: ${{ matrix.os }} - Bun - ${{ matrix.bundler }}
+    name: ${{ matrix.os }} - Bun - ${{ matrix.bundler }} - ${{ matrix.mode }}
     timeout-minutes: 60
     runs-on: ${{ matrix.os }}
     strategy:
@@ -168,6 +168,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         bundler: [esbuild, rollup, webpack]
+        mode: [jit, bundle]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -196,16 +197,20 @@ jobs:
       - name: Install Playwright Browsers & Deps
         timeout-minutes: 20
         run: npx playwright install --with-deps
-      - name: Build App (${{ matrix.bundler }})
-        run: npm run build:${{ matrix.bundler }}
+      - name: Build App (JIT Mode)
+        if: matrix.mode == 'jit'
+        run: npm run build:bun:${{ matrix.bundler }}
+      - name: Build App (Bundle Mode)
+        if: matrix.mode == 'bundle'
+        run: npm run build:bun:bundle:${{ matrix.bundler }}
       - name: Run Playwright Tests on Bun
         env:
-          TEST_CMD: ${{ matrix.bundler == 'webpack' && 'npm run start:bun:webpack' || 'npm run start:bun' }}
+          TEST_CMD: ${{ matrix.mode == 'bundle' && format('npm run start:bun:bundle:{0}', matrix.bundler) || format('npm run start:bun:{0}', matrix.bundler) }}
         run: npx playwright test
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
-          name: report-${{ matrix.os }}-bun-${{ matrix.bundler }}
+          name: report-${{ matrix.os }}-bun-${{ matrix.bundler }}-${{ matrix.mode }}
           path: playwright-report/
           retention-days: 30
 

@@ -2,6 +2,11 @@ const { execSync } = require("child_process");
 const fs = require("fs"); // 1. Importamos FileSystem
 const path = require("path"); // 2. Importamos Path
 
+// Asegurar que Bun esté en PATH en Windows/Linux si está instalado en ~/.bun/bin
+const bunBinDir = path.join(process.env.USERPROFILE || process.env.HOME || "", ".bun", "bin");
+if (fs.existsSync(bunBinDir) && !process.env.PATH.includes(bunBinDir)) {
+  process.env.PATH = `${bunBinDir}${path.delimiter}${process.env.PATH}`;
+}
 
 const scenarios = [
   { name: "Webpack DEV", cmd: "npm run dev:webpack" },
@@ -28,9 +33,44 @@ const scenarios = [
     name: "Deno (Webpack)",
     cmd: "npm run build:deno:webpack && npm run start:deno",
   },
+  {
+    name: "Bun JIT (Esbuild)",
+    cmd: "npm run build:bun:esbuild && npm run start:bun:esbuild",
+  },
+  {
+    name: "Bun JIT (Rollup)",
+    cmd: "npm run build:bun:rollup && npm run start:bun:rollup",
+  },
+  {
+    name: "Bun JIT (Webpack)",
+    cmd: "npm run build:bun:webpack && npm run start:bun:webpack",
+  },
+  {
+    name: "Bun Bundle (Esbuild)",
+    cmd: "npm run build:bun:bundle:esbuild && npm run start:bun:bundle:esbuild",
+  },
+  {
+    name: "Bun Bundle (Rollup)",
+    cmd: "npm run build:bun:bundle:rollup && npm run start:bun:bundle:rollup",
+  },
+  {
+    name: "Bun Bundle (Webpack)",
+    cmd: "npm run build:bun:bundle:webpack && npm run start:bun:bundle:webpack",
+  },
 ];
 
-for (const scenario of scenarios) {
+// Soporte para filtrar escenarios (--scenario=bun) y pasar flags a Playwright (--project=chromium, -g, etc.)
+const rawArgs = process.argv.slice(2);
+const scenarioFilterArg = rawArgs.find((a) => a.startsWith("--scenario="));
+const scenarioFilter = scenarioFilterArg ? scenarioFilterArg.split("=")[1].toLowerCase() : null;
+const playwrightArgs = rawArgs.filter((a) => !a.startsWith("--scenario=")).join(" ");
+const playwrightCmd = playwrightArgs ? `npx playwright test ${playwrightArgs}` : `npx playwright test`;
+
+const targetScenarios = scenarioFilter
+  ? scenarios.filter((s) => s.name.toLowerCase().includes(scenarioFilter))
+  : scenarios;
+
+for (const scenario of targetScenarios) {
   console.log(`\n🔵 TESTING SCENARIO: ${scenario.name}`);
   try {
     if (scenario.name.includes("DEV")) {
@@ -45,8 +85,9 @@ for (const scenario of scenarios) {
     }
     // Llamamos a Playwright pasándole el comando del servidor
     // cross-env es útil para compatibilidad Windows/Mac en la definición de variables
-    execSync(`npx cross-env TEST_CMD="${scenario.cmd}" npx playwright test`, {
+    execSync(`npx cross-env TEST_CMD="${scenario.cmd}" ${playwrightCmd}`, {
       stdio: "inherit",
+      env: process.env,
     });
     console.log(`✅ ${scenario.name} PASSED`);
   } catch (err) {
