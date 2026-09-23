@@ -16,7 +16,7 @@
     "dev:webpack": "concurrently \"npm run dev:express:webpack\" \"npm run dev_webpack\"",
     "build:webpack": "cross-env NODE_ENV=production webpack --config dinou/webpack/webpack.config.js",
     "start:webpack": "cross-env NODE_ENV=production DINOU_BUILD_TOOL=webpack node ./dinou/core/server.js",
-    "start:bun": "bun dinou/adapters/bun.js",
+    "start:bun": "cross-env NODE_ENV=production bun --conditions=react-server dinou/adapters/bun.js",
     "start:deno": "deno run --unstable-kv --allow-net --allow-read --allow-write --allow-env --allow-sys dinou/adapters/deno.js",
     "build:cloudflare": "npm run build && node ./dinou/cloudflare/build.mjs",
     "build:cloudflare:esbuild": "npm run build:cloudflare",
