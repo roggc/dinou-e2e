@@ -1169,7 +1169,7 @@ async function handleRequest(request, platformContext = {}) {
     }
 
     // 4. Dynamic ISG / 404 Route on Edge!
-    if (pagePath && (isPathBlocked || allowISGValue === false)) {
+    if (pagePath && isPathBlocked) {
       return new Response("Not Found", { status: 404 });
     }
 
@@ -1304,7 +1304,6 @@ async function handleRequest(request, platformContext = {}) {
             bootstrapScriptContent += `window.HMR_WEBSOCKET_URL="ws://localhost:3001";\n`;
           }
 
-          bridge.headersSent = true;
           let htmlStream;
           try {
             htmlStream = await platformContext.renderHtmlStream(streamForSsr, {

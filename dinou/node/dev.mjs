@@ -713,7 +713,7 @@ const ctxA = await esbuild.context({
   loader: commonLoader,
   jsx: "automatic",
   define: {
-    "process.env.NODE_ENV": '"production"',
+    "process.env.NODE_ENV": '"development"',
     "process.env.DINOU_DEV": '"true"',
     "process.env.DINOU_RUNTIME": '"node-bundle"',
     "process.env.DINOU_BUILD_TOOL": JSON.stringify(isWebpackBuild ? "webpack" : (process.env.DINOU_BUILD_TOOL || "esbuild")),
@@ -737,7 +737,7 @@ const ctxB = await esbuild.context({
   loader: commonLoader,
   jsx: "automatic",
   define: {
-    "process.env.NODE_ENV": '"production"',
+    "process.env.NODE_ENV": '"development"',
     "process.env.DINOU_DEV": '"true"',
     "process.env.DINOU_RUNTIME": '"node-bundle"',
     "process.env.DINOU_BUILD_TOOL": JSON.stringify(isWebpackBuild ? "webpack" : (process.env.DINOU_BUILD_TOOL || "esbuild")),
