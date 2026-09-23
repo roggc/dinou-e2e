@@ -862,9 +862,14 @@ async function onManifestUpdated() {
 }
 
 let manifestDebounce = null;
-const manifestWatcher = chokidar.watch([manifestFolder, path.resolve(projectRoot, ".dinou/public")], {
+const dotDinouDir = path.resolve(projectRoot, ".dinou");
+if (!fs.existsSync(dotDinouDir)) {
+  fs.mkdirSync(dotDinouDir, { recursive: true });
+}
+const manifestWatcher = chokidar.watch(dotDinouDir, {
   ignoreInitial: false,
   ignored: [/node_modules/],
+  depth: 3,
 });
 
 manifestWatcher.on("all", (event, fullPath) => {
@@ -917,6 +922,9 @@ const server = http.createServer(async (req, res) => {
 
     // 1. Playwright readiness check
     if (pathname === "/__DINOU_STATUS_PLAYWRIGHT__") {
+      if (!clientManifestReady && checkClientFilesPresent()) {
+        await onManifestUpdated();
+      }
       const ready = isManifestReady();
       res.statusCode = 200;
       res.setHeader("content-type", "application/json");

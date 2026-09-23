@@ -1234,6 +1234,7 @@ async function handleRequest(request, platformContext = {}) {
         };
 
         const shouldCacheISG =
+          !isDevelopment &&
           genMeta.status === 200 &&
           !isNotFound.value &&
           !dynamicState.value &&
@@ -1303,15 +1304,81 @@ async function handleRequest(request, platformContext = {}) {
             bootstrapScriptContent += `window.HMR_WEBSOCKET_URL="ws://localhost:3001";\n`;
           }
 
-          const htmlStream = await platformContext.renderHtmlStream(streamForSsr, {
-            bootstrapModules,
-            bootstrapScriptContent,
-            onError(err) {
-              console.error("[Edge Native SSR] Stream error:", err);
-            },
-          });
+          bridge.headersSent = true;
+          let htmlStream;
+          try {
+            htmlStream = await platformContext.renderHtmlStream(streamForSsr, {
+              bootstrapModules,
+              bootstrapScriptContent,
+              onError(err) {
+                console.error("[Edge Native SSR] Stream error:", err);
+              },
+            });
+          } catch (ssrErr) {
+            console.error("[Edge Native SSR] SSR render threw error, falling back to getErrorJSX:", ssrErr.message);
+            isError = true;
+            caughtError = ssrErr;
+            bridge.status(500);
+            genMeta.status = 500;
 
-          if (bridge.headers.has("Location") || (bridge.statusCode >= 300 && bridge.statusCode < 400)) {
+            const serializedError = {
+              message: isDevelopment
+                ? (ssrErr?.message || "An error occurred in the Server Components render")
+                : "An error occurred in the Server Components render",
+              name: ssrErr?.name || "Error",
+              stack: isDevelopment ? ssrErr?.stack : undefined,
+            };
+
+            let errorJsx;
+            try {
+              await requestStorage.run(context, async () => {
+                errorJsx = await getErrorJSX(cleanPath, queryObj, serializedError, isDevelopment);
+              });
+            } catch (errJsxErr) {
+              console.error("[Edge Native SSR] Failed to get error JSX:", errJsxErr);
+            }
+
+            if (!errorJsx) {
+              const errMsg = isDevelopment
+                ? (ssrErr?.message || "Error")
+                : "An error occurred in the Server Components render";
+              return {
+                type: "html",
+                html: `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Dinou</title></head><body data-hydrated="true"><div class="min-h-screen bg-slate-950 text-slate-100 p-6"><h2>Application Error</h2><p>${errMsg}</p></div></body></html>`,
+                status: 500,
+                headers: new Headers(bridge.headers),
+                cookies: [...bridge.cookies],
+              };
+            }
+
+            const errorRscStream = renderRSCStream(errorJsx, clientManifest, { runtime: "edge" });
+            const errorClientEntry = getAssetFromManifest("error.js");
+            const errorBootstrapModules = isDevelopment
+              ? [
+                  errorClientEntry,
+                  isWebpack ? undefined : getAssetFromManifest("runtime.js"),
+                ].filter(Boolean)
+              : [errorClientEntry];
+
+            let errorBootstrapScript = "";
+            errorBootstrapScript += `window.__DINOU_ERROR_MESSAGE__=${JSON.stringify(
+              serializedError.message
+            )};window.__DINOU_ERROR_NAME__=${JSON.stringify(serializedError.name)};\n`;
+            errorBootstrapScript += 'document.body.setAttribute("data-hydrated", "true");\n';
+            if (isDevelopment && !isWebpack) {
+              errorBootstrapScript += `window.HMR_WEBSOCKET_URL="ws://localhost:3001";\n`;
+            }
+
+            htmlStream = await platformContext.renderHtmlStream(errorRscStream, {
+              bootstrapModules: errorBootstrapModules,
+              bootstrapScriptContent: errorBootstrapScript,
+              onError(err) {
+                console.error("[Edge Native SSR Error Page] Stream error:", err);
+              },
+            });
+          }
+
+          if (!bridge.headersSent && (bridge.headers.has("Location") || (bridge.statusCode >= 300 && bridge.statusCode < 400))) {
             return {
               type: "redirect",
               status: bridge.statusCode || 302,
