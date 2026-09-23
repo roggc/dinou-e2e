@@ -553,9 +553,12 @@ function createServerFunctionContext(simReq, resBridge, platformContext = {}) {
     res: {
       redirect: (urlOrStatus, url) => {
         const rawUrl = url || urlOrStatus;
+        const currentPath = simReq.headers["x-dinou-current-path"];
         const referer = simReq.headers["referer"];
         let refererPath = "/";
-        if (referer) {
+        if (currentPath) {
+          refererPath = currentPath;
+        } else if (referer) {
           try {
             refererPath = new URL(referer).pathname;
           } catch (e) { }

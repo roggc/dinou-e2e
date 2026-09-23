@@ -128,6 +128,17 @@ class CloudflareKVStorage extends StorageAdapter {
     const cleanKey = this._cleanKey(key);
     await this.kv.delete(cleanKey);
   }
+
+  async keys(prefix = "") {
+    if (!this.kv || typeof this.kv.list !== "function") return [];
+    try {
+      const options = prefix ? { prefix } : undefined;
+      const res = await this.kv.list(options);
+      return res && res.keys ? res.keys.map((k) => k.name) : [];
+    } catch (e) {
+      return [];
+    }
+  }
 }
 
 /**
@@ -249,14 +260,17 @@ class DenoKVStorage extends StorageAdapter {
   }
 
   _cleanKey(key) {
-    return key.replace(/^\/+/, "").replace(/\\/g, "/");
+    return String(key).replace(/^\/+/, "").replace(/\\/g, "/");
   }
 
   async get(key) {
     const kv = await this._getKV();
     if (!kv) return null;
     const cleanKey = this._cleanKey(key);
-    const res = await kv.get(["dinou_cache", cleanKey]);
+    let res = await kv.get(["dinou_cache", cleanKey]);
+    if ((!res || res.value === null) && !cleanKey.includes(".")) {
+      res = await kv.get(["dinou_cache", cleanKey ? `${cleanKey}/index.html` : "index.html"]);
+    }
     if (!res || res.value === null) return null;
     const val = res.value;
     if (val && val.chunked) {
@@ -301,6 +315,13 @@ class DenoKVStorage extends StorageAdapter {
         metadata,
       });
     }
+
+    if (cleanKey.endsWith("/index.html")) {
+      const folderKey = cleanKey.slice(0, -11);
+      await this.set(folderKey, content, metadata);
+    } else if (cleanKey === "index.html") {
+      await this.set("", content, metadata);
+    }
   }
 
   async has(key) {
@@ -308,7 +329,12 @@ class DenoKVStorage extends StorageAdapter {
     if (!kv) return false;
     const cleanKey = this._cleanKey(key);
     const res = await kv.get(["dinou_cache", cleanKey]);
-    return res && res.value !== null;
+    if (res && res.value !== null) return true;
+    if (!cleanKey.includes(".")) {
+      const fallbackRes = await kv.get(["dinou_cache", cleanKey ? `${cleanKey}/index.html` : "index.html"]);
+      return fallbackRes && fallbackRes.value !== null;
+    }
+    return false;
   }
 
   async delete(key) {
@@ -322,6 +348,30 @@ class DenoKVStorage extends StorageAdapter {
       }
     }
     await kv.delete(["dinou_cache", cleanKey]);
+
+    if (cleanKey.endsWith("/index.html")) {
+      const folderKey = cleanKey.slice(0, -11);
+      await this.delete(folderKey);
+    } else if (cleanKey === "index.html") {
+      await this.delete("");
+    }
+  }
+
+  async keys(prefix = "dinou_cache") {
+    const kv = await this._getKV();
+    if (!kv) return [];
+    try {
+      const entries = kv.list({ prefix: [prefix] });
+      const result = [];
+      for await (const entry of entries) {
+        if (entry.key && entry.key.length >= 2 && typeof entry.key[1] === "string") {
+          result.push(entry.key[1]);
+        }
+      }
+      return result;
+    } catch (e) {
+      return [];
+    }
   }
 }
 

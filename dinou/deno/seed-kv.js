@@ -84,6 +84,15 @@ async function processDir(dir, relPrefix = "") {
       } else if (cleanRelPath === "index.html") {
         await setKvCache(kv, "", html, metadata);
       }
+    } else if (entry.name === "metadata.json") {
+      const metaContent = fs.readFileSync(fullPath, "utf8");
+      let metadata = null;
+      try {
+        metadata = JSON.parse(metaContent);
+      } catch (e) {}
+      await setKvCache(kv, cleanRelPath, metaContent, metadata);
+      seededCount++;
+      console.log(`   ✅ Cached Meta: ${cleanRelPath}`);
     } else if (entry.name === "rsc.rsc") {
       const rsc = fs.readFileSync(fullPath, "utf8");
       await setKvCache(kv, cleanRelPath, rsc, null);
