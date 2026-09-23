@@ -8,11 +8,87 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
+import { Readable } from "node:stream";
 
 if (typeof globalThis !== "undefined") {
   globalThis.__DINOU_RUNTIME__ = "bun";
 }
 process.env.NODE_ENV = process.env.NODE_ENV || "production";
+
+// Bun WebStreams adapter fix:
+// Prevent unhandled "TypeError: Invalid state: Controller is already closed"
+// when node streams write after stream completion or reader cancellation.
+if (Readable && typeof Readable.toWeb === "function") {
+  const originalToWeb = Readable.toWeb;
+  Readable.toWeb = function safeToWeb(nodeStream) {
+    if (!nodeStream || typeof nodeStream.on !== "function") {
+      return originalToWeb.call(Readable, nodeStream);
+    }
+    let isClosed = false;
+    let isEnded = false;
+    return new ReadableStream({
+      start(controller) {
+        function onData(chunk) {
+          if (isClosed || isEnded) return;
+          try {
+            controller.enqueue(chunk);
+            if (controller.desiredSize !== null && controller.desiredSize <= 0) {
+              if (typeof nodeStream.pause === "function") nodeStream.pause();
+            }
+          } catch (e) {
+            isClosed = true;
+            cleanup();
+          }
+        }
+        function onDrain() {
+          if (isClosed || isEnded) return;
+          if (typeof nodeStream.resume === "function") nodeStream.resume();
+        }
+        function onEnd() {
+          if (isClosed || isEnded) return;
+          isEnded = true;
+          cleanup();
+          try {
+            controller.close();
+          } catch (e) {}
+        }
+        function onError(err) {
+          if (isClosed || isEnded) return;
+          isClosed = true;
+          cleanup();
+          try {
+            controller.error(err);
+          } catch (e) {}
+        }
+        function cleanup() {
+          if (typeof nodeStream.removeListener === "function") {
+            nodeStream.removeListener("data", onData);
+            nodeStream.removeListener("drain", onDrain);
+            nodeStream.removeListener("end", onEnd);
+            nodeStream.removeListener("error", onError);
+            nodeStream.removeListener("close", onEnd);
+          }
+        }
+        nodeStream.on("data", onData);
+        nodeStream.on("drain", onDrain);
+        nodeStream.on("end", onEnd);
+        nodeStream.on("error", onError);
+        nodeStream.on("close", onEnd);
+      },
+      pull(controller) {
+        if (!isClosed && !isEnded && typeof nodeStream.resume === "function") {
+          nodeStream.resume();
+        }
+      },
+      cancel(reason) {
+        isClosed = true;
+        if (typeof nodeStream.destroy === "function") {
+          nodeStream.destroy();
+        }
+      }
+    });
+  };
+}
 
 const require = createRequire(import.meta.url);
 let parseExports;
