@@ -835,8 +835,17 @@ if (typeof globalThis.__webpack_require__.u === 'undefined') {
 if (typeof globalThis.__webpack_chunk_load__ === 'undefined') {
   globalThis.__webpack_chunk_load__ = () => Promise.resolve();
 }
-var __webpack_require__ = globalThis.__webpack_require__;
-var __webpack_chunk_load__ = globalThis.__webpack_chunk_load__;
+var __webpack_require__ = function(id) {
+  return globalThis.__webpack_require__ ? globalThis.__webpack_require__(id) : {};
+};
+__webpack_require__.u = function(chunkId) {
+  return (globalThis.__webpack_require__ && globalThis.__webpack_require__.u)
+    ? globalThis.__webpack_require__.u(chunkId)
+    : '' + chunkId + '.js';
+};
+var __webpack_chunk_load__ = function(chunkId) {
+  return globalThis.__webpack_chunk_load__ ? globalThis.__webpack_chunk_load__(chunkId) : Promise.resolve();
+};
 `,
 };
 
