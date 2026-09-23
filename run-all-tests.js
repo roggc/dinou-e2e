@@ -9,18 +9,26 @@ if (fs.existsSync(bunBinDir) && !process.env.PATH.includes(bunBinDir)) {
 }
 
 const scenarios = [
-  { name: "Webpack DEV", cmd: "npm run dev:webpack" },
+  // 1. Entorno de Desarrollo (JIT dinámico)
+  { name: "Node DEV (Esbuild)", cmd: "npm run dev:esbuild" },
+  { name: "Node DEV (Rollup)", cmd: "npm run dev:rollup" },
+  { name: "Node DEV (Webpack)", cmd: "npm run dev:webpack" },
+
+  // 2. Node.js Producción (AOT Dual-Bundle, Cero Fork)
   {
-    name: "Webpack PROD",
-    cmd: "npm run build:webpack && npm run start:webpack",
+    name: "Node AOT (Esbuild)",
+    cmd: "npm run build:node:esbuild && npm run start:node:esbuild",
   },
-  { name: "Rollup DEV", cmd: "npm run dev:rollup" },
-  { name: "Rollup PROD", cmd: "npm run build:rollup && npm run start:rollup" },
-  { name: "Esbuild DEV", cmd: "npm run dev:esbuild" },
   {
-    name: "Esbuild PROD",
-    cmd: "npm run build:esbuild && npm run start:esbuild",
+    name: "Node AOT (Rollup)",
+    cmd: "npm run build:node:rollup && npm run start:node:rollup",
   },
+  {
+    name: "Node AOT (Webpack)",
+    cmd: "npm run build:node:webpack && npm run start:node:webpack",
+  },
+
+  // 3. Deno Producción (AOT)
   {
     name: "Deno (Esbuild)",
     cmd: "npm run build:deno:esbuild && npm run start:deno",
@@ -33,6 +41,8 @@ const scenarios = [
     name: "Deno (Webpack)",
     cmd: "npm run build:deno:webpack && npm run start:deno",
   },
+
+  // 4. Bun Producción (AOT)
   {
     name: "Bun (Esbuild)",
     cmd: "npm run build:bun:esbuild && npm run start:bun:esbuild",
@@ -44,18 +54,6 @@ const scenarios = [
   {
     name: "Bun (Webpack)",
     cmd: "npm run build:bun:webpack && npm run start:bun:webpack",
-  },
-  {
-    name: "Node AOT (Esbuild)",
-    cmd: "npm run build:node:esbuild && npm run start:node:esbuild",
-  },
-  {
-    name: "Node AOT (Rollup)",
-    cmd: "npm run build:node:rollup && npm run start:node:rollup",
-  },
-  {
-    name: "Node AOT (Webpack)",
-    cmd: "npm run build:node:webpack && npm run start:node:webpack",
   },
 ];
 
