@@ -448,6 +448,20 @@ function walkVfs(dir) {
 walkVfs(srcDir);
 
 const envSetupContent = `// Auto-generated environment setup
+if (typeof globalThis.__webpack_require__ === 'undefined') {
+  globalThis.__webpack_require__ = function(id) {
+    if (globalThis.__webpack_modules__ && globalThis.__webpack_modules__[id]) {
+      return globalThis.__webpack_modules__[id];
+    }
+    return {};
+  };
+}
+if (typeof globalThis.__webpack_require__.u === 'undefined') {
+  globalThis.__webpack_require__.u = function(chunkId) { return '' + chunkId + '.js'; };
+}
+if (typeof globalThis.__webpack_chunk_load__ === 'undefined') {
+  globalThis.__webpack_chunk_load__ = () => Promise.resolve();
+}
 ${manifestInlines}
 globalThis.__DINOU_VFS__ = ${JSON.stringify(vfsSnapshot)};
 `;
@@ -660,6 +674,7 @@ globalThis.__webpack_require__ = (id) => {
   console.error("[SSR Engine] Module not found in __webpack_require__:", id);
   return {};
 };
+globalThis.__webpack_require__.u = (chunkId) => "" + chunkId + ".js";
 globalThis.__webpack_chunk_load__ = () => Promise.resolve();
 
 export async function renderHtml(rscStream, options = {}) {
@@ -805,7 +820,24 @@ const __filename = '';
 globalThis.__dinou_require__ = require;
 if (typeof globalThis.AsyncLocalStorage === 'undefined' && typeof ___AsyncLocalStorage !== 'undefined') {
   globalThis.AsyncLocalStorage = ___AsyncLocalStorage;
-}`,
+}
+if (typeof globalThis.__webpack_require__ === 'undefined') {
+  globalThis.__webpack_require__ = function(id) {
+    if (globalThis.__webpack_modules__ && globalThis.__webpack_modules__[id]) {
+      return globalThis.__webpack_modules__[id];
+    }
+    return {};
+  };
+}
+if (typeof globalThis.__webpack_require__.u === 'undefined') {
+  globalThis.__webpack_require__.u = function(chunkId) { return '' + chunkId + '.js'; };
+}
+if (typeof globalThis.__webpack_chunk_load__ === 'undefined') {
+  globalThis.__webpack_chunk_load__ = () => Promise.resolve();
+}
+var __webpack_require__ = globalThis.__webpack_require__;
+var __webpack_chunk_load__ = globalThis.__webpack_chunk_load__;
+`,
 };
 
 // Plugins for RSC Engine
