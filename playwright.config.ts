@@ -51,7 +51,7 @@ export default defineConfig({
   /* Fail the build on CI if you accidentally left test.only in the source code. */
   forbidOnly: !!process.env.CI,
   /* Retry on CI only */
-  retries: process.env.CI ? 2 : 0,
+  retries: 0,
   /* Opt out of parallel tests on CI. For local dev:webpack, 2 workers prevents heavy CPU/RAM saturation */
   workers: process.env.CI ? 1 : (commandToRun.includes("dev:webpack") ? 2 : 4),
   /* Reporter to use. Generates full HTML report without blocking automated chain execution */
