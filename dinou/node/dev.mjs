@@ -58,6 +58,8 @@ const parseExports = require(path.join(dinouDir, "core/parse-exports.js"));
 const { useClientRegex, useServerRegex } = require(path.join(dinouDir, "constants.js"));
 const { nodeToWebRequest, sendWebResponseToNode } = require(path.join(dinouDir, "core/http-adapter.js"));
 const { setStorageAdapter, FileSystemStorage, MemoryStorage } = require(path.join(dinouDir, "core/storage-adapter.js"));
+const createScopedName = require(path.join(dinouDir, "core/createScopedName.js"));
+const { regex: assetRegex } = require(path.join(dinouDir, "core/asset-extensions.js"));
 
 // Initialize Dinou Storage
 try {
@@ -763,9 +765,45 @@ const commonAlias = {
 };
 const commonLoader = {
   ".js": "jsx", ".jsx": "jsx", ".ts": "ts", ".tsx": "tsx",
-  ".json": "json", ".css": "empty", ".svg": "dataurl",
-  ".png": "dataurl", ".jpg": "dataurl", ".jpeg": "dataurl",
-  ".webp": "dataurl", ".ico": "dataurl",
+  ".json": "json", ".css": "empty",
+};
+
+const serverAssetPlugin = {
+  name: "dinou-server-asset-plugin",
+  setup(build) {
+    build.onResolve({ filter: assetRegex }, (args) => {
+      let resolvedPath;
+      if (args.path.startsWith("@/")) {
+        resolvedPath = path.resolve(projectRoot, "src", args.path.slice(2));
+      } else if (path.isAbsolute(args.path)) {
+        resolvedPath = args.path;
+      } else {
+        resolvedPath = path.resolve(args.resolveDir, args.path);
+      }
+      return { path: resolvedPath, namespace: "dinou-server-asset" };
+    });
+
+    build.onLoad({ filter: /.*/, namespace: "dinou-server-asset" }, (args) => {
+      const ext = path.extname(args.path);
+      const base = path.basename(args.path, ext);
+      const scoped = createScopedName(base, args.path);
+      const assetUrl = `/assets/${scoped}${ext}`;
+
+      try {
+        const outAssetDir = path.resolve(projectRoot, ".dinou/public/assets");
+        const outAssetPath = path.join(outAssetDir, `${scoped}${ext}`);
+        if (!fs.existsSync(outAssetPath)) {
+          fs.mkdirSync(outAssetDir, { recursive: true });
+          fs.copyFileSync(args.path, outAssetPath);
+        }
+      } catch (e) {}
+
+      return {
+        contents: `export default ${JSON.stringify(assetUrl)};`,
+        loader: "js",
+      };
+    });
+  },
 };
 
 const banner = {
@@ -823,7 +861,7 @@ const ctxA = await esbuild.context({
   conditions: ["node", "worker", "react-server"],
   external: externalList,
   banner,
-  plugins: [clientReferencesPlugin, serverReferencesPlugin],
+  plugins: [clientReferencesPlugin, serverReferencesPlugin, serverAssetPlugin],
   alias: commonAlias,
   loader: commonLoader,
   jsx: "automatic",
@@ -847,7 +885,7 @@ const ctxB = await esbuild.context({
   conditions: ["node", "worker", "browser"],
   external: externalList,
   banner,
-  plugins: [serverReferencesPluginSsr],
+  plugins: [serverReferencesPluginSsr, serverAssetPlugin],
   alias: commonAlias,
   loader: commonLoader,
   jsx: "automatic",
