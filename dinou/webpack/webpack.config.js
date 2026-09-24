@@ -124,7 +124,8 @@ module.exports = async () => {
     },
     output: {
       path: path.resolve(process.cwd(), outputDirectory),
-      filename: "[name]-[contenthash].js",
+      filename: isDevelopment ? "[name].js" : "[name]-[contenthash].js",
+      chunkFilename: isDevelopment ? "[name].js" : "[name]-[contenthash].js",
       publicPath: "/",
       clean: isDevelopment,
       library: {

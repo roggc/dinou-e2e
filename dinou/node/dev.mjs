@@ -974,7 +974,7 @@ manifestWatcher.on("all", (event, fullPath) => {
     manifestDebounce = setTimeout(() => {
       manifestDebounce = null;
       onManifestUpdated();
-    }, 40);
+    }, 80);
   }
 });
 
