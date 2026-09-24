@@ -15,6 +15,26 @@ const require = createRequire(path.resolve(projectRoot, "package.json"));
 const esbuild = require("esbuild");
 const chokidar = require("chokidar");
 
+// Protect file descriptor operations against transient EMFILE spikes on Windows
+try {
+  const gracefulFs = require("graceful-fs");
+  gracefulFs.gracefulify(fs);
+} catch (e) {}
+
+async function dynamicImportWithRetry(fileUrl, maxRetries = 6, delayMs = 60) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await import(fileUrl);
+    } catch (err) {
+      if ((err.code === "EMFILE" || err.code === "EBUSY" || err.code === "EPERM") && i < maxRetries - 1) {
+        await new Promise((r) => setTimeout(r, delayMs * (i + 1)));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 process.env.NODE_ENV = "development";
 process.env.DINOU_DEV = "true";
 process.env.DINOU_RUNTIME = "node-bundle";
@@ -849,8 +869,8 @@ async function doInitialBuild() {
   const t0 = Date.now();
   await Promise.all([ctxA.rebuild(), ctxB.rebuild()]);
   const v = "?v=" + engineVersion;
-  rscModule = await import(pathToFileURL(rscOutfile).href + v);
-  ssrModule = await import(pathToFileURL(ssrOutfile).href + v);
+  rscModule = await dynamicImportWithRetry(pathToFileURL(rscOutfile).href + v);
+  ssrModule = await dynamicImportWithRetry(pathToFileURL(ssrOutfile).href + v);
   console.log(`✅ [Dinou Dev] Initial build completed in ${Date.now() - t0}ms`);
 }
 
@@ -909,9 +929,9 @@ async function triggerRebuild(filePath = "", eventType = "change") {
 
       engineVersion = Date.now();
       const v = "?v=" + engineVersion;
-      rscModule = await import(pathToFileURL(rscOutfile).href + v);
+      rscModule = await dynamicImportWithRetry(pathToFileURL(rscOutfile).href + v);
       if (needsStructureRebuild || isClientFile) {
-        ssrModule = await import(pathToFileURL(ssrOutfile).href + v);
+        ssrModule = await dynamicImportWithRetry(pathToFileURL(ssrOutfile).href + v);
       }
       console.log(`⚡ [Dinou Dev] Rebuild finished in ${Date.now() - t0}ms (${eventType} ${path.basename(filePath) || "source"})`);
       if (!isClientFile) {
@@ -993,8 +1013,8 @@ async function onManifestUpdated() {
       await Promise.all([ctxA.rebuild(), ctxB.rebuild()]);
       engineVersion = Date.now();
       const v = "?v=" + engineVersion;
-      rscModule = await import(pathToFileURL(rscOutfile).href + v);
-      ssrModule = await import(pathToFileURL(ssrOutfile).href + v);
+      rscModule = await dynamicImportWithRetry(pathToFileURL(rscOutfile).href + v);
+      ssrModule = await dynamicImportWithRetry(pathToFileURL(ssrOutfile).href + v);
       clientManifestReady = true;
       console.log("✅ [Dinou Dev] Dual-Bundle engine successfully synchronized with client build!");
     } catch (err) {
@@ -1014,11 +1034,15 @@ if (!fs.existsSync(dotDinouDir)) {
 }
 const manifestWatcher = chokidar.watch(dotDinouDir, {
   ignoreInitial: true,
-  ignored: [/node_modules/, /[\\/]\.dinou[\\/](public|dist|dev-)/],
+  ignored: [/node_modules/, /[\\/]\.dinou[\\/](public|dist|dist2|node-dev|dev-)/],
   depth: 3,
 });
 
 manifestWatcher.on("all", (event, fullPath) => {
+  if (isWebpackBuild) {
+    // In Webpack mode, compiler.hooks.done handles manifest synchronization cleanly
+    return;
+  }
   if (
     fullPath.endsWith("react-client-manifest.json") ||
     fullPath.endsWith("server-functions-manifest.json") ||

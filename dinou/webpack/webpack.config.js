@@ -359,7 +359,13 @@ module.exports = async () => {
       },
     },
     watchOptions: {
-      ignored: outputDirs.map((dir) => `${dir}/**`),
+      ignored: [
+        "**/node_modules/**",
+        "**/.git/**",
+        "**/.dinou/node-dev/**",
+        "**/.dinou/dist2/**",
+        ...outputDirs.map((dir) => `${dir}/**`),
+      ],
     },
     stats: "normal", // or 'verbose' in dev
     infrastructureLogging: {
