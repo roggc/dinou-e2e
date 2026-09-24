@@ -11,6 +11,8 @@ function normalizePath(p) {
   return path.resolve(p).replace(/\\/g, "/").toLowerCase();
 }
 
+let activeHmrEngine = null;
+
 function esmHmrPlugin() {
   let hmrEngine;
   let server = null;
@@ -30,6 +32,7 @@ function esmHmrPlugin() {
           }
         });
         hmrEngine = new EsmHmrEngine({ server });
+        activeHmrEngine = hmrEngine;
         server.listen(3001, () => {
           // console.log("[esm-hmr] WebSocket server listening on port 3001");
         });
@@ -123,5 +126,6 @@ function esmHmrPlugin() {
 
 module.exports = {
   esmHmrPlugin,
+  getHmrEngine: () => activeHmrEngine,
 };
 

@@ -856,6 +856,17 @@ async function doInitialBuild() {
 
 await doInitialBuild();
 
+// Client bundler handle & broadcast helper
+let clientBundlerHandle = null;
+let clientBundlerPromise = null;
+
+async function broadcastToClients(msg) {
+  try {
+    const handle = clientBundlerHandle || (await clientBundlerPromise);
+    handle?.broadcast?.(msg);
+  } catch (e) {}
+}
+
 // Trigger an incremental rebuild
 async function triggerRebuild(filePath = "", eventType = "change") {
   if (activeRebuildPromise) {
@@ -903,6 +914,9 @@ async function triggerRebuild(filePath = "", eventType = "change") {
         ssrModule = await import(pathToFileURL(ssrOutfile).href + v);
       }
       console.log(`⚡ [Dinou Dev] Rebuild finished in ${Date.now() - t0}ms (${eventType} ${path.basename(filePath) || "source"})`);
+      if (!isClientFile) {
+        await broadcastToClients({ type: "reload" });
+      }
     } catch (err) {
       console.error("❌ [Dinou Dev] Rebuild error:", err);
     } finally {
@@ -1043,10 +1057,6 @@ function isManifestReady() {
   return clientManifestReady && checkClientFilesPresent();
 }
 
-// In-process client bundler management
-let clientBundlerHandle = null;
-let clientBundlerPromise = null;
-
 async function startClientBundler(tool) {
   const normTool = (tool || "esbuild").toLowerCase();
   console.log(`📦 [Dinou Dev] Starting in-process client bundler (${normTool})...`);
@@ -1063,6 +1073,7 @@ async function startClientBundler(tool) {
   if (normTool === "rollup") {
     const { watch } = require("rollup");
     const getRollupConfig = require(path.resolve(dinouDir, "rollup/rollup.config.js"));
+    const { getHmrEngine } = require(path.resolve(dinouDir, "rollup/react-refresh/rollup-plugin-esm-hmr.js"));
     const rollupConfig = await getRollupConfig();
     const watcher = watch(rollupConfig);
 
@@ -1077,6 +1088,9 @@ async function startClientBundler(tool) {
           if (!initialResolved) {
             initialResolved = true;
             resolve({
+              broadcast: (msg) => {
+                getHmrEngine()?.broadcastMessage?.(msg);
+              },
               close: async () => {
                 try {
                   await watcher.close();
@@ -1089,6 +1103,9 @@ async function startClientBundler(tool) {
           if (!initialResolved) {
             initialResolved = true;
             resolve({
+              broadcast: (msg) => {
+                getHmrEngine()?.broadcastMessage?.(msg);
+              },
               close: async () => {
                 try {
                   await watcher.close();
@@ -1195,53 +1212,78 @@ const server = http.createServer(async (req, res) => {
     if (pathname !== "/") {
       const cleanPath = pathname.startsWith("/") ? pathname.slice(1) : pathname;
       const mappedPath = (parsedAssetManifest && parsedAssetManifest[cleanPath]) || cleanPath;
+      const ext = path.extname(cleanPath).toLowerCase();
 
+      let foundFilePath = null;
       for (const baseDir of candidateStaticDirs) {
         for (const targetName of [mappedPath, cleanPath]) {
           const filePath = path.join(baseDir, targetName);
           if (fs.existsSync(filePath)) {
             try {
-              const stat = fs.statSync(filePath);
-              if (stat.isFile()) {
-                const ext = path.extname(filePath).toLowerCase();
-                const contentType = MIME_TYPES[ext] || "application/octet-stream";
-                res.statusCode = 200;
-                res.setHeader("content-type", contentType);
-                res.setHeader("content-length", String(stat.size));
-                res.setHeader("cache-control", "no-cache");
-                fs.createReadStream(filePath).pipe(res);
-                return;
+              if (fs.statSync(filePath).isFile()) {
+                foundFilePath = filePath;
+                break;
               }
             } catch (e) {}
           }
         }
+        if (foundFilePath) break;
       }
 
-      // Check if it's an asset file with a known static extension
-      const ext = path.extname(cleanPath).toLowerCase();
-      if (ext && MIME_TYPES[ext]) {
-        // If it's a client bundle file, wait briefly in case a bundler rebuild is currently writing to disk
-        if (cleanPath === "main.js" || cleanPath === "runtime.js" || cleanPath.startsWith("chunk-")) {
-          for (let attempt = 0; attempt < 10; attempt++) {
-            await new Promise((r) => setTimeout(r, 50));
-            for (const baseDir of candidateStaticDirs) {
-              const filePath = path.join(baseDir, cleanPath);
+      // If it's a client bundle file that is currently being written or created by the bundler
+      if (!foundFilePath && (cleanPath === "main.js" || cleanPath === "runtime.js" || cleanPath.startsWith("chunk-") || (ext && MIME_TYPES[ext]))) {
+        for (let attempt = 0; attempt < 12; attempt++) {
+          await new Promise((r) => setTimeout(r, 25));
+          for (const baseDir of candidateStaticDirs) {
+            for (const targetName of [mappedPath, cleanPath]) {
+              const filePath = path.join(baseDir, targetName);
               if (fs.existsSync(filePath)) {
                 try {
-                  const stat = fs.statSync(filePath);
-                  if (stat.isFile()) {
-                    res.statusCode = 200;
-                    res.setHeader("content-type", MIME_TYPES[ext] || "application/javascript");
-                    res.setHeader("content-length", String(stat.size));
-                    res.setHeader("cache-control", "no-cache");
-                    fs.createReadStream(filePath).pipe(res);
-                    return;
+                  if (fs.statSync(filePath).isFile()) {
+                    foundFilePath = filePath;
+                    break;
                   }
                 } catch (e) {}
               }
             }
+            if (foundFilePath) break;
           }
+          if (foundFilePath) break;
         }
+      }
+
+      if (foundFilePath) {
+        try {
+          const fileExt = path.extname(foundFilePath).toLowerCase();
+          const contentType = MIME_TYPES[fileExt] || "application/octet-stream";
+
+          // Safely read buffer into memory, retrying briefly if the bundler currently has it truncated or locked
+          let buf = null;
+          for (let attempt = 0; attempt < 10; attempt++) {
+            try {
+              buf = fs.readFileSync(foundFilePath);
+              if (buf.length > 0 || (!fileExt.endsWith(".js") && !fileExt.endsWith(".css"))) {
+                break;
+              }
+            } catch (readErr) {
+              // File might be momentarily locked on Windows during write
+            }
+            await new Promise((r) => setTimeout(r, 25));
+          }
+
+          if (buf !== null) {
+            res.statusCode = 200;
+            res.setHeader("content-type", contentType);
+            res.setHeader("content-length", String(buf.length));
+            res.setHeader("cache-control", "no-cache");
+            res.end(buf);
+            return;
+          }
+        } catch (e) {}
+      }
+
+      // Check if it's an asset file with a known static extension
+      if (ext && MIME_TYPES[ext]) {
         res.statusCode = 404;
         res.setHeader("content-type", "text/plain; charset=utf-8");
         res.end(`Not Found: ${pathname}`);

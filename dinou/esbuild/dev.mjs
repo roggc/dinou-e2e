@@ -246,7 +246,7 @@ export async function startEsbuildDev(options = {}) {
 
     if (entryPointsChanged || file.endsWith(".css") || file.endsWith(".scss")) {
       debounceRecreateAndReload();
-    } else {
+    } else if (isClientModule) {
       debounceReload();
     }
   });
@@ -254,6 +254,9 @@ export async function startEsbuildDev(options = {}) {
   await readyPromise;
 
   return {
+    broadcast: (msg) => {
+      hmrEngine.value?.broadcastMessage?.(msg);
+    },
     close: async () => {
       try {
         if (debounceTimer) clearTimeout(debounceTimer);
