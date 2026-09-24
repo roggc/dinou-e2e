@@ -1293,7 +1293,8 @@ const server = http.createServer(async (req, res) => {
       }
 
       // If it's a client bundle file that is currently being written or created by the bundler
-      if (!foundFilePath && (cleanPath === "main.js" || cleanPath === "runtime.js" || cleanPath.startsWith("chunk-") || (ext && MIME_TYPES[ext]))) {
+      const isClientBundleFile = cleanPath === "main.js" || cleanPath === "runtime.js" || cleanPath.startsWith("chunk-") || cleanPath.startsWith("assets/");
+      if (!foundFilePath && isClientBundleFile) {
         for (let attempt = 0; attempt < 12; attempt++) {
           await new Promise((r) => setTimeout(r, 25));
           for (const baseDir of candidateStaticDirs) {
@@ -1342,14 +1343,6 @@ const server = http.createServer(async (req, res) => {
             return;
           }
         } catch (e) {}
-      }
-
-      // Check if it's an asset file with a known static extension
-      if (ext && MIME_TYPES[ext]) {
-        res.statusCode = 404;
-        res.setHeader("content-type", "text/plain; charset=utf-8");
-        res.end(`Not Found: ${pathname}`);
-        return;
       }
     }
 
