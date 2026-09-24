@@ -300,12 +300,28 @@ Dinou v7 organiza sus scripts en una matriz coherente por **Objetivo de Desplieg
 ├── Bun Standalone & Compile:
 │   ├── build:bun                            (Genera .dinou/bun/server.js)
 │   ├── build:bun:esbuild / :rollup / :webpack
+│   ├── build:bun:compile                    (Compila a binario para el OS actual)
+│   ├── build:bun:compile:esbuild / :rollup / :webpack
+│   ├── build:bun:compile:linux              (Compila para Linux x64 -> dist/server-linux)
+│   ├── build:bun:compile:linux:esbuild / :rollup / :webpack
+│   ├── build:bun:compile:linux_arm          (Compila para Linux ARM64 -> dist/server-linux-arm)
+│   ├── build:bun:compile:linux_arm:esbuild / :rollup / :webpack
+│   ├── build:bun:compile:mac                (Compila para macOS Apple Silicon -> dist/server-mac)
+│   ├── build:bun:compile:mac:esbuild / :rollup / :webpack
+│   ├── build:bun:compile:win                (Compila para Windows x64 -> dist/server-win.exe)
+│   ├── build:bun:compile:win:esbuild / :rollup / :webpack
 │   ├── build:bun:pure                       (Build 100% Bun, sin Node -> :esbuild)
 │   ├── build:bun:pure:esbuild / :rollup / :webpack
-│   ├── build:bun:compile                    (Compila a binario único dist/server)
-│   ├── build:bun:compile:esbuild / :rollup / :webpack
 │   ├── build:bun:pure:compile               (Compila a binario usando 100% Bun)
 │   ├── build:bun:pure:compile:esbuild / :rollup / :webpack
+│   ├── build:bun:pure:compile:linux         (Compila a binario Linux x64 con 100% Bun)
+│   ├── build:bun:pure:compile:linux:esbuild / :rollup / :webpack
+│   ├── build:bun:pure:compile:linux_arm     (Compila a binario Linux ARM64 con 100% Bun)
+│   ├── build:bun:pure:compile:linux_arm:esbuild / :rollup / :webpack
+│   ├── build:bun:pure:compile:mac           (Compila a binario macOS Apple Silicon con 100% Bun)
+│   ├── build:bun:pure:compile:mac:esbuild / :rollup / :webpack
+│   ├── build:bun:pure:compile:win           (Compila a binario Windows x64 con 100% Bun)
+│   ├── build:bun:pure:compile:win:esbuild / :rollup / :webpack
 │   └── start:bun / :esbuild / :rollup / :webpack
 │
 ├── Cloudflare Workers:

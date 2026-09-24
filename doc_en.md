@@ -300,12 +300,28 @@ Dinou v7 organizes all operations into a structured matrix categorized by **Targ
 ├── Bun Standalone & Compile:
 │   ├── build:bun                            (Generates .dinou/bun/server.js)
 │   ├── build:bun:esbuild / :rollup / :webpack
+│   ├── build:bun:compile                    (Compiles standalone binary for current host OS)
+│   ├── build:bun:compile:esbuild / :rollup / :webpack
+│   ├── build:bun:compile:linux              (Cross-compiles for Linux x64 -> dist/server-linux)
+│   ├── build:bun:compile:linux:esbuild / :rollup / :webpack
+│   ├── build:bun:compile:linux_arm          (Cross-compiles for Linux ARM64 -> dist/server-linux-arm)
+│   ├── build:bun:compile:linux_arm:esbuild / :rollup / :webpack
+│   ├── build:bun:compile:mac                (Cross-compiles for macOS Apple Silicon -> dist/server-mac)
+│   ├── build:bun:compile:mac:esbuild / :rollup / :webpack
+│   ├── build:bun:compile:win                (Cross-compiles for Windows x64 -> dist/server-win.exe)
+│   ├── build:bun:compile:win:esbuild / :rollup / :webpack
 │   ├── build:bun:pure                       (100% Bun build, zero Node dependency -> :esbuild)
 │   ├── build:bun:pure:esbuild / :rollup / :webpack
-│   ├── build:bun:compile                    (Compiles standalone binary dist/server)
-│   ├── build:bun:compile:esbuild / :rollup / :webpack
 │   ├── build:bun:pure:compile               (Compiles standalone binary using 100% Bun)
 │   ├── build:bun:pure:compile:esbuild / :rollup / :webpack
+│   ├── build:bun:pure:compile:linux         (Cross-compiles for Linux x64 with 100% Bun)
+│   ├── build:bun:pure:compile:linux:esbuild / :rollup / :webpack
+│   ├── build:bun:pure:compile:linux_arm     (Cross-compiles for Linux ARM64 with 100% Bun)
+│   ├── build:bun:pure:compile:linux_arm:esbuild / :rollup / :webpack
+│   ├── build:bun:pure:compile:mac           (Cross-compiles for macOS Apple Silicon with 100% Bun)
+│   ├── build:bun:pure:compile:mac:esbuild / :rollup / :webpack
+│   ├── build:bun:pure:compile:win           (Cross-compiles for Windows x64 with 100% Bun)
+│   ├── build:bun:pure:compile:win:esbuild / :rollup / :webpack
 │   └── start:bun / :esbuild / :rollup / :webpack
 │
 ├── Cloudflare Workers:
