@@ -80,26 +80,45 @@ function createDevClientManifestProxy(target) {
       }
 
       // 2. Check if disk manifest has been updated
+      const hashIdx = prop.lastIndexOf("#");
+      const baseUri = hashIdx !== -1 ? prop.slice(0, hashIdx) : prop;
+      const expName = hashIdx !== -1 ? prop.slice(hashIdx + 1) : "default";
+
+      let altBaseUri = null;
+      if (baseUri.startsWith("file:///c:/")) {
+        altBaseUri = "file:///C:/" + baseUri.slice(11);
+      } else if (baseUri.startsWith("file:///C:/")) {
+        altBaseUri = "file:///c:/" + baseUri.slice(11);
+      }
+
       try {
         const p = getClientManifestPath();
         if (fs.existsSync(p)) {
           const fresh = JSON.parse(fs.readFileSync(p, "utf8"));
           if (fresh[prop]) {
-            obj[prop] = fresh[prop];
-            return obj[prop];
+            const entry = { ...fresh[prop] };
+            if (hashIdx !== -1) entry.name = expName;
+            obj[prop] = entry;
+            return entry;
           }
           if (altProp && fresh[altProp]) {
-            obj[prop] = fresh[altProp];
-            return obj[prop];
+            const entry = { ...fresh[altProp] };
+            if (hashIdx !== -1) entry.name = expName;
+            obj[prop] = entry;
+            return entry;
+          }
+          if (hashIdx !== -1) {
+            const baseEntry = fresh[baseUri] || (altBaseUri && fresh[altBaseUri]);
+            if (baseEntry) {
+              const entry = { ...baseEntry, name: expName };
+              obj[prop] = entry;
+              return entry;
+            }
           }
         }
       } catch (e) {}
 
       // 3. Fallback for client files in src/ during hot edits
-      const hashIdx = prop.lastIndexOf("#");
-      const baseUri = hashIdx !== -1 ? prop.slice(0, hashIdx) : prop;
-      const expName = hashIdx !== -1 ? prop.slice(hashIdx + 1) : "default";
-
       if (baseUri.startsWith("file:///")) {
         try {
           const { fileURLToPath } = require("url");
@@ -107,7 +126,9 @@ function createDevClientManifestProxy(target) {
           if (fs.existsSync(localPath)) {
             const fallbackEntry = { id: baseUri, chunks: [], name: expName };
             obj[prop] = fallbackEntry;
-            obj[baseUri] = fallbackEntry;
+            if (!obj[baseUri]) {
+              obj[baseUri] = { id: baseUri, chunks: [], name: "*" };
+            }
             return fallbackEntry;
           }
         } catch (e) {}

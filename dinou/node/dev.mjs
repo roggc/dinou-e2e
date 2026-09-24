@@ -204,19 +204,25 @@ function updateManifestsState() {
     const hashIdx = k.indexOf("#");
     if (hashIdx === -1) {
       const defKey = k + "#default";
-      if (!normalized[defKey]) normalized[defKey] = { ...v, name: v.name || "default" };
+      const defEntry = { ...v, name: "default" };
+      normalized[defKey] = defEntry;
       if (k.startsWith("file:///c:/")) {
-        normalized["file:///C:/" + k.slice(11) + "#default"] = { ...v, name: v.name || "default" };
+        normalized["file:///C:/" + k.slice(11) + "#default"] = defEntry;
       } else if (k.startsWith("file:///C:/")) {
-        normalized["file:///c:/" + k.slice(11) + "#default"] = { ...v, name: v.name || "default" };
+        normalized["file:///c:/" + k.slice(11) + "#default"] = defEntry;
       }
     } else {
+      const expName = k.slice(hashIdx + 1);
+      const expEntry = { ...v, name: expName };
+      normalized[k] = expEntry;
       const baseKey = k.slice(0, hashIdx);
       if (!normalized[baseKey]) normalized[baseKey] = v;
       if (baseKey.startsWith("file:///c:/")) {
         normalized["file:///C:/" + baseKey.slice(11)] = v;
+        normalized["file:///C:/" + baseKey.slice(11) + "#" + expName] = expEntry;
       } else if (baseKey.startsWith("file:///C:/")) {
         normalized["file:///c:/" + baseKey.slice(11)] = v;
+        normalized["file:///c:/" + baseKey.slice(11) + "#" + expName] = expEntry;
       }
     }
   }
@@ -288,7 +294,7 @@ function updateManifestsState() {
       }
       for (const exp of fileExports) {
         const hashKey = `${u}#${exp}`;
-        if (!normalized[hashKey]) {
+        if (!normalized[hashKey] || normalized[hashKey].name === "*") {
           normalized[hashKey] = { id: compId, chunks: compChunks, name: exp };
         }
       }
@@ -544,14 +550,28 @@ export { handleRequest } from "${dinouDirSlash}/core/handler.js";
 import { renderRscStreamToHtmlStream } from "${dinouDirSlash}/core/edge-ssr.js";
 import { clientModules, ssrConsumerManifest } from "./ssr-client-manifest.mjs";
 
+const wrapModule = (mod) => {
+  if (!mod || typeof mod !== "object") return mod;
+  if (mod.__esModule) return mod;
+  return new Proxy(mod, {
+    get(target, prop, receiver) {
+      if (prop === "__esModule") return true;
+      return Reflect.get(target, prop, receiver);
+    }
+  });
+};
+
 globalThis.__webpack_require__ = (id) => {
-  if (clientModules[id]) return clientModules[id];
-  const alt = id.startsWith("file:///c:/")
-    ? id.replace("file:///c:/", "file:///C:/")
-    : id.startsWith("file:///C:/")
-    ? id.replace("file:///C:/", "file:///c:/")
-    : id;
-  if (clientModules[alt]) return clientModules[alt];
+  let mod = clientModules[id];
+  if (!mod) {
+    const alt = id.startsWith("file:///c:/")
+      ? id.replace("file:///c:/", "file:///C:/")
+      : id.startsWith("file:///C:/")
+      ? id.replace("file:///C:/", "file:///c:/")
+      : id;
+    mod = clientModules[alt];
+  }
+  if (mod) return wrapModule(mod);
   console.error("[SSR Engine Dev] Module not found in __webpack_require__:", id);
   return {};
 };
