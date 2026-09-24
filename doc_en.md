@@ -86,6 +86,22 @@ The `fork()` mechanism has been eliminated entirely. It is replaced with an Ahea
 
 ---
 
+### 2.4. Dinou v7 vs v6: From Heavy Diesel Truck to Formula 1 Ferrari (The Technical Metamorphosis)
+
+The transition from Dinou v6 to Dinou v7 is not merely an incremental version bump; it represents a **complete architectural rebirth**. The most apt analogy is evolving from a **heavy diesel utility truck with trailers** into an **aerodynamic carbon-fiber Formula 1 Ferrari**:
+
+| Architectural Dimension | 🚛 Dinou v6 (Heavy Diesel Truck) | 🏎️ Dinou v7 (Formula 1 Ferrari) |
+| :--- | :--- | :--- |
+| **Rendering Engine** | `child_process.fork()` + runtime Babel JIT. Every render required heavy IPC serialization across OS process boundaries. | **Dual-Bundle AOT In-Memory**. Direct RAM stream interconnection via native React 19 Web Streams. |
+| **Chassis & Middleware** | Monolithic **Express** + `require.extensions` hacks (`asset-require-hook`, `css-require-hook`) + Chokidar. | **Pure Web Standards** (`Request`, `Response`, `ReadableStream`). Zero Express and zero runtime Babel dependencies. |
+| **Concurrency & Memory** | Required `concurrency-manager.js` to guard against CPU/RAM exhaustion ("fork bomb"). High memory overhead per process. | **Flat, predictable memory footprint**. Thousands of concurrent async streams inside the native event loop with zero forks. |
+| **SSG / ISG / ISR** | Duplicated, divergent pipelines (`generate-static-pages.js` vs `generate-static-page.js`) running on sub-processes. | **Single Unified Pipeline**: The exact same in-memory ISG engine (`storageAdapter`) pre-renders hundreds of pages in seconds. |
+| **Cross-Runtime Portability** | Fragmented and tightly coupled to Node CJS. Bun required experimental JIT plugins; impossible on Edge/Workers. | **Universal "Deploy Everywhere"**: Identical architecture across Node Standalone (`server.mjs`), Bun, Deno (single-binary), and Cloudflare. |
+| **E2E Test Performance** | Sluggish test execution (~15-20 min), prone to socket timeouts and child process IPC stalls. | **377 tests passed at 100% in ~4 minutes** across Chromium, Firefox, and WebKit simultaneously with zero failures. |
+| **Code Hygiene** | Legacy bridges, redundant loaders, and runtime hooks. | **~2,200 lines of dead code eradicated** (14 obsolete files cleanly purged). |
+
+---
+
 ## 3. Core Architectural Highlights
 
 ### 3.1. W3C Web Standards at the Foundation
