@@ -1,142 +1,239 @@
-# Dinou v7: Despliegue Universal ("Deploy Everywhere")
+# Dinou v7: Arquitectura Universal y Despliegue en Cualquier Infraestructura ("Deploy Everywhere")
 
-## 1. Visión y Objetivo de Dinou v7
+## 1. La Gran Revolución de Dinou v7
 
-Durante años, los frameworks modernos de React han pecado de un grave problema de la industria: el **acoplamiento propietario (*vendor lock-in*)**. Muchas de las mejores características de React 19 (Server Components, Streaming SSR, Server Actions e ISR) parecían estar diseñadas para funcionar de forma óptima únicamente en plataformas de alojamiento específicas.
+Durante años, los frameworks modernos de React con soporte para React Server Components (RSC) han adolecido de un grave problema en la industria: el **acoplamiento propietario (*vendor lock-in*)**. Muchas de las mejores capacidades de React 19 (Server Components, streaming asíncrono con Suspense, Server Functions RPC e Incremental Static Regeneration) parecían concebidas para ejecutarse únicamente en plataformas cloud propietarias o mediante arquitecturas monolíticas y pesadas de servidor.
 
-El gran objetivo arquitectónico de **Dinou v7** ha sido romper esa barrera: **hacer que una aplicación React 19 con Server Components pueda desplegarse literalmente en cualquier infraestructura de hosting existente en el mundo**, desde un servidor VPS de 3€ hasta las redes Edge descentralizadas más avanzadas o un hosting 100% estático gratuito.
-
-### El pilar fundamental: Estándares Web de la W3C
-Para lograr la independencia total de plataforma, el motor de Dinou (`handleRequest`) se desacopló por completo de APIs de sistemas operativos específicos o de librerías como Express. Todo el núcleo de Dinou opera exclusivamente sobre estándares web abiertos:
-- Objetos nativos `Request` y `Response`.
-- Streaming reactivo asíncrono con `ReadableStream` para React Server Components.
-- Manejo universal de `Headers`, `Cookies` y `URL`.
-
-Gracias a esto, Dinou ya no es un framework dependiente de Node.js: es un **motor universal de React 19** que se ejecuta de forma nativa dondequiera que exista JavaScript o TypeScript.
+**Dinou v7 rompe definitivamente con esa limitación:**
+> **Cualquier aplicación Dinou escrita con React 19 y Server Components puede compilarse y desplegarse en absolutamente cualquier infraestructura del planeta:** desde un Cloudflare Worker de 0 ms de arranque en el borde de la red, pasando por Deno Deploy, Bun en bare metal, Node.js tradicional en contenedores Docker/Kubernetes, ejecutables binarios autocontenidos sin dependencias (`compile`), hasta hosting 100% estático gratuito (GitHub Pages, Surge, S3).
 
 ---
 
-## 2. Los 5 Paradigmas de Despliegue Soportados
+## 2. El Salto Arquitectónico: Del Legacy `fork()` al Pipeline Dual-Bundle Universal
 
-Dinou v7 cubre de forma nativa los 5 paradigmas de computación web actuales:
+### 2.1. El Problema Histórico de React 19: El Conflicto de Condiciones
+En React 19 existe una incompatibilidad fundamental a nivel de empaquetado conocida como el **Dual Condition Conflict**:
+* **RSC Engine** (servidor de componentes): Requiere que los módulos se resuelvan con la condición `"react-server"`. En esta condición, los módulos de React no tienen acceso a APIs de cliente (como `useState`, `useEffect` o `react-dom/server`).
+* **SSR Engine** (generador de HTML en streaming): Requiere que los módulos se resuelvan con la condición `"browser"` o de cliente (`react-dom/server.edge` o `react-dom/server.node`).
+* Si ambos motores se importan en un mismo contexto sin aislar, React lanza el error fatal:
+  ```text
+  ReactServer has been imported outside of react-server condition.
+  ```
 
-| Paradigma | Runtimes / Plataformas | Características en Dinou |
-| :--- | :--- | :--- |
-| **A. Runtimes Modernos Alternativos** | **Bun** | Streaming estático *zero-copy* a nivel de kernel (`Bun.file`) y servidor HTTP ultra-rápido en C++. |
-| **B. Servidores y Contenedores** | **Node.js** y **Deno Standalone** | Despliegue en Docker, Kubernetes, VPS (Hetzner, OVH, DigitalOcean) o PaaS (Render, Fly.io, Railway). |
-| **C. Redes Edge y Serverless** | **Cloudflare Workers/Pages**, **Deno Deploy** y **Netlify** | Ejecución distribuida en Edge y funciones Serverless v2 con estándares web. |
-| **D. Almacenamiento Distribuido (ISR/ISG)** | **Cloudflare KV**, **Deno KV** y **Redis** | Regeneración estática incremental sin necesidad de disco físico. |
-| **E. Hosting 100% Estático (SSG)** | **Surge.sh**, **GitHub Pages**, AWS S3, Firebase Hosting | Exportación a carpeta `out/` autocontenida con pre-renderizado completo de páginas y payloads RSC. |
+### 2.2. La Solución Antigua (Legacy): El Proceso Hijo (`fork`)
+En versiones anteriores (y en muchos frameworks del ecosistema), este conflicto se sorteaba en Node.js levantando un proceso hijo mediante `child_process.fork()`:
+1. El proceso padre ejecutaba el servidor HTTP y el motor SSR en condición normal.
+2. Cada vez que se requería renderizar Server Components, el proceso padre enviaba un mensaje IPC al proceso hijo (ejecutado con `node --conditions=react-server`).
+3. El proceso hijo generaba el stream binario de RSC y lo transfería por IPC de vuelta al padre.
 
----
-
-## 3. Arquitectura de Dos Capas: Compilación y Adaptador Edge
-
-En aplicaciones tradicionales con Server Components, compilar para entornos Serverless/Edge solía ser complejo porque los Workers carecen de un sistema de archivos tradicional persistente (`fs`) y de la carpeta `node_modules`.
-
-Dinou v7 resuelve esto mediante una arquitectura limpia de dos fases:
-
-1. **Fase 1: Compilación de la Aplicación (`npm run build`)**  
-   Procesa los componentes cliente (`"use client"`), CSS, TypeScript y genera los bundles optimizados con hashes en `.dinou/dist3/`, así como las páginas pre-renderizadas en `.dinou/dist2/`. Dinou permite elegir entre **Esbuild**, **Rollup** o **Webpack**.
-2. **Fase 2: El Linker de Adaptador Edge (`build:cloudflare` o `build:deno`)**  
-   Inyecta en memoria las rutas de la aplicación (`route-modules.js`) y los manifiestos de RSC (`__DINOU_CLIENT_MANIFEST__` y `__DINOU_SERVER_FUNCTIONS_MANIFEST__`), empaquetando un único archivo ESM standalone (`worker.js` o `main.js`) listo para desplegar.
+#### ¿Por qué era insostenible el `fork`?
+* **Latencia y Serialización IPC**: Cada petición incurría en el coste de serializar y deserializar streams entre dos procesos del sistema operativo.
+* **Consumo de Memoria Doble**: Dos procesos Node.js completos en ejecución por cada réplica del servidor.
+* **Imposible de desplegar en Edge y Serverless**: En entornos como **Cloudflare Workers**, **Deno Deploy**, **AWS Lambda** o **Vercel Functions**, la API `child_process.fork()` **no existe**.
+* **Imposible de compilar a binario único**: Ni `bun build --compile` ni `deno compile` pueden empaquetar una aplicación que depende de bifurcar procesos hijos externos.
 
 ---
 
-## 4. Guía Práctica de Despliegue Paso a Paso
+### 2.3. La Solución Dinou v7: La Arquitectura Dual-Bundle de 3 Pasadas (AOT)
+La solución desarrollada originalmente para conquistar Cloudflare Workers ([`CLOUDFLARE_WRANGLER.md`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/CLOUDFLARE_WRANGLER.md)) demostró ser tan limpia, eficiente y universal que **en Dinou v7 se ha estandarizado como la arquitectura central para TODOS los entornos (Node, Deno, Bun y Cloudflare)**.
 
-### A. Despliegue en Bun (VPS o Docker)
-Bun es ideal si buscas el máximo rendimiento en un servidor propio con un consumo mínimo de CPU y RAM.
+Se elimina por completo el `fork()` y se sustituye por un pipeline Ahead-Of-Time (AOT) de 3 pasadas:
 
-1. Compila la aplicación:
+```
+                             [ Petición Entrante (HTTP / Fetch) ]
+                                              │
+                                              ▼
+                  ┌────────────────────────────────────────────────────────┐
+                  │                 Orquestador Principal                  │
+                  │   Node (server.mjs) / Deno (main.js) / Bun / Worker    │
+                  └───────────────────────────┬────────────────────────────┘
+                                              │
+              ┌───────────────────────────────┴───────────────────────────────┐
+              ▼                                                               ▼
+    ¿Activo Estático / SSG?                                         ¿Ruta Dinámica / RSC / SF?
+              │                                                               │
+              ▼                                                               ▼
+ ┌─────────────────────────┐                                    ┌───────────────────────────┐
+ │   Entrega Inmediata     │                                    │   Worker Orchestrator     │
+ │ (Disk / KV / CDN Assets)│                                    │   (Pass C)                │
+ └─────────────────────────┘                                    └─────────────┬─────────────┘
+                                             ┌────────────────────────────────┴────────────────────────────────┐
+                                             ▼                                                                 ▼
+                                ┌──────────────────────────────┐                                  ┌──────────────────────────────┐
+                                │     Pass A: RSC Engine       │                                  │     Pass B: SSR Engine       │
+                                │ (conditions: [react-server]) │                                  │  (conditions: [browser])     │
+                                │                              │                                  │                              │
+                                │ - React 19 Server Components │        RSC Payload Stream        │ - react-dom/server.edge      │
+                                │ - Server Functions RPC       │ ───────────────────────────────> │ - SSR Client Manifest        │
+                                │ - Client Component Proxies   │      (ReadableStream)            │ - HTML Streaming nativo      │
+                                └──────────────────────────────┘                                  └──────────────┬───────────────┘
+                                                                                                                 │
+                                                                                                                 ▼
+                                                                                                  [ Respuesta HTML Streaming ]
+```
+
+#### Las 3 Pasadas de Compilación:
+1. **Pass A — RSC Engine**:
+   - Se compila con las condiciones `["react-server"]`.
+   - Transforma los Client Components (`"use client"`) en proxies ligeros (`createClientModuleProxy`) mediante el plugin `clientReferencesPlugin`. Esto permite que el servidor RSC emita los identificadores de referencia sin cargar código de navegador.
+   - Registra y expone las Server Functions (`"use server"`).
+2. **Pass B — SSR Engine**:
+   - Se compila con las condiciones `["browser"]` (o entorno cliente).
+   - Empaqueta `react-dom/server.edge` (`renderToReadableStream`) junto con el `ssr-client-manifest.js` autogenerado, conteniendo los componentes cliente reales listos para hidratar y renderizar el árbol HTML en streaming.
+3. **Pass C — Orchestrator (Runtime Adapter)**:
+   - Enlaza en memoria Pass A y Pass B conectándolos mediante Web Streams estándar (`ReadableStream`).
+   - Sirve activos estáticos con caché óptima y gestiona la capa de persistencia y revalidación (ISR).
+
+---
+
+## 3. Características Fundamentales de la Arquitectura v7
+
+### 3.1. Estándares Web de la W3C en el Núcleo
+El manejador principal (`handleRequest` en [`dinou/core/handler.js`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/core/handler.js)) es 100% agnóstico del runtime. Trabaja exclusivamente con interfaces estándar:
+- `Request` y `Response` nativos (Web Fetch API).
+- `ReadableStream` y `TransformStream` para streaming continuo de HTML y payloads RSC.
+- `Headers`, `URL`, `URLSearchParams` y gestión estandarizada de cookies.
+
+### 3.2. Manifiestos Agnósticos del Empaquetador
+Dinou no te ata a un único bundler. El pipeline compila sobre cualquiera de los 3 grandes motores del ecosistema:
+- **Esbuild**: Compilación en milisegundos para desarrollo y producción ultrarrápida.
+- **Rollup**: Árbol de dependencias optimizado con tree-shaking quirúrgico.
+- **Webpack**: Máxima compatibilidad con plugins legacy del ecosistema empresarial.
+
+### 3.3. Sistema de Archivos Virtual (VFS) y Aislamiento Semántico de `node_modules`
+Para correr en plataformas sin disco físico (`workerd` en Cloudflare o Deno Deploy):
+- Dinou genera un **Virtual File System en memoria (`__DINOU_VFS__`)** con la estructura de rutas descubierta durante el build.
+- **Filtro Semántico de Dependencias**: Analiza el código de `node_modules` para evitar que bundles no compatibles (como wrappers SystemJS o UMD antiguos presentes en paquetes como Jotai) contaminen el bundle del servidor.
+
+### 3.4. Capa Universal de Almacenamiento e ISR (`StorageAdapter`)
+Dinou desacopla la caché estática y la regeneración incremental (ISR / ISG) del disco mediante el contrato abstracto de [`dinou/core/storage-adapter.js`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/core/storage-adapter.js):
+- **`FileSystemStorage`**: Utilizado en Node.js y Bun (almacena en disco físico `.dinou/dist2`).
+- **`DenoKVStorage`**: Utilizado en Deno y Deno Deploy (persiste en la base de datos distribuida Deno KV, sin requerir disco).
+- **`CloudflareKVStorage`**: Utilizado en Cloudflare Workers mediante bindings de KV.
+- **`MemoryStorage`**: Para entornos efímeros o tests en memoria.
+
+---
+
+## 4. Opciones y Guía de Despliegue ("Deploy Everywhere")
+
+Dinou v7 permite desplegar la misma aplicación en cualquiera de los siguientes destinos:
+
+| Destino de Despliegue | Runtime en Producción | Motor de Caché / ISR | Comando de Build | Comando de Arranque / Deploy |
+| :--- | :--- | :--- | :--- | :--- |
+| **Node.js AOT** | Node.js (>= 18) | FileSystem | `npm run build:node` | `npm run start:node` |
+| **Bun Standalone** | Bun | FileSystem | `npm run build:bun` | `npm run start:bun` |
+| **Bun Pure (Sin Node)** | Bun (100% nativo) | FileSystem | `npm run build:bun:pure` | `npm run start:bun` |
+| **Bun Binario (`compile`)** | Ninguno (Ejecutable) | FileSystem | `npm run build:bun:compile` | `./dist/server` |
+| **Deno Standalone** | Deno CLI | Deno KV (disco) | `npm run build:deno` | `npm run start:deno` |
+| **Deno Deploy (Edge)** | Deno Deploy | Deno KV (global) | `npm run build:deno` | `deployctl deploy .dinou/deno/main.js` |
+| **Deno Binario (`compile`)**| Ninguno (Ejecutable) | Deno KV (embebido)| `npm run build:deno:compile`| `./dist/deno-server` |
+| **Cloudflare Workers** | workerd (V8 Isolates) | Cloudflare KV | `npm run build:cloudflare` | `npx wrangler deploy` |
+| **Netlify Functions v2**| Netlify Edge | CDN Cache | `npm run build` | `git push netlify` |
+| **Hosting Estático (SSG)**| Servidor Web / CDN | Pre-renderizado | `npm run export-static` | Subir carpeta `out/` |
+
+---
+
+### A. Despliegue en Node.js (Servidores VPS, Docker, PM2, PaaS)
+Gracias al nuevo orquestador AOT Dual-Bundle de Dinou v7, Node.js ya no utiliza `fork()`. Ambos motores (RSC y SSR) corren en el mismo proceso con cero latencia IPC.
+
+1. **Compilación**:
    ```bash
-   npm run build
+   npm run build:node
+   # o con tu bundler preferido: npm run build:node:esbuild / :rollup / :webpack
    ```
-2. Arranca el servidor de Bun:
+2. **Ejecución**:
    ```bash
+   npm run start:node
+   ```
+3. **Despliegue con Docker**:
+   ```dockerfile
+   FROM node:20-alpine
+   WORKDIR /app
+   COPY package*.json ./
+   RUN npm ci --omit=dev
+   COPY . .
+   RUN npm run build:node
+   EXPOSE 3000
+   CMD ["npm", "run", "start:node"]
+   ```
+
+---
+
+### B. Despliegue en Bun (Máximo Rendimiento o Binario Standalone)
+Bun ofrece arranque instantáneo y streaming de archivos a nivel de kernel (`Bun.file`).
+
+1. **Modo Estándar (Compilado con Node, ejecutado con Bun)**:
+   ```bash
+   npm run build:bun
    npm run start:bun
-   # o directamente: cross-env NODE_ENV=production bun --conditions=react-server dinou/adapters/bun.js
    ```
-   *Puerto por defecto: `3000` (configurable con la variable de entorno `PORT`).*
-
----
-
-### B. Despliegue en Deno Standalone (VPS o Contenedor)
-Aprovecha la seguridad por defecto y el soporte nativo de TypeScript de Deno.
-
-1. Compila la aplicación:
+2. **Modo Pure Bun (100% Bun, sin Node en el entorno de CI/Build)**:
    ```bash
-   npm run build
+   npm run build:bun:pure
+   npm run start:bun
    ```
-2. Arranca con permisos explícitos de red, lectura y entorno:
+3. **Modo Binario Autónomo (`bun build --compile`)**:
+   Empaqueta el runtime y la aplicación en un ejecutable binario único listo para correr en máquinas sin Bun ni Node:
    ```bash
-   npm run start:deno
-   # o directamente: deno run --allow-net --allow-read --allow-env dinou/adapters/deno.js
+   npm run build:bun:compile
+   # Ejecuta el binario resultante:
+   ./dist/server
    ```
 
 ---
 
-### C. Despliegue en Deno Deploy (Edge Global)
-Deno Deploy ejecuta tu app en la red global de Deno con 1.000.000 de peticiones al mes gratuitas.
+### C. Despliegue en Deno y Deno Deploy
+Deno aporta seguridad granular por permisos, compatibilidad nativa con TypeScript y persistencia integrada mediante Deno KV.
 
-1. Genera el bundle Edge en un solo paso:
+1. **Deno Standalone (VPS, Docker o Contenedor)**:
    ```bash
    npm run build:deno
+   npm run start:deno
    ```
-   *(Este comando compila automáticamente los assets y genera el archivo standalone `.dinou/deno/main.js`)*.
-2. Despliega con la CLI de Deno Deploy:
+2. **Deno Deploy (Edge Global Distribuido sin Servidor)**:
    ```bash
-   deployctl deploy --project=<tu-proyecto> .dinou/deno/main.js
+   npm run build:deno
+   deployctl deploy --project=<mi-proyecto> .dinou/deno/main.js
    ```
-   *Nota: Si tu aplicación utiliza ISR (Incremental Static Regeneration), Dinou activará automáticamente `DenoKVStorage` usando la base de datos distribuida global Deno KV sin requerir ninguna configuración extra.*
+   *Dinou detecta automáticamente `Deno.openKv()` en Deno Deploy y almacena las páginas de ISR en la red global de Deno.*
+3. **Deno Binario Autónomo (`deno compile`)**:
+   Genera un archivo ejecutable único con Deno KV y permisos embebidos:
+   ```bash
+   npm run build:deno:compile
+   # Ejecuta el binario directamente:
+   ./dist/deno-server
+   ```
 
 ---
 
-### D. Despliegue en Cloudflare Workers / Cloudflare Pages
-Despliega en la infraestructura Edge de Cloudflare con 100.000 peticiones diarias gratis.
+### D. Despliegue en Cloudflare Workers (Wrangler)
+Ejecución en más de 300 ciudades con latencia casi nula y arranque en 0 ms.
 
-1. Genera el bundle Edge:
+1. **Compilación para Cloudflare**:
    ```bash
    npm run build:cloudflare
+   # (Genera el artefacto .dinou/cloudflare/worker.js)
    ```
-   *(Genera `.dinou/cloudflare/worker.js` listo para Cloudflare)*.
-2. Despliega con Wrangler:
+2. **Previsualización local con Wrangler**:
+   ```bash
+   npx wrangler dev --port 3000
+   ```
+3. **Despliegue a la red de Cloudflare**:
    ```bash
    npx wrangler deploy
    ```
+   *(La configuración en `wrangler.toml` delega los activos estáticos y páginas SSG a `env.ASSETS` para servirlos directamente desde la CDN de Cloudflare sin coste de cómputo)*.
 
 ---
 
-### E. Despliegue en DigitalOcean (DO)
-DigitalOcean ofrece dos excelentes alternativas para alojar aplicaciones Dinou:
+### E. Despliegue en Netlify (Functions v2)
+Dinou incluye soporte oficial para Netlify Functions v2 mediante [`dinou/adapters/netlify.js`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/adapters/netlify.js):
 
-#### 1. DigitalOcean App Platform (PaaS Totalmente Administrado)
-Despliegue automático conectado directamente a tu repositorio de GitHub, sin gestionar servidores:
-- **Build Command**: `npm run build`
-- **Run Command**: `npm start` (o `npm run start:bun` si utilizas un Dockerfile con Bun)
-- **HTTP Port**: `3000` (Dinou detecta automáticamente la variable de entorno `PORT` inyectada por DigitalOcean).
-- Despliegues continuos automáticos con cada `git push` y certificados SSL gratuitos.
-
-#### 2. DigitalOcean Droplets (VPS Tradicional con Linux / Docker / PM2)
-Si prefieres un servidor VPS propio (a partir de $4-$6/mes) con control total y almacenamiento en disco persistente (`FileSystemStorage`):
-```bash
-# En tu Droplet (Ubuntu/Debian):
-npm ci
-npm run build
-pm2 start npm --name "dinou-app" -- start
-```
-*(O ejecutando tu contenedor Docker con `docker run -d -p 80:3000 mi-dinou-app`)*.
-
----
-
-### F. Despliegue en Netlify (Functions v2)
-Dinou incluye un adaptador nativo oficial para Netlify Functions v2 ([`dinou/adapters/netlify.js`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/adapters/netlify.js)), operando sobre estándares web W3C:
-
-1. Crea el archivo `netlify/functions/dinou.js` en tu proyecto:
+1. En tu proyecto, crea `netlify/functions/dinou.js`:
    ```javascript
    export { default, config } from "dinou/adapters/netlify";
    ```
-2. Configura tu archivo `netlify.toml` en la raíz:
+2. Configura tu `netlify.toml`:
    ```toml
    [build]
      command = "npm run build"
@@ -145,83 +242,79 @@ Dinou incluye un adaptador nativo oficial para Netlify Functions v2 ([`dinou/ada
    [functions]
      directory = "netlify/functions"
    ```
-   *Nota: Gracias a la directiva `preferStatic: true` integrada en el adaptador, Netlify sirve automáticamente todos los assets de cliente de `.dinou/dist3` directamente desde su CDN global, y enruta únicamente las peticiones de SSR y Server Functions a la función serverless.*
+3. Gracias a `preferStatic: true`, Netlify entrega los archivos de `.dinou/dist3` directamente desde su CDN y sólo invoca la función para SSR dinámico y Server Functions.
 
 ---
 
-### G. Despliegue en Hosting 100% Estático (Surge.sh / GitHub Pages / DO Spaces)
-Si tu aplicación utiliza Static Site Generation (SSG) y no requiere SSR dinámico en el servidor, puedes exportarla como un sitio estático puro a coste 0.
+### F. Hosting 100% Estático (SSG Puro)
+Si tu aplicación sólo utiliza Static Site Generation y Client Components, puedes exportarla sin ningún servidor backend:
 
-1. Genera la exportación estática:
+1. **Exportación estática**:
    ```bash
    npm run export-static
    ```
-   *(Dinou compila la aplicación y unifica los bundles de `.dinou/dist3` y los HTML pre-renderizados de `.dinou/dist2` en una carpeta limpia `out/`)*.
-2. Despliega la carpeta `out/`:
-   - **En Surge.sh:**
-     ```bash
-     npx surge out tu-dominio.surge.sh
-     ```
-   - **En GitHub Pages:**
-     ```bash
-     npx gh-pages -d out
-     ```
-   - **En Cloudflare Pages (Static Direct Upload):**
-     ```bash
-     npx wrangler pages deploy out
-     ```
-   - **En DigitalOcean Spaces (S3 compatible con CDN):**
-     Subiendo el contenido de `out/` a tu Bucket de Spaces con CDN activado.
+   *Genera la carpeta unificada `out/` con todos los HTML y payloads RSC pre-renderizados.*
+2. **Subida directa**:
+   - **GitHub Pages**: `npx gh-pages -d out`
+   - **Surge.sh**: `npx surge out tu-dominio.surge.sh`
+   - **AWS S3 / DigitalOcean Spaces**: Copiando el contenido de `out/` a tu bucket.
 
 ---
 
 ## 5. La Carpeta Estática Estándar: `public/`
 
-A partir de la versión 7, Dinou adopta el estándar universal de la industria para archivos estáticos no procesados: **la carpeta `public/` en la raíz del proyecto**.
-
-- **¿Para qué sirve?**: Cualquier archivo colocado en `public/` (`favicon.ico`, `robots.txt`, `sitemap.xml`, `site.webmanifest`, imágenes directas) se copia automáticamente a la raíz de `.dinou/dist3/` durante el build.
-- **Acceso en el navegador**: Se sirve directamente desde la URL raíz (por ejemplo, `public/robots.txt` se sirve en `https://tu-dominio.com/robots.txt`).
-- **Retrocompatibilidad**: Dinou mantiene compatibilidad total con proyectos anteriores que aún utilicen la carpeta `favicons/`.
+Dinou v7 adopta el estándar de la industria:
+- Todo archivo ubicado en `public/` (`favicon.ico`, `robots.txt`, `sitemap.xml`, imágenes, fuentes, etc.) se copia directamente a la raíz pública durante la compilación.
+- Se sirve de forma inmediata en la raíz de tu dominio (ejemplo: `public/robots.txt` -> `https://tu-dominio.com/robots.txt`).
+- Mantiene compatibilidad transparente con proyectos anteriores que utilicen la carpeta `favicons/`.
 
 ---
 
-## 6. Resumen de Scripts de Despliegue en `package.json`
+## 6. Mapa Completo de Scripts en `package.json`
 
-Dinou v7 estructura sus comandos de forma clara y modular por familias:
+Dinou v7 organiza sus scripts en una matriz coherente por **Objetivo de Despliegue** y **Herramienta de Compilación**:
 
-```json
-{
-  "scripts": {
-    "// --- Runtimes Standalone ---": "",
-    "start": "npm run start:esbuild",
-    "start:bun": "cross-env NODE_ENV=production bun --conditions=react-server dinou/adapters/bun.js",
-    "start:deno": "deno run --allow-net --allow-read --allow-env dinou/adapters/deno.js",
-
-    "// --- Edge Builds (Cloudflare & Deno Deploy) ---": "",
-    "build:cloudflare": "npm run build && node ./dinou/cloudflare/build.mjs",
-    "build:cloudflare:rollup": "npm run build:rollup && node ./dinou/cloudflare/build.mjs",
-    "build:cloudflare:webpack": "npm run build:webpack && node ./dinou/cloudflare/build.mjs",
-
-    "build:deno": "npm run build && node ./dinou/deno/build.mjs",
-    "build:deno:rollup": "npm run build:rollup && node ./dinou/deno/build.mjs",
-    "build:deno:webpack": "npm run build:webpack && node ./dinou/deno/build.mjs",
-
-    "// --- Static Site Export (Surge, GitHub Pages, S3) ---": "",
-    "export-static": "npm run export-static:esbuild",
-    "export-static:esbuild": "npm run build:esbuild && node ./dinou/core/export-static.mjs",
-    "export-static:rollup": "npm run build:rollup && node ./dinou/core/export-static.mjs",
-    "export-static:webpack": "npm run build:webpack && node ./dinou/core/export-static.mjs"
-  }
-}
+```text
+├── build / dev / start                      (Desarrollo y build general por defecto)
+│
+├── Node.js AOT Dual-Bundle:
+│   ├── build:node                           (Alias -> build:node:esbuild)
+│   ├── build:node:esbuild / :rollup / :webpack
+│   └── start:node / :esbuild / :rollup / :webpack
+│
+├── Deno & Deno Deploy:
+│   ├── build:deno                           (Genera .dinou/deno/main.js y sincroniza KV)
+│   ├── build:deno:esbuild / :rollup / :webpack
+│   ├── build:deno:compile                   (Compila a binario único dist/deno-server)
+│   ├── build:deno:compile:esbuild / :rollup / :webpack
+│   └── start:deno                           (Arranca adaptador nativo Deno CLI)
+│
+├── Bun Standalone & Compile:
+│   ├── build:bun                            (Genera .dinou/bun/server.js)
+│   ├── build:bun:esbuild / :rollup / :webpack
+│   ├── build:bun:pure                       (Build 100% Bun, sin Node -> :esbuild)
+│   ├── build:bun:pure:esbuild / :rollup / :webpack
+│   ├── build:bun:compile                    (Compila a binario único dist/server)
+│   ├── build:bun:compile:esbuild / :rollup / :webpack
+│   ├── build:bun:pure:compile               (Compila a binario usando 100% Bun)
+│   ├── build:bun:pure:compile:esbuild / :rollup / :webpack
+│   └── start:bun / :esbuild / :rollup / :webpack
+│
+├── Cloudflare Workers:
+│   ├── build:cloudflare                     (Genera .dinou/cloudflare/worker.js)
+│   ├── build:cloudflare:esbuild / :rollup / :webpack
+│   └── test:cloudflare                      (Tests E2E con Wrangler y Playwright)
+│
+└── Static Site Generation (SSG):
+    ├── export-static                        (Alias -> export-static:esbuild)
+    └── export-static:esbuild / :rollup / :webpack
 ```
 
 ---
 
-## 7. Conclusión: Libertad Total de Elección
+## 7. Conclusión: Independencia, Rendimiento y Futuro
 
-Con Dinou v7 ya no tienes que adaptar tu arquitectura a las exigencias o tarifas de un proveedor de hosting. Puedes:
-- Empezar gratis en **GitHub Pages** o **Surge.sh** con `export-static`.
-- Escalar a nivel global con latencia cero en **Cloudflare Workers** o **Deno Deploy** a coste 0€.
-- O desplegar con máximo control y rendimiento en **DigitalOcean** (App Platform o Droplets), **Bun** o **Docker**.
-
-Tu código sigue siendo exactamente el mismo. Dinou se encarga del resto.
+La arquitectura de **Dinou v7** demuestra que es posible disfrutar de toda la potencia de **React 19 (Server Components, Streaming SSR, Server Functions e ISR)** sin renunciar a la libertad de infraestructura:
+* **Sin procesos hijos (`fork`)**: Arquitectura AOT unificada, ligera y ultrarrápida.
+* **Sin ataduras a proveedores**: La misma aplicación se ejecuta en una función Edge de Cloudflare, en un cluster Kubernetes con Node, en una máquina virtual con Bun o como un binario autocontenido.
+* **Basado en Estándares**: Tu código no depende de APIs propietarias, sino de los estándares web universales de la W3C.
