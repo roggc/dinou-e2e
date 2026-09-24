@@ -8,6 +8,7 @@ const pendingUpdateUrls = new Set();
 let needsFullReload = false;
 function esmHmrPlugin() {
   let hmrEngine;
+  let server = null;
   let serverStarted = false;
 
   return {
@@ -15,7 +16,7 @@ function esmHmrPlugin() {
 
     buildStart() {
       if (!serverStarted) {
-        const server = createServer();
+        server = createServer();
         hmrEngine = new EsmHmrEngine({ server });
         server.listen(3001, () => {
           // console.log("[esm-hmr] WebSocket server listening on port 3001");
@@ -108,6 +109,11 @@ function esmHmrPlugin() {
       changedIds.clear();
       pendingUpdateUrls.clear();
       needsFullReload = false;
+    },
+    closeWatcher() {
+      if (server) {
+        try { server.close(); } catch (e) {}
+      }
     },
   };
 }

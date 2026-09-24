@@ -41,6 +41,8 @@ const projectRoot = process.cwd();
 const outputDirs = [
   path.resolve(projectRoot, ".dinou/public"),
   path.resolve(projectRoot, ".dinou/dist3"),
+  path.resolve(projectRoot, "out"),
+  path.resolve(projectRoot, "dist"),
 ];
 
 function cleanDir(dir) {

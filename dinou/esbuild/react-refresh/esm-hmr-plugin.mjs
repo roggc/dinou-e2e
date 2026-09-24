@@ -30,6 +30,7 @@ export default function esmHmrPlugin({
       if (!serverStarted) {
         const server = createServer();
         hmrEngine.value = new EsmHmrEngine({ server });
+        hmrEngine.value.server = server;
         server.listen(3001, () => {
           // console.log("[esm-hmr] WebSocket server listening on port 3001");
         });

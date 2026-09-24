@@ -1009,11 +1009,110 @@ function isManifestReady() {
   return clientManifestReady && checkClientFilesPresent();
 }
 
+// In-process client bundler management
+let clientBundlerHandle = null;
+let clientBundlerPromise = null;
+
+async function startClientBundler(tool) {
+  const normTool = (tool || "esbuild").toLowerCase();
+  console.log(`📦 [Dinou Dev] Starting in-process client bundler (${normTool})...`);
+
+  if (normTool === "esbuild") {
+    const { startEsbuildDev } = await import(
+      pathToFileURL(path.resolve(dinouDir, "esbuild/dev.mjs")).href
+    );
+    return await startEsbuildDev({
+      onRebuilt: () => onManifestUpdated(),
+    });
+  }
+
+  if (normTool === "rollup") {
+    const { watch } = require("rollup");
+    const getRollupConfig = require(path.resolve(dinouDir, "rollup/rollup.config.js"));
+    const rollupConfig = await getRollupConfig();
+    const watcher = watch(rollupConfig);
+
+    return new Promise((resolve) => {
+      let initialResolved = false;
+      watcher.on("event", (event) => {
+        if (event.code === "BUNDLE_END") {
+          onManifestUpdated();
+          if (!initialResolved) {
+            initialResolved = true;
+            resolve({
+              close: async () => {
+                try {
+                  await watcher.close();
+                } catch (e) {}
+              },
+            });
+          }
+        } else if (event.code === "ERROR") {
+          console.error("❌ [Rollup Dev Error]:", event.error);
+          if (!initialResolved) {
+            initialResolved = true;
+            resolve({
+              close: async () => {
+                try {
+                  await watcher.close();
+                } catch (e) {}
+              },
+            });
+          }
+        }
+      });
+    });
+  }
+
+  if (normTool === "webpack") {
+    const webpack = require("webpack");
+    const WebpackDevServer = require("webpack-dev-server");
+    const getWebpackConfig = require(path.resolve(dinouDir, "webpack/webpack.config.js"));
+    const webpackConfig = await getWebpackConfig();
+    const compiler = webpack(webpackConfig);
+
+    return new Promise((resolve, reject) => {
+      let initialResolved = false;
+      let devServer = null;
+
+      compiler.hooks.done.tap("DinouClientSync", (stats) => {
+        onManifestUpdated();
+        if (!initialResolved) {
+          initialResolved = true;
+          resolve({
+            close: async () => {
+              if (devServer) {
+                try {
+                  await devServer.stop();
+                } catch (e) {}
+              }
+            },
+          });
+        }
+      });
+
+      devServer = new WebpackDevServer(webpackConfig.devServer, compiler);
+      devServer.start().catch((err) => {
+        console.error("❌ [Webpack Dev Server Error]:", err);
+        if (!initialResolved) {
+          initialResolved = true;
+          reject(err);
+        }
+      });
+    });
+  }
+
+  throw new Error(`Unsupported DINOU_BUILD_TOOL: ${tool}`);
+}
+
 // HTTP Server
 const PORT = Number(process.env.PORT || 3000);
 
 const server = http.createServer(async (req, res) => {
   try {
+    if (clientBundlerPromise) {
+      await clientBundlerPromise;
+    }
     if (activeRebuildPromise) {
       await activeRebuildPromise;
     }
@@ -1113,16 +1212,38 @@ server.on("error", (err) => {
   process.exit(1);
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(`\n🚀 Dinou Development Server (Dual-Bundle, 0 fork) ready on http://localhost:${PORT}`);
   console.log(`   Tool: ${isWebpackBuild ? "Webpack" : (process.env.DINOU_BUILD_TOOL || "esbuild")}`);
   console.log(`   Mode: Development`);
+  if (isWebpackBuild) {
+    console.log(`   Webpack Dev Server proxy: http://localhost:3001`);
+  }
+
+  if (process.env.DINOU_STANDALONE_SERVER !== "true") {
+    const buildTool = process.env.DINOU_BUILD_TOOL || "esbuild";
+    try {
+      clientBundlerPromise = startClientBundler(buildTool);
+      clientBundlerHandle = await clientBundlerPromise;
+    } catch (err) {
+      console.error("❌ [Dinou Dev] Failed to start client bundler:", err);
+    } finally {
+      clientBundlerPromise = null;
+    }
+  }
 });
 
 // Clean exit on termination
+let isCleaningUp = false;
 async function cleanup() {
+  if (isCleaningUp) return;
+  isCleaningUp = true;
   try {
     srcWatcher.close();
+    manifestWatcher.close();
+    if (clientBundlerHandle?.close) {
+      await clientBundlerHandle.close();
+    }
     server.close();
     await ctxA.dispose();
     await ctxB.dispose();
