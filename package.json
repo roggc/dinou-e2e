@@ -108,12 +108,7 @@
     "export-static": "npm run export-static:esbuild",
     "export-static:esbuild": "npm run build:esbuild && node ./dinou/core/export-static.mjs",
     "export-static:rollup": "npm run build:rollup && node ./dinou/core/export-static.mjs",
-    "export-static:webpack": "npm run build:webpack && node ./dinou/core/export-static.mjs",
-    "dev:server": "cross-env DINOU_STANDALONE_SERVER=true node dinou/node/dev.mjs",
-    "dev:server:webpack": "cross-env DINOU_STANDALONE_SERVER=true DINOU_BUILD_TOOL=webpack node dinou/node/dev.mjs",
-    "dev_esbuild": "node dinou/esbuild/dev.mjs",
-    "dev_rollup": "rollup -c ./dinou/rollup/rollup.config.js -w",
-    "dev_webpack": "webpack serve --config dinou/webpack/webpack.config.js"
+    "export-static:webpack": "npm run build:webpack && node ./dinou/core/export-static.mjs"
   },
   "keywords": [],
   "author": "",
