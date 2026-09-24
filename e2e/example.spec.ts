@@ -3647,6 +3647,127 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
   });
 
+  test.describe("Dinou Core: Query Parameters & Cache Isolation Suite", () => {
+    // 1. ISG / SSG Cache Isolation & Cache Poisoning Prevention
+    test("ISG / SSG: requests with query params do not contaminate or overwrite canonical static cache", async ({ page, request }) => {
+      const staticDistPath = path.resolve(".dinou/dist2/t-static/case1/petazeta/normal/index.html");
+      const hasDist = fs.existsSync(staticDistPath);
+      let initialContent = "";
+      if (hasDist) {
+        initialContent = fs.readFileSync(staticDistPath, "utf-8");
+      }
+
+      // Step A: Request the static page with query parameters
+      const poisonQuery = "utm_source=untrusted_campaign&poison_tag=malicious_payload_987";
+      const responseWithQuery = await request.get(`/t-static/case1/petazeta/normal/?${poisonQuery}`);
+      expect(responseWithQuery.status()).toBe(200);
+
+      // Step B: Verify that the static cache on disk was NOT poisoned/overwritten
+      if (hasDist) {
+        const afterQueryContent = fs.readFileSync(staticDistPath, "utf-8");
+        expect(afterQueryContent).not.toContain("poison_tag");
+        expect(afterQueryContent).not.toContain("malicious_payload_987");
+        expect(afterQueryContent).toBe(initialContent);
+      }
+
+      // Step C: Request the clean URL in browser and verify canonical static content is preserved
+      const cleanResponse = await page.goto("/t-static/case1/petazeta/normal/");
+      expect(cleanResponse?.status()).toBe(200);
+      const bodyText = await page.locator("body").innerText();
+      expect(bodyText).not.toContain("malicious_payload_987");
+    });
+
+    // 2. Server Components (RSC): ctx.req.query reading & Dynamic SSR Bailout
+    test("Server Components (RSC): correctly reads ctx.req.query and dynamically renders via SSR", async ({ page }) => {
+      // First request with specific query params
+      const res1 = await page.goto(
+        "/t-params/t-layout-server-component/t-server-component?filter=active&order=desc&limit=25"
+      );
+      expect(res1?.status()).toBe(200);
+      await expect(page.locator("body")).toContainText('"filter": "active"');
+      await expect(page.locator("body")).toContainText('"order": "desc"');
+      await expect(page.locator("body")).toContainText('"limit": "25"');
+
+      // Second request with different query params verifying dynamic SSR reactivity
+      const res2 = await page.goto(
+        "/t-params/t-layout-server-component/t-server-component?filter=archived&order=asc"
+      );
+      expect(res2?.status()).toBe(200);
+      await expect(page.locator("body")).toContainText('"filter": "archived"');
+      await expect(page.locator("body")).toContainText('"order": "asc"');
+      await expect(page.locator("body")).not.toContainText('"limit": "25"');
+    });
+
+    // 3. Client Components: Reactivity of useSearchParams() during SPA Soft Navigation
+    test("Client Components: useSearchParams() updates reactively on SPA soft navigation without losing React state", async ({ page }) => {
+      await page.goto("/t-params/t-spa-query?tab=overview&q=first");
+      await page.waitForSelector('[data-testid="spa-query-container"]');
+
+      await expect(page.getByTestId("current-tab")).toHaveText("overview");
+      await expect(page.getByTestId("current-q")).toHaveText("first");
+      await expect(page.getByTestId("counter")).toHaveText("0");
+
+      // Increment internal state
+      await page.getByTestId("increment").click();
+      await expect(page.getByTestId("counter")).toHaveText("1");
+
+      // SPA navigation to settings via router.push()
+      await page.getByTestId("btn-tab-settings").click();
+
+      // Verify URL changed
+      await expect(page).toHaveURL(/\/t-params\/t-spa-query\?tab=settings&q=react/);
+      // Verify useSearchParams updated reactively
+      await expect(page.getByTestId("current-tab")).toHaveText("settings");
+      await expect(page.getByTestId("current-q")).toHaveText("react");
+      // Verify internal React state was preserved (soft navigation, no reload)
+      await expect(page.getByTestId("counter")).toHaveText("1");
+
+      // Navigate to profile
+      await page.getByTestId("btn-tab-profile").click();
+      await expect(page).toHaveURL(/\/t-params\/t-spa-query\?tab=profile&q=dinou/);
+      await expect(page.getByTestId("current-tab")).toHaveText("profile");
+      await expect(page.getByTestId("current-q")).toHaveText("dinou");
+      await expect(page.getByTestId("counter")).toHaveText("1");
+    });
+
+    // 4. Dynamic Routes: Route Parameters (params) and Query Parameters (query) Coexistence
+    test("Dynamic Routes: route parameters (params) and query parameters (query) coexist cleanly", async ({ page }) => {
+      const response = await page.goto(
+        "/t-params/dynamic-slug-item?filter=electronics&page=4&sort=price"
+      );
+      expect(response?.status()).toBe(200);
+
+      // Verify route parameter [slug]
+      await expect(page.locator("body")).toContainText('"slug": "dynamic-slug-item"');
+      // Verify searchParams (query)
+      await expect(page.locator("body")).toContainText('"filter": "electronics"');
+      await expect(page.locator("body")).toContainText('"page": "4"');
+      await expect(page.locator("body")).toContainText('"sort": "price"');
+    });
+
+    // 5. Special Characters & URL Encoding Handling
+    test("URL Encoding: special characters in query params are correctly decoded on server and client", async ({ page }) => {
+      // Test on Server Component
+      const encodedQuery = "q=react%20%2B%20dinou&tag=espa%C3%B1ol&symbols=%26%3D%3F";
+      const serverRes = await page.goto(
+        `/t-params/t-layout-server-component/t-server-component?${encodedQuery}`
+      );
+      expect(serverRes?.status()).toBe(200);
+      await expect(page.locator("body")).toContainText('"q": "react + dinou"');
+      await expect(page.locator("body")).toContainText('"tag": "español"');
+      await expect(page.locator("body")).toContainText('"symbols": "&=?"');
+
+      // Test on Client Component
+      const clientRes = await page.goto(
+        `/t-params/special-item?${encodedQuery}`
+      );
+      expect(clientRes?.status()).toBe(200);
+      await expect(page.locator("body")).toContainText('"q": "react + dinou"');
+      await expect(page.locator("body")).toContainText('"tag": "español"');
+      await expect(page.locator("body")).toContainText('"symbols": "&=?"');
+    });
+  });
+
   test.describe("Demo Application Features", () => {
     test("Server Components: displays posts successfully", async ({ page }) => {
       await page.goto("/demo/server-components");
