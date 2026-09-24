@@ -227,7 +227,17 @@ module.exports = async () => {
       ],
     },
     plugins: [
-      new ReactServerWebpackPlugin({ isServer: false }),
+      new ReactServerWebpackPlugin({
+        isServer: false,
+        clientReferences: [
+          {
+            directory: ".",
+            recursive: true,
+            include: /\.(js|ts|jsx|tsx)$/,
+            exclude: /[\\/](?:out|dist|\.dinou|tests|__tests__|docs)[\\/]/,
+          },
+        ],
+      }),
       isDevelopment && {
         apply(compiler) {
           compiler.hooks.thisCompilation.tap(

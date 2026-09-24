@@ -126,6 +126,9 @@ function findClientComponents(parsedClientManifest = {}) {
     if (fileUrl.startsWith("file:///")) {
       try {
         const filePath = fileURLToPath(fileUrl);
+        const norm = filePath.replace(/\\/g, "/");
+        if (norm.includes("/out/") || norm.includes("/dist/") || norm.includes("/.dinou/")) continue;
+        const base = path.basename(filePath);
         if (
           base === "client.jsx" ||
           base === "client-error.jsx" ||
@@ -147,10 +150,15 @@ function findClientComponents(parsedClientManifest = {}) {
 
 // Manifest paths and helpers
 function findManifest(filename, fallbackFolder) {
-  const candidates = [
-    path.resolve(projectRoot, ".dinou/public", filename),
-    path.resolve(projectRoot, ".dinou", fallbackFolder, filename),
-  ];
+  const candidates = isWebpackBuild
+    ? [
+        path.resolve(projectRoot, ".dinou/public", filename),
+        path.resolve(projectRoot, ".dinou", fallbackFolder, filename),
+      ]
+    : [
+        path.resolve(projectRoot, ".dinou", fallbackFolder, filename),
+        path.resolve(projectRoot, ".dinou/public", filename),
+      ];
   for (const c of candidates) {
     if (fs.existsSync(c)) return c;
   }
@@ -180,7 +188,23 @@ function updateManifestsState() {
 
   const rawClient = readJsonSafe(cPath);
   if (rawClient) {
-    parsedClientManifest = rawClient;
+    const cleanClient = {};
+    for (const [k, v] of Object.entries(rawClient)) {
+      const normK = k.replace(/\\/g, "/");
+      const normId = (v?.id || "").replace(/\\/g, "/");
+      if (
+        normK.includes("/out/") ||
+        normK.includes("/dist/") ||
+        normK.includes("/.dinou/") ||
+        normId.includes("/out/") ||
+        normId.includes("/dist/") ||
+        normId.includes("/.dinou/")
+      ) {
+        continue;
+      }
+      cleanClient[k] = v;
+    }
+    parsedClientManifest = cleanClient;
   }
 
   const rawSf = readJsonSafe(sfPath);
@@ -232,6 +256,8 @@ function updateManifestsState() {
   let linkEntry = null;
   let redirectEntry = null;
   for (const [k, v] of Object.entries(parsedClientManifest)) {
+    const norm = k.replace(/\\/g, "/");
+    if (norm.includes("/out/") || norm.includes("/dist/") || norm.includes("/.dinou/")) continue;
     if (k.includes("/core/link.jsx") || k.includes("dinouLink")) {
       if (v?.id) { linkChunkId = v.id; linkEntry = v; }
     }
