@@ -119,7 +119,7 @@ export default defineConfig({
 
     // Timeout generoso para Webpack
     timeout: 420 * 1000,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     stdout: "pipe",
     stderr: "pipe",
   },
