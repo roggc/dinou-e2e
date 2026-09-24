@@ -293,6 +293,8 @@ Dinou v7 organizes all operations into a structured matrix categorized by **Targ
 │   ├── build:deno:compile:linux_arm:esbuild / :rollup / :webpack
 │   ├── build:deno:compile:mac               (Cross-compiles for macOS Apple Silicon -> dist/deno-server-mac)
 │   ├── build:deno:compile:mac:esbuild / :rollup / :webpack
+│   ├── build:deno:compile:win               (Cross-compiles for Windows x64 -> dist/deno-server-win.exe)
+│   ├── build:deno:compile:win:esbuild / :rollup / :webpack
 │   └── start:deno                           (Runs native Deno CLI adapter)
 │
 ├── Bun Standalone & Compile:

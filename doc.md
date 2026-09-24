@@ -293,6 +293,8 @@ Dinou v7 organiza sus scripts en una matriz coherente por **Objetivo de Desplieg
 │   ├── build:deno:compile:linux_arm:esbuild / :rollup / :webpack
 │   ├── build:deno:compile:mac               (Compila para macOS Apple Silicon -> dist/deno-server-mac)
 │   ├── build:deno:compile:mac:esbuild / :rollup / :webpack
+│   ├── build:deno:compile:win               (Compila para Windows x64 -> dist/deno-server-win.exe)
+│   ├── build:deno:compile:win:esbuild / :rollup / :webpack
 │   └── start:deno                           (Arranca adaptador nativo Deno CLI)
 │
 ├── Bun Standalone & Compile:
