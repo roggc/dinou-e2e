@@ -958,7 +958,15 @@ if (checkClientFilesPresent()) {
 
 let manifestSyncPromise = null;
 
+let lastManifestSyncTime = 0;
+
 async function onManifestUpdated() {
+  const now = Date.now();
+  if (now - lastManifestSyncTime < 150) {
+    return manifestSyncPromise;
+  }
+  lastManifestSyncTime = now;
+
   if (manifestSyncPromise) {
     try { await manifestSyncPromise; } catch (e) {}
   }
@@ -991,8 +999,8 @@ if (!fs.existsSync(dotDinouDir)) {
   fs.mkdirSync(dotDinouDir, { recursive: true });
 }
 const manifestWatcher = chokidar.watch(dotDinouDir, {
-  ignoreInitial: false,
-  ignored: [/node_modules/],
+  ignoreInitial: true,
+  ignored: [/node_modules/, /[\\/]\.dinou[\\/](public|dist|dev-)/],
   depth: 3,
 });
 
@@ -1061,7 +1069,10 @@ async function startClientBundler(tool) {
     return new Promise((resolve) => {
       let initialResolved = false;
       watcher.on("event", (event) => {
-        if (event.code === "BUNDLE_END") {
+        if (event.code === "BUNDLE_START") {
+          console.log("⚡ [Rollup Dev] Bundling client...");
+        } else if (event.code === "BUNDLE_END") {
+          console.log(`✓ [Rollup Dev] Client bundle completed in ${event.duration}ms`);
           onManifestUpdated();
           if (!initialResolved) {
             initialResolved = true;

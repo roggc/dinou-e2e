@@ -1318,8 +1318,8 @@ async function handleRequest(request, platformContext = {}) {
 
           const bootstrapModules = isDevelopment
             ? [
-                clientEntry,
                 isWebpack ? undefined : getAssetFromManifest("runtime.js"),
+                clientEntry,
               ].filter(Boolean)
             : [clientEntry];
 
@@ -1377,8 +1377,8 @@ async function handleRequest(request, platformContext = {}) {
             const errorClientEntry = getAssetFromManifest("error.js");
             const errorBootstrapModules = isDevelopment
               ? [
-                  errorClientEntry,
                   isWebpack ? undefined : getAssetFromManifest("runtime.js"),
+                  errorClientEntry,
                 ].filter(Boolean)
               : [errorClientEntry];
 
