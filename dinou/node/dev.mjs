@@ -1205,6 +1205,37 @@ const server = http.createServer(async (req, res) => {
           }
         }
       }
+
+      // Check if it's an asset file with a known static extension
+      const ext = path.extname(cleanPath).toLowerCase();
+      if (ext && MIME_TYPES[ext]) {
+        // If it's a client bundle file, wait briefly in case a bundler rebuild is currently writing to disk
+        if (cleanPath === "main.js" || cleanPath === "runtime.js" || cleanPath.startsWith("chunk-")) {
+          for (let attempt = 0; attempt < 10; attempt++) {
+            await new Promise((r) => setTimeout(r, 50));
+            for (const baseDir of candidateStaticDirs) {
+              const filePath = path.join(baseDir, cleanPath);
+              if (fs.existsSync(filePath)) {
+                try {
+                  const stat = fs.statSync(filePath);
+                  if (stat.isFile()) {
+                    res.statusCode = 200;
+                    res.setHeader("content-type", MIME_TYPES[ext] || "application/javascript");
+                    res.setHeader("content-length", String(stat.size));
+                    res.setHeader("cache-control", "no-cache");
+                    fs.createReadStream(filePath).pipe(res);
+                    return;
+                  }
+                } catch (e) {}
+              }
+            }
+          }
+        }
+        res.statusCode = 404;
+        res.setHeader("content-type", "text/plain; charset=utf-8");
+        res.end(`Not Found: ${pathname}`);
+        return;
+      }
     }
 
     // 3. Dynamic RSC + Native SSR Streaming

@@ -122,7 +122,6 @@ export async function startEsbuildDev(options = {}) {
         await currentCtx.dispose();
       }
 
-      await fs.rm(outdir, { recursive: true, force: true });
       currentCtx = await esbuild.context(
         getConfigEsbuild({
           entryPoints,
@@ -150,7 +149,7 @@ export async function startEsbuildDev(options = {}) {
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(async () => {
       await createEsbuildContext();
-    }, 300);
+    }, 50);
   };
 
   const debounceRecreateAndReload = () => {
@@ -159,7 +158,7 @@ export async function startEsbuildDev(options = {}) {
       await createEsbuildContext();
       hmrEngine.value?.broadcastMessage?.({ type: "reload" });
       onRebuilt();
-    }, 300);
+    }, 50);
   };
 
   let reloadTimer = null;
@@ -170,7 +169,7 @@ export async function startEsbuildDev(options = {}) {
         hmrEngine.value.broadcastMessage({ type: "reload" });
       }
       onRebuilt();
-    }, 100);
+    }, 40);
   };
 
   watcher.on("add", async (file) => {
