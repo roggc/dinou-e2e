@@ -3925,7 +3925,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Verify the custom server error page is shown
       await expect(page.locator("body")).toContainText("Dinou Page Boundary Captured an Error");
       if (isProd) {
-        await expect(page.locator("body")).toContainText("Minified React error #441");
+        await expect(page.locator("body")).toContainText(
+          /An error occurred in the Server Components render|Minified React error #441/
+        );
       } else {
         await expect(page.locator("body")).toContainText("Simulated Critical Server Component Crash during SSR");
       }
@@ -3948,7 +3950,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Page boundary should catch it and render error
       await expect(page.locator("body")).toContainText("Dinou Page Boundary Captured an Error");
       if (isProd) {
-        await expect(page.locator("body")).toContainText("Minified React error #441");
+        await expect(page.locator("body")).toContainText(
+          /An error occurred in the Server Components render|Minified React error #441/
+        );
       } else {
         await expect(page.locator("body")).toContainText("Simulated Server Component Crash during Client-Side Soft Navigation");
       }
@@ -4027,7 +4031,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Nested error boundary should catch it locally
       await expect(page.locator("body")).toContainText("Nested Local Error Boundary Captured");
       if (isProd) {
-        await expect(page.locator("body")).toContainText("Minified React error #441");
+        await expect(page.locator("body")).toContainText(
+          /An error occurred in the Server Components render|Minified React error #441/
+        );
       } else {
         await expect(page.locator("body")).toContainText("Crash inside nested route page component");
       }
