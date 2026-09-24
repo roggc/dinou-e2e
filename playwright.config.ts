@@ -8,7 +8,7 @@ import { defineConfig, devices } from "@playwright/test";
 // import path from 'path';
 // dotenv.config({ path: path.resolve(__dirname, '.env') });
 if (!process.env.TEST_CMD) {
-  process.env.TEST_CMD = "npm run build:esbuild && npm run start:esbuild";
+  process.env.TEST_CMD = "npm run build:node:esbuild && npm run start:node:esbuild";
 }
 const commandToRun = process.env.TEST_CMD;
 const port = 3000;
