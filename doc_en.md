@@ -285,8 +285,14 @@ Dinou v7 organizes all operations into a structured matrix categorized by **Targ
 ├── Deno & Deno Deploy:
 │   ├── build:deno                           (Generates .dinou/deno/main.js & seeds KV)
 │   ├── build:deno:esbuild / :rollup / :webpack
-│   ├── build:deno:compile                   (Compiles standalone binary dist/deno-server)
+│   ├── build:deno:compile                   (Compiles standalone binary for current host OS)
 │   ├── build:deno:compile:esbuild / :rollup / :webpack
+│   ├── build:deno:compile:linux             (Cross-compiles for Linux x64 -> dist/deno-server-linux)
+│   ├── build:deno:compile:linux:esbuild / :rollup / :webpack
+│   ├── build:deno:compile:linux_arm         (Cross-compiles for Linux ARM64 -> dist/deno-server-linux-arm)
+│   ├── build:deno:compile:linux_arm:esbuild / :rollup / :webpack
+│   ├── build:deno:compile:mac               (Cross-compiles for macOS Apple Silicon -> dist/deno-server-mac)
+│   ├── build:deno:compile:mac:esbuild / :rollup / :webpack
 │   └── start:deno                           (Runs native Deno CLI adapter)
 │
 ├── Bun Standalone & Compile:

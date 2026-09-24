@@ -285,8 +285,14 @@ Dinou v7 organiza sus scripts en una matriz coherente por **Objetivo de Desplieg
 ├── Deno & Deno Deploy:
 │   ├── build:deno                           (Genera .dinou/deno/main.js y sincroniza KV)
 │   ├── build:deno:esbuild / :rollup / :webpack
-│   ├── build:deno:compile                   (Compila a binario único dist/deno-server)
+│   ├── build:deno:compile                   (Compila a binario para el OS actual)
 │   ├── build:deno:compile:esbuild / :rollup / :webpack
+│   ├── build:deno:compile:linux             (Compila para Linux x64 -> dist/deno-server-linux)
+│   ├── build:deno:compile:linux:esbuild / :rollup / :webpack
+│   ├── build:deno:compile:linux_arm         (Compila para Linux ARM64 -> dist/deno-server-linux-arm)
+│   ├── build:deno:compile:linux_arm:esbuild / :rollup / :webpack
+│   ├── build:deno:compile:mac               (Compila para macOS Apple Silicon -> dist/deno-server-mac)
+│   ├── build:deno:compile:mac:esbuild / :rollup / :webpack
 │   └── start:deno                           (Arranca adaptador nativo Deno CLI)
 │
 ├── Bun Standalone & Compile:
