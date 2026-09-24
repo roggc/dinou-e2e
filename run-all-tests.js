@@ -55,6 +55,20 @@ const scenarios = [
     name: "Bun (Webpack)",
     cmd: "npm run build:bun:webpack && npm run start:bun:webpack",
   },
+
+  // 5. Bun Pure Producción (Build 100% Bun, AOT)
+  {
+    name: "Bun Pure (Esbuild)",
+    cmd: "npm run build:bun:pure:esbuild && npm run start:bun:esbuild",
+  },
+  {
+    name: "Bun Pure (Rollup)",
+    cmd: "npm run build:bun:pure:rollup && npm run start:bun:rollup",
+  },
+  {
+    name: "Bun Pure (Webpack)",
+    cmd: "npm run build:bun:pure:webpack && npm run start:bun:webpack",
+  },
 ];
 
 // Soporte para filtrar escenarios (--scenario=bun) y pasar flags a Playwright (--project=chromium, -g, etc.)
