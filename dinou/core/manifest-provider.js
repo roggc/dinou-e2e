@@ -54,9 +54,78 @@ function isManifestReady() {
   }
 }
 
+function createDevClientManifestProxy(target) {
+  if (!target || typeof target !== "object") return target;
+  if (target.__isDinouDevProxy) return target;
+
+  return new Proxy(target, {
+    get(obj, prop, receiver) {
+      if (prop === "__isDinouDevProxy") return true;
+      if (typeof prop !== "string") {
+        return Reflect.get(obj, prop, receiver);
+      }
+      if (prop in obj) {
+        return obj[prop];
+      }
+
+      // 1. Try drive-letter / url casing variations
+      let altProp = null;
+      if (prop.startsWith("file:///c:/")) {
+        altProp = "file:///C:/" + prop.slice(11);
+      } else if (prop.startsWith("file:///C:/")) {
+        altProp = "file:///c:/" + prop.slice(11);
+      }
+      if (altProp && altProp in obj) {
+        return obj[altProp];
+      }
+
+      // 2. Check if disk manifest has been updated
+      try {
+        const p = getClientManifestPath();
+        if (fs.existsSync(p)) {
+          const fresh = JSON.parse(fs.readFileSync(p, "utf8"));
+          if (fresh[prop]) {
+            obj[prop] = fresh[prop];
+            return obj[prop];
+          }
+          if (altProp && fresh[altProp]) {
+            obj[prop] = fresh[altProp];
+            return obj[prop];
+          }
+        }
+      } catch (e) {}
+
+      // 3. Fallback for client files in src/ during hot edits
+      const hashIdx = prop.lastIndexOf("#");
+      const baseUri = hashIdx !== -1 ? prop.slice(0, hashIdx) : prop;
+      const expName = hashIdx !== -1 ? prop.slice(hashIdx + 1) : "default";
+
+      if (baseUri.startsWith("file:///")) {
+        try {
+          const { fileURLToPath } = require("url");
+          const localPath = fileURLToPath(baseUri);
+          if (fs.existsSync(localPath)) {
+            const fallbackEntry = { id: baseUri, chunks: [], name: expName };
+            obj[prop] = fallbackEntry;
+            obj[baseUri] = fallbackEntry;
+            return fallbackEntry;
+          }
+        } catch (e) {}
+      }
+
+      return Reflect.get(obj, prop, receiver);
+    },
+  });
+}
+
 function getClientManifest() {
   if (typeof globalThis !== "undefined" && globalThis.__DINOU_CLIENT_MANIFEST__) {
-    return globalThis.__DINOU_CLIENT_MANIFEST__;
+    const manifest = globalThis.__DINOU_CLIENT_MANIFEST__;
+    if (isDevMode() && !manifest.__isDinouDevProxy) {
+      globalThis.__DINOU_CLIENT_MANIFEST__ = createDevClientManifestProxy(manifest);
+      return globalThis.__DINOU_CLIENT_MANIFEST__;
+    }
+    return manifest;
   }
   const isDevelopment = isDevMode();
   if (!isDevelopment && cachedClientManifest) {
@@ -67,16 +136,18 @@ function getClientManifest() {
     if (fs.existsSync(p)) {
       const parsed = JSON.parse(fs.readFileSync(p, "utf8"));
       if (!isDevelopment) cachedClientManifest = parsed;
-      return parsed;
+      return isDevelopment ? createDevClientManifestProxy(parsed) : parsed;
     }
   } catch (e) {}
-  return cachedClientManifest || {};
+  return cachedClientManifest || (isDevelopment ? createDevClientManifestProxy({}) : {});
 }
 
 function setClientManifest(manifest) {
   cachedClientManifest = manifest;
   if (typeof globalThis !== "undefined") {
-    globalThis.__DINOU_CLIENT_MANIFEST__ = manifest;
+    globalThis.__DINOU_CLIENT_MANIFEST__ = isDevMode()
+      ? createDevClientManifestProxy(manifest)
+      : manifest;
   }
 }
 
