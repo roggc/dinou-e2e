@@ -775,7 +775,12 @@ async function handleRequest(request, platformContext = {}) {
       if (isRelativeSrc) {
         relativePath = fileUrl.replace(/^file:\/\/\/?/, "").trim();
       } else {
-        const resolvedPath = fileURLToPath(fileUrl);
+        let resolvedPath;
+        try {
+          resolvedPath = fileURLToPath(fileUrl);
+        } catch (e) {
+          return Response.json({ error: "Invalid file URL format" }, { status: 400 });
+        }
         const normalizedCwd = normalizePathCase(process.cwd());
         const normalizedResolved = normalizePathCase(resolvedPath);
         if (normalizedResolved.startsWith(normalizedCwd)) {
@@ -785,8 +790,8 @@ async function handleRequest(request, platformContext = {}) {
         }
       }
 
-      const normalizedRelativePath = relativePath.replace(/\\/g, "/");
-      if (!normalizedRelativePath.startsWith("src/")) {
+      const normalizedRelativePath = path.normalize(relativePath).replace(/\\/g, "/");
+      if (!normalizedRelativePath.startsWith("src/") && normalizedRelativePath !== "src") {
         return Response.json({ error: "Forbidden access" }, { status: 403 });
       }
 

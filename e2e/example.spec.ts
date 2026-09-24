@@ -4047,5 +4047,131 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("body")).toContainText("Double Crash! The custom error boundary component itself has crashed");
     });
   });
+
+  test.describe("🛡️ Casos Límite de Seguridad y Cabeceras Corruptas", () => {
+    test("Protección CSRF: Rechaza petición con Origin no coincidente", async ({ request }) => {
+      const res = await request.post("/____server_function____", {
+        headers: {
+          "host": "localhost:3000",
+          "origin": "http://malicious-attacker.com",
+          "x-server-function-call": "1",
+          "content-type": "application/json",
+        },
+        data: JSON.stringify({ id: "file:///src/test.js#test", args: [] }),
+      });
+      if (isProd) {
+        expect(res.status()).toBe(403);
+        const json = await res.json();
+        expect(json.error).toBe("Invalid Origin");
+      } else {
+        expect([200, 400, 403, 404]).toContain(res.status());
+      }
+    });
+
+    test("Seguridad: Rechaza petición sin cabecera x-server-function-call obligatoria", async ({ request }) => {
+      const res = await request.post("/____server_function____", {
+        headers: {
+          "content-type": "application/json",
+        },
+        data: JSON.stringify({ id: "file:///src/test.js#test", args: [] }),
+      });
+      expect(res.status()).toBe(403);
+      const json = await res.json();
+      expect(json.error).toBe("Missing security header");
+    });
+
+    test("Seguridad: Rechaza petición con cabecera x-server-function-call no igual a 1", async ({ request }) => {
+      const res = await request.post("/____server_function____", {
+        headers: {
+          "x-server-function-call": "true",
+          "content-type": "application/json",
+        },
+        data: JSON.stringify({ id: "file:///src/test.js#test", args: [] }),
+      });
+      expect(res.status()).toBe(403);
+      const json = await res.json();
+      expect(json.error).toBe("Missing security header");
+    });
+
+    test("Robustez: Maneja JSON malformado / corrupto sin crashear el servidor", async ({ request }) => {
+      const res = await request.post("/____server_function____", {
+        headers: {
+          "x-server-function-call": "1",
+          "content-type": "application/json",
+        },
+        data: "{ malformed json: true, id: ",
+      });
+      expect([400, 500]).toContain(res.status());
+      const text = await res.text();
+      expect(text.length).toBeGreaterThan(0);
+    });
+
+    test("Validación de Schema: Rechaza payload con tipos inválidos en id o args", async ({ request }) => {
+      const res = await request.post("/____server_function____", {
+        headers: {
+          "x-server-function-call": "1",
+          "content-type": "application/json",
+        },
+        data: JSON.stringify({ id: 99999, args: "not-an-array" }),
+      });
+      expect(res.status()).toBe(400);
+      const json = await res.json();
+      expect(json.error).toBe("Invalid request body");
+    });
+
+    test("Seguridad: Rechaza id que no utiliza protocolo file://", async ({ request }) => {
+      const res = await request.post("/____server_function____", {
+        headers: {
+          "x-server-function-call": "1",
+          "content-type": "application/json",
+        },
+        data: JSON.stringify({ id: "https://evil-server.com/exploit.js#attack", args: [] }),
+      });
+      expect(res.status()).toBe(400);
+      const json = await res.json();
+      expect(json.error).toBe("Invalid file URL format");
+    });
+
+    test("Seguridad: Protege contra Path Traversal fuera de la raíz src/", async ({ request }) => {
+      const res = await request.post("/____server_function____", {
+        headers: {
+          "x-server-function-call": "1",
+          "content-type": "application/json",
+        },
+        data: JSON.stringify({ id: "file:///src/../package.json#default", args: [] }),
+      });
+      expect(res.status()).toBe(403);
+      const json = await res.json();
+      expect(json.error).toBe("Forbidden access");
+    });
+
+    test("Seguridad: Rechaza exportación no autorizada o no registrada en el manifest", async ({ request }) => {
+      const res = await request.post("/____server_function____", {
+        headers: {
+          "x-server-function-call": "1",
+          "content-type": "application/json",
+        },
+        data: JSON.stringify({ id: "file:///src/components/unregistered-fn.js#maliciousExport", args: [] }),
+      });
+      expect([400, 404, 500]).toContain(res.status());
+      const json = await res.json();
+      expect(json.error).toBeDefined();
+    });
+
+    test("Robustez: Endpoint de error de cliente responde adecuadamente ante payload corrupto", async ({ request }) => {
+      const res = await request.post("/____rsc_payload_error____/error", {
+        headers: {
+          "content-type": "application/json",
+        },
+        data: "not a valid json payload",
+      });
+      expect([200, 400, 500]).toContain(res.status());
+    });
+
+    test("Salud del servidor: El servidor sigue saludable y operativo tras los intentos anómalos", async ({ request }) => {
+      const res = await request.get("/");
+      expect(res.status()).toBe(200);
+    });
+  });
 });
 
