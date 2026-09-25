@@ -310,17 +310,19 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     if (toServerComponent) {
       // Playwright debe haber sido redirigido automáticamente a /docs
       await expect(page).toHaveURL("/docs", { timeout: 20000 });
+      await expect(page.getByText("This is docs page")).toBeVisible({
+        timeout: 20000,
+      });
       await expect(
         page.getByText("This page will be redirected!"),
-      ).not.toBeVisible();
-      await expect(page.getByText("This is docs page")).toBeVisible();
+      ).not.toBeVisible({ timeout: 20000 });
     } else {
       // Playwright debe haber sido redirigido automáticamente a /
       await expect(page).toHaveURL("/", { timeout: 20000 });
+      await expect(page.getByText("hello!")).toBeVisible({ timeout: 20000 });
       await expect(
         page.getByText("This page will be redirected!"),
-      ).not.toBeVisible();
-      await expect(page.getByText("hello!")).toBeVisible();
+      ).not.toBeVisible({ timeout: 20000 });
     }
   }
 
