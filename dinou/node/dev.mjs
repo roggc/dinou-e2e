@@ -973,6 +973,13 @@ async function triggerRebuild(filePath = "", eventType = "change") {
       const wasServerFile = absFilePath ? knownServerFiles.has(absFilePath) : false;
       const serverDirectiveChanged = isServerFile !== wasServerFile;
 
+      if (clientDirectiveChanged && clientBundlerHandle?.restart) {
+        console.log(`⚡ [Dinou Dev] Client directive change detected in ${path.basename(filePath) || "source"}. Recreating client bundle...`);
+        await clientBundlerHandle.restart();
+        await broadcastToClients({ type: "reload" });
+        return;
+      }
+
       const needsStructureRebuild = isStructureChange || clientDirectiveChanged || serverDirectiveChanged;
 
       if (needsStructureRebuild) {
@@ -992,18 +999,11 @@ async function triggerRebuild(filePath = "", eventType = "change") {
         ssrModule = await dynamicImportWithRetry(pathToFileURL(ssrOutfile).href + v);
       }
       console.log(`⚡ [Dinou Dev] Rebuild finished in ${Date.now() - t0}ms (${eventType} ${path.basename(filePath) || "source"})`);
-      if (clientDirectiveChanged && clientBundlerHandle?.restart) {
-        await clientBundlerHandle.restart();
+      if (activeClientBuildPromise) {
+        await activeClientBuildPromise;
+      }
+      if (!isClientFile && !isCssFile) {
         await broadcastToClients({ type: "reload" });
-      } else {
-        if (activeClientBuildPromise) {
-          await activeClientBuildPromise;
-        }
-        if (!isClientFile && !isCssFile) {
-          await broadcastToClients({ type: "reload" });
-        } else if (clientDirectiveChanged) {
-          await broadcastToClients({ type: "reload" });
-        }
       }
     } catch (err) {
       console.error("❌ [Dinou Dev] Rebuild error:", err);
@@ -1132,6 +1132,8 @@ async function startClientBundler(tool) {
     );
     return await startEsbuildDev({
       onRebuilt: () => onManifestUpdated(),
+      onBuildStart: notifyClientBuildStart,
+      onBuildEnd: notifyClientBuildEnd,
     });
   }
 
