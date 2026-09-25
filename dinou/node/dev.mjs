@@ -918,6 +918,25 @@ await doInitialBuild();
 let clientBundlerHandle = null;
 let clientBundlerPromise = null;
 
+let activeClientBuildPromise = null;
+let activeClientBuildResolve = null;
+
+function notifyClientBuildStart() {
+  if (!activeClientBuildPromise) {
+    activeClientBuildPromise = new Promise((resolve) => {
+      activeClientBuildResolve = resolve;
+    });
+  }
+}
+
+function notifyClientBuildEnd() {
+  if (activeClientBuildResolve) {
+    activeClientBuildResolve();
+    activeClientBuildResolve = null;
+  }
+  activeClientBuildPromise = null;
+}
+
 async function broadcastToClients(msg) {
   try {
     const handle = clientBundlerHandle || (await clientBundlerPromise);
@@ -973,8 +992,18 @@ async function triggerRebuild(filePath = "", eventType = "change") {
         ssrModule = await dynamicImportWithRetry(pathToFileURL(ssrOutfile).href + v);
       }
       console.log(`⚡ [Dinou Dev] Rebuild finished in ${Date.now() - t0}ms (${eventType} ${path.basename(filePath) || "source"})`);
-      if (!isClientFile && !isCssFile) {
+      if (clientDirectiveChanged && clientBundlerHandle?.restart) {
+        await clientBundlerHandle.restart();
         await broadcastToClients({ type: "reload" });
+      } else {
+        if (activeClientBuildPromise) {
+          await activeClientBuildPromise;
+        }
+        if (!isClientFile && !isCssFile) {
+          await broadcastToClients({ type: "reload" });
+        } else if (clientDirectiveChanged) {
+          await broadcastToClients({ type: "reload" });
+        }
       }
     } catch (err) {
       console.error("❌ [Dinou Dev] Rebuild error:", err);
@@ -1066,34 +1095,10 @@ async function onManifestUpdated() {
   return manifestSyncPromise;
 }
 
-let manifestDebounce = null;
 const dotDinouDir = path.resolve(projectRoot, ".dinou");
 if (!fs.existsSync(dotDinouDir)) {
   fs.mkdirSync(dotDinouDir, { recursive: true });
 }
-const manifestWatcher = chokidar.watch(dotDinouDir, {
-  ignoreInitial: true,
-  ignored: [/node_modules/, /[\\/]\.dinou[\\/](public|dist|dist2|node-dev|dev-)/],
-  depth: 3,
-});
-
-manifestWatcher.on("all", (event, fullPath) => {
-  if (isWebpackBuild) {
-    // In Webpack mode, compiler.hooks.done handles manifest synchronization cleanly
-    return;
-  }
-  if (
-    fullPath.endsWith("react-client-manifest.json") ||
-    fullPath.endsWith("server-functions-manifest.json") ||
-    fullPath.endsWith("manifest.json")
-  ) {
-    if (manifestDebounce) clearTimeout(manifestDebounce);
-    manifestDebounce = setTimeout(() => {
-      manifestDebounce = null;
-      onManifestUpdated();
-    }, 40);
-  }
-});
 
 const MIME_TYPES = {
   ".js": "application/javascript; charset=utf-8",
@@ -1136,49 +1141,64 @@ async function startClientBundler(tool) {
   if (normTool === "rollup") {
     const { watch } = require("rollup");
     const getRollupConfig = require(path.resolve(dinouDir, "rollup/rollup.config.js"));
-    const { getHmrEngine } = require(path.resolve(dinouDir, "rollup/react-refresh/rollup-plugin-esm-hmr.js"));
-    const rollupConfig = await getRollupConfig();
-    const watcher = watch(rollupConfig);
+    const { getHmrEngine, closeHmrServer } = require(path.resolve(dinouDir, "rollup/react-refresh/rollup-plugin-esm-hmr.js"));
+    const reactClientManifestPlugin = require(path.resolve(dinouDir, "rollup/rollup-plugins/rollup-plugin-react-client-manifest.js"));
+    reactClientManifestPlugin.setOnManifestUpdated?.(() => onManifestUpdated());
 
-    return new Promise((resolve) => {
-      let initialResolved = false;
-      watcher.on("event", (event) => {
-        if (event.code === "BUNDLE_START") {
-          console.log("⚡ [Rollup Dev] Bundling client...");
-        } else if (event.code === "BUNDLE_END") {
-          console.log(`✓ [Rollup Dev] Client bundle completed in ${event.duration}ms`);
-          if (!initialResolved) {
-            onManifestUpdated();
-            initialResolved = true;
-            resolve({
-              broadcast: (msg) => {
-                getHmrEngine()?.broadcastMessage?.(msg);
-              },
-              close: async () => {
-                try {
-                  await watcher.close();
-                } catch (e) {}
-              },
-            });
+    let currentWatcher = null;
+
+    async function startRollupWatcher() {
+      if (currentWatcher) {
+        try { await currentWatcher.close(); } catch (e) {}
+        currentWatcher = null;
+      }
+      const rollupConfig = await getRollupConfig();
+      currentWatcher = watch(rollupConfig);
+
+      return new Promise((resolve) => {
+        let initialResolved = false;
+        currentWatcher.on("event", (event) => {
+          if (event.code === "BUNDLE_START") {
+            console.log("⚡ [Rollup Dev] Bundling client...");
+            notifyClientBuildStart();
+          } else if (event.code === "BUNDLE_END") {
+            console.log(`✓ [Rollup Dev] Client bundle completed in ${event.duration}ms`);
+            notifyClientBuildEnd();
+            if (!initialResolved) {
+              onManifestUpdated();
+              initialResolved = true;
+              resolve();
+            }
+          } else if (event.code === "ERROR") {
+            console.error("❌ [Rollup Dev Error]:", event.error);
+            notifyClientBuildEnd();
+            if (!initialResolved) {
+              initialResolved = true;
+              resolve();
+            }
           }
-        } else if (event.code === "ERROR") {
-          console.error("❌ [Rollup Dev Error]:", event.error);
-          if (!initialResolved) {
-            initialResolved = true;
-            resolve({
-              broadcast: (msg) => {
-                getHmrEngine()?.broadcastMessage?.(msg);
-              },
-              close: async () => {
-                try {
-                  await watcher.close();
-                } catch (e) {}
-              },
-            });
-          }
-        }
+        });
       });
-    });
+    }
+
+    await startRollupWatcher();
+
+    return {
+      broadcast: (msg) => {
+        getHmrEngine()?.broadcastMessage?.(msg);
+      },
+      restart: async () => {
+        console.log("⚡ [Rollup Dev] Recreating client bundle due to directive change...");
+        await startRollupWatcher();
+        await onManifestUpdated();
+      },
+      close: async () => {
+        try {
+          if (currentWatcher) await currentWatcher.close();
+          closeHmrServer?.();
+        } catch (e) {}
+      },
+    };
   }
 
   if (normTool === "webpack") {
@@ -1230,6 +1250,9 @@ const server = http.createServer(async (req, res) => {
     if (clientBundlerPromise) {
       await clientBundlerPromise;
     }
+    if (activeClientBuildPromise) {
+      await activeClientBuildPromise;
+    }
     if (activeRebuildPromise) {
       await activeRebuildPromise;
     }
@@ -1240,11 +1263,6 @@ const server = http.createServer(async (req, res) => {
     }
     if (activeRebuildPromise) {
       await activeRebuildPromise;
-    }
-    if (manifestDebounce) {
-      clearTimeout(manifestDebounce);
-      manifestDebounce = null;
-      await onManifestUpdated();
     }
     if (manifestSyncPromise) {
       await manifestSyncPromise;
@@ -1418,7 +1436,6 @@ async function cleanup() {
   isCleaningUp = true;
   try {
     srcWatcher.close();
-    manifestWatcher.close();
     if (clientBundlerHandle?.close) {
       await clientBundlerHandle.close();
     }
