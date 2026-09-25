@@ -37,6 +37,26 @@ async function pollUntilReady(request: APIRequestContext, maxRetries = 800) {
   );
 }
 
+// Helper para peticiones de concurrencia que absorbe micro-glitches transitorios de sockets del SO (ECONNRESET)
+async function safeApiGet(apiCtx: APIRequestContext, url: string, retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await apiCtx.get(url);
+    } catch (err: any) {
+      const isSocketGlitch =
+        err?.message?.includes("ECONNRESET") ||
+        err?.message?.includes("socket hang up") ||
+        err?.code === "ECONNRESET";
+      if (isSocketGlitch && attempt < retries) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error(`Failed to GET ${url}`);
+}
+
 // =========================================================
 // GRUPO 2: Tests que requieren SSG completo (isReady = true)
 // =========================================================
@@ -1020,7 +1040,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
             clientPromise: (async () => {
               const apiCtx = await playwrightRequest.newContext();
               try {
-                const res = await apiCtx.get(`http://localhost:3000/t-ssg/${slug}`);
+                const res = await safeApiGet(apiCtx, `http://localhost:3000/t-ssg/${slug}`);
                 const status = res.status();
                 const body = await res.text();
                 return { status, body, slug };
@@ -1076,7 +1096,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const htmlTasks = Array.from({ length: HTML_USERS }).map(async () => {
         const apiCtx = await playwrightRequest.newContext();
         try {
-          const res = await apiCtx.get(`http://localhost:3000${targetUrl}?mix_html=${Date.now()}_${Math.random()}`);
+          const res = await safeApiGet(apiCtx, `http://localhost:3000${targetUrl}?mix_html=${Date.now()}_${Math.random()}`);
           return { type: "html", status: res.status(), body: await res.text() };
         } finally {
           await apiCtx.dispose();
@@ -1086,7 +1106,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const rscTasks = Array.from({ length: RSC_USERS }).map(async () => {
         const apiCtx = await playwrightRequest.newContext();
         try {
-          const res = await apiCtx.get(`http://localhost:3000/____rsc_payload_static____${targetUrl}?mix_rsc=${Date.now()}_${Math.random()}`);
+          const res = await safeApiGet(apiCtx, `http://localhost:3000/____rsc_payload_static____${targetUrl}?mix_rsc=${Date.now()}_${Math.random()}`);
           return { type: "rsc", status: res.status(), body: await res.text() };
         } finally {
           await apiCtx.dispose();
@@ -1148,7 +1168,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         const burstResults = await Promise.all(
           burstContexts.map(async (ctx) => {
             try {
-              const res = await ctx.get(`http://localhost:3000${targetUrl}?burst_round=${round}&t=${Date.now()}_${Math.random()}`);
+              const res = await safeApiGet(ctx, `http://localhost:3000${targetUrl}?burst_round=${round}&t=${Date.now()}_${Math.random()}`);
               return res.status();
             } finally {
               await ctx.dispose();
