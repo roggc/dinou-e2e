@@ -973,8 +973,10 @@ async function triggerRebuild(filePath = "", eventType = "change") {
       const wasServerFile = absFilePath ? knownServerFiles.has(absFilePath) : false;
       const serverDirectiveChanged = isServerFile !== wasServerFile;
 
-      if (clientDirectiveChanged && clientBundlerHandle?.restart) {
-        console.log(`⚡ [Dinou Dev] Client directive change detected in ${path.basename(filePath) || "source"}. Recreating client bundle...`);
+      const needsClientBundlerRestart = clientDirectiveChanged || (isStructureChange && isCssFile);
+
+      if (needsClientBundlerRestart && clientBundlerHandle?.restart) {
+        console.log(`⚡ [Dinou Dev] ${clientDirectiveChanged ? "Client directive change" : "CSS structure change"} detected in ${path.basename(filePath) || "source"}. Recreating client bundle...`);
         await clientBundlerHandle.restart();
         await broadcastToClients({ type: "reload" });
         return;
