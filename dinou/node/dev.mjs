@@ -1207,15 +1207,66 @@ async function startClientBundler(tool) {
     const webpackConfig = await getWebpackConfig();
     const compiler = webpack(webpackConfig);
 
+    let devServer = null;
+    let buildWaitPromise = null;
+    let buildWaitResolve = null;
+
+    function startBuildWait() {
+      notifyClientBuildStart();
+      if (!buildWaitPromise) {
+        buildWaitPromise = new Promise((resolve) => {
+          buildWaitResolve = resolve;
+        });
+      }
+    }
+
+    function endBuildWait() {
+      notifyClientBuildEnd();
+      if (buildWaitResolve) {
+        const resolve = buildWaitResolve;
+        buildWaitResolve = null;
+        buildWaitPromise = null;
+        resolve();
+      }
+    }
+
+    compiler.hooks.invalid.tap("DinouBuildStart", () => {
+      startBuildWait();
+    });
+
+    compiler.hooks.watchRun.tap("DinouBuildStart", () => {
+      startBuildWait();
+    });
+
     return new Promise((resolve, reject) => {
       let initialResolved = false;
-      let devServer = null;
 
-      compiler.hooks.done.tap("DinouClientSync", (stats) => {
-        onManifestUpdated();
+      compiler.hooks.done.tapPromise("DinouClientSync", async (stats) => {
+        try {
+          await onManifestUpdated();
+        } finally {
+          endBuildWait();
+        }
         if (!initialResolved) {
           initialResolved = true;
           resolve({
+            broadcast: (msg) => {
+              if (devServer?.sendMessage && devServer?.sockets) {
+                devServer.sendMessage(devServer.sockets, "ok");
+              }
+            },
+            restart: async () => {
+              console.log("⚡ [Webpack Dev] Waiting for client bundle compilation due to directive change...");
+              for (let i = 0; i < 10 && !buildWaitPromise && !activeClientBuildPromise; i++) {
+                await new Promise((r) => setTimeout(r, 25));
+              }
+              if (buildWaitPromise) {
+                await buildWaitPromise;
+              } else if (activeClientBuildPromise) {
+                await activeClientBuildPromise;
+              }
+              await onManifestUpdated();
+            },
             close: async () => {
               if (devServer) {
                 try {
