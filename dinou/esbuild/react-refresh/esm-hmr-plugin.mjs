@@ -66,9 +66,6 @@ export default function esmHmrPlugin({
       });
 
       build.onLoad({ filter: /.*/ }, async (args) => {
-        if (!isInitialBuild && changedIds) {
-          changedIds.add(normKey(args.path));
-        }
         const abs = path.resolve(args.path);
 
         const absNorm = norm(abs);
@@ -206,6 +203,8 @@ export default function esmHmrPlugin({
           ).map((m) => m[1]);
 
           hmrEngine.value.setEntry(urlId, imports, true);
+          const acceptedEntry = hmrEngine.value.getEntry(urlId, true);
+          acceptedEntry.isHmrAccepted = true;
           const wrappedCode = `
           const RefreshRuntime = window.__reactRefreshRuntime;
           let prevRefreshReg = window.$RefreshReg$;
@@ -253,31 +252,53 @@ export default function esmHmrPlugin({
         const bundleFiles = Object.keys(result.metafile.outputs);
         const pendingUpdateUrls = new Set();
         let needsFullReload = false;
+
+        const frameworkEntries = new Set([
+          "main.js",
+          "error.js",
+          "serverFunctionProxy.js",
+          "runtime.js",
+          "react-refresh-entry.js",
+        ]);
+
         for (const fileName of bundleFiles) {
+          // Only inspect actual JavaScript output chunks (skip sourcemaps, css, images, etc.)
+          if (!fileName.endsWith(".js") || fileName.endsWith(".js.map")) {
+            continue;
+          }
+          const baseName = path.basename(fileName);
+          if (frameworkEntries.has(baseName)) {
+            continue;
+          }
+
           const chunk = result.metafile.outputs[fileName];
           const modules = Object.keys(chunk?.inputs ?? {});
 
-          for (const modulePath of modules) {
+          const isChangedByModule = modules.some((modulePath) => {
             const cleanPath = modulePath.replace(/^[a-zA-Z0-9_-]+:/, "");
-            if (changedIds.has(normKey(cleanPath))) {
-              const url = "/" + path.relative(outdir, fileName).replace(/\\/g, "/");
-              const baseNameUrl = "/" + path.basename(fileName);
-              const entry = hmrEngine.value.getEntry(url) || hmrEngine.value.getEntry(baseNameUrl);
-              if (entry?.isHmrAccepted) {
-                pendingUpdateUrls.add(url);
-              } else {
-                needsFullReload = true;
-              }
+            return changedIds.has(normKey(cleanPath));
+          });
+
+          if (isChangedByModule) {
+            const url = "/" + path.relative(outdir, fileName).replace(/\\/g, "/");
+            const baseNameUrl = "/" + baseName;
+            const entry = hmrEngine.value.getEntry(url) || hmrEngine.value.getEntry(baseNameUrl);
+            if (entry?.isHmrAccepted) {
+              pendingUpdateUrls.add(baseNameUrl);
+            } else {
+              needsFullReload = true;
             }
           }
         }
 
-        if (needsFullReload || pendingUpdateUrls.size === 0) {
-          hmrEngine.value.broadcastMessage({ type: "reload" });
-        } else {
+        if (pendingUpdateUrls.size > 0 && !needsFullReload) {
           for (const url of pendingUpdateUrls) {
+            console.log(`⚡ [HMR Dev] Updating client component: ${url}`);
             hmrEngine.value.broadcastMessage({ type: "update", url });
           }
+        } else if (needsFullReload || pendingUpdateUrls.size === 0) {
+          console.log(`⚡ [HMR Dev] Full reload triggered (needsFullReload: ${needsFullReload}, pendingUpdateUrls: ${Array.from(pendingUpdateUrls)})`);
+          hmrEngine.value.broadcastMessage({ type: "reload" });
         }
         changedIds.clear();
       });
