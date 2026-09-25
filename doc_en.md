@@ -98,30 +98,62 @@ The transition from Dinou v6 to Dinou v7 is not merely an incremental version bu
 | **SSG / ISG / ISR** | Duplicated, divergent pipelines (`generate-static-pages.js` vs `generate-static-page.js`) running on sub-processes. | **Single Unified Pipeline**: The exact same in-memory ISG engine (`storageAdapter`) pre-renders hundreds of pages in seconds. |
 | **Cross-Runtime Portability** | Fragmented and tightly coupled to Node CJS. Bun required experimental JIT plugins; impossible on Edge/Workers. | **Universal "Deploy Everywhere"**: Identical architecture across Node Standalone (`server.mjs`), Bun, Deno (single-binary), and Cloudflare. |
 | **E2E Test Performance** | Sluggish test execution (~15-20 min), prone to socket timeouts and child process IPC stalls. | **377 tests passed at 100% in ~4 minutes** across Chromium, Firefox, and WebKit simultaneously with zero failures. |
+| **Developer Experience & HMR** | Fork-dependent dev server, duplicate Chokidar watchers, full page reloads on CSS edits or directive changes. | **Single-process (0 forks)** with in-memory Dual-Engine (<80ms incremental builds), hot directive synchronization (`use client`/`use server`), React Fast Refresh with state preservation, and Hot CSS swapping without page reloads. |
 | **Code Hygiene** | Legacy bridges, redundant loaders, and runtime hooks. | **~2,200 lines of dead code eradicated** (14 obsolete files cleanly purged). |
 
 ---
 
-## 3. Core Architectural Highlights
+## 3. The v7 Developer Experience (DX): Single-Process (0-Fork) Dual-Engine & Next-Gen HMR
 
-### 3.1. W3C Web Standards at the Foundation
+The transition to Dinou v7's Dual-Bundle architecture doesn't just supercharge production; it has completely transformed the local development experience (`npm run dev`):
+
+### 3.1. In-Process (0-Fork) Dev Server & Unified Watcher
+In previous versions, the development server spawned separate child processes to run the React Server Components engine while a separate process coordinated client asset bundling. Each process maintained its own file watcher (`chokidar`), causing duplicate disk I/O, IPC sync bottlenecks, and potential manifest divergence.
+
+In **Dinou v7**, [`dinou/node/dev.mjs`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/node/dev.mjs) unifies everything within a **single Node.js process**:
+* **Incremental In-Memory Rebuilds**: Both Pass A (RSC Engine) and Pass B (SSR Engine) utilize esbuild incremental contexts (`ctxA.rebuild()` and `ctxB.rebuild()`) that rebuild changed server modules in RAM in 30–80 ms.
+* **Centralized File Watcher**: A single Chokidar instance observes `src/`. Upon detecting changes, it notifies both the server engines and the client bundler in memory, guaranteeing manifest synchronization before dispatching client updates.
+* **Zero Zombie Processes**: Terminating the server (`Ctrl + C`) cleanly closes the process without leaving dangling child processes holding ports or consuming system RAM.
+
+### 3.2. Next-Generation React Fast Refresh & ESM-HMR
+Dinou v7 incorporates an ultra-refined HMR pipeline that guarantees state continuity across edits:
+* **Total State Preservation in Client Components (`"use client"`)**: Edits to interactive components are hot-swapped in the browser via ESM-HMR and React Refresh Runtime, flawlessly preserving hooks (`useState`, `useReducer`), form inputs, and UI component state.
+* **Hot Directive Switching**: If a developer adds or removes `"use client"` or `"use server"` from a file, Dinou immediately detects the directive change, rebuilds the client entry points, and synchronizes the Dual-Bundle engine without requiring a manual dev server restart.
+* **Static Assets & Image HMR**: Dynamic imports of images (`.png`, `.jpg`, `.svg`), fonts, and media assets in client components hot-reload reliably without crashing the React tree.
+* **Instant Hot CSS Swapping (`style-update`)**:
+  * Any edit to a `.css` file (global stylesheet, in layouts, or component-imported) is compiled and dispatched via `{ type: "style-update", url: "/styles.css" }`.
+  * The browser HMR runtime updates the `<link rel="stylesheet">` tag with a cache-busting timestamp (`?t=...`), applying visual styling changes **instantly, without full page reloads, without flickering, and without unmounting components or resetting state**.
+  * CSS entry chunks are isolated from React Refresh boundaries, preventing erroneous full reloads.
+
+### 3.3. Complete Parity Across All 3 Bundlers (Esbuild, Rollup, Webpack)
+The local development experience is identical regardless of the underlying bundler chosen:
+* `npm run dev:esbuild`: Sub-second rebuilds designed for ultra-fast day-to-day iteration.
+* `npm run dev:rollup`: Ideal for debugging production-grade ESM chunk splitting.
+* `npm run dev:webpack`: Full feature parity for enterprise ecosystems dependent on Webpack plugins.
+All three engines share identical WebSocket protocols, manifest formats, and HMR semantics.
+
+---
+
+## 4. Core Architectural Highlights
+
+### 4.1. W3C Web Standards at the Foundation
 The core request orchestrator (`handleRequest` in [`dinou/core/handler.js`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/core/handler.js)) is 100% runtime-agnostic. It relies exclusively on open W3C standards:
 - Native `Request` and `Response` interfaces (Web Fetch API).
 - Native `ReadableStream` and `TransformStream` for non-blocking streaming of HTML and RSC payloads.
 - Native `Headers`, `URL`, `URLSearchParams`, and standard cookie parsers.
 
-### 3.2. Bundler-Agnostic Compilation
+### 4.2. Bundler-Agnostic Compilation
 Dinou does not lock you into a single bundler. The entire application pipeline seamlessly compiles using any of the three major JS bundlers:
 - **Esbuild**: Sub-second compilation for development and lightning-fast production builds.
 - **Rollup**: Highly optimized dependency graphs with precise tree-shaking.
 - **Webpack**: Full compatibility with legacy plugins and enterprise tooling.
 
-### 3.3. In-Memory Virtual File System (VFS) & Semantic Module Filtering
+### 4.3. In-Memory Virtual File System (VFS) & Semantic Module Filtering
 To run flawlessly in environments lacking physical file systems (`workerd` in Cloudflare Workers or Deno Deploy):
 - Dinou compiles an **In-Memory Virtual File System (`__DINOU_VFS__`)** containing the route hierarchy discovered during build time.
 - **Semantic Module Filter**: Inspects transitive dependencies in `node_modules` to prevent non-standard bundles (such as legacy SystemJS or UMD wrappers found in libraries like Jotai) from corrupting the edge server bundle.
 
-### 3.4. Universal Storage & ISR Layer (`StorageAdapter`)
+### 4.4. Universal Storage & ISR Layer (`StorageAdapter`)
 Dinou decouples static cache storage and on-demand revalidation (ISR / ISG) from the local filesystem through the abstract contract in [`dinou/core/storage-adapter.js`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/core/storage-adapter.js):
 - **`FileSystemStorage`**: Used by Node.js and Bun (persists to physical disk at `.dinou/dist2`).
 - **`DenoKVStorage`**: Used by Deno CLI and Deno Deploy (persists to local disk or the globally distributed Deno KV cloud database).
@@ -130,7 +162,7 @@ Dinou decouples static cache storage and on-demand revalidation (ISR / ISG) from
 
 ---
 
-## 4. Deployment Targets & Practical Guide ("Deploy Everywhere")
+## 5. Deployment Targets & Practical Guide ("Deploy Everywhere")
 
 Dinou v7 enables deploying the exact same codebase to any of the following targets:
 
@@ -277,7 +309,7 @@ If your application uses static pages and client interactivity without dynamic s
 
 ---
 
-## 5. The Standard Static Assets Directory: `public/`
+## 6. The Standard Static Assets Directory: `public/`
 
 Dinou v7 adheres to standard industry conventions:
 - Any file placed in `public/` (`favicon.ico`, `robots.txt`, `sitemap.xml`, images, fonts, etc.) is automatically copied to the root public output folder during compilation.
@@ -286,7 +318,7 @@ Dinou v7 adheres to standard industry conventions:
 
 ---
 
-## 6. Complete `package.json` Scripts Overview
+## 7. Complete `package.json` Scripts Overview
 
 Dinou v7 organizes all operations into a structured matrix categorized by **Target Platform** and **Bundler Engine**:
 
@@ -352,7 +384,7 @@ Dinou v7 organizes all operations into a structured matrix categorized by **Targ
 
 ---
 
-## 7. Conclusion: Freedom, Performance, and Future-Proofing
+## 8. Conclusion: Freedom, Performance, and Future-Proofing
 
 The architecture of **Dinou v7** demonstrates that it is entirely possible to leverage the full power of **React 19 (Server Components, Streaming SSR, Server Functions, and ISR)** without submitting to cloud platform lock-in:
 * **Zero Child Processes (`fork`)**: A unified, lightweight, and ultra-fast in-process AOT architecture.

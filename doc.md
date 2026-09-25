@@ -98,30 +98,62 @@ La evolución de Dinou v6 a Dinou v7 no ha sido una simple actualización increm
 | **SSG / ISG / ISR** | Pipelines duplicados y divergentes (`generate-static-pages.js` vs `generate-static-page.js`) basados en subprocesos. | **Pipeline único y universal**: El mismo motor en memoria de ISG (`storageAdapter`) pre-renderiza cientos de páginas en segundos. |
 | **Portabilidad (Cross-Runtime)** | Fragmentado y atado a Node CJS. Bun requería plugins JIT experimentales; imposible en Edge/Serverless. | **Universal "Deploy Everywhere"**: Idéntico en Node Standalone (`server.mjs`), Bun, Deno (con binarios únicos) y Cloudflare. |
 | **Rendimiento de Tests E2E** | Ejecución lenta (~15-20 min), vulnerable a cuelgues por sockets IPC y timeouts de procesos hijos. | **377 tests pasados al 100% en ~4 minutos** en paralelo en Chromium, Firefox y WebKit con cero fallos. |
+| **Entorno de Desarrollo y HMR** | Servidor dependiente de `fork()`, watchers Chokidar duplicados, recargas completas del navegador al cambiar CSS o directivas. | **Proceso único (0 forks)** con motor Dual incremental en RAM (<80ms), sincronización en caliente de directivas (`use client`/`use server`), React Fast Refresh con preservación de estado y Hot CSS swapping sin recargas. |
 | **Higiene de Código** | Dependencias legacy, wrappers redundantes y loaders experimentales. | **~2.200 líneas de código muerto eliminadas** (14 archivos obsoletos purgados definitivamente). |
 
 ---
 
-## 3. Características Fundamentales de la Arquitectura v7
+## 3. La Experiencia de Desarrollo v7 (DX): Motor Dual en Proceso Único (0 Forks) y Next-Gen HMR
 
-### 3.1. Estándares Web de la W3C en el Núcleo
+El salto a la arquitectura Dual-Bundle de Dinou v7 no solo beneficia a la producción; ha transformado de raíz la experiencia de desarrollo local (`npm run dev`):
+
+### 3.1. Servidor de Desarrollo In-Process (0 Forks) y Watcher Unificado
+En versiones anteriores, el servidor de desarrollo requería bifurcar procesos hijos para compilar y ejecutar React Server Components mientras otro proceso gestionaba el empaquetado del cliente. Cada proceso mantenía su propio observador de archivos (`chokidar`), provocando duplicación de eventos de I/O en disco, latencias de sincronización y posibles desincronizaciones de manifiestos.
+
+En **Dinou v7**, el archivo [`dinou/node/dev.mjs`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/node/dev.mjs) consolida todo en un **único proceso Node.js**:
+* **Recompilación Incremental en RAM**: Tanto Pass A (RSC Engine) como Pass B (SSR Engine) se gestionan mediante contextos incrementales de esbuild (`ctxA.rebuild()` y `ctxB.rebuild()`) que reconstruyen los módulos modificados en memoria en 30–80 ms.
+* **Watcher Centralizado**: Un único observador Chokidar monitoriza la carpeta `src/`. Cuando se detecta un cambio, notifica en memoria tanto a los motores del servidor como al empaquetador del cliente de forma coordinada, garantizando que el manifiesto de cliente esté sincronizado antes de emitir cualquier actualización.
+* **Cero Procesos Huérfanos**: Al detener el servidor con `Ctrl + C`, no quedan procesos hijos zombies reteniendo puertos ni consumiendo memoria.
+
+### 3.2. React Fast Refresh y ESM-HMR de Nueva Generación
+Dinou v7 incorpora un pipeline de HMR altamente refinado que garantiza la continuidad del estado de la aplicación durante la codificación:
+* **Preservación Total del Estado en Componentes Cliente (`"use client"`)**: Los cambios en componentes interactivos se parchean en el navegador vía ESM-HMR y React Refresh Runtime, preservando íntegramente hooks como `useState`, `useReducer`, entradas de formularios y estados de UI.
+* **Detección Dinámica de Directivas en Caliente**: Si un desarrollador añade o retira `"use client"` o `"use server"` de un archivo existente, Dinou detecta la transición de directiva en tiempo real, regenera automáticamente las entradas de empaquetado y recrea el bundle del cliente sin requerir un reinicio manual de `npm run dev`.
+* **HMR de Activos Estáticos e Imágenes**: Importaciones de imágenes (`.png`, `.jpg`, `.svg`), fuentes y recursos multimedia dentro de componentes cliente se resuelven y actualizan en caliente sin romper el árbol de React.
+* **Hot CSS Swapping Instantáneo (`style-update`)**:
+  * Cualquier modificación en una hoja de estilos `.css` (global, en Layout o importada por componentes) es extraída y emitida mediante un evento `{ type: "style-update", url: "/styles.css" }`.
+  * El runtime cliente de Dinou actualiza dinámicamente el `<link rel="stylesheet">` con un parámetro de tiempo (`?t=...`), aplicando los nuevos estilos visuales **al instante, sin recargar la página, sin parpadeo y sin desmontar los componentes ni reiniciar el estado**.
+  * Los chunks dummy de CSS quedan completamente aislados del motor de Fast Refresh, previniendo recargas espurias del navegador.
+
+### 3.3. Paridad Absoluta en los 3 Empaquetadores (Esbuild, Rollup, Webpack)
+La experiencia de desarrollo local es homogénea independientemente de la herramienta elegida:
+* `npm run dev:esbuild`: Reconstrucción ultrarrápida en milisegundos ideal para iteración diaria ágil.
+* `npm run dev:rollup`: Ideal para depurar la estructura final de chunks y módulos ESM.
+* `npm run dev:webpack`: Paridad absoluta para ecosistemas empresariales que dependen de plugins específicos de Webpack.
+Todos comparten los mismos protocolos de comunicación WebSocket, manifiestos estandarizados y semántica de HMR.
+
+---
+
+## 4. Características Fundamentales de la Arquitectura v7
+
+### 4.1. Estándares Web de la W3C en el Núcleo
 El manejador principal (`handleRequest` en [`dinou/core/handler.js`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/core/handler.js)) es 100% agnóstico del runtime. Trabaja exclusivamente con interfaces estándar:
 - `Request` y `Response` nativos (Web Fetch API).
 - `ReadableStream` y `TransformStream` para streaming continuo de HTML y payloads RSC.
 - `Headers`, `URL`, `URLSearchParams` y gestión estandarizada de cookies.
 
-### 3.2. Manifiestos Agnósticos del Empaquetador
+### 4.2. Manifiestos Agnósticos del Empaquetador
 Dinou no te ata a un único bundler. El pipeline compila sobre cualquiera de los 3 grandes motores del ecosistema:
 - **Esbuild**: Compilación en milisegundos para desarrollo y producción ultrarrápida.
 - **Rollup**: Árbol de dependencias optimizado con tree-shaking quirúrgico.
 - **Webpack**: Máxima compatibilidad con plugins legacy del ecosistema empresarial.
 
-### 3.3. Sistema de Archivos Virtual (VFS) y Aislamiento Semántico de `node_modules`
+### 4.3. Sistema de Archivos Virtual (VFS) y Aislamiento Semántico de `node_modules`
 Para correr en plataformas sin disco físico (`workerd` en Cloudflare o Deno Deploy):
 - Dinou genera un **Virtual File System en memoria (`__DINOU_VFS__`)** con la estructura de rutas descubierta durante el build.
 - **Filtro Semántico de Dependencias**: Analiza el código de `node_modules` para evitar que bundles no compatibles (como wrappers SystemJS o UMD antiguos presentes en paquetes como Jotai) contaminen el bundle del servidor.
 
-### 3.4. Capa Universal de Almacenamiento e ISR (`StorageAdapter`)
+### 4.4. Capa Universal de Almacenamiento e ISR (`StorageAdapter`)
 Dinou desacopla la caché estática y la regeneración incremental (ISR / ISG) del disco mediante el contrato abstracto de [`dinou/core/storage-adapter.js`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/core/storage-adapter.js):
 - **`FileSystemStorage`**: Utilizado en Node.js y Bun (almacena en disco físico `.dinou/dist2`).
 - **`DenoKVStorage`**: Utilizado en Deno y Deno Deploy (persiste en la base de datos distribuida Deno KV, sin requerir disco).
@@ -130,7 +162,7 @@ Dinou desacopla la caché estática y la regeneración incremental (ISR / ISG) d
 
 ---
 
-## 4. Opciones y Guía de Despliegue ("Deploy Everywhere")
+## 5. Opciones y Guía de Despliegue ("Deploy Everywhere")
 
 Dinou v7 permite desplegar la misma aplicación en cualquiera de los siguientes destinos:
 
@@ -277,7 +309,7 @@ Si tu aplicación sólo utiliza Static Site Generation y Client Components, pued
 
 ---
 
-## 5. La Carpeta Estática Estándar: `public/`
+## 6. La Carpeta Estática Estándar: `public/`
 
 Dinou v7 adopta el estándar de la industria:
 - Todo archivo ubicado en `public/` (`favicon.ico`, `robots.txt`, `sitemap.xml`, imágenes, fuentes, etc.) se copia directamente a la raíz pública durante la compilación.
@@ -286,7 +318,7 @@ Dinou v7 adopta el estándar de la industria:
 
 ---
 
-## 6. Mapa Completo de Scripts en `package.json`
+## 7. Mapa Completo de Scripts en `package.json`
 
 Dinou v7 organiza sus scripts en una matriz coherente por **Objetivo de Despliegue** y **Herramienta de Compilación**:
 
@@ -352,7 +384,7 @@ Dinou v7 organiza sus scripts en una matriz coherente por **Objetivo de Desplieg
 
 ---
 
-## 7. Conclusión: Independencia, Rendimiento y Futuro
+## 8. Conclusión: Independencia, Rendimiento y Futuro
 
 La arquitectura de **Dinou v7** demuestra que es posible disfrutar de toda la potencia de **React 19 (Server Components, Streaming SSR, Server Functions e ISR)** sin renunciar a la libertad de infraestructura:
 * **Sin procesos hijos (`fork`)**: Arquitectura AOT unificada, ligera y ultrarrápida.
