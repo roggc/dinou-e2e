@@ -52,8 +52,8 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   /* Retry on CI only */
   retries: 0,
-  /* Opt out of parallel tests on CI. For local dev:webpack, 2 workers prevents heavy CPU/RAM saturation */
-  workers: process.env.CI ? 1 : (commandToRun.includes("dev:webpack") ? 2 : 4),
+  /* Opt out of parallel tests on CI. For local dev modes, 2 workers prevents heavy CPU/RAM saturation */
+  workers: process.env.CI ? 1 : (commandToRun.includes("dev") ? 2 : 4),
   /* Reporter to use. Generates full HTML report without blocking automated chain execution */
   reporter: [["html", { open: "never" }], ["list"]],
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */

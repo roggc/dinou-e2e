@@ -174,9 +174,11 @@ module.exports = async function () {
     ].filter(Boolean),
     watch: {
       exclude: [
-        ".dinou/public/**",
-        ".dinou/react_client_manifest/**",
-        ".dinou/server_functions_manifest/**",
+        "**/node_modules/**",
+        "**/.git/**",
+        "**/.dinou/**",
+        "**/test-results/**",
+        "**/playwright-report/**",
       ],
     },
     onwarn(warning, warn) {

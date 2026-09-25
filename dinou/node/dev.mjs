@@ -1116,7 +1116,7 @@ const candidateStaticDirs = [
 ];
 
 function isManifestReady() {
-  return clientManifestReady && checkClientFilesPresent();
+  return clientManifestReady && !manifestSyncPromise && checkClientFilesPresent();
 }
 
 async function startClientBundler(tool) {
@@ -1293,9 +1293,14 @@ const server = http.createServer(async (req, res) => {
       }
 
       // If it's a client bundle file that is currently being written or created by the bundler
-      const isClientBundleFile = cleanPath === "main.js" || cleanPath === "runtime.js" || cleanPath.startsWith("chunk-") || cleanPath.startsWith("assets/");
+      const isClientBundleFile =
+        cleanPath.endsWith(".js") ||
+        cleanPath.endsWith(".mjs") ||
+        cleanPath.endsWith(".css") ||
+        cleanPath.endsWith(".map") ||
+        cleanPath.startsWith("assets/");
       if (!foundFilePath && isClientBundleFile) {
-        for (let attempt = 0; attempt < 12; attempt++) {
+        for (let attempt = 0; attempt < 20; attempt++) {
           await new Promise((r) => setTimeout(r, 25));
           for (const baseDir of candidateStaticDirs) {
             for (const targetName of [mappedPath, cleanPath]) {
@@ -1312,6 +1317,13 @@ const server = http.createServer(async (req, res) => {
             if (foundFilePath) break;
           }
           if (foundFilePath) break;
+        }
+
+        if (!foundFilePath) {
+          res.statusCode = 404;
+          res.setHeader("content-type", "text/plain; charset=utf-8");
+          res.end("Not Found");
+          return;
         }
       }
 
