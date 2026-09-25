@@ -955,6 +955,9 @@ async function triggerRebuild(filePath = "", eventType = "change") {
     try {
       const isStructureChange = eventType === "add" || eventType === "unlink";
       const absFilePath = filePath ? path.resolve(filePath) : "";
+      if (clientBundlerHandle?.notifyFileChanged && absFilePath) {
+        clientBundlerHandle.notifyFileChanged(absFilePath);
+      }
       const isCssFile = absFilePath.endsWith(".css") || absFilePath.endsWith(".scss");
       let isClientFile = false;
       let isServerFile = false;
@@ -1030,6 +1033,9 @@ const srcWatcher = chokidar.watch(srcDir, {
 srcWatcher.on("all", (event, fullPath) => {
   pendingSrcPath = fullPath;
   pendingSrcEvent = event;
+  if (clientBundlerHandle?.notifyFileChanged && fullPath) {
+    clientBundlerHandle.notifyFileChanged(fullPath);
+  }
   if (srcDebounce) clearTimeout(srcDebounce);
   srcDebounce = setTimeout(() => {
     srcDebounce = null;

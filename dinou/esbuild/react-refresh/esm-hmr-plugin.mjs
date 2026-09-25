@@ -9,6 +9,14 @@ import write from "../helpers-esbuild/write.mjs";
 import normalizePath from "../helpers-esbuild/normalize-path.mjs";
 
 const norm = (p) => path.resolve(p).replace(/\\/g, "/");
+const normKey = (p) => {
+  if (!p) return "";
+  let s = path.resolve(p).replace(/\\/g, "/");
+  if (process.platform === "win32") {
+    s = s.replace(/^([a-zA-Z]):/, (_, d) => d.toLowerCase() + ":");
+  }
+  return s;
+};
 let serverStarted = false;
 
 export default function esmHmrPlugin({
@@ -20,6 +28,7 @@ export default function esmHmrPlugin({
     name: "esm-hmr",
 
     setup(build) {
+      let isInitialBuild = true;
       const outdir = build.initialOptions.outdir || ".dinou/public";
       const entryPoints = build.initialOptions.entryPoints;
 
@@ -57,6 +66,9 @@ export default function esmHmrPlugin({
       });
 
       build.onLoad({ filter: /.*/ }, async (args) => {
+        if (!isInitialBuild && changedIds) {
+          changedIds.add(normKey(args.path));
+        }
         const abs = path.resolve(args.path);
 
         const absNorm = norm(abs);
@@ -227,10 +239,13 @@ export default function esmHmrPlugin({
       build.onEnd(write);
 
       build.onEnd(async (result) => {
+        if (isInitialBuild) {
+          isInitialBuild = false;
+          changedIds?.clear();
+          return;
+        }
+
         if (!result.metafile) {
-          // console.warn(
-          //   "[hmr-plugin] Metafile is missing. Enable 'metafile: true'"
-          // );
           return;
         }
 
@@ -243,9 +258,11 @@ export default function esmHmrPlugin({
           const modules = Object.keys(chunk?.inputs ?? {});
 
           for (const modulePath of modules) {
-            if (changedIds.has(normalizePath(path.resolve(modulePath)))) {
-              const url = "/" + path.relative(outdir, fileName);
-              const entry = hmrEngine.value.getEntry(url);
+            const cleanPath = modulePath.replace(/^[a-zA-Z0-9_-]+:/, "");
+            if (changedIds.has(normKey(cleanPath))) {
+              const url = "/" + path.relative(outdir, fileName).replace(/\\/g, "/");
+              const baseNameUrl = "/" + path.basename(fileName);
+              const entry = hmrEngine.value.getEntry(url) || hmrEngine.value.getEntry(baseNameUrl);
               if (entry?.isHmrAccepted) {
                 pendingUpdateUrls.add(url);
               } else {

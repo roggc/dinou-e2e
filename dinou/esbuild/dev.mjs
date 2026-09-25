@@ -157,6 +157,15 @@ export async function startEsbuildDev(options = {}) {
     }
   }
 
+  const normKey = (p) => {
+    if (!p) return "";
+    let s = path.resolve(p).replace(/\\/g, "/");
+    if (process.platform === "win32") {
+      s = s.replace(/^([a-zA-Z]):/, (_, d) => d.toLowerCase() + ":");
+    }
+    return s;
+  };
+
   // Initial build
   await updateEntriesAndComponents();
   await createEsbuildContext(true);
@@ -164,6 +173,11 @@ export async function startEsbuildDev(options = {}) {
   return {
     broadcast: (msg) => {
       hmrEngine.value?.broadcastMessage?.(msg);
+    },
+    notifyFileChanged: (filePath) => {
+      if (filePath) {
+        changedIds.add(normKey(filePath));
+      }
     },
     restart: async () => {
       console.log("⚡ [Esbuild Dev] Recreating client bundle due to directive change...");
