@@ -1059,32 +1059,29 @@ if (checkClientFilesPresent()) {
 }
 
 let manifestSyncPromise = null;
-
-let lastManifestSyncTime = 0;
+let pendingManifestSync = false;
 
 async function onManifestUpdated() {
-  const now = Date.now();
-  if (now - lastManifestSyncTime < 150) {
-    return manifestSyncPromise;
-  }
-  lastManifestSyncTime = now;
-
   if (manifestSyncPromise) {
-    try { await manifestSyncPromise; } catch (e) {}
+    pendingManifestSync = true;
+    return manifestSyncPromise;
   }
 
   manifestSyncPromise = (async () => {
     try {
-      console.log("⚡ [Dinou Dev] Client manifest change detected. Synchronizing Dual-Bundle engine...");
-      updateManifestsState();
-      generateEntryFiles();
-      await Promise.all([ctxA.rebuild(), ctxB.rebuild()]);
-      engineVersion = Date.now();
-      const v = "?v=" + engineVersion;
-      rscModule = await dynamicImportWithRetry(pathToFileURL(rscOutfile).href + v);
-      ssrModule = await dynamicImportWithRetry(pathToFileURL(ssrOutfile).href + v);
-      clientManifestReady = true;
-      console.log("✅ [Dinou Dev] Dual-Bundle engine successfully synchronized with client build!");
+      do {
+        pendingManifestSync = false;
+        console.log("⚡ [Dinou Dev] Client manifest change detected. Synchronizing Dual-Bundle engine...");
+        updateManifestsState();
+        generateEntryFiles();
+        await Promise.all([ctxA.rebuild(), ctxB.rebuild()]);
+        engineVersion = Date.now();
+        const v = "?v=" + engineVersion;
+        rscModule = await dynamicImportWithRetry(pathToFileURL(rscOutfile).href + v);
+        ssrModule = await dynamicImportWithRetry(pathToFileURL(ssrOutfile).href + v);
+        clientManifestReady = true;
+        console.log("✅ [Dinou Dev] Dual-Bundle engine successfully synchronized with client build!");
+      } while (pendingManifestSync);
     } catch (err) {
       console.error("❌ [Dinou Dev] Error synchronizing with client manifest:", err);
     } finally {

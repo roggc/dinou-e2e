@@ -128,11 +128,17 @@ export async function startEsbuildDev(options = {}) {
           manifest,
           changedIds,
           hmrEngine,
+          onManifestUpdated: async () => {
+            if (resolveInitial) {
+              resolveInitial();
+              resolveInitial = null;
+            }
+            await onRebuilt();
+          },
         })
       );
 
       await currentCtx.watch();
-      onRebuilt();
     } catch (err) {
       console.error("Error recreating context:", err);
     }
@@ -142,7 +148,6 @@ export async function startEsbuildDev(options = {}) {
   watcher.on("ready", async () => {
     await updateEntriesAndComponents();
     await createEsbuildContext();
-    if (resolveInitial) resolveInitial();
   });
 
   const debounceRecreate = () => {
@@ -157,7 +162,6 @@ export async function startEsbuildDev(options = {}) {
     debounceTimer = setTimeout(async () => {
       await createEsbuildContext();
       hmrEngine.value?.broadcastMessage?.({ type: "reload" });
-      onRebuilt();
     }, 50);
   };
 
@@ -168,7 +172,6 @@ export async function startEsbuildDev(options = {}) {
       if (hmrEngine.value) {
         hmrEngine.value.broadcastMessage({ type: "reload" });
       }
-      onRebuilt();
     }, 40);
   };
 

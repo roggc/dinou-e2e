@@ -15,12 +15,13 @@ export default function getConfigEsbuild({
   manifest = {},
   changedIds,
   hmrEngine,
+  onManifestUpdated,
 }) {
   let plugins = [
     skipMissingEntryPointsPlugin(),
     TsconfigPathsPlugin({}),
     cssProcessorPlugin({ outdir, hmrEngine }),
-    reactClientManifestPlugin({ manifest }),
+    reactClientManifestPlugin({ manifest, onManifestUpdated }),
     assetsPlugin(),
     stableChunkNamesAndMapsPlugin(),
     serverFunctionsPlugin(),
