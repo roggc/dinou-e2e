@@ -192,7 +192,8 @@ export default function esmHmrPlugin({
           const hasUserCode = inputFiles.some(
             (f) =>
               !f.includes("node_modules") &&
-              !f.includes("dinou")
+              !f.includes("dinou") &&
+              /\.(jsx?|tsx?)$/.test(f)
           );
           if (!hasUserCode) continue;
 
@@ -249,6 +250,21 @@ export default function esmHmrPlugin({
         }
 
         if (changedIds.size === 0) return;
+
+        // If only CSS files were modified, styles are updated via style-update in cssProcessorPlugin.
+        // Do NOT trigger full reload or JS component updates.
+        const isCssOnly = Array.from(changedIds).every((id) => {
+          const lower = id.toLowerCase();
+          return (
+            (lower.endsWith(".css") || lower.endsWith(".scss") || lower.endsWith(".less")) &&
+            !lower.endsWith(".module.css")
+          );
+        });
+        if (isCssOnly) {
+          changedIds.clear();
+          return;
+        }
+
         const bundleFiles = Object.keys(result.metafile.outputs);
         const pendingUpdateUrls = new Set();
         let needsFullReload = false;
@@ -276,7 +292,15 @@ export default function esmHmrPlugin({
 
           const isChangedByModule = modules.some((modulePath) => {
             const cleanPath = modulePath.replace(/^[a-zA-Z0-9_-]+:/, "");
-            return changedIds.has(normKey(cleanPath));
+            const norm = normKey(cleanPath);
+            const lower = norm.toLowerCase();
+            if (
+              (lower.endsWith(".css") || lower.endsWith(".scss") || lower.endsWith(".less")) &&
+              !lower.endsWith(".module.css")
+            ) {
+              return false;
+            }
+            return changedIds.has(norm);
           });
 
           if (isChangedByModule) {

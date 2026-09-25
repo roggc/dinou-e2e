@@ -958,7 +958,8 @@ async function triggerRebuild(filePath = "", eventType = "change") {
       if (clientBundlerHandle?.notifyFileChanged && absFilePath) {
         clientBundlerHandle.notifyFileChanged(absFilePath);
       }
-      const isCssFile = absFilePath.endsWith(".css") || absFilePath.endsWith(".scss");
+      const normLower = absFilePath.toLowerCase();
+      const isCssFile = normLower.endsWith(".css") || normLower.endsWith(".scss") || normLower.endsWith(".less");
       let isClientFile = false;
       let isServerFile = false;
 
