@@ -11,6 +11,10 @@ const ServerFunctionsPlugin = require("./plugins/server-functions-plugin");
 const webpack = require("webpack");
 const { regex } = require("../core/asset-extensions");
 const getCSSEntries = require("./helpers/get-webpack-entries");
+const {
+  scanProjectDependenciesForClientComponents,
+} = require("../core/scan-dependency-components.js");
+const { useClientRegex } = require("../constants.js");
 
 const isDevelopment = process.env.NODE_ENV !== "production";
 const outputDirectory = isDevelopment ? ".dinou/public" : ".dinou/dist3";
@@ -67,6 +71,13 @@ module.exports = async () => {
   // 🔥 CLEAN HARD
   cleanDir(outputDir);
   const [cssEntries] = await getCSSEntries();
+
+  const dependencyClientFiles = new Set();
+  scanProjectDependenciesForClientComponents(
+    process.cwd(),
+    dependencyClientFiles,
+    useClientRegex
+  );
 
   let clientDone = false;
   let serverDone = false;
@@ -239,6 +250,12 @@ module.exports = async () => {
             recursive: true,
             include: /\.(js|ts|jsx|tsx)$/,
           },
+          {
+            directory: path.resolve(__dirname, "../core"),
+            recursive: false,
+            include: /\.(js|ts|jsx|tsx)$/,
+          },
+          ...Array.from(dependencyClientFiles),
         ],
       }),
       isDevelopment && {
