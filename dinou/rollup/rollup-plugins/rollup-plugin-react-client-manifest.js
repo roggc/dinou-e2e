@@ -74,7 +74,7 @@ function normalizeFileUrl(p) {
 
 function setManifestEntry(fileUrl, expName, entry) {
   const keys = [expName === "default" ? fileUrl : `${fileUrl}#${expName}`];
-  if (fileUrl.startsWith("file:///")) {
+  if (fileUrl.startsWith("file:///") && fileUrl[9] === ":") {
     const drive = fileUrl[8];
     if (drive >= "A" && drive <= "Z") {
       const altUrl = "file:///" + drive.toLowerCase() + fileUrl.slice(9);

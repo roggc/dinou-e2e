@@ -472,8 +472,9 @@ if (typeof globalThis.__webpack_chunk_load__ === 'undefined') {
     const compIndex = clientComponents.findIndex(
       (c) => pathToFileURL(c).href === fileUrl || pathToFileURL(c).href.toLowerCase() === fileUrl.toLowerCase()
     );
-    if (compIndex !== -1 && v?.id) {
-      addClientModule(v.id, `mod_${compIndex}`);
+    if (compIndex !== -1) {
+      if (v?.id) addClientModule(v.id, `mod_${compIndex}`);
+      addClientModule(fileUrl, `mod_${compIndex}`);
     }
   }
 
@@ -616,6 +617,11 @@ globalThis.__webpack_require__ = (id) => {
       ? id.replace("file:///C:/", "file:///c:/")
       : id;
     mod = clientModules[alt];
+  }
+  if (!mod) {
+    const lower = typeof id === "string" ? id.toLowerCase() : "";
+    const match = Object.keys(clientModules).find((k) => k.toLowerCase() === lower);
+    if (match && clientModules[match]) mod = clientModules[match];
   }
   if (mod) return wrapModule(mod);
   console.error("[SSR Engine Dev] Module not found in __webpack_require__:", id);

@@ -444,8 +444,9 @@ globalThis.__DINOU_VFS__ = ${JSON.stringify(vfsSnapshot)};
     const compIndex = clientComponents.findIndex(
       (c) => pathToFileURL(c).href === fileUrl || pathToFileURL(c).href.toLowerCase() === fileUrl.toLowerCase()
     );
-    if (compIndex !== -1 && v && v.id) {
-      addClientModule(v.id, `mod_${compIndex}`);
+    if (compIndex !== -1) {
+      if (v && v.id) addClientModule(v.id, `mod_${compIndex}`);
+      addClientModule(fileUrl, `mod_${compIndex}`);
     }
   }
 
@@ -612,6 +613,9 @@ globalThis.__webpack_require__ = (id) => {
     ? id.replace("file:///C:/", "file:///c:/")
     : id;
   if (clientModules[alt]) return clientModules[alt];
+  const lower = typeof id === "string" ? id.toLowerCase() : "";
+  const match = Object.keys(clientModules).find((k) => k.toLowerCase() === lower);
+  if (match && clientModules[match]) return clientModules[match];
   console.error("[SSR Engine] Module not found in __webpack_require__:", id);
   return {};
 };
