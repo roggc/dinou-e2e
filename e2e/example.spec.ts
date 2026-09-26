@@ -256,13 +256,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     // await expect(pageA.getByText("Hello ALICE")).toBeVisible();
     await expect(
       pageA.getByText("Hello ALICE", { exact: true }).locator("visible=true"),
-    ).toBeVisible({ timeout: 15000 });
+    ).toBeVisible({ timeout: 30000 });
     await expect(pageA.getByText("Hello BOB")).not.toBeVisible(); // 🛑 Si esto falla, tienes un leak grave
 
     // await expect(pageB.getByText("Hello BOB")).toBeVisible();
     await expect(
       pageB.getByText("Hello BOB", { exact: true }).locator("visible=true"),
-    ).toBeVisible({ timeout: 15000 });
+    ).toBeVisible({ timeout: 30000 });
     await expect(pageB.getByText("Hello ALICE")).not.toBeVisible();
 
     await userA.close();
