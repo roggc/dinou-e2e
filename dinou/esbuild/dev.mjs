@@ -15,6 +15,9 @@ export async function startEsbuildDev(options = {}) {
   const onBuildStart = options.onBuildStart || (() => {});
   const onBuildEnd = options.onBuildEnd || (() => {});
   const outdir = ".dinou/public";
+  if (typeof globalThis !== "undefined" && globalThis.__DINOU_MEM_FILES__) {
+    globalThis.__DINOU_MEM_FILES__.clear();
+  }
   await fs.rm(outdir, { recursive: true, force: true });
   await fs.rm(".dinou/react_client_manifest", { recursive: true, force: true });
   await fs.rm(".dinou/server_functions_manifest", { recursive: true, force: true });
