@@ -786,13 +786,26 @@ const serverAssetPlugin = {
       const base = path.basename(args.path, ext);
       const scoped = createScopedName(base, args.path);
       const assetUrl = `/assets/${scoped}${ext}`;
+      const assetKey = `assets/${scoped}${ext}`;
 
       try {
-        const outAssetDir = path.resolve(projectRoot, ".dinou/public/assets");
-        const outAssetPath = path.join(outAssetDir, `${scoped}${ext}`);
-        if (!fs.existsSync(outAssetPath)) {
-          fs.mkdirSync(outAssetDir, { recursive: true });
-          fs.copyFileSync(args.path, outAssetPath);
+        const fileBuf = fs.readFileSync(args.path);
+        if (typeof globalThis !== "undefined") {
+          if (!globalThis.__DINOU_MEM_FILES__) {
+            globalThis.__DINOU_MEM_FILES__ = new Map();
+          }
+          globalThis.__DINOU_MEM_FILES__.set(assetKey, fileBuf);
+          globalThis.__DINOU_MEM_FILES__.set("/" + assetKey, fileBuf);
+          globalThis.__DINOU_MEM_FILES__.set(`${scoped}${ext}`, fileBuf);
+        }
+
+        if (process.env.DINOU_WRITE_TO_DISK === "true") {
+          const outAssetDir = path.resolve(projectRoot, ".dinou/public/assets");
+          const outAssetPath = path.join(outAssetDir, `${scoped}${ext}`);
+          if (!fs.existsSync(outAssetPath)) {
+            fs.mkdirSync(outAssetDir, { recursive: true });
+            fs.writeFileSync(outAssetPath, fileBuf);
+          }
         }
       } catch (e) {}
 
