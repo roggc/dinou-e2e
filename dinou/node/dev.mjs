@@ -608,20 +608,14 @@ const wrapModule = (mod) => {
   });
 };
 
+const lowerMap = new Map();
 globalThis.__webpack_require__ = (id) => {
   let mod = clientModules[id];
-  if (!mod) {
-    const alt = id.startsWith("file:///c:/")
-      ? id.replace("file:///c:/", "file:///C:/")
-      : id.startsWith("file:///C:/")
-      ? id.replace("file:///C:/", "file:///c:/")
-      : id;
-    mod = clientModules[alt];
-  }
-  if (!mod) {
-    const lower = typeof id === "string" ? id.toLowerCase() : "";
-    const match = Object.keys(clientModules).find((k) => k.toLowerCase() === lower);
-    if (match && clientModules[match]) mod = clientModules[match];
+  if (!mod && typeof id === "string") {
+    if (lowerMap.size === 0) {
+      for (const k of Object.keys(clientModules)) lowerMap.set(k.toLowerCase(), clientModules[k]);
+    }
+    mod = lowerMap.get(id.toLowerCase());
   }
   if (mod) return wrapModule(mod);
   console.error("[SSR Engine Dev] Module not found in __webpack_require__:", id);

@@ -628,17 +628,16 @@ const ssrEntryContent = `// Auto-generated SSR Engine entry for Deno Deploy / Ed
 import { renderRscStreamToHtmlStream } from "${dinouDirSlash}/core/edge-ssr.js";
 import { clientModules, ssrConsumerManifest } from "./ssr-client-manifest.js";
 
+const lowerMap = new Map();
 globalThis.__webpack_require__ = (id) => {
   if (clientModules[id]) return clientModules[id];
-  const alt = id.startsWith("file:///c:/")
-    ? id.replace("file:///c:/", "file:///C:/")
-    : id.startsWith("file:///C:/")
-    ? id.replace("file:///C:/", "file:///c:/")
-    : id;
-  if (clientModules[alt]) return clientModules[alt];
-  const lower = typeof id === "string" ? id.toLowerCase() : "";
-  const match = Object.keys(clientModules).find((k) => k.toLowerCase() === lower);
-  if (match && clientModules[match]) return clientModules[match];
+  if (typeof id === "string") {
+    if (lowerMap.size === 0) {
+      for (const k of Object.keys(clientModules)) lowerMap.set(k.toLowerCase(), clientModules[k]);
+    }
+    const lowerVal = lowerMap.get(id.toLowerCase());
+    if (lowerVal) return lowerVal;
+  }
   console.error("[SSR Engine] Module not found in __webpack_require__:", id);
   return {};
 };

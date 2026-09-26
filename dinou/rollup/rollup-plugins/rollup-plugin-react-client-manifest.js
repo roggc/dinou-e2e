@@ -74,13 +74,12 @@ function normalizeFileUrl(p) {
 
 function setManifestEntry(fileUrl, expName, entry) {
   const keys = [expName === "default" ? fileUrl : `${fileUrl}#${expName}`];
-  if (fileUrl.startsWith("file:///") && fileUrl[9] === ":") {
-    const drive = fileUrl[8];
-    if (drive >= "A" && drive <= "Z") {
-      const altUrl = "file:///" + drive.toLowerCase() + fileUrl.slice(9);
-      keys.push(expName === "default" ? altUrl : `${altUrl}#${expName}`);
-    } else if (drive >= "a" && drive <= "z") {
-      const altUrl = "file:///" + drive.toUpperCase() + fileUrl.slice(9);
+  if (process.platform === "win32") {
+    const winMatch = fileUrl.match(/^file:\/\/\/([a-zA-Z]):(\/.*)$/);
+    if (winMatch) {
+      const drive = winMatch[1];
+      const altDrive = drive === drive.toLowerCase() ? drive.toUpperCase() : drive.toLowerCase();
+      const altUrl = `file:///${altDrive}:${winMatch[2]}`;
       keys.push(expName === "default" ? altUrl : `${altUrl}#${expName}`);
     }
   }
