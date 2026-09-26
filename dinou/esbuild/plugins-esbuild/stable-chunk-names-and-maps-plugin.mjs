@@ -5,7 +5,9 @@ export default function stableChunkNamesAndMapsPlugin({ dev = true } = {}) {
     name: "stable-chunk-names",
     setup(build) {
       build.onEnd(async (result) => {
-        if (!result.metafile || !result.outputFiles?.length) return;
+        const tStable0 = Date.now();
+        try {
+          if (!result.metafile || !result.outputFiles?.length) return;
         const outdir = build.initialOptions.outdir;
         if (!outdir) return;
 
@@ -56,17 +58,28 @@ export default function stableChunkNamesAndMapsPlugin({ dev = true } = {}) {
             renames.set(oldMapLocal, newMapLocal);
           }
         }
+        if (renames.size === 0) return;
+
         // Step 3: Update references in importers (imports in .js)
         const outputs = result.metafile.outputs;
         const escapeRegExp = (string) =>
           string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+        // Pre-index outputFiles for O(1) lookup
+        const outputFilesMap = new Map();
+        for (const f of result.outputFiles) {
+          outputFilesMap.set(normalizeRel(path.relative(process.cwd(), f.path)), f);
+        }
+
         for (const relPath in outputs) {
           const output = outputs[relPath];
           if (!output.imports || !relPath.endsWith(".js")) continue;
-          const importerFile = result.outputFiles.find(
-            (f) =>
-              normalizeRel(path.relative(process.cwd(), f.path)) === relPath
-          );
+
+          // Only decode and regex-replace if this output imports any renamed chunk
+          const hasRenamedChunk = output.imports.some((imp) => renames.has(path.basename(imp.path)));
+          if (!hasRenamedChunk) continue;
+
+          const importerFile = outputFilesMap.get(relPath);
           if (!importerFile) continue;
           let content = new TextDecoder().decode(importerFile.contents);
           for (const imp of output.imports) {
@@ -153,6 +166,9 @@ export default function stableChunkNamesAndMapsPlugin({ dev = true } = {}) {
           }
         }
         result.metafile.outputs = newOutputs;
+        } finally {
+          globalThis.__DINOU_STABLE_TIME__ = Date.now() - tStable0;
+        }
       });
     },
   };

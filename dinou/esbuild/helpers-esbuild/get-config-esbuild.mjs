@@ -35,7 +35,7 @@ export default function getConfigEsbuild({
     skipMissingEntryPointsPlugin(),
     TsconfigPathsPlugin({}),
     cssProcessorPlugin({ outdir, hmrEngine }),
-    serverFunctionsPlugin({ onManifestUpdated }),
+    serverFunctionsPlugin(),
     reactClientManifestPlugin({ manifest, onManifestUpdated }),
     assetsPlugin(),
     stableChunkNamesAndMapsPlugin(),

@@ -47,13 +47,30 @@ export default async function write(result) {
       }
     }
   }
+  const filesToWrite = [];
   for (const file of result.outputFiles) {
     const fileRelPath = normalizeRel(path.relative(process.cwd(), file.path));
     if (skipSet.has(fileRelPath)) {
       continue;
     }
-    await fs.mkdir(path.dirname(file.path), { recursive: true });
-    await fs.writeFile(file.path, file.contents);
+    filesToWrite.push(file);
   }
+
+  const tWrite0 = Date.now();
+  const uniqueDirs = new Set(filesToWrite.map((f) => path.dirname(f.path)));
+  await Promise.all(
+    Array.from(uniqueDirs).map((d) => fs.mkdir(d, { recursive: true }))
+  );
+  await Promise.all(
+    filesToWrite.map(async (file) => {
+      try {
+        const existing = await fs.readFile(file.path);
+        if (existing.equals(file.contents)) return;
+      } catch (e) {}
+      await fs.writeFile(file.path, file.contents);
+    })
+  );
+  globalThis.__DINOU_WRITE_TIME__ = Date.now() - tWrite0;
+
   console.log(`✓ Build completed`);
 }

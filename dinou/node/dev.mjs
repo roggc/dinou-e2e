@@ -20,6 +20,7 @@ import {
 } from "./terminal-status.mjs";
 
 const devStartTime = Date.now();
+const devTimings = {};
 startSpinner("Initializing Incremental Dual-Bundle Engine (No fork)...");
 
 const projectRoot = process.cwd();
@@ -844,6 +845,7 @@ var __webpack_chunk_load__ = function(chunkId) {
 };
 
 // Create esbuild contexts
+devTimings.discovery = Date.now() - devStartTime;
 updateSpinner("Initializing Incremental Dual-Bundle Engine (No fork)...");
 const rscOutfile = path.join(devDir, "rsc-engine.mjs");
 const ssrOutfile = path.join(devDir, "ssr-engine.mjs");
@@ -902,15 +904,24 @@ let engineVersion = 1;
 let activeRebuildPromise = null;
 
 async function doInitialBuild() {
-  const t0 = Date.now();
+  const tBuild0 = Date.now();
   await Promise.all([ctxA.rebuild(), ctxB.rebuild()]);
+  devTimings.engineBuild = Date.now() - tBuild0;
+
+  const tImport0 = Date.now();
   const v = "?v=" + engineVersion;
   rscModule = await dynamicImportWithRetry(pathToFileURL(rscOutfile).href + v);
   ssrModule = await dynamicImportWithRetry(pathToFileURL(ssrOutfile).href + v);
+  devTimings.engineImport = Date.now() - tImport0;
+
   updateSpinner("Dual-Bundle engine compiled. Starting client bundler...");
 }
 
-await doInitialBuild();
+if (process.env.DINOU_STANDALONE_SERVER === "true") {
+  await doInitialBuild();
+} else {
+  updateSpinner("Starting in-process client bundler...");
+}
 
 // Client bundler handle & broadcast helper
 let clientBundlerHandle = null;
@@ -1087,11 +1098,19 @@ async function onManifestUpdated() {
         updateSpinner("Synchronizing Dual-Bundle engine with client build...");
         updateManifestsState();
         generateEntryFiles();
+        const tEngine0 = Date.now();
         await Promise.all([ctxA.rebuild(), ctxB.rebuild()]);
+        if (devTimings.engineBuild == null) {
+          devTimings.engineBuild = Date.now() - tEngine0;
+        }
         engineVersion = Date.now();
         const v = "?v=" + engineVersion;
+        const tImport0 = Date.now();
         rscModule = await dynamicImportWithRetry(pathToFileURL(rscOutfile).href + v);
         ssrModule = await dynamicImportWithRetry(pathToFileURL(ssrOutfile).href + v);
+        if (devTimings.engineImport == null) {
+          devTimings.engineImport = Date.now() - tImport0;
+        }
         clientManifestReady = true;
       } while (pendingManifestSync);
     } catch (err) {
@@ -1476,8 +1495,23 @@ server.listen(PORT, async () => {
   if (process.env.DINOU_STANDALONE_SERVER !== "true") {
     updateSpinner(`Bundling client with ${buildTool}...`);
     try {
+      const tClient0 = Date.now();
       clientBundlerPromise = startClientBundler(buildTool);
       clientBundlerHandle = await clientBundlerPromise;
+      devTimings.clientBundlerTotal = Date.now() - tClient0;
+      if (clientBundlerHandle?.timings) {
+        devTimings.clientEntriesBabel = clientBundlerHandle.timings.clientEntriesBabel;
+        devTimings.clientBuild = clientBundlerHandle.timings.clientBuild;
+        devTimings.postCss = clientBundlerHandle.timings.postCss;
+        devTimings.postCssCount = clientBundlerHandle.timings.postCssCount;
+        devTimings.swc = clientBundlerHandle.timings.swc;
+        devTimings.swcCount = clientBundlerHandle.timings.swcCount;
+        devTimings.sf = clientBundlerHandle.timings.sf;
+        devTimings.sfCount = clientBundlerHandle.timings.sfCount;
+        devTimings.rcm = clientBundlerHandle.timings.rcm;
+        devTimings.stable = clientBundlerHandle.timings.stable;
+        devTimings.writeDisk = clientBundlerHandle.timings.writeDisk;
+      }
       if (manifestSyncPromise) {
         await manifestSyncPromise;
       }
@@ -1485,6 +1519,7 @@ server.listen(PORT, async () => {
         port: PORT,
         tool: isWebpackBuild ? "Webpack" : buildTool,
         durationMs: Date.now() - devStartTime,
+        timings: devTimings,
       });
     } catch (err) {
       stopSpinner();
@@ -1497,6 +1532,7 @@ server.listen(PORT, async () => {
       port: PORT,
       tool: isWebpackBuild ? "Webpack" : (process.env.DINOU_BUILD_TOOL || "esbuild"),
       durationMs: Date.now() - devStartTime,
+      timings: devTimings,
     });
   }
 });

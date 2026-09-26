@@ -16,10 +16,21 @@ export default function serverFunctionsPlugin(manifestData = {}, options = {}) {
     setup(build) {
       const root = process.cwd();
       const serverFunctions = new Map(); // Collect server functions here: Map<relativePath, Set<exports>>
+      let sfTime = 0;
+      let sfCount = 0;
+
+      build.onStart(() => {
+        sfTime = 0;
+        sfCount = 0;
+      });
 
       // 1. TRANSFORM FILES DURING BUILD
       build.onLoad({ filter: /\.[jt]sx?$/ }, async (args) => {
-        const code = await fs.readFile(args.path, "utf8");
+        const normPath = args.path.replace(/\\/g, "/");
+        if (normPath.includes("/node_modules/") || normPath.includes("/.dinou/")) return null;
+        const t0 = Date.now();
+        try {
+          const code = await fs.readFile(args.path, "utf8");
 
         if (!useServerRegex.test(code.trim())) return null;
 
@@ -55,11 +66,19 @@ export default function serverFunctionsPlugin(manifestData = {}, options = {}) {
           contents: proxyCode,
           loader: "js",
         };
+        } finally {
+          sfTime += Date.now() - t0;
+          sfCount++;
+          globalThis.__DINOU_SF_TIME__ = sfTime;
+          globalThis.__DINOU_SF_COUNT__ = sfCount;
+        }
       });
 
       // 2. REPLACE PLACEHOLDER AND GENERATE MANIFEST AFTER BUILD
       build.onEnd(async (result) => {
-        const hashedProxy =
+        const tEnd0 = Date.now();
+        try {
+          const hashedProxy =
           "/" +
           (manifestMap["serverFunctionProxy.js"] || "serverFunctionProxy.js");
 
@@ -89,10 +108,9 @@ export default function serverFunctionsPlugin(manifestData = {}, options = {}) {
         );
         await fs.mkdir(path.dirname(manifestPath), { recursive: true });
         await fs.writeFile(manifestPath, JSON.stringify(manifestObj, null, 2));
-        
-        if (onManifestUpdated) {
-          await onManifestUpdated();
-        }
+      } finally {
+        globalThis.__DINOU_SF_END_TIME__ = Date.now() - tEnd0;
+      }
       });
     },
   };

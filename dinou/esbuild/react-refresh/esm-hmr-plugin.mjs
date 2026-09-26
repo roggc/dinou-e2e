@@ -29,6 +29,8 @@ export default function esmHmrPlugin({
 
     setup(build) {
       let isInitialBuild = true;
+      let swcTotalTime = 0;
+      let swcCount = 0;
       const outdir = build.initialOptions.outdir || ".dinou/public";
       const entryPoints = build.initialOptions.entryPoints;
 
@@ -53,57 +55,60 @@ export default function esmHmrPlugin({
         serverStarted = true;
       }
 
+      const rootEntryMap = new Map();
+      let entryPointsSet = new Set();
+
       build.onStart(async () => {
+        swcTotalTime = 0;
+        swcCount = 0;
+        rootEntryMap.clear();
+        entryPointsSet = new Set(
+          Object.values(entryPoints || {}).map((val) => norm(path.resolve(val)))
+        );
         for (const entryName of entryNames) {
           const entryPath = entryPoints?.[entryName];
           if (!entryPath) return;
 
           const absPath = path.resolve(entryPath);
+          const source = await fs.readFile(absPath, "utf8");
           entryAbsPaths.push(absPath);
-          entrySources.push(await fs.readFile(absPath, "utf8"));
+          entrySources.push(source);
           entryOutputNames.push(entryName + ".js");
+          rootEntryMap.set(norm(absPath), source);
         }
       });
 
       build.onLoad({ filter: /.*/ }, async (args) => {
-        const abs = path.resolve(args.path);
+        const normPath = args.path.replace(/\\/g, "/");
+        if (normPath.includes("/node_modules/")) return null;
 
+        const abs = path.resolve(args.path);
         const absNorm = norm(abs);
 
         // 1. Check if it is a ROOT Entry (client.jsx or error.tsx)
-        // These are the ones saved in 'entryAbsPaths'
-        const rootIndex = entryAbsPaths.findIndex(
-          (entryPath) => norm(entryPath) === absNorm,
-        );
+        const rootSource = rootEntryMap.get(absNorm);
+        if (rootSource) {
+          let injectCode = `import { createHotContext } from "/__hmr_client__.js";\n`;
+          injectCode += `window.__hotContext = createHotContext;\n`;
 
-        // CASE A: It is Main or Error (Roots)
-        if (rootIndex !== -1) {
-          const source = entrySources[rootIndex];
-          if (source) {
-            let injectCode = `import { createHotContext } from "/__hmr_client__.js";\n`;
-            injectCode += `window.__hotContext = createHotContext;\n`;
-
-            // IMPORTANT: We return RAW 'source' + injection.
-            // Without passing through Babel/SWC to prevent $RefreshSig$ from breaking initialization.
-            return {
-              contents: injectCode + source,
-              loader: "jsx",
-            };
-          }
-          return null;
+          // IMPORTANT: We return RAW 'source' + injection.
+          // Without passing through Babel/SWC to prevent $RefreshSig$ from breaking initialization.
+          return {
+            contents: injectCode + rootSource,
+            loader: "jsx",
+          };
         }
 
         // 2. Check if it is any OTHER Entry Point from the esbuild configuration
         // (Here are your pages, layouts, components...)
-        const isAnEntryPoint = Object.values(entryPoints).some(
-          (val) => norm(path.resolve(val)) === absNorm,
-        );
+        const isAnEntryPoint = entryPointsSet.has(absNorm);
 
         // CASE B: It is a user page or component
         if (isAnEntryPoint) {
           // HERE we DO apply SWC transformation to enable React Fast Refresh
           const source = await fs.readFile(args.path, "utf8");
           try {
+            const tSwc0 = Date.now();
             const { code } = transformSync(source, {
               filename: abs,
               jsc: {
@@ -122,6 +127,10 @@ export default function esmHmrPlugin({
                 },
               },
             });
+            swcTotalTime += Date.now() - tSwc0;
+            swcCount++;
+            globalThis.__DINOU_SWC_TIME__ = swcTotalTime;
+            globalThis.__DINOU_SWC_COUNT__ = swcCount;
 
             return {
               contents: code,
@@ -239,6 +248,8 @@ export default function esmHmrPlugin({
       build.onEnd(write);
 
       build.onEnd(async (result) => {
+        globalThis.__DINOU_SWC_TIME__ = swcTotalTime;
+        globalThis.__DINOU_SWC_COUNT__ = swcCount;
         if (isInitialBuild) {
           isInitialBuild = false;
           changedIds?.clear();

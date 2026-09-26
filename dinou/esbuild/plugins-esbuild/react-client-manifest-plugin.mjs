@@ -15,9 +15,22 @@ export default function reactClientManifestPlugin({
     name: "react-client-manifest",
     setup(build) {
       build.onEnd(async (result) => {
+        const tRcm0 = Date.now();
         try {
           const meta = result.metafile;
           if (meta && meta.outputs) {
+            // Group manifest keys by base file URL for O(1) matching
+            const manifestPrefixMap = new Map();
+            for (const key of Object.keys(manifest)) {
+              const base = key.split("#")[0];
+              let list = manifestPrefixMap.get(base);
+              if (!list) {
+                list = [];
+                manifestPrefixMap.set(base, list);
+              }
+              list.push(key);
+            }
+
             for (const [outFile, outInfo] of Object.entries(meta.outputs)) {
               const fileName = outFile.replace(/\\/g, "/").split(/[/\\]/).pop();
               const outUrl = "/" + fileName;
@@ -27,25 +40,11 @@ export default function reactClientManifestPlugin({
               }
               const absModulePath = path.resolve(modulePath);
               const baseFileUrl = pathToFileURL(absModulePath).href;
-              const code = readFileSync(absModulePath, "utf8");
-              const isClientModule = useClientRegex.test(code.trim());
-              if (!isClientModule) {
-                // console.log(
-                //   `[react-client-manifest]   Skipping non-client module: ${baseFileUrl}`
-                // );
-                continue;
-              }
-              const exports = parseExports(code);
-              for (const expName of exports) {
-                const manifestKey =
-                  expName === "default"
-                    ? baseFileUrl
-                    : `${baseFileUrl}#${expName}`;
-                if (manifest[manifestKey]) {
-                  manifest[manifestKey].id = outUrl;
-                }
-                if (expName === "default" && manifest[`${baseFileUrl}#default`]) {
-                  manifest[`${baseFileUrl}#default`].id = outUrl;
+
+              const relatedKeys = manifestPrefixMap.get(baseFileUrl);
+              if (relatedKeys) {
+                for (const key of relatedKeys) {
+                  manifest[key].id = outUrl;
                 }
               }
             }
@@ -61,12 +60,14 @@ export default function reactClientManifestPlugin({
             serialized,
             "utf8"
           );
-
-          if (onManifestUpdated) {
-            await onManifestUpdated();
-          }
         } catch (err) {
           console.warn("[react-client-manifest] onEnd error:", err.message);
+        } finally {
+          globalThis.__DINOU_RCM_TIME__ = Date.now() - tRcm0;
+        }
+
+        if (onManifestUpdated) {
+          await onManifestUpdated();
         }
       });
     }, // end setup
