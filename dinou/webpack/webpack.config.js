@@ -97,6 +97,9 @@ module.exports = async () => {
     },
     cache: false,
     mode: isDevelopment ? "development" : "production",
+    ignoreWarnings: [
+      /from "autoprefixer" plugin/,
+    ],
     entry: {
       main: [path.resolve(__dirname, "../core/client-webpack.jsx")].filter(
         Boolean,
@@ -232,10 +235,9 @@ module.exports = async () => {
         isServer: false,
         clientReferences: [
           {
-            directory: ".",
+            directory: "./src",
             recursive: true,
             include: /\.(js|ts|jsx|tsx)$/,
-            exclude: /[\\/](?:out|dist|\.dinou|tests|__tests__|docs)[\\/]/,
           },
         ],
       }),

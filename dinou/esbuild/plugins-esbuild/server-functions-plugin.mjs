@@ -15,9 +15,6 @@ export default function serverFunctionsPlugin(manifestData = {}, options = {}) {
   return {
     name: "server-functions-proxy",
     setup(build) {
-      if (serverFiles && serverFiles.size === 0) {
-        return;
-      }
       const root = process.cwd();
       const serverFunctions = new Map(); // Collect server functions here: Map<relativePath, Set<exports>>
       const sfCache = new Map(); // Cache by path: { mtimeMs, isServer, relativePath, exportsSet, proxyCode }
@@ -34,19 +31,6 @@ export default function serverFunctionsPlugin(manifestData = {}, options = {}) {
         const normPath = args.path.replace(/\\/g, "/");
         if (normPath.includes("/node_modules/") || normPath.includes("/.dinou/")) return null;
 
-        if (serverFiles) {
-          const absNorm = path.resolve(args.path).replace(/\\/g, "/").toLowerCase();
-          let isKnownServer = false;
-          for (const sf of serverFiles) {
-            if (path.resolve(sf).replace(/\\/g, "/").toLowerCase() === absNorm) {
-              isKnownServer = true;
-              break;
-            }
-          }
-          if (!isKnownServer) {
-            return null;
-          }
-        }
         const t0 = Date.now();
         try {
           let stat;
@@ -133,7 +117,30 @@ export default function serverFunctionsPlugin(manifestData = {}, options = {}) {
           "/" +
           (manifestMap["serverFunctionProxy.js"] || "serverFunctionProxy.js");
 
-          for (const outputFile of Object.values(result.outputFiles)) {
+          const serverFnNormalized = new Set();
+          for (const relPath of serverFunctions.keys()) {
+            serverFnNormalized.add(path.resolve(root, relPath).replace(/\\/g, "/").toLowerCase());
+          }
+
+          let targetOutputFiles = Object.values(result.outputFiles || {});
+          if (result.metafile && result.metafile.outputs) {
+            const allowedOutputs = new Set();
+            for (const [outPath, outMeta] of Object.entries(result.metafile.outputs)) {
+              const hasSf = Object.keys(outMeta.inputs || {}).some((inPath) => {
+                const norm = path.resolve(root, inPath).replace(/\\/g, "/").toLowerCase();
+                return serverFnNormalized.has(norm);
+              });
+              if (hasSf) {
+                allowedOutputs.add(path.resolve(root, outPath).replace(/\\/g, "/").toLowerCase());
+              }
+            }
+            targetOutputFiles = targetOutputFiles.filter((outputFile) => {
+              const norm = path.resolve(outputFile.path).replace(/\\/g, "/").toLowerCase();
+              return allowedOutputs.has(norm);
+            });
+          }
+
+          for (const outputFile of targetOutputFiles) {
             const fileCode = new TextDecoder().decode(outputFile.contents);
 
             if (!fileCode) continue;
