@@ -11,6 +11,16 @@ export default function serverFunctionsPlugin(manifestData = {}, options = {}) {
   const manifestMap = opts.manifestData || (manifestData.onManifestUpdated ? {} : manifestData) || {};
   const onManifestUpdated = opts.onManifestUpdated;
   const serverFiles = opts.serverFiles || manifestData.serverFiles || options.serverFiles || null;
+  const normalizeNormPath = (p) => {
+    let s = path.resolve(p).replace(/\\/g, "/");
+    if (process.platform === "win32") {
+      s = s.replace(/^([a-zA-Z]):/, (_, d) => d.toLowerCase() + ":");
+    }
+    return s;
+  };
+  const serverFilesSet = serverFiles
+    ? new Set(Array.from(serverFiles).map((f) => normalizeNormPath(f)))
+    : null;
 
   return {
     name: "server-functions-proxy",
@@ -30,6 +40,13 @@ export default function serverFunctionsPlugin(manifestData = {}, options = {}) {
       build.onLoad({ filter: /\.[jt]sx?$/ }, async (args) => {
         const normPath = args.path.replace(/\\/g, "/");
         if (normPath.includes("/node_modules/") || normPath.includes("/.dinou/")) return null;
+
+        if (serverFilesSet) {
+          const absNorm = normalizeNormPath(args.path);
+          if (!serverFilesSet.has(absNorm)) {
+            return null;
+          }
+        }
 
         const t0 = Date.now();
         try {
