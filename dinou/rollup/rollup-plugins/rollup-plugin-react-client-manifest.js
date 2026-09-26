@@ -461,6 +461,16 @@ function setManifestEntry(fileUrl, expName, entry) {
       }
     },
     generateBundle(outputOptions, bundle) {
+      const normFsPathCache = new Map();
+      function getNormFsPath(p) {
+        let n = normFsPathCache.get(p);
+        if (!n) {
+          n = normalizeFsPath(p);
+          normFsPathCache.set(p, n);
+        }
+        return n;
+      }
+
       for (const [fileName, chunk] of Object.entries(bundle)) {
         if (chunk.type !== "chunk") continue;
         const chunkUrl = "/" + fileName;
@@ -468,26 +478,33 @@ function setManifestEntry(fileUrl, expName, entry) {
         // Process entry point facadeModuleId for default export preservation
         if (chunk.facadeModuleId) {
           const absModulePath = path.resolve(chunk.facadeModuleId);
-          if (!absModulePath.includes("\0") && !absModulePath.startsWith("commonjsHelpers")) {
-            const fileUrl = normalizeFileUrl(absModulePath);
-            const fileUrlLower = fileUrl.toLowerCase();
-            const keys = urlToManifestKeys.get(fileUrlLower);
-            if (keys) {
-              for (const k of keys) {
-                if (manifest[k]) manifest[k].id = chunkUrl;
+          if (
+            !absModulePath.includes("\0") &&
+            !absModulePath.startsWith("commonjsHelpers") &&
+            !absModulePath.includes("node_modules")
+          ) {
+            const normPath = getNormFsPath(absModulePath);
+            if (clientModules.has(normPath)) {
+              const fileUrl = normalizeFileUrl(absModulePath);
+              const fileUrlLower = fileUrl.toLowerCase();
+              const keys = urlToManifestKeys.get(fileUrlLower);
+              if (keys) {
+                for (const k of keys) {
+                  if (manifest[k]) manifest[k].id = chunkUrl;
+                }
               }
-            }
-            setManifestEntry(fileUrl, "default", {
-              id: chunkUrl,
-              chunks: "default",
-              name: "default",
-            });
+              setManifestEntry(fileUrl, "default", {
+                id: chunkUrl,
+                chunks: "default",
+                name: "default",
+              });
 
-            if (!chunk.exports.includes("default")) {
-              const defaultName = defaultExportCache.get(absModulePath);
-              if (defaultName && chunk.exports.includes(defaultName)) {
-                chunk.code += `\nexport { ${defaultName} as default };\n`;
-                chunk.exports.push("default");
+              if (!chunk.exports.includes("default")) {
+                const defaultName = defaultExportCache.get(absModulePath);
+                if (defaultName && chunk.exports.includes(defaultName)) {
+                  chunk.code += `\nexport { ${defaultName} as default };\n`;
+                  chunk.exports.push("default");
+                }
               }
             }
           }
@@ -495,8 +512,14 @@ function setManifestEntry(fileUrl, expName, entry) {
 
         // Map all modules in the chunk to this chunk in the manifest (only if they are client modules)
         for (const modulePath of Object.keys(chunk.modules)) {
-          if (modulePath.includes("\0") || modulePath.startsWith("commonjsHelpers")) continue;
-          const normPath = normalizeFsPath(modulePath);
+          if (
+            modulePath.includes("\0") ||
+            modulePath.startsWith("commonjsHelpers") ||
+            modulePath.includes("node_modules")
+          ) {
+            continue;
+          }
+          const normPath = getNormFsPath(modulePath);
 
           if (clientModules.has(normPath)) {
             const fileUrl = normalizeFileUrl(modulePath);
@@ -510,10 +533,41 @@ function setManifestEntry(fileUrl, expName, entry) {
           }
         }
       }
-      const serialized = JSON.stringify(manifest, null, 2);
-      if (!existsSync(manifestPath) || readFileSync(manifestPath, "utf8") !== serialized) {
+
+      function areManifestsSemanticallyEqual(m1, m2) {
+        if (!m1 || !m2) return false;
+        const k1 = Object.keys(m1);
+        const k2 = Object.keys(m2);
+        if (k1.length !== k2.length) return false;
+        for (const k of k1) {
+          const v1 = m1[k];
+          const v2 = m2[k];
+          if (!v2) return false;
+          if (
+            v1.id !== v2.id ||
+            v1.name !== v2.name ||
+            v1.chunks !== v2.chunks
+          ) {
+            return false;
+          }
+        }
+        return true;
+      }
+
+      let existingManifest = null;
+      if (existsSync(manifestPath)) {
+        try {
+          existingManifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+        } catch (e) {}
+      }
+
+      if (!existingManifest || !areManifestsSemanticallyEqual(existingManifest, manifest)) {
+        const sortedManifest = {};
+        for (const k of Object.keys(manifest).sort()) {
+          sortedManifest[k] = manifest[k];
+        }
         mkdirSync(dirname(manifestPath), { recursive: true });
-        writeFileSync(manifestPath, serialized);
+        writeFileSync(manifestPath, JSON.stringify(sortedManifest, null, 2));
         manifestUpdatedCallback?.();
       }
     },

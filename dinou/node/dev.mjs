@@ -1280,6 +1280,12 @@ async function startClientBundler(tool) {
       const rollupConfig = await getRollupConfig();
       currentWatcher = watch(rollupConfig);
 
+      currentWatcher.on("change", (id, change) => {
+        if (process.env.DINOU_DEBUG) {
+          logTimeline(`[Rollup Watcher] File changed: ${id} (${change?.event || "change"})`);
+        }
+      });
+
       return new Promise((resolve) => {
         let initialResolved = false;
         currentWatcher.on("event", (event) => {

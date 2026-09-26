@@ -99,7 +99,8 @@ export function createHotContext(id) {
   const normId = id.startsWith("/") ? id : "/" + id;
   const existing = REGISTERED_MODULES[normId] || REGISTERED_MODULES[id];
   if (existing) {
-    existing.lock();
+    existing.isLocked = false;
+    existing.acceptCallbacks = [];
     return existing;
   }
   const state = new HotModuleState(normId);
@@ -116,12 +117,18 @@ async function applyUpdate(id) {
     return false;
   }
 
-  const acceptCallbacks = state.acceptCallbacks;
-  const disposeCallbacks = state.disposeCallbacks;
+  const acceptCallbacks = [...state.acceptCallbacks];
+  const disposeCallbacks = [...state.disposeCallbacks];
   state.disposeCallbacks = [];
   state.data = {};
 
-  disposeCallbacks.forEach((callback) => callback());
+  disposeCallbacks.forEach((callback) => {
+    try {
+      callback();
+    } catch (e) {
+      console.warn("[ESM-HMR] dispose callback error:", e);
+    }
+  });
 
   const updateID = Date.now();
 

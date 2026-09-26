@@ -18,9 +18,6 @@ const serverFunctionsPlugin = require("./rollup-plugins/rollup-plugin-server-fun
 const { regex } = require("../core/asset-extensions.js");
 const manifestGeneratorPlugin = require("./rollup-plugins/manifest-generator-plugin.js");
 
-const isDevelopment = process.env.NODE_ENV !== "production";
-const outputDirectory = isDevelopment ? ".dinou/public" : ".dinou/dist3";
-
 const localDinouPath = path.resolve(process.cwd(), "dinou");
 const isEjected = fs.existsSync(localDinouPath);
 
@@ -31,6 +28,8 @@ console.log(
 );
 
 module.exports = async function () {
+  const isDevelopment = process.env.NODE_ENV !== "production";
+  const outputDirectory = isDevelopment ? ".dinou/public" : ".dinou/dist3";
   const del = (await import("rollup-plugin-delete")).default;
   const clientConfig = {
     input: isDevelopment
@@ -104,6 +103,7 @@ module.exports = async function () {
     // Tells Rollup: "Keep entry point signatures (export names) intact"
     preserveEntrySignatures: "strict",
     perf: isDevelopment,
+    treeshake: isDevelopment ? false : true,
     external: [
       "/refresh.js",
       "/__hmr_client__.js",
@@ -189,7 +189,13 @@ module.exports = async function () {
       serverFunctionsPlugin(),
     ].filter(Boolean),
     watch: {
+      buildDelay: 100,
       exclude: [
+        /[\\/]node_modules[\\/]/,
+        /[\\/]\.git[\\/]/,
+        /[\\/]\.dinou[\\/]/,
+        /[\\/]test-results[\\/]/,
+        /[\\/]playwright-report[\\/]/,
         "**/node_modules/**",
         "**/.git/**",
         "**/.dinou/**",
