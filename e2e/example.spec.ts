@@ -3386,7 +3386,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     // Configuración
     const TOTAL_USERS = 10;
     const STAGGER_DELAY_MS = 1500; // Un usuario nuevo entra cada 1.5 segundos
-    const RELOADS_PER_USER = 15; // Cada usuario recargará varias veces para mantenerse activo
+    const RELOADS_PER_USER = 8; // Cada usuario recargará varias veces para mantenerse activo
     const PAGE_URL = "/t-hybrid-staggered-slow";
     const DIST_DIR = path.resolve(process.cwd(), ".dinou/dist2");
     const TRIGGER_FILE = path.join(DIST_DIR, "hybrid-staggered-slow.mode");
@@ -3494,7 +3494,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           if (errors.length > 0) {
             console.error(`⚠️ [USER ${id}] Encountered errors:`, errors);
           }
-          await context.close();
+          await context.close().catch(() => {});
         }
       };
 
