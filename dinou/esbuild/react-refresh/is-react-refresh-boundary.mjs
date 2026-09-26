@@ -14,6 +14,13 @@ export function isReactRefreshBoundary(RefreshRuntime, moduleExports) {
       key === "metadata" ||
       key === "revalidate" ||
       key === "dynamic" ||
+      key === "dynamicParams" ||
+      key === "fetchCache" ||
+      key === "preferredRegion" ||
+      key === "runtime" ||
+      key === "maxDuration" ||
+      key === "generateStaticParams" ||
+      key === "generateMetadata" ||
       key === "frontmatter" ||
       key === "toc" ||
       key === "headings"

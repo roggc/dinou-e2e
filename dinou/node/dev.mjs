@@ -122,7 +122,6 @@ function findClientComponents(parsedClientManifest = {}) {
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "tests" || entry.name === "test" || entry.name === "__tests__" || entry.name === "docs") continue;
         walk(full);
       } else if (/\.[jt]sx?$/.test(entry.name)) {
         try {
@@ -958,12 +957,39 @@ function notifyClientBuildStart() {
 
 function notifyClientBuildEnd() {
   const elapsed = Date.now() - clientBuildStartTime;
-  const swc = globalThis.__DINOU_SWC_TIME__ || 0;
-  const swcCount = globalThis.__DINOU_SWC_COUNT__ || 0;
-  const assetsTime = globalThis.__DINOU_ASSETS_TIME__ || 0;
-  const stable = globalThis.__DINOU_STABLE_TIME__ || 0;
-  const writeDisk = globalThis.__DINOU_WRITE_TIME__ || 0;
-  logTimeline(`Client Bundler build finished in ${elapsed}ms [SWC: ${swc}ms (${swcCount} files) | Assets: ${assetsTime}ms | Stable: ${stable}ms | Disk: ${writeDisk}ms]`);
+  const tool = (isWebpackBuild ? "webpack" : (process.env.DINOU_BUILD_TOOL || "esbuild")).toLowerCase();
+
+  if (tool === "esbuild") {
+    const swc = globalThis.__DINOU_SWC_TIME__ || 0;
+    const swcCount = globalThis.__DINOU_SWC_COUNT__ || 0;
+    const assetsTime = globalThis.__DINOU_ASSETS_TIME__ || 0;
+    const stable = globalThis.__DINOU_STABLE_TIME__ || 0;
+    const writeDisk = globalThis.__DINOU_WRITE_TIME__ || 0;
+    const details = [];
+    if (swcCount > 0) details.push(`SWC: ${swc}ms (${swcCount} files)`);
+    if (assetsTime > 0) details.push(`Assets: ${assetsTime}ms`);
+    if (stable > 0) details.push(`Stable: ${stable}ms`);
+    if (writeDisk > 0) details.push(`Disk: ${writeDisk}ms`);
+    const detailsStr = details.length > 0 ? ` [${details.join(" | ")}]` : "";
+    logTimeline(`Client Bundler (esbuild) build finished in ${elapsed}ms${detailsStr}`);
+  } else if (tool === "rollup") {
+    const manifestTime = globalThis.__DINOU_ROLLUP_MANIFEST_TIME__ || 0;
+    const details = [];
+    if (manifestTime > 0) details.push(`Manifest AST: ${manifestTime}ms`);
+    if (globalThis.__DINOU_ROLLUP_TIMINGS__) {
+      for (const t of globalThis.__DINOU_ROLLUP_TIMINGS__.slice(0, 5)) {
+        const cleanName = t.name
+          .replace(/^[#-]+\s*/, "")
+          .replace(/plugin\s+\d+\s*\((.+?)\)/, "$1");
+        details.push(`${cleanName}: ${t.ms}ms`);
+      }
+    }
+    const detailsStr = details.length > 0 ? ` [${details.join(" | ")}]` : "";
+    logTimeline(`Client Bundler (Rollup) build finished in ${elapsed}ms${detailsStr}`);
+  } else {
+    logTimeline(`Client Bundler (${tool}) build finished in ${elapsed}ms`);
+  }
+
   if (activeClientBuildResolve) {
     activeClientBuildResolve();
     activeClientBuildResolve = null;
@@ -1240,7 +1266,7 @@ async function startClientBundler(tool) {
   if (normTool === "rollup") {
     const { watch } = require("rollup");
     const getRollupConfig = require(path.resolve(dinouDir, "rollup/rollup.config.js"));
-    const { getHmrEngine, closeHmrServer } = require(path.resolve(dinouDir, "rollup/react-refresh/rollup-plugin-esm-hmr.js"));
+    const { getHmrEngine, closeHmrServer, notifyFileChanged } = require(path.resolve(dinouDir, "rollup/react-refresh/rollup-plugin-esm-hmr.js"));
     const reactClientManifestPlugin = require(path.resolve(dinouDir, "rollup/rollup-plugins/rollup-plugin-react-client-manifest.js"));
     reactClientManifestPlugin.setOnManifestUpdated?.(() => onManifestUpdated());
 
@@ -1262,6 +1288,17 @@ async function startClientBundler(tool) {
             notifyClientBuildStart();
           } else if (event.code === "BUNDLE_END") {
             logSuccess(`Client bundle completed in ${event.duration}ms`);
+            if (event.result?.getTimings) {
+              const rawTimings = event.result.getTimings();
+              const pluginTimes = [];
+              for (const [key, val] of Object.entries(rawTimings)) {
+                if (Array.isArray(val) && val[0] > 100) {
+                  pluginTimes.push({ name: key, ms: Math.round(val[0]) });
+                }
+              }
+              pluginTimes.sort((a, b) => b.ms - a.ms);
+              globalThis.__DINOU_ROLLUP_TIMINGS__ = pluginTimes;
+            }
             notifyClientBuildEnd();
             if (!initialResolved) {
               onManifestUpdated();
@@ -1283,6 +1320,9 @@ async function startClientBundler(tool) {
     await startRollupWatcher();
 
     return {
+      notifyFileChanged: (filePath) => {
+        notifyFileChanged?.(filePath);
+      },
       broadcast: (msg) => {
         getHmrEngine()?.broadcastMessage?.(msg);
       },

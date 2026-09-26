@@ -104,7 +104,6 @@ function findClientComponents() {
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "tests" || entry.name === "test" || entry.name === "__tests__" || entry.name === "docs") continue;
         walk(full);
       } else if (/\.[jt]sx?$/.test(entry.name)) {
         try {
