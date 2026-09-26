@@ -72,16 +72,25 @@ export default async function write(result) {
     filesToWrite.push(file);
   }
 
+  const isDebug =
+    process.env.DINOU_DEBUG === "true" ||
+    process.env.DINOU_DEBUG === "1" ||
+    process.env.DEBUG === "true" ||
+    process.env.DEBUG === "1";
   const timelineTime = () => new Date().toTimeString().slice(0, 8) + "." + String(Date.now() % 1000).padStart(3, "0");
   const timelineRel = () => globalThis.__TIMELINE_T0__ ? `[+${Date.now() - globalThis.__TIMELINE_T0__}ms]` : ``;
 
   if (filesToWrite.length === 0) {
-    console.log(`⏱️ [TIMELINE ${timelineTime()}] ${timelineRel()} write.mjs: 0 files changed, disk write skipped (0ms)`);
+    if (isDebug) {
+      console.log(`⏱️ [TIMELINE ${timelineTime()}] ${timelineRel()} write.mjs: 0 files changed, disk write skipped (0ms)`);
+    }
     return;
   }
 
   const tWrite0 = Date.now();
-  console.log(`⏱️ [TIMELINE ${timelineTime()}] ${timelineRel()} write.mjs: writing ${filesToWrite.length} file(s) to disk...`);
+  if (isDebug) {
+    console.log(`⏱️ [TIMELINE ${timelineTime()}] ${timelineRel()} write.mjs: writing ${filesToWrite.length} file(s) to disk...`);
+  }
   const uniqueDirs = new Set();
   for (const f of filesToWrite) {
     const dir = path.dirname(f.path);
@@ -103,6 +112,8 @@ export default async function write(result) {
   );
   globalThis.__DINOU_WRITE_TIME__ = Date.now() - tWrite0;
 
-  console.log(`⏱️ [TIMELINE ${timelineTime()}] ${timelineRel()} write.mjs: wrote ${filesToWrite.length} file(s) in ${Date.now() - tWrite0}ms`);
+  if (isDebug) {
+    console.log(`⏱️ [TIMELINE ${timelineTime()}] ${timelineRel()} write.mjs: wrote ${filesToWrite.length} file(s) in ${Date.now() - tWrite0}ms`);
+  }
   console.log(`✓ Build completed`);
 }

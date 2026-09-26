@@ -127,9 +127,13 @@ export function printReadyBanner({ port, tool, durationMs, timings }) {
   console.log("");
   console.log(`  ${C_GREEN}➜${C_RESET}  ${C_BOLD}Local:${C_RESET}   ${C_CYAN}http://localhost:${port}/${C_RESET}`);
   console.log(`  ${C_GREEN}➜${C_RESET}  ${C_BOLD}Bundler:${C_RESET} ${tool}`);
-  console.log(`  ${C_GREEN}➜${C_RESET}  ${C_BOLD}Mode:${C_RESET}    development`);
+  const isDebug =
+    process.env.DINOU_DEBUG === "true" ||
+    process.env.DINOU_DEBUG === "1" ||
+    process.env.DEBUG === "true" ||
+    process.env.DEBUG === "1";
 
-  if (timings) {
+  if (timings && isDebug) {
     console.log("");
     console.log(`  ${C_BOLD}⚡ Startup Breakdown:${C_RESET}`);
     if (timings.discovery != null) {

@@ -170,7 +170,15 @@ export default function esmHmrPlugin({
           path.dirname(fileURLToPath(import.meta.url)),
           "./esm-hmr/client.mjs",
         );
-        const clientCode = await fs.readFile(clientPath, "utf8");
+        let clientCode = await fs.readFile(clientPath, "utf8");
+        const isDebug =
+          process.env.DINOU_DEBUG === "true" ||
+          process.env.DINOU_DEBUG === "1" ||
+          process.env.DEBUG === "true" ||
+          process.env.DEBUG === "1";
+        if (isDebug) {
+          clientCode = `window.__DINOU_DEBUG__ = true;\n` + clientCode;
+        }
         const assetPath = path.join(outdir, "__hmr_client__.js");
         result.outputFiles.push({
           path: assetPath,
@@ -367,13 +375,27 @@ export default function esmHmrPlugin({
         const timelineTime = () => new Date().toTimeString().slice(0, 8) + "." + String(Date.now() % 1000).padStart(3, "0");
         const timelineRel = () => globalThis.__TIMELINE_T0__ ? `[+${Date.now() - globalThis.__TIMELINE_T0__}ms]` : ``;
 
+        const isDebug =
+          process.env.DINOU_DEBUG === "true" ||
+          process.env.DINOU_DEBUG === "1" ||
+          process.env.DEBUG === "true" ||
+          process.env.DEBUG === "1";
+
         if (pendingUpdateUrls.size > 0 && !needsFullReload) {
           for (const url of pendingUpdateUrls) {
-            console.log(`⏱️ [TIMELINE ${timelineTime()}] ${timelineRel()} ⚡ [HMR Broadcast] Sending update to browser: ${url}`);
+            if (isDebug) {
+              console.log(`⏱️ [TIMELINE ${timelineTime()}] ${timelineRel()} ⚡ [HMR Broadcast] Sending update to browser: ${url}`);
+            } else {
+              console.log(`⚡ [HMR] Updating client component: ${url}`);
+            }
             hmrEngine.value.broadcastMessage({ type: "update", url });
           }
         } else if (needsFullReload || pendingUpdateUrls.size === 0) {
-          console.log(`⏱️ [TIMELINE ${timelineTime()}] ${timelineRel()} ⚡ [HMR Broadcast] Full reload triggered (needsFullReload: ${needsFullReload})`);
+          if (isDebug) {
+            console.log(`⏱️ [TIMELINE ${timelineTime()}] ${timelineRel()} ⚡ [HMR Broadcast] Full reload triggered (needsFullReload: ${needsFullReload})`);
+          } else {
+            console.log(`⚡ [HMR] Full reload triggered`);
+          }
           hmrEngine.value.broadcastMessage({ type: "reload" });
         }
         changedIds.clear();

@@ -923,10 +923,20 @@ if (process.env.DINOU_STANDALONE_SERVER === "true") {
   updateSpinner("Starting in-process client bundler...");
 }
 
+const isDebug =
+  process.env.DINOU_DEBUG === "true" ||
+  process.env.DINOU_DEBUG === "1" ||
+  process.env.DEBUG === "true" ||
+  process.env.DEBUG === "1";
+
 globalThis.__TIMELINE_T0__ = 0;
 const timelineTime = () => new Date().toTimeString().slice(0, 8) + "." + String(Date.now() % 1000).padStart(3, "0");
 const timelineRel = () => globalThis.__TIMELINE_T0__ ? `[+${Date.now() - globalThis.__TIMELINE_T0__}ms]` : `[+0ms]`;
-const logTimeline = (msg) => console.log(`⏱️ [TIMELINE ${timelineTime()}] ${timelineRel()} ${msg}`);
+const logTimeline = (msg) => {
+  if (isDebug) {
+    console.log(`⏱️ [TIMELINE ${timelineTime()}] ${timelineRel()} ${msg}`);
+  }
+};
 
 // Client bundler handle & broadcast helper
 let clientBundlerHandle = null;
