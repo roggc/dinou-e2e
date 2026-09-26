@@ -126,6 +126,7 @@ export async function startEsbuildDev(options = {}) {
           manifest,
           changedIds,
           hmrEngine,
+          serverFiles: currentServerFiles,
           onManifestUpdated: async () => {
             await onRebuilt();
           },
@@ -182,6 +183,9 @@ export async function startEsbuildDev(options = {}) {
     notifyFileChanged: (filePath) => {
       if (filePath) {
         changedIds.add(normKey(filePath));
+        if (currentCtx) {
+          currentCtx.rebuild().catch(() => {});
+        }
       }
     },
     restart: async () => {

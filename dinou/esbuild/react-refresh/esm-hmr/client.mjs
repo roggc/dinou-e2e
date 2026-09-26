@@ -168,14 +168,20 @@ socket.addEventListener("message", ({ data: _data }) => {
     return;
   }
 
+  const tRecv = Date.now();
+  console.log(`⏱️ [BROWSER HMR] Received update for ${data.url} at ${new Date().toTimeString().slice(0, 8)}.${String(Date.now() % 1000).padStart(3, '0')}`);
+
   applyUpdate(data.url)
     .then((ok) => {
       if (!ok) {
+        console.warn(`⏱️ [BROWSER HMR] applyUpdate returned false, falling back to full reload!`);
         reload();
+      } else {
+        console.log(`⏱️ [BROWSER HMR] Fast Refresh finished applying in ${Date.now() - tRecv}ms!`);
       }
     })
     .catch((err) => {
-      console.error(err);
+      console.error(`⏱️ [BROWSER HMR] applyUpdate error:`, err);
       reload();
     });
 });

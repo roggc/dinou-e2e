@@ -16,6 +16,7 @@ export default function reactClientManifestPlugin({
     setup(build) {
       build.onEnd(async (result) => {
         const tRcm0 = Date.now();
+        let manifestChanged = false;
         try {
           const meta = result.metafile;
           if (meta && meta.outputs) {
@@ -53,20 +54,29 @@ export default function reactClientManifestPlugin({
           // Ensure directory exists
           await fs.mkdir(path.dirname(manifestPath), { recursive: true });
 
-          // Write merged manifest
+          // Write merged manifest only if changed
           const serialized = JSON.stringify(manifest, null, 2);
-          await fs.writeFile(
-            manifestPath,
-            serialized,
-            "utf8"
-          );
+          try {
+            const old = await fs.readFile(manifestPath, "utf8");
+            if (old !== serialized) manifestChanged = true;
+          } catch (e) {
+            manifestChanged = true;
+          }
+
+          if (manifestChanged) {
+            await fs.writeFile(
+              manifestPath,
+              serialized,
+              "utf8"
+            );
+          }
         } catch (err) {
           console.warn("[react-client-manifest] onEnd error:", err.message);
         } finally {
           globalThis.__DINOU_RCM_TIME__ = Date.now() - tRcm0;
         }
 
-        if (onManifestUpdated) {
+        if (manifestChanged && onManifestUpdated) {
           await onManifestUpdated();
         }
       });

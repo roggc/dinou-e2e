@@ -2,6 +2,18 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { regex } from "../../core/asset-extensions.js";
 
+function areBuffersEqual(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.byteLength !== b.byteLength) return false;
+  return Buffer.from(a.buffer, a.byteOffset, a.byteLength).equals(
+    Buffer.from(b.buffer, b.byteOffset, b.byteLength)
+  );
+}
+
+const writtenCache = new Map();
+const createdDirs = new Set();
+
 export default async function write(result) {
   if (!result.metafile) {
     return;
@@ -53,24 +65,44 @@ export default async function write(result) {
     if (skipSet.has(fileRelPath)) {
       continue;
     }
+    const cached = writtenCache.get(file.path);
+    if (cached && areBuffersEqual(cached, file.contents)) {
+      continue;
+    }
     filesToWrite.push(file);
   }
 
+  const timelineTime = () => new Date().toTimeString().slice(0, 8) + "." + String(Date.now() % 1000).padStart(3, "0");
+  const timelineRel = () => globalThis.__TIMELINE_T0__ ? `[+${Date.now() - globalThis.__TIMELINE_T0__}ms]` : ``;
+
+  if (filesToWrite.length === 0) {
+    console.log(`⏱️ [TIMELINE ${timelineTime()}] ${timelineRel()} write.mjs: 0 files changed, disk write skipped (0ms)`);
+    return;
+  }
+
   const tWrite0 = Date.now();
-  const uniqueDirs = new Set(filesToWrite.map((f) => path.dirname(f.path)));
-  await Promise.all(
-    Array.from(uniqueDirs).map((d) => fs.mkdir(d, { recursive: true }))
-  );
+  console.log(`⏱️ [TIMELINE ${timelineTime()}] ${timelineRel()} write.mjs: writing ${filesToWrite.length} file(s) to disk...`);
+  const uniqueDirs = new Set();
+  for (const f of filesToWrite) {
+    const dir = path.dirname(f.path);
+    if (!createdDirs.has(dir)) {
+      uniqueDirs.add(dir);
+      createdDirs.add(dir);
+    }
+  }
+  if (uniqueDirs.size > 0) {
+    await Promise.all(
+      Array.from(uniqueDirs).map((d) => fs.mkdir(d, { recursive: true }))
+    );
+  }
   await Promise.all(
     filesToWrite.map(async (file) => {
-      try {
-        const existing = await fs.readFile(file.path);
-        if (existing.equals(file.contents)) return;
-      } catch (e) {}
       await fs.writeFile(file.path, file.contents);
+      writtenCache.set(file.path, file.contents);
     })
   );
   globalThis.__DINOU_WRITE_TIME__ = Date.now() - tWrite0;
 
+  console.log(`⏱️ [TIMELINE ${timelineTime()}] ${timelineRel()} write.mjs: wrote ${filesToWrite.length} file(s) in ${Date.now() - tWrite0}ms`);
   console.log(`✓ Build completed`);
 }

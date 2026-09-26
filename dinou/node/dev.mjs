@@ -923,14 +923,22 @@ if (process.env.DINOU_STANDALONE_SERVER === "true") {
   updateSpinner("Starting in-process client bundler...");
 }
 
+globalThis.__TIMELINE_T0__ = 0;
+const timelineTime = () => new Date().toTimeString().slice(0, 8) + "." + String(Date.now() % 1000).padStart(3, "0");
+const timelineRel = () => globalThis.__TIMELINE_T0__ ? `[+${Date.now() - globalThis.__TIMELINE_T0__}ms]` : `[+0ms]`;
+const logTimeline = (msg) => console.log(`⏱️ [TIMELINE ${timelineTime()}] ${timelineRel()} ${msg}`);
+
 // Client bundler handle & broadcast helper
 let clientBundlerHandle = null;
 let clientBundlerPromise = null;
 
 let activeClientBuildPromise = null;
 let activeClientBuildResolve = null;
+let clientBuildStartTime = 0;
 
 function notifyClientBuildStart() {
+  clientBuildStartTime = Date.now();
+  logTimeline(`Client Bundler build started...`);
   if (!activeClientBuildPromise) {
     activeClientBuildPromise = new Promise((resolve) => {
       activeClientBuildResolve = resolve;
@@ -939,6 +947,13 @@ function notifyClientBuildStart() {
 }
 
 function notifyClientBuildEnd() {
+  const elapsed = Date.now() - clientBuildStartTime;
+  const swc = globalThis.__DINOU_SWC_TIME__ || 0;
+  const swcCount = globalThis.__DINOU_SWC_COUNT__ || 0;
+  const assetsTime = globalThis.__DINOU_ASSETS_TIME__ || 0;
+  const stable = globalThis.__DINOU_STABLE_TIME__ || 0;
+  const writeDisk = globalThis.__DINOU_WRITE_TIME__ || 0;
+  logTimeline(`Client Bundler build finished in ${elapsed}ms [SWC: ${swc}ms (${swcCount} files) | Assets: ${assetsTime}ms | Stable: ${stable}ms | Disk: ${writeDisk}ms]`);
   if (activeClientBuildResolve) {
     activeClientBuildResolve();
     activeClientBuildResolve = null;
@@ -954,81 +969,117 @@ async function broadcastToClients(msg) {
 }
 
 // Trigger an incremental rebuild
-async function triggerRebuild(filePath = "", eventType = "change") {
-  if (activeRebuildPromise) {
-    try { await activeRebuildPromise; } catch (e) {}
-  }
+let isRebuilding = false;
+let pendingRebuildTask = null;
 
-  activeRebuildPromise = (async () => {
-    const t0 = Date.now();
-    try {
-      const isStructureChange = eventType === "add" || eventType === "unlink";
-      const absFilePath = filePath ? path.resolve(filePath) : "";
-      const baseName = absFilePath ? path.basename(absFilePath) : "source";
-      startSpinner(`Recompiling changes in ${baseName}...`);
+async function doRebuild(filePath = "", eventType = "change") {
+  const t0 = Date.now();
+  try {
+    const isStructureChange = eventType === "add" || eventType === "unlink";
+    const absFilePath = filePath ? path.resolve(filePath) : "";
+    const baseName = absFilePath ? path.basename(absFilePath) : "source";
+    logTimeline(`doRebuild executing for ${baseName}`);
+    startSpinner(`Recompiling changes in ${baseName}...`);
 
-      if (clientBundlerHandle?.notifyFileChanged && absFilePath) {
-        clientBundlerHandle.notifyFileChanged(absFilePath);
-      }
-      const normLower = absFilePath.toLowerCase();
-      const isCssFile = normLower.endsWith(".css") || normLower.endsWith(".scss") || normLower.endsWith(".less");
-      let isClientFile = false;
-      let isServerFile = false;
+    if (clientBundlerHandle?.notifyFileChanged && absFilePath) {
+      clientBundlerHandle.notifyFileChanged(absFilePath);
+    }
+    const normLower = absFilePath.toLowerCase();
+    const isCssFile = normLower.endsWith(".css") || normLower.endsWith(".scss") || normLower.endsWith(".less");
+    let isClientFile = false;
+    let isServerFile = false;
 
-      if (absFilePath && fs.existsSync(absFilePath)) {
-        try {
-          const content = fs.readFileSync(absFilePath, "utf8");
-          isClientFile = useClientRegex.test(content.trim());
-          isServerFile = useServerRegex.test(content.trim());
-        } catch (e) {}
-      }
+    if (absFilePath && fs.existsSync(absFilePath)) {
+      try {
+        const content = fs.readFileSync(absFilePath, "utf8");
+        isClientFile = useClientRegex.test(content.trim());
+        isServerFile = useServerRegex.test(content.trim());
+      } catch (e) {}
+    }
 
-      const wasClientFile = absFilePath ? knownClientFiles.has(absFilePath) : false;
-      const clientDirectiveChanged = isClientFile !== wasClientFile;
+    const wasClientFile = absFilePath ? knownClientFiles.has(absFilePath) : false;
+    const clientDirectiveChanged = isClientFile !== wasClientFile;
 
-      const wasServerFile = absFilePath ? knownServerFiles.has(absFilePath) : false;
-      const serverDirectiveChanged = isServerFile !== wasServerFile;
+    const wasServerFile = absFilePath ? knownServerFiles.has(absFilePath) : false;
+    const serverDirectiveChanged = isServerFile !== wasServerFile;
 
-      const needsClientBundlerRestart = clientDirectiveChanged || (isStructureChange && isCssFile);
+    const needsClientBundlerRestart = clientDirectiveChanged || (isStructureChange && isCssFile);
 
-      if (needsClientBundlerRestart && clientBundlerHandle?.restart) {
-        updateSpinner(`${clientDirectiveChanged ? "Directive change" : "CSS change"} in ${baseName}. Recreating bundle...`);
-        await clientBundlerHandle.restart();
-        await broadcastToClients({ type: "reload" });
-        logSuccess(`Recreated bundle for ${baseName} in ${Date.now() - t0}ms`);
-        return;
-      }
+    if (needsClientBundlerRestart && clientBundlerHandle?.restart) {
+      updateSpinner(`${clientDirectiveChanged ? "Directive change" : "CSS change"} in ${baseName}. Recreating bundle...`);
+      await clientBundlerHandle.restart();
+      await broadcastToClients({ type: "reload" });
+      logSuccess(`Recreated bundle for ${baseName} in ${Date.now() - t0}ms`);
+      return;
+    }
 
-      const needsStructureRebuild = isStructureChange || clientDirectiveChanged || serverDirectiveChanged;
+    const needsStructureRebuild = isStructureChange || clientDirectiveChanged || serverDirectiveChanged;
 
-      if (needsStructureRebuild) {
-        updateManifestsState();
-        generateEntryFiles();
-        await Promise.all([ctxA.rebuild(), ctxB.rebuild()]);
-      } else if (isClientFile) {
-        await Promise.all([ctxA.rebuild(), ctxB.rebuild()]);
+    if (needsStructureRebuild) {
+      updateManifestsState();
+      generateEntryFiles();
+      await Promise.all([ctxA.rebuild(), ctxB.rebuild()]);
+    } else if (isClientFile) {
+      if (activeClientBuildPromise) {
+        logTimeline(`Prioritizing client HMR broadcast before SSR update...`);
+        await activeClientBuildPromise;
       } else {
-        await ctxA.rebuild();
+        await new Promise((r) => setTimeout(r, 20));
+        if (activeClientBuildPromise) {
+          await activeClientBuildPromise;
+        }
       }
+      logTimeline(`ctxB (SSR Engine) background rebuild starting...`);
+      const tB = Date.now();
+      await ctxB.rebuild();
+      logTimeline(`ctxB (SSR Engine) rebuilt in ${Date.now() - tB}ms`);
+    } else {
+      await ctxA.rebuild();
+    }
 
-      engineVersion = Date.now();
-      const v = "?v=" + engineVersion;
+    engineVersion = Date.now();
+    const v = "?v=" + engineVersion;
+    if (needsStructureRebuild || !isClientFile) {
       rscModule = await dynamicImportWithRetry(pathToFileURL(rscOutfile).href + v);
-      if (needsStructureRebuild || isClientFile) {
-        ssrModule = await dynamicImportWithRetry(pathToFileURL(ssrOutfile).href + v);
-      }
-      logSuccess(`Rebuilt in ${Date.now() - t0}ms (${eventType} ${baseName})`);
+    }
+    if (needsStructureRebuild || isClientFile) {
+      ssrModule = await dynamicImportWithRetry(pathToFileURL(ssrOutfile).href + v);
+    }
+    logTimeline(`SSR module imported into V8 runtime`);
+    logSuccess(`Rebuilt in ${Date.now() - t0}ms (${eventType} ${baseName})`);
+    if (!isClientFile) {
       if (activeClientBuildPromise) {
         await activeClientBuildPromise;
       }
-      if (!isClientFile && !isCssFile) {
+      if (!isCssFile) {
         await broadcastToClients({ type: "reload" });
       }
-    } catch (err) {
-      stopSpinner();
-      console.error("❌ [Dinou Dev] Rebuild error:", err);
-      showIdleStatus();
+    }
+  } catch (err) {
+    stopSpinner();
+    console.error("❌ [Dinou Dev] Rebuild error:", err);
+    showIdleStatus();
+  }
+}
+
+// Trigger an incremental rebuild with automatic task coalescing
+async function triggerRebuild(filePath = "", eventType = "change") {
+  if (isRebuilding) {
+    pendingRebuildTask = { filePath, eventType };
+    return activeRebuildPromise;
+  }
+
+  isRebuilding = true;
+  activeRebuildPromise = (async () => {
+    try {
+      let task = { filePath, eventType };
+      while (task) {
+        pendingRebuildTask = null;
+        await doRebuild(task.filePath, task.eventType);
+        task = pendingRebuildTask;
+      }
     } finally {
+      isRebuilding = false;
       activeRebuildPromise = null;
     }
   })();
@@ -1044,9 +1095,15 @@ let pendingSrcEvent = "";
 const srcWatcher = chokidar.watch(srcDir, {
   ignoreInitial: true,
   ignored: [/node_modules/, /\.git/],
+  awaitWriteFinish: {
+    stabilityThreshold: 60,
+    pollInterval: 20,
+  },
 });
 
 srcWatcher.on("all", (event, fullPath) => {
+  globalThis.__TIMELINE_T0__ = Date.now();
+  logTimeline(`File change detected: ${event} ${path.basename(fullPath)}`);
   pendingSrcPath = fullPath;
   pendingSrcEvent = event;
   if (clientBundlerHandle?.notifyFileChanged && fullPath) {
@@ -1055,7 +1112,8 @@ srcWatcher.on("all", (event, fullPath) => {
   if (srcDebounce) clearTimeout(srcDebounce);
   srcDebounce = setTimeout(() => {
     srcDebounce = null;
-    triggerRebuild(fullPath, event);
+    logTimeline(`Debounce timer fired, triggering rebuild...`);
+    triggerRebuild(pendingSrcPath, pendingSrcEvent);
   }, 40);
 });
 
@@ -1117,6 +1175,7 @@ async function onManifestUpdated() {
       console.error("❌ [Dinou Dev] Error synchronizing with client manifest:", err);
     } finally {
       manifestSyncPromise = null;
+      showIdleStatus();
     }
   })();
 
@@ -1334,19 +1393,11 @@ const server = http.createServer(async (req, res) => {
     if (activeClientBuildPromise) {
       await activeClientBuildPromise;
     }
-    if (activeRebuildPromise) {
-      await activeRebuildPromise;
-    }
+    // If a source change is pending debounce, process it
     if (srcDebounce) {
       clearTimeout(srcDebounce);
       srcDebounce = null;
       await triggerRebuild(pendingSrcPath, pendingSrcEvent);
-    }
-    if (activeRebuildPromise) {
-      await activeRebuildPromise;
-    }
-    if (manifestSyncPromise) {
-      await manifestSyncPromise;
     }
 
     const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
@@ -1447,6 +1498,7 @@ const server = http.createServer(async (req, res) => {
           }
 
           if (buf !== null) {
+            logTimeline(`🌐 HTTP served ${pathname} (${buf.length} bytes)`);
             res.statusCode = 200;
             res.setHeader("content-type", contentType);
             res.setHeader("content-length", String(buf.length));
@@ -1459,6 +1511,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     // 3. Dynamic RSC + Native SSR Streaming
+    if (activeRebuildPromise) {
+      await activeRebuildPromise;
+    }
+    if (manifestSyncPromise) {
+      await manifestSyncPromise;
+    }
+
     const webReq = nodeToWebRequest(req);
     const webRes = await rscModule.handleRequest(webReq, {
       runtime: "node-bundle",
