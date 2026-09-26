@@ -5,14 +5,27 @@ const manifestGeneratorPlugin = require("./manifest-generator-plugin");
 const parseExports = require("../../core/parse-exports.js");
 const { useServerRegex } = require("../../constants.js");
 
-function serverFunctionsPlugin() {
+function serverFunctionsPlugin(manifestData = {}, options = {}) {
+  const opts =
+    typeof manifestData === "object" &&
+    manifestData !== null &&
+    ("onManifestUpdated" in manifestData || "serverFiles" in manifestData)
+      ? manifestData
+      : options;
+  const serverFiles =
+    opts.serverFiles || manifestData.serverFiles || options.serverFiles || null;
   const root = process.cwd();
   const serverFunctions = new Map(); // Collect here: Map<relativePath, Set<exports>>
+
+  function normalizeFsPath(p) {
+    return path.resolve(p).replace(/\\/g, "/").toLowerCase();
+  }
 
   return {
     name: "server-functions-proxy",
     transform(code, id) {
       if (id.includes("node_modules") || id.includes("\0")) return null;
+      if (serverFiles && !serverFiles.has(normalizeFsPath(id))) return null;
       if (!useServerRegex.test(code)) return null;
 
       const exports = parseExports(code);
@@ -49,6 +62,12 @@ function serverFunctionsPlugin() {
     },
     // 🪄 After manifest exists, replace the placeholder with the final URL
     async generateBundle(options, bundle) {
+      if (serverFunctions.size === 0) {
+        if (typeof globalThis !== "undefined") {
+          globalThis.__DINOU_RAW_SERVER_FUNCTIONS_MANIFEST__ = {};
+        }
+        return;
+      }
       const manifest = manifestGeneratorPlugin.manifestData;
       const hashedPath =
         "/" + (manifest["serverFunctionProxy.js"] || "serverFunctionProxy.js");

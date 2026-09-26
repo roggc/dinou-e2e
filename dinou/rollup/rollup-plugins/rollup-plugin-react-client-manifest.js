@@ -9,7 +9,7 @@ const traverse = typeof _traverseRaw === "function" ? _traverseRaw : (_traverseR
 const { regex } = require("../../core/asset-extensions.js");
 const createScopedName = require("../../core/createScopedName.js");
 const { getAbsPathWithExt } = require("../../core/get-abs-path-with-ext.js");
-const { useClientRegex } = require("../../constants.js");
+const { useClientRegex, useServerRegex } = require("../../constants.js");
 const parseExports = require("../../core/parse-exports.js");
 
 function getDefaultExportName(code) {
@@ -42,6 +42,7 @@ function reactClientManifestPlugin({
   srcDir = path.resolve("src"),
   manifestPath = ".dinou/react_client_manifest/react-client-manifest.json",
   assetInclude = regex,
+  serverFiles = new Set(),
 } = {}) {
   const manifest = {};
   const clientModules = new Set();
@@ -316,6 +317,10 @@ function setManifestEntry(fileUrl, expName, entry) {
         const code = readFileSync(absPath, "utf8");
         const normalizedPath = absPath.split(path.sep).join(path.posix.sep);
         const isClientModule = useClientRegex.test(code.trim());
+        const isServerModule = useServerRegex.test(code.trim());
+        if (isServerModule) {
+          serverFiles.add(normalizeFsPath(absPath));
+        }
 
         if (isClientModule) {
           clientModules.add(normalizeFsPath(absPath));
@@ -417,11 +422,18 @@ function setManifestEntry(fileUrl, expName, entry) {
         }
         clientModules.delete(normId);
         serverModules.delete(normId);
+        serverFiles.delete(normId);
         knownClientChunks.delete(id);
         return;
       }
       const code = readFileSync(id, "utf8");
       const isClientModule = useClientRegex.test(code.trim());
+      const isServerModule = useServerRegex.test(code.trim());
+      if (isServerModule) {
+        serverFiles.add(normId);
+      } else {
+        serverFiles.delete(normId);
+      }
 
       updateManifestForModule(id, code, isClientModule);
 

@@ -32,6 +32,7 @@ module.exports = async function () {
   const isDevelopment = process.env.NODE_ENV !== "production";
   const outputDirectory = isDevelopment ? ".dinou/public" : ".dinou/dist3";
   const shouldWriteToDisk = process.env.DINOU_WRITE_TO_DISK === "true" || !isDevelopment;
+  const serverFiles = new Set();
   const del = (await import("rollup-plugin-delete")).default;
   const clientConfig = {
     input: isDevelopment
@@ -186,11 +187,12 @@ module.exports = async function () {
           ".dinou/react_client_manifest",
           "react-client-manifest.json",
         ),
+        serverFiles,
       }),
       isDevelopment && reactRefreshWrapModules(),
       isDevelopment && esmHmrPlugin(),
       !isDevelopment && manifestGeneratorPlugin(),
-      serverFunctionsPlugin(),
+      serverFunctionsPlugin({ serverFiles }),
       isDevelopment && rollupMemoryPlugin(),
     ].filter(Boolean),
     watch: {
