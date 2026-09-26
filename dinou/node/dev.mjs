@@ -206,7 +206,7 @@ function updateManifestsState() {
   const sfPath = findManifest("server-functions-manifest.json", "server_functions_manifest");
   const aPath = findManifest("manifest.json", "public");
 
-  const rawClient = readJsonSafe(cPath);
+  const rawClient = globalThis.__DINOU_RAW_CLIENT_MANIFEST__ || readJsonSafe(cPath);
   if (rawClient) {
     const cleanClient = {};
     for (const [k, v] of Object.entries(rawClient)) {
@@ -227,7 +227,7 @@ function updateManifestsState() {
     parsedClientManifest = cleanClient;
   }
 
-  const rawSf = readJsonSafe(sfPath);
+  const rawSf = globalThis.__DINOU_RAW_SERVER_FUNCTIONS_MANIFEST__ || readJsonSafe(sfPath);
   if (rawSf) {
     parsedServerFunctionsManifest = rawSf;
   }
@@ -1165,7 +1165,7 @@ function checkClientFilesPresent() {
     return true;
   }
   const cPath = findManifest("react-client-manifest.json", "react_client_manifest");
-  if (!readJsonSafe(cPath)) return false;
+  if (!globalThis.__DINOU_RAW_CLIENT_MANIFEST__ && !readJsonSafe(cPath)) return false;
   if (isWebpackBuild) {
     const mPath = path.resolve(projectRoot, ".dinou/public/manifest.json");
     return fs.existsSync(mPath);
