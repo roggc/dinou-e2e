@@ -232,7 +232,7 @@ function updateManifestsState() {
     parsedServerFunctionsManifest = rawSf;
   }
 
-  const rawAsset = readJsonSafe(aPath);
+  const rawAsset = globalThis.__DINOU_RAW_ASSET_MANIFEST__ || readJsonSafe(aPath);
   if (rawAsset) {
     parsedAssetManifest = rawAsset;
   }
@@ -1167,6 +1167,7 @@ function checkClientFilesPresent() {
   const cPath = findManifest("react-client-manifest.json", "react_client_manifest");
   if (!globalThis.__DINOU_RAW_CLIENT_MANIFEST__ && !readJsonSafe(cPath)) return false;
   if (isWebpackBuild) {
+    if (globalThis.__DINOU_RAW_ASSET_MANIFEST__) return true;
     const mPath = path.resolve(projectRoot, ".dinou/public/manifest.json");
     return fs.existsSync(mPath);
   }
@@ -1286,6 +1287,7 @@ async function startClientBundler(tool) {
         }
         delete globalThis.__DINOU_RAW_CLIENT_MANIFEST__;
         delete globalThis.__DINOU_RAW_SERVER_FUNCTIONS_MANIFEST__;
+        delete globalThis.__DINOU_RAW_ASSET_MANIFEST__;
       }
       const rollupConfig = await getRollupConfig();
       currentWatcher = watch(rollupConfig);
@@ -1357,6 +1359,14 @@ async function startClientBundler(tool) {
   }
 
   if (normTool === "webpack") {
+    if (typeof globalThis !== "undefined") {
+      if (globalThis.__DINOU_MEM_FILES__) {
+        globalThis.__DINOU_MEM_FILES__.clear();
+      }
+      delete globalThis.__DINOU_RAW_CLIENT_MANIFEST__;
+      delete globalThis.__DINOU_RAW_SERVER_FUNCTIONS_MANIFEST__;
+      delete globalThis.__DINOU_RAW_ASSET_MANIFEST__;
+    }
     const webpack = require("webpack");
     const WebpackDevServer = require("webpack-dev-server");
     const getWebpackConfig = require(path.resolve(dinouDir, "webpack/webpack.config.js"));
