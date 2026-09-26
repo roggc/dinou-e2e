@@ -11,8 +11,13 @@ function rollupMemoryPlugin() {
       const isDev =
         process.env.NODE_ENV !== "production" ||
         process.env.DINOU_DEV === "true";
-      const shouldWriteToDisk =
-        process.env.DINOU_WRITE_TO_DISK === "true" || !isDev;
+
+      // Solo actúa en modo desarrollo. En producción, Rollup escribe a .dinou/dist3 normalmente.
+      if (!isDev) {
+        return;
+      }
+
+      const shouldWriteToDisk = process.env.DINOU_WRITE_TO_DISK === "true";
 
       if (typeof globalThis !== "undefined") {
         if (!globalThis.__DINOU_MEM_FILES__) {

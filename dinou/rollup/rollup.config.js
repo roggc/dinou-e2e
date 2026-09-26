@@ -191,7 +191,7 @@ module.exports = async function () {
       isDevelopment && esmHmrPlugin(),
       !isDevelopment && manifestGeneratorPlugin(),
       serverFunctionsPlugin(),
-      rollupMemoryPlugin(),
+      isDevelopment && rollupMemoryPlugin(),
     ].filter(Boolean),
     watch: {
       buildDelay: 100,
