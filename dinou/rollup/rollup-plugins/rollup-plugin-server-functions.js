@@ -70,16 +70,28 @@ function serverFunctionsPlugin() {
         manifestObj[relPath] = Array.from(exportsSet);
       }
 
-      // Write the manifest to the specified folder (e.g. same place as other assets)
-      const manifestPath = path.join(
-        ".dinou/server_functions_manifest",
-        "server-functions-manifest.json"
-      );
-      try {
-        await fs.mkdir(path.dirname(manifestPath), { recursive: true });
-        await fs.writeFile(manifestPath, JSON.stringify(manifestObj, null, 2));
-      } catch (err) {
-        console.error(err);
+      if (typeof globalThis !== "undefined") {
+        globalThis.__DINOU_RAW_SERVER_FUNCTIONS_MANIFEST__ = manifestObj;
+      }
+
+      const isDev =
+        process.env.NODE_ENV !== "production" ||
+        process.env.DINOU_DEV === "true";
+      const shouldWriteToDisk =
+        process.env.DINOU_WRITE_TO_DISK === "true" || !isDev;
+
+      if (shouldWriteToDisk) {
+        // Write the manifest to the specified folder (e.g. same place as other assets)
+        const manifestPath = path.join(
+          ".dinou/server_functions_manifest",
+          "server-functions-manifest.json"
+        );
+        try {
+          await fs.mkdir(path.dirname(manifestPath), { recursive: true });
+          await fs.writeFile(manifestPath, JSON.stringify(manifestObj, null, 2));
+        } catch (err) {
+          console.error(err);
+        }
       }
     },
   };

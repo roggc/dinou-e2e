@@ -1280,6 +1280,13 @@ async function startClientBundler(tool) {
         try { await currentWatcher.close(); } catch (e) {}
         currentWatcher = null;
       }
+      if (typeof globalThis !== "undefined") {
+        if (globalThis.__DINOU_MEM_FILES__) {
+          globalThis.__DINOU_MEM_FILES__.clear();
+        }
+        delete globalThis.__DINOU_RAW_CLIENT_MANIFEST__;
+        delete globalThis.__DINOU_RAW_SERVER_FUNCTIONS_MANIFEST__;
+      }
       const rollupConfig = await getRollupConfig();
       currentWatcher = watch(rollupConfig);
 

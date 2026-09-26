@@ -46,6 +46,7 @@ function reactClientManifestPlugin({
   const manifest = {};
   const clientModules = new Set();
   const serverModules = new Set();
+  let lastManifest = null;
 
 const urlToManifestKeys = new Map();
 const defaultExportCache = new Map();
@@ -553,20 +554,30 @@ function setManifestEntry(fileUrl, expName, entry) {
         return true;
       }
 
+      if (typeof globalThis !== "undefined") {
+        globalThis.__DINOU_RAW_CLIENT_MANIFEST__ = { ...manifest };
+      }
+
+      const isDev = process.env.NODE_ENV !== "production" || process.env.DINOU_DEV === "true";
+      const shouldWriteToDisk = process.env.DINOU_WRITE_TO_DISK === "true" || !isDev;
+
       let existingManifest = null;
-      if (existsSync(manifestPath)) {
+      if (shouldWriteToDisk && existsSync(manifestPath)) {
         try {
           existingManifest = JSON.parse(readFileSync(manifestPath, "utf8"));
         } catch (e) {}
       }
 
-      if (!existingManifest || !areManifestsSemanticallyEqual(existingManifest, manifest)) {
-        const sortedManifest = {};
-        for (const k of Object.keys(manifest).sort()) {
-          sortedManifest[k] = manifest[k];
+      if (!lastManifest || !areManifestsSemanticallyEqual(lastManifest, manifest)) {
+        lastManifest = JSON.parse(JSON.stringify(manifest));
+        if (shouldWriteToDisk) {
+          const sortedManifest = {};
+          for (const k of Object.keys(manifest).sort()) {
+            sortedManifest[k] = manifest[k];
+          }
+          mkdirSync(dirname(manifestPath), { recursive: true });
+          writeFileSync(manifestPath, JSON.stringify(sortedManifest, null, 2));
         }
-        mkdirSync(dirname(manifestPath), { recursive: true });
-        writeFileSync(manifestPath, JSON.stringify(sortedManifest, null, 2));
         manifestUpdatedCallback?.();
       }
     },
