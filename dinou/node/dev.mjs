@@ -1655,7 +1655,6 @@ const server = http.createServer(async (req, res) => {
         if (memBuf) {
           const fileExt = path.extname(cleanPath).toLowerCase();
           const contentType = MIME_TYPES[fileExt] || "application/octet-stream";
-          logTimeline(`⚡ [MEM CACHE] HTTP served ${pathname} (${memBuf.length} bytes)`);
           res.statusCode = 200;
           res.setHeader("content-type", contentType);
           res.setHeader("content-length", String(memBuf.length));
@@ -1736,7 +1735,6 @@ const server = http.createServer(async (req, res) => {
           }
 
           if (buf !== null) {
-            logTimeline(`🌐 HTTP served ${pathname} (${buf.length} bytes)`);
             res.statusCode = 200;
             res.setHeader("content-type", contentType);
             res.setHeader("content-length", String(buf.length));
