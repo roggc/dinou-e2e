@@ -68,7 +68,7 @@ function hookStreams() {
 function render() {
   if (!active || !isTTY) return;
   const cols = getTerminalCols();
-  const maxTextLen = Math.max(20, Math.min(cols - 8, 60));
+  const maxTextLen = Math.max(20, cols - 8);
   let text = currentText;
   if (text.length > maxTextLen) {
     text = text.slice(0, Math.max(1, maxTextLen - 3)) + "...";
@@ -117,19 +117,29 @@ let buildTimer = null;
 let currentBuildText = "";
 let isBuildActive = false;
 
+function smartTruncate(text, maxLen) {
+  if (text.length <= maxLen) return text;
+  const m = text.match(/^(\[SSG\].*?:\s+)(.*)$/);
+  if (m) {
+    const prefix = m[1];
+    const route = m[2];
+    const avail = maxLen - prefix.length;
+    if (avail > 10) {
+      const half = Math.floor((avail - 3) / 2);
+      return prefix + route.slice(0, half) + "..." + route.slice(route.length - (avail - 3 - half));
+    }
+  }
+  return text.slice(0, Math.max(1, maxLen - 3)) + "...";
+}
+
 function renderBuildProgress() {
   if (!isBuildActive || !isTTY) return;
   const cols = getTerminalCols();
-  // Strictly cap at 60 columns maximum (or cols - 4, whichever is smaller).
-  // This guarantees the progress line NEVER wraps in any standard terminal (>= 60 cols),
-  // even if the user resizes a wide terminal narrower during build!
-  const maxLineLen = Math.max(20, Math.min(cols - 4, 60));
+  // Dynamically adapt to full terminal width with a 4-column margin against auto-wrap
+  const maxLineLen = Math.max(20, cols - 4);
   const maxTextLen = maxLineLen - 4;
 
-  let safeText = currentBuildText;
-  if (safeText.length > maxTextLen) {
-    safeText = safeText.slice(0, Math.max(1, maxTextLen - 3)) + "...";
-  }
+  const safeText = smartTruncate(currentBuildText, maxTextLen);
 
   const frame = FRAMES[buildFrameIdx];
   buildFrameIdx = (buildFrameIdx + 1) % FRAMES.length;
