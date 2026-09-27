@@ -18,13 +18,21 @@ const C_YELLOW = "\x1b[33m";
 const C_MAGENTA = "\x1b[35m";
 
 export function getTerminalCols() {
-  if (process.stdout.isTTY && typeof process.stdout.getWindowSize === "function") {
-    try {
-      const [w] = process.stdout.getWindowSize();
-      if (w > 0) return w;
-    } catch (e) {}
+  if (process.stdout.isTTY) {
+    if (typeof process.stdout._refreshSize === "function") {
+      try {
+        process.stdout._refreshSize();
+      } catch (e) {}
+    }
+    if (typeof process.stdout.getWindowSize === "function") {
+      try {
+        const [w] = process.stdout.getWindowSize();
+        if (w > 0) return w;
+      } catch (e) {}
+    }
+    return process.stdout.columns || 80;
   }
-  return process.stdout.columns || 80;
+  return 80;
 }
 
 let active = false;
