@@ -4,7 +4,12 @@ const clientRedirectModule = require("./core/client-redirect.jsx");
 const redirectModule = require("./core/redirect.jsx");
 const linkModule = require("./core/link.jsx");
 
+function defineConfig(config) {
+  return config;
+}
+
 module.exports = {
+  defineConfig,
   getContext: contextModule.getContext,
   usePathname: navigationModule.usePathname,
   useSearchParams: navigationModule.useSearchParams,

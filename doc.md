@@ -208,6 +208,18 @@ Dinou desacopla la caché estática y la regeneración incremental (ISR / ISG) d
 - **`CloudflareKVStorage`**: Utilizado en Cloudflare Workers mediante bindings de KV.
 - **`MemoryStorage`**: Para entornos efímeros o tests en memoria.
 
+### 4.5. Sistema Universal de Middleware y Webhooks (`onRequest` en `dinou.config.js`)
+
+Con la eliminación de Express en favor de los Estándares Web de la W3C, Dinou v7 introduce un sistema de middleware y webhooks universal a través del hook `onRequest(request, context)` en [`dinou.config.js`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou.config.js):
+
+* **Interceptación y Retorno Temprano (Webhooks y Guards)**:
+  El hook recibe el objeto estándar `Request` y el objeto `context` de Dinou. Si el plugin devuelve una instancia nativa de `Response` (por ejemplo `Response.json(...)` o `Response.redirect(...)`), la petición finaliza de inmediato en <1ms sin cargar el árbol de React ni procesar manifiestos.
+  - **Webhooks**: Permite recibir y validar firmas criptográficas en bruto (como webhooks de Stripe o Clerk vía Svix) leyendo `await request.text()`.
+  - **Protección de Rutas (Route Guards)**: Permite inspeccionar cookies o cabeceras y ejecutar redirecciones tempranas (`Response.redirect(...)`).
+* **Enriquecimiento del Contexto (`getContext()`)**:
+  Si el plugin no devuelve ninguna `Response`, la petición continúa su flujo normal hacia los Server Components y Server Functions. Cualquier propiedad adjunta a `context` (por ejemplo `context.user = userData` o `context.auth = authData`) queda disponible de forma síncrona en toda la aplicación mediante `getContext()`.
+* **100% Portátil**: Funciona exactamente igual en Node.js, Bun, Deno, Cloudflare Workers y Netlify Functions.
+
 ---
 
 ## 5. Opciones y Guía de Despliegue ("Deploy Everywhere")

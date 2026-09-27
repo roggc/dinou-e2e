@@ -39,17 +39,67 @@ const getAssetFromManifest = require("./get-asset-from-manifest.js");
 
 // Load Dinou configuration and plugins
 let dinouConfig = { plugins: [] };
+let dinouConfigPromise = null;
+
+async function getDinouConfig() {
+  if (dinouConfigPromise && !isDevelopment) {
+    return dinouConfigPromise;
+  }
+  dinouConfigPromise = (async () => {
+    const cwd = typeof process !== "undefined" && typeof process.cwd === "function" ? process.cwd() : ".";
+    for (const filename of ["dinou.config.js", "dinou.config.mjs", "dinou.config.cjs"]) {
+      const p = path.resolve(cwd, filename);
+      if (existsSync(p)) {
+        try {
+          let loaded;
+          try {
+            loaded = require(p);
+          } catch (e) {
+            loaded = await import(pathToFileURL(p).href + (isDevelopment ? `?t=${Date.now()}` : ""));
+          }
+          const cfg = (loaded && loaded.default) ? loaded.default : (loaded || { plugins: [] });
+          if (cfg && cfg.storage) {
+            setStorageAdapter(cfg.storage);
+          }
+          dinouConfig = cfg;
+          return cfg;
+        } catch (err) {
+          console.error(`[Dinou] Error loading ${filename}:`, err);
+        }
+      }
+    }
+    return dinouConfig;
+  })();
+  return dinouConfigPromise;
+}
+
+// Initial sync load attempt for immediate storage adapter setup
 const dinouConfigPath = typeof process !== "undefined" && typeof process.cwd === "function"
   ? path.resolve(process.cwd(), "dinou.config.js")
   : null;
 if (dinouConfigPath && existsSync(dinouConfigPath)) {
   try {
-    dinouConfig = require(dinouConfigPath);
+    const loaded = require(dinouConfigPath);
+    dinouConfig = (loaded && loaded.default) ? loaded.default : (loaded || { plugins: [] });
     if (dinouConfig && dinouConfig.storage) {
       setStorageAdapter(dinouConfig.storage);
     }
-  } catch (err) {
-    console.error("[Dinou] Error loading dinou.config.js in handler:", err);
+  } catch (err) {}
+}
+
+function copyCustomContextProperties(source, target) {
+  if (!source || !target) return;
+  for (const key of Object.keys(source)) {
+    if (!["req", "res", "env", "ctx"].includes(key)) {
+      target[key] = source[key];
+    }
+  }
+  if (source.req && target.req) {
+    for (const key of Object.keys(source.req)) {
+      if (!["cookies", "headers", "query", "path", "url", "method", "env", "ctx"].includes(key)) {
+        target.req[key] = source.req[key];
+      }
+    }
   }
 }
 
@@ -704,8 +754,27 @@ async function handleRequest(request, platformContext = {}) {
   };
 
   const bridge = new WebResponseBridge();
+  const rootContext = createRequestContext(simReq, bridge, platformContext);
 
-  // 4. Server Functions Endpoint (POST /____server_function____)
+  // 4. Plugin onRequest Hook (Universal Middlewares & Webhooks)
+  const cfg = await getDinouConfig();
+  if (cfg.plugins && Array.isArray(cfg.plugins)) {
+    for (const plugin of cfg.plugins) {
+      if (typeof plugin.onRequest === "function") {
+        try {
+          const result = await plugin.onRequest(request, rootContext);
+          if (result instanceof Response) {
+            return result;
+          }
+        } catch (pluginErr) {
+          console.error(`[Dinou Plugin Error: "${plugin.name || "unnamed"}"]:`, pluginErr);
+          return new Response("Internal Server Error", { status: 500 });
+        }
+      }
+    }
+  }
+
+  // 5. Server Functions Endpoint (POST /____server_function____)
   if (pathname === "/____server_function____" && request.method === "POST") {
     try {
       const origin = headersObj["origin"];
@@ -804,6 +873,7 @@ async function handleRequest(request, platformContext = {}) {
       }
 
       const context = createServerFunctionContext(simReq, bridge, platformContext);
+      copyCustomContextProperties(rootContext, context);
       let returnValue;
       try {
         await requestStorage.run(context, async () => {
@@ -853,6 +923,7 @@ async function handleRequest(request, platformContext = {}) {
 
       const clientError = body?.error || { message: "Unknown Error" };
       const context = createRequestContext(simReq, bridge, platformContext);
+      copyCustomContextProperties(rootContext, context);
 
       await requestStorage.run(context, async () => {
         const jsx = await getErrorJSX(
@@ -988,6 +1059,7 @@ async function handleRequest(request, platformContext = {}) {
     );
 
     const context = createRequestContext(simReq, bridge, platformContext, dynamicState);
+    copyCustomContextProperties(rootContext, context);
     const isNotFound = {};
 
     await requestStorage.run(context, async () => {
@@ -1197,6 +1269,7 @@ async function handleRequest(request, platformContext = {}) {
       isgPromise = (async () => {
         console.log(`[Edge ISG] Processing page for ${reqPath}...`);
         const context = createRequestContext(simReq, bridge, platformContext, dynamicState);
+        copyCustomContextProperties(rootContext, context);
         const isNotFound = { value: !pagePath };
         const isSsrCrash = queryObj.ssr_crash === "true";
         let isError = isSsrCrash;
