@@ -790,6 +790,7 @@ const externalList = [...nodeBuiltins, ...nodeBuiltins.map((b) => "node:" + b)];
 
 const commonAlias = {
   "@": path.resolve(projectRoot, "src"),
+  "dinou/config": path.resolve(dinouDir, "core/config.js"),
   dinou: dinouDir,
 };
 const commonLoader = {
