@@ -82,7 +82,7 @@ function render() {
     text = text.slice(0, Math.max(1, maxTextLen - 3)) + "...";
   }
   const frame = FRAMES[frameIdx];
-  const line = `\r\x1b[2K  ${C_CYAN}${C_BOLD}${frame}${C_RESET} ${text}\x1b[K`;
+  const line = `\r\x1b[2K  ${C_CYAN}${C_BOLD}${frame}${C_RESET} ${text}\x1b[K\x1b[J`;
   originalStdoutWrite(line);
 }
 
@@ -116,7 +116,7 @@ export function stopSpinner() {
     timer = null;
   }
   if (isTTY) {
-    originalStdoutWrite("\r\x1b[2K\r");
+    originalStdoutWrite("\r\x1b[2K\x1b[J\r");
   }
 }
 
@@ -150,7 +150,7 @@ function renderBuildProgress() {
   // If terminal narrowed since last render, the previous line reflowed across multiple physical rows.
   // Move up linesOccupied - 1 rows and clear each one to stay on a single line!
   if (lastBuildLineLen > 0 && lastBuildCols > cols) {
-    const linesOccupied = Math.ceil(lastBuildLineLen / Math.max(1, cols));
+    const linesOccupied = Math.min(3, Math.ceil(lastBuildLineLen / Math.max(1, cols)));
     if (linesOccupied > 1) {
       for (let i = 0; i < linesOccupied - 1; i++) {
         process.stdout.write("\x1b[1A\r\x1b[2K");
@@ -170,8 +170,8 @@ function renderBuildProgress() {
   lastBuildLineLen = safeText.length + 4;
   lastBuildCols = cols;
 
-  // \r (carriage return) + \x1b[2K (clear line) + text + \x1b[K (clear trailing)
-  process.stdout.write(`\r\x1b[2K  ${C_CYAN}${C_BOLD}${frame}${C_RESET} ${safeText}\x1b[K`);
+  // \r (carriage return) + \x1b[2K (clear line) + text + \x1b[K (clear trailing) + \x1b[J (clear all lines below)
+  process.stdout.write(`\r\x1b[2K  ${C_CYAN}${C_BOLD}${frame}${C_RESET} ${safeText}\x1b[K\x1b[J`);
 }
 
 export function updateBuildProgress(text) {
@@ -189,9 +189,6 @@ export function updateBuildProgress(text) {
       buildTimer = setInterval(renderBuildProgress, 80);
       if (buildTimer.unref) buildTimer.unref();
     }
-  } else {
-    // Re-render immediately so text changes appear instantly without waiting 80ms
-    renderBuildProgress();
   }
 }
 
@@ -204,15 +201,22 @@ export function clearBuildProgress() {
     clearInterval(buildTimer);
     buildTimer = null;
   }
-  // Clear the line and restore cursor visibility
-  process.stdout.write("\r\x1b[2K\x1b[?25h");
+  // Clear the line, clear any lines below, and restore cursor visibility
+  process.stdout.write("\r\x1b[2K\x1b[J\x1b[?25h");
 }
 
-// Handle terminal resize dynamically so the line is cleanly adapted to the new width
+// Debounce terminal resize events so mouse dragging does not flood stdout
+let resizeTimer = null;
 if (typeof process.stdout.on === "function") {
   process.stdout.on("resize", () => {
     if (isBuildActive && isTTY) {
-      renderBuildProgress();
+      if (!resizeTimer) {
+        resizeTimer = setTimeout(() => {
+          resizeTimer = null;
+          renderBuildProgress();
+        }, 40);
+        if (resizeTimer.unref) resizeTimer.unref();
+      }
     }
   });
 }
