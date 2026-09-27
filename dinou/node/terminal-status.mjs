@@ -76,7 +76,13 @@ function hookStreams() {
 function render() {
   if (!active || !isTTY) return;
   const cols = getTerminalCols();
-  const maxTextLen = Math.max(20, cols - 8);
+  if (cols <= 0) return;
+  if (cols < 8) {
+    const frame = FRAMES[frameIdx];
+    originalStdoutWrite(`\r\x1b[2K${frame}\x1b[K\x1b[J`);
+    return;
+  }
+  const maxTextLen = Math.max(1, cols - 6);
   let text = currentText;
   if (text.length > maxTextLen) {
     text = text.slice(0, Math.max(1, maxTextLen - 3)) + "...";
@@ -137,7 +143,10 @@ function smartTruncate(text, maxLen) {
       return prefix + route.slice(0, half) + "..." + route.slice(route.length - (avail - 3 - half));
     }
   }
-  return text.slice(0, Math.max(1, maxLen - 3)) + "...";
+  if (maxLen <= 3) {
+    return text.slice(0, maxLen);
+  }
+  return text.slice(0, maxLen - 3) + "...";
 }
 
 let lastBuildLineLen = 0;
@@ -146,6 +155,17 @@ let lastBuildCols = 0;
 function renderBuildProgress() {
   if (!isBuildActive || !isTTY) return;
   const cols = getTerminalCols();
+  if (cols <= 0) return;
+
+  // Ultra-narrow terminal (< 8 cols): render just the spinner frame to guarantee 0 wrapping
+  if (cols < 8) {
+    const frame = FRAMES[buildFrameIdx];
+    buildFrameIdx = (buildFrameIdx + 1) % FRAMES.length;
+    lastBuildLineLen = 1;
+    lastBuildCols = cols;
+    process.stdout.write(`\r\x1b[2K${frame}\x1b[K\x1b[J`);
+    return;
+  }
 
   // If terminal narrowed since last render, the previous line reflowed across multiple physical rows.
   // Move up linesOccupied - 1 rows and clear each one to stay on a single line!
@@ -158,9 +178,9 @@ function renderBuildProgress() {
     }
   }
 
-  // Dynamically adapt to full terminal width with a 4-column margin against auto-wrap
-  const maxLineLen = Math.max(20, cols - 4);
-  const maxTextLen = maxLineLen - 4;
+  // Dynamically adapt to full terminal width with a 2-column margin against auto-wrap
+  const maxLineLen = Math.max(4, cols - 2);
+  const maxTextLen = Math.max(1, maxLineLen - 4);
 
   const safeText = smartTruncate(currentBuildText, maxTextLen);
 
