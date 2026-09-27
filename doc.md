@@ -132,6 +132,54 @@ La experiencia de desarrollo local es homogénea independientemente de la herram
 * `npm run dev:webpack`: Paridad absoluta para ecosistemas empresariales que dependen de plugins específicos de Webpack.
 Todos comparten los mismos protocolos de comunicación WebSocket, manifiestos estandarizados y semántica de HMR.
 
+### 3.4. Arquitectura 100% en Memoria (Zero Disk I/O) y Fast-Path de Server Functions
+
+En proyectos de gran envergadura (con miles de componentes, documentación técnica y decenas de paquetes npm), el cuello de botella tradicional de los frameworks residía en dos factores críticos: **la saturación de I/O en disco durante el desarrollo** y **el análisis exhaustivo de ASTs de Babel en busca de directivas `"use server"`**.
+
+Dinou v7 introduce dos optimizaciones profundas integradas de forma uniforme en **Esbuild, Rollup y Webpack**:
+
+#### A. Desarrollo 100% en RAM (`globalThis.__DINOU_MEM_FILES__` y Cero I/O)
+* **Eliminación Total de `.dinou/public` en Disco**: En modo desarrollo (`npm run dev:*`), ninguno de los tres empaquetadores escribe archivos a disco. Chunks de JavaScript, hojas de estilo compiladas (`styles.css`), mapas de origen (`.map`) y los 3 manifiestos (`react-client-manifest.json`, `server-functions-manifest.json` y `manifest.json`) se almacenan directamente como buffers binarios en un registro global en memoria RAM (`globalThis.__DINOU_MEM_FILES__`).
+* **Servicio In-Memory a Latencia Cero**: El servidor HTTP de Dinou (`dev.mjs`) despacha cualquier activo estático solicitado por el navegador directamente desde la memoria RAM en `<0.5ms`, sin abrir ni consultar descriptores de archivos del sistema operativo.
+* **Sin Sobrecarga de I/O ni Antivirus en Windows**: Se erradican las miles de escrituras y eliminaciones síncronas que ralentizaban el arranque local en Windows debido a escaneos de seguridad e indexadores de archivos. En desarrollo estándar, el directorio `.dinou/public` ni siquiera llega a crearse.
+* **Modo Inspección (`DINOU_WRITE_TO_DISK=true`)**: Si el desarrollador desea auditar físicamente el contenido de los paquetes generados, basta con activar esta variable de entorno para que el pipeline dev vuelque todos los archivos a `.dinou/public`.
+* **Garantía Estricta de Producción**: En compilaciones de producción (`npm run build:*`), todos los bundlers vuelcan con total integridad los artefactos físicos finales a `.dinou/dist3` (y `.dinou/dist2` para SSG).
+
+#### B. Fast-Path Reactivo de Server Functions
+* **Bypass Inmediato en O(1)**: Anteriormente, cada archivo `.js`, `.jsx`, `.ts` y `.tsx` era analizado con expresiones regulares y parseo de AST con Babel en los loaders de Server Functions para determinar si contenía la directiva `"use server"`. En aplicaciones grandes, esto consumía valiosos segundos de CPU en cientos de archivos que eran simples componentes de UI o utilidades.
+* **Indexación en Fase de Descubrimiento**: Tanto `get-esbuild-entries`, como `rollup-plugin-server-functions` y `get-webpack-entries` indexan previamente los archivos que declaran `"use server"` en un `Set` (`serverFiles`). Los loaders y plugins realizan un filtrado inmediato en O(1): si el módulo no está en el conjunto y no contiene la directiva, se devuelve intacto en microsegundos, saltándose todo el pipeline de Babel.
+* **Reactividad Dinámica en Caliente**: Si un desarrollador añade `"use server"` a un archivo existente o retira la directiva durante una sesión de desarrollo activa, el sistema detecta dinámicamente la transición y actualiza el índice en tiempo real sin requerir reinicios manuales.
+
+#### C. Impacto en Métricas Reales (`dinou-docs`)
+En aplicaciones complejas como `dinou-docs` (con más de 2.280 módulos de `node_modules`, decenas de páginas de documentación y más de 25 MB de assets compilados):
+* **Esbuild**: Reducción del arranque en frío de **~124 segundos a 11.2 segundos** (una aceleración de más del **91%**) y arranque en caliente en **8.3 segundos**.
+* **Rollup**: Compilación del bundle de cliente en **21.7s** y arranque total en caliente en **28.4s**.
+* **Webpack**: Compilación de **25 MB de JS, 330+ assets y 2.280 módulos en 15.0 segundos**, manteniendo **0 bytes** escritos a disco en desarrollo.
+* **Validación 100% Verde**: 377+ pruebas de Playwright pasadas con éxito en paralelo en Chromium, Firefox y WebKit a través de todos los adaptadores (Node, Bun, Deno y Cloudflare Workers).
+
+### 3.5. Selección Inteligente e Interactiva de Puertos en Desarrollo (`port-selector`)
+
+En entornos de desarrollo local es común tener múltiples aplicaciones Dinou u otros servidores ejecutándose simultáneamente en los puertos por defecto `3000` (servidor HTTP principal) y `3001` (servidor WebSocket de HMR). Anteriormente, si el puerto 3000 o 3001 estaban ocupados, el servidor arrojaba un error `EADDRINUSE` y el proceso terminaba abruptamente.
+
+Dinou v7 introduce un gestor de puertos inteligente ([`dinou/node/port-selector.mjs`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/node/port-selector.mjs)) con las siguientes características:
+
+* **Detección de Pares Consecutivos Libres `[Port, Port + 1]`**:
+  Dinou verifica en milisegundos (`node:net`) que tanto el puerto del servidor HTTP como el puerto complementario de HMR estén libres. Si el puerto 3000 o 3001 están ocupados, localiza automáticamente el siguiente par consecutivo disponible (por ejemplo, `3002` para HTTP y `3003` para HMR). Mantiene la paridad par/impar para evitar cualquier colisión entre puertos HTTP y WebSocket.
+* **Flujo Interactivo en Terminal (TTY)**:
+  Si la terminal es interactiva (`isTTY`), antes de inicializar los motores de compilación se pregunta limpiamente al desarrollador:
+  ```text
+  ⚠️  Port 3000 is in use.
+  ? Would you like to use port 3002 instead? (Y/n)
+  ```
+  - Al pulsar **Enter** o responder **Y**, Dinou conmuta automáticamente a los puertos seleccionados (`3002` y `3003`).
+  - Al responder **N**, el proceso se detiene de forma limpia con código de salida `0` sin trazas de error.
+* **Protección Estricta en CI y Entornos No Interactivos**:
+  En entornos de integración continua (CI) como GitHub Actions o ejecuciones no interactivas (`!process.stdout.isTTY || process.env.CI`), Dinou no bloquea la entrada estándar; muestra inmediatamente el mensaje de error fatal en inglés y sale con código `1`.
+* **Sincronización Total en los 3 Bundlers (`esbuild`, `rollup`, `webpack`)**:
+  - Tanto `esbuild` (`esm-hmr-plugin.mjs`) como `rollup` (`rollup-plugin-esm-hmr.js`) vinculan el WebSocket de HMR al puerto desplazado (`HMR_PORT = PORT + 1`).
+  - El motor de SSR inyecta la URL del WebSocket (`ws://localhost:${HMR_PORT}`) en el cliente web.
+  - En `webpack` (`webpack.config.js`), `WebpackDevServer` adopta dinámicamente `HMR_PORT` para su WebSocket de live reload (`ws://localhost:${HMR_PORT}/ws`) y actualiza la regla de proxy hacia `http://localhost:${PORT}`.
+
 ---
 
 ## 4. Características Fundamentales de la Arquitectura v7

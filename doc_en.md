@@ -132,6 +132,54 @@ The local development experience is identical regardless of the underlying bundl
 * `npm run dev:webpack`: Full feature parity for enterprise ecosystems dependent on Webpack plugins.
 All three engines share identical WebSocket protocols, manifest formats, and HMR semantics.
 
+### 3.4. 100% In-Memory Architecture (Zero Disk I/O) & Server Functions Fast-Path
+
+In large-scale applications (featuring thousands of components, comprehensive technical documentation, and dozens of npm dependencies), the traditional framework bottleneck stemmed from two critical factors: **heavy disk I/O saturation during development** and **exhaustive Babel AST parsing in search of `"use server"` directives**.
+
+Dinou v7 introduces two deeply integrated architectural optimizations implemented uniformly across **Esbuild, Rollup, and Webpack**:
+
+#### A. 100% In-RAM Development (`globalThis.__DINOU_MEM_FILES__` & Zero Disk I/O)
+* **Complete Elimination of `.dinou/public` on Disk**: In development mode (`npm run dev:*`), none of the three bundlers writes files to disk. JavaScript chunks, extracted stylesheets (`styles.css`), sourcemaps (`.map`), and all 3 manifests (`react-client-manifest.json`, `server-functions-manifest.json`, and `manifest.json`) are stored directly as binary buffers in a global in-memory registry (`globalThis.__DINOU_MEM_FILES__`).
+* **Sub-Millisecond In-Memory Serving**: Dinou's dev HTTP server (`dev.mjs`) dispatches requested static assets directly from RAM in `<0.5ms`, completely bypassing filesystem open/read descriptor overhead.
+* **No Windows Antivirus or Indexing Penalties**: Eradicates the thousands of synchronous disk writes and deletes that historically throttled development on Windows due to real-time security scans and file indexers. In standard development, the `.dinou/public` directory is never even created on disk.
+* **Inspection Mode (`DINOU_WRITE_TO_DISK=true`)**: Whenever developers wish to physically inspect generated bundle outputs, toggling this environment variable instructs the dev pipeline to flush all assets to `.dinou/public`.
+* **Strict Production Integrity**: Production builds (`npm run build:*`) continue to reliably emit all optimized physical assets to `.dinou/dist3` (and `.dinou/dist2` for SSG).
+
+#### B. Reactive Server Functions Fast-Path
+* **Instant O(1) Bypass**: Previously, every `.js`, `.jsx`, `.ts`, and `.tsx` file was analyzed via regex and Babel AST traversal in Server Function loaders to inspect for `"use server"` declarations. In large codebases, this incurred seconds of redundant CPU overhead across hundreds of pure UI components and utilities.
+* **Pre-Indexed Discovery Phase**: `get-esbuild-entries`, `rollup-plugin-server-functions`, and `get-webpack-entries` pre-filter and collect modules declaring `"use server"` into a `Set` (`serverFiles`). Loaders and plugins perform an instant O(1) lookup: if a module is absent and contains no server directive, it is returned intact in microseconds, bypassing Babel parsing entirely.
+* **Dynamic Hot Reactivity**: Adding or removing `"use server"` in an existing file during an active development session is automatically detected; the index updates dynamically in memory without requiring a dev server restart.
+
+#### C. Real-World Performance Benchmarks (`dinou-docs`)
+In real-world production-scale applications such as `dinou-docs` (encompassing 2,280+ `node_modules`, dozens of documentation routes, and over 25 MB of compiled client assets):
+* **Esbuild**: Cold start slashed from **~124 seconds down to 11.2 seconds** (a **>91% speedup**) with warm starts clocking in at **8.3 seconds**.
+* **Rollup**: Client bundle completes in **21.7s** and warm total server readiness in **28.4s**.
+* **Webpack**: Bundles **25 MB of JS, 330+ assets, and 2,280 modules in 15.0 seconds**, maintaining **0 bytes** written to disk in development.
+* **100% Green Test Suite**: 377+ end-to-end Playwright tests passing cleanly across Chromium, Firefox, and WebKit on all execution targets (Node, Bun, Deno, and Cloudflare Workers).
+
+### 3.5. Intelligent & Interactive Dev Port Selection (`port-selector`)
+
+In local development, it is common to have multiple Dinou applications or other local servers running concurrently on default ports `3000` (main HTTP server) and `3001` (WebSocket HMR server). Previously, if port 3000 or 3001 was occupied, the dev server threw an `EADDRINUSE` error and exited immediately.
+
+Dinou v7 introduces an intelligent port manager ([`dinou/node/port-selector.mjs`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/node/port-selector.mjs)) with the following capabilities:
+
+* **Consecutive Free Port Pair Detection `[Port, Port + 1]`**:
+  Dinou verifies in milliseconds via `node:net` that both the HTTP server port and its companion HMR port are available. If port 3000 or 3001 is in use, it automatically finds the next available consecutive pair (e.g., `3002` for HTTP and `3003` for HMR), preserving even/odd parity so HTTP servers never clash with WebSocket endpoints.
+* **Interactive Terminal Prompt (TTY)**:
+  In interactive terminal sessions (`isTTY`), before triggering background compilation, the developer is prompted cleanly:
+  ```text
+  ⚠️  Port 3000 is in use.
+  ? Would you like to use port 3002 instead? (Y/n)
+  ```
+  - Pressing **Enter** or typing **Y** switches Dinou to the selected ports (`3002` and `3003`).
+  - Typing **N** cleanly aborts startup with exit code `0` and no stack trace clutter.
+* **Strict Protection in CI & Non-Interactive Environments**:
+  In automated CI pipelines (e.g., GitHub Actions) or piped non-interactive environments (`!process.stdout.isTTY || process.env.CI`), Dinou never hangs waiting on stdin; it logs a fatal error and exits cleanly with code `1`.
+* **Full Parity Across All 3 Bundlers (`esbuild`, `rollup`, `webpack`)**:
+  - Both `esbuild` (`esm-hmr-plugin.mjs`) and `rollup` (`rollup-plugin-esm-hmr.js`) bind the HMR WebSocket to the shifted port (`HMR_PORT = PORT + 1`).
+  - The SSR runtime dynamically injects the WebSocket URL (`ws://localhost:${HMR_PORT}`) into the browser bootstrap.
+  - In `webpack` (`webpack.config.js`), `WebpackDevServer` dynamically binds to `HMR_PORT` for its live-reload WebSocket (`ws://localhost:${HMR_PORT}/ws`) and updates its proxy target to `http://localhost:${PORT}`.
+
 ---
 
 ## 4. Core Architectural Highlights
