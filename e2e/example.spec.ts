@@ -4285,6 +4285,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
     test("5. Context Preservation (Server Function): getContext() preserves user in Server Function RPC", async ({ page }) => {
       await page.goto("/t-plugin-context", { waitUntil: "commit" });
+      await page.waitForSelector('body[data-hydrated="true"]');
       await expect(page.locator("#plugin-test-page")).toBeVisible();
 
       // Click button to invoke Server Function getPluginUser()

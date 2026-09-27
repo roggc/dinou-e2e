@@ -821,6 +821,67 @@ const serverAssetPlugin = {
   },
 };
 
+function createDevExternalPackagesPlugin(isRsc = true) {
+  return {
+    name: `dinou-dev-external-packages-${isRsc ? "rsc" : "ssr"}`,
+    setup(build) {
+      build.onResolve({ filter: /^[^.\/]|^\.[^.\/]/ }, async (args) => {
+        // 1. Windows or Unix absolute paths
+        if (path.isAbsolute(args.path) || /^[a-zA-Z]:[\\\/]/.test(args.path)) {
+          return null;
+        }
+        // 2. Relative paths or leading slashes
+        if (args.path.startsWith(".") || args.path.startsWith("/") || args.path.startsWith("\\")) {
+          return null;
+        }
+        // 3. Virtual modules
+        if (args.path.startsWith("\0") || args.path.startsWith("virtual:")) {
+          return null;
+        }
+        // 4. Aliases
+        if (args.path.startsWith("@/") || args.path === "@") {
+          return null;
+        }
+        if (args.path === "dinou" || args.path.startsWith("dinou/")) {
+          return null;
+        }
+        // 5. In RSC (ctxA), React packages must remain bundled to preserve react-server condition.
+        // In SSR (ctxB), React packages MUST be external so client components and the renderer share the same React singleton!
+        if (isRsc) {
+          if (
+            args.path === "react" ||
+            args.path.startsWith("react/") ||
+            args.path === "react-dom" ||
+            args.path.startsWith("react-dom/") ||
+            args.path === "react-server-dom-webpack" ||
+            args.path.startsWith("react-server-dom-webpack/") ||
+            args.path === "@roggc/react-server-dom-esm" ||
+            args.path.startsWith("@roggc/react-server-dom-esm/")
+          ) {
+            return null;
+          }
+        }
+        // 6. CSS / Stylesheets (handled by esbuild empty loader)
+        if (/\.(css|scss|sass|less)$/i.test(args.path)) {
+          return null;
+        }
+        // 7. Client components from node_modules:
+        // In RSC (ctxA), client components need to be intercepted by clientReferencesPlugin to create the proxy.
+        if (isRsc) {
+          try {
+            const resolved = require.resolve(args.path, { paths: [args.resolveDir || projectRoot] });
+            if (knownClientFiles && knownClientFiles.has(path.resolve(resolved))) {
+              return null;
+            }
+          } catch (e) {}
+        }
+
+        return { path: args.path, external: true };
+      });
+    },
+  };
+}
+
 const banner = {
   js: `import { createRequire as ___createRequire } from 'node:module';
 import { AsyncLocalStorage as ___AsyncLocalStorage } from 'node:async_hooks';
@@ -867,8 +928,11 @@ const rscOutfile = path.join(devDir, "rsc-engine.mjs");
 const ssrOutfile = path.join(devDir, "ssr-engine.mjs");
 
 const ctxA = await esbuild.context({
-  entryPoints: [path.join(devDir, "rsc-entry.mjs")],
-  outfile: rscOutfile,
+  entryPoints: { "rsc-engine": path.join(devDir, "rsc-entry.mjs") },
+  outdir: devDir,
+  splitting: true,
+  outExtension: { ".js": ".mjs" },
+  chunkNames: "chunks/rsc/[name]-[hash]",
   bundle: true,
   format: "esm",
   target: "node20",
@@ -877,7 +941,7 @@ const ctxA = await esbuild.context({
   conditions: ["node", "worker", "react-server"],
   external: externalList,
   banner,
-  plugins: [clientReferencesPlugin, serverReferencesPlugin, serverAssetPlugin],
+  plugins: [clientReferencesPlugin, serverReferencesPlugin, serverAssetPlugin, createDevExternalPackagesPlugin(true)],
   alias: commonAlias,
   loader: commonLoader,
   jsx: "automatic",
@@ -891,8 +955,11 @@ const ctxA = await esbuild.context({
 });
 
 const ctxB = await esbuild.context({
-  entryPoints: [path.join(devDir, "ssr-entry.mjs")],
-  outfile: ssrOutfile,
+  entryPoints: { "ssr-engine": path.join(devDir, "ssr-entry.mjs") },
+  outdir: devDir,
+  splitting: true,
+  outExtension: { ".js": ".mjs" },
+  chunkNames: "chunks/ssr/[name]-[hash]",
   bundle: true,
   format: "esm",
   target: "node20",
@@ -901,7 +968,7 @@ const ctxB = await esbuild.context({
   conditions: ["node", "worker", "browser"],
   external: externalList,
   banner,
-  plugins: [serverReferencesPluginSsr, serverAssetPlugin],
+  plugins: [serverReferencesPluginSsr, serverAssetPlugin, createDevExternalPackagesPlugin(false)],
   alias: commonAlias,
   loader: commonLoader,
   jsx: "automatic",
