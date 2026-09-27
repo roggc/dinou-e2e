@@ -1139,9 +1139,6 @@ async function doRebuild(filePath = "", eventType = "change") {
     logTimeline(`doRebuild executing for ${baseName}`);
     startSpinner(`Recompiling changes in ${baseName}...`);
 
-    if (clientBundlerHandle?.notifyFileChanged && absFilePath) {
-      clientBundlerHandle.notifyFileChanged(absFilePath);
-    }
     const normLower = absFilePath.toLowerCase();
     const isCssFile = normLower.endsWith(".css") || normLower.endsWith(".scss") || normLower.endsWith(".less");
     let isClientFile = false;
@@ -1160,6 +1157,11 @@ async function doRebuild(filePath = "", eventType = "change") {
 
     const wasServerFile = absFilePath ? knownServerFiles.has(absFilePath) : false;
     const serverDirectiveChanged = isServerFile !== wasServerFile;
+
+    const isClientRelevant = isClientFile || wasClientFile || clientDirectiveChanged || isCssFile;
+    if (clientBundlerHandle?.notifyFileChanged && absFilePath && isClientRelevant) {
+      clientBundlerHandle.notifyFileChanged(absFilePath);
+    }
 
     const needsClientBundlerRestart = clientDirectiveChanged || (isStructureChange && isCssFile);
 
@@ -1210,7 +1212,11 @@ async function doRebuild(filePath = "", eventType = "change") {
         await activeClientBuildPromise;
       }
       if (!isCssFile) {
-        await broadcastToClients({ type: "reload" });
+        if (needsStructureRebuild) {
+          await broadcastToClients({ type: "reload" });
+        } else {
+          await broadcastToClients({ type: "rsc-update", path: absFilePath || filePath });
+        }
       }
     }
   } catch (err) {
