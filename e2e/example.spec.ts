@@ -3135,10 +3135,6 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
   });
 
   test.describe("Staggered Concurrency Stress Test", () => {
-    // Configuración
-    const TOTAL_USERS = 10;
-    const STAGGER_DELAY_MS = 1500; // Un usuario nuevo entra cada 1.5 segundos
-    const RELOADS_PER_USER = 15; // Cada usuario recargará varias veces para mantenerse activo
     const PAGE_URL = "/t-hybrid-staggered";
     const DIST_DIR = path.resolve(process.cwd(), ".dinou/dist2");
     const TRIGGER_FILE = path.join(DIST_DIR, "hybrid-staggered.mode");
@@ -3156,23 +3152,30 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
     test(`Should survive staggered load (ramp-up) while switching modes`, async ({
       browser,
+      browserName,
     }) => {
       if (!isProd || isCloudflare || isDeno) test.skip();
-      // Aumentamos el timeout del test porque este va a durar más
+      // Mantenemos un timeout generoso
       test.setTimeout(340000);
+
+      // Calibración de concurrencia: WebKit en Windows en runners de CI (2 vCPUs) es muy sensible a procesos paralelos
+      const isWebKit = browserName === "webkit";
+      const TOTAL_USERS = isWebKit ? 6 : 8;
+      const RELOADS_PER_USER = isWebKit ? 6 : 8;
+      const STAGGER_DELAY_MS = 1000;
 
       let testsRunning = true; // Bandera para detener el Chaos Monkey cuando acaben los usuarios
 
       // -----------------------------------------------------------------------
-      // 1. EL "CHAOS MONKEY" (Cambia modos en bucle infinito hasta que paremos)
+      // 1. EL "CHAOS MONKEY" (Cambia modos rápidamente para estresar Dinou)
       // -----------------------------------------------------------------------
       const chaosLoop = async () => {
         let mode = "STATIC";
         console.log("🐵 [CHAOS] Monkey started.");
 
         while (testsRunning) {
-          // Esperamos un tiempo aleatorio entre 3 y 6 segundos para no ser predecibles
-          const randomWait = Math.floor(Math.random() * 3000) + 3000;
+          // Cambiamos cada 1.5 a 3s para maximizar transiciones mientras la ola navega
+          const randomWait = Math.floor(Math.random() * 1500) + 1500;
           await new Promise((r) => setTimeout(r, randomWait));
 
           if (!testsRunning) break;
@@ -3185,77 +3188,81 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       };
 
       // -----------------------------------------------------------------------
-      // 2. LA "OLA" DE USUARIOS (Staggered Journey)
+      // 2. PRE-CREAR USUARIOS (Evita lanzar procesos pesados bajo 100% CPU en CI)
       // -----------------------------------------------------------------------
-      const runUserJourney = async (id: any) => {
-        // A. EL DECALAGE (Espera inicial escalonada)
+      console.log(`🚀 [TEST] Initializing ${TOTAL_USERS} isolated browser contexts...`);
+      const users = await Promise.all(
+        Array.from({ length: TOTAL_USERS }).map(async (_, id) => {
+          const context = await browser.newContext();
+          const page = await context.newPage();
+          return { id, context, page };
+        })
+      );
+
+      // -----------------------------------------------------------------------
+      // 3. LA "OLA" DE USUARIOS (Staggered Journey)
+      // -----------------------------------------------------------------------
+      const runUserJourney = async (user: { id: number; context: any; page: any }) => {
+        const { id, page } = user;
         const startDelay = id * STAGGER_DELAY_MS;
         console.log(`👤 [USER ${id}] Waiting ${startDelay}ms to start...`);
         await new Promise((r) => setTimeout(r, startDelay));
 
         console.log(`▶️ [USER ${id}] Entering the site.`);
-        const context = await browser.newContext();
-        const page = await context.newPage();
 
-        // B. MONITORIZACIÓN
+        // Monitorización
         const errors: any = [];
-        page.on("console", (msg) => {
+        page.on("console", (msg: any) => {
           if (msg.type() === "error") errors.push(msg.text());
         });
-        page.on("response", (resp) => {
+        page.on("response", (resp: any) => {
           if (resp.status() >= 500)
             errors.push(`Status ${resp.status()} on ${resp.url()}`);
         });
 
-        // C. BUCLE DE NAVEGACIÓN
+        // BUCLE DE NAVEGACIÓN
         try {
-          // // Desactivar caché es vital para estresar al servidor
-          // const client = await page.context().newCDPSession(page);
-          // await client.send("Network.setCacheDisabled", { cacheDisabled: true });
-
           for (let i = 0; i < RELOADS_PER_USER; i++) {
             await page.goto(PAGE_URL);
 
             // Verificamos que cargó algo coherente
             await expect(page.locator("h1")).toBeVisible({ timeout: 80000 });
 
-            // Pequeña pausa humana entre recargas (0.5s - 1s)
-            await page.waitForTimeout(Math.random() * 500 + 500);
+            // Pausa breve (50-150ms): mantiene presión continua en Dinou sin gastar minutos esperando
+            await page.waitForTimeout(Math.random() * 100 + 50);
           }
           console.log(`🏁 [USER ${id}] Finished journey.`);
         } catch (err) {
           console.error(`❌ [USER ${id}] CRASHED:`, err);
           throw err;
         } finally {
-          // Si hubo errores, los reportamos
           if (errors.length > 0) {
             console.error(`⚠️ [USER ${id}] Encountered errors:`, errors);
           }
-          await context.close();
         }
       };
 
       // -----------------------------------------------------------------------
-      // 3. EJECUCIÓN PARALELA
+      // 4. EJECUCIÓN PARALELA Y LIMPIEZA
       // -----------------------------------------------------------------------
+      try {
+        const chaosPromise = chaosLoop();
 
-      // Lanzamos el Chaos Monkey (no usamos await aquí para que corra en background)
-      const chaosPromise = chaosLoop();
+        console.log("🚀 [TEST] Launching user wave...");
+        const userPromises = users.map((u) => runUserJourney(u));
 
-      // Lanzamos a los usuarios
-      console.log("🚀 [TEST] Launching user wave...");
-      const userPromises = Array.from({ length: TOTAL_USERS }).map((_, i) =>
-        runUserJourney(i),
-      );
+        // Esperamos a que TODOS los usuarios terminen
+        await Promise.all(userPromises);
 
-      // Esperamos a que TODOS los usuarios terminen
-      await Promise.all(userPromises);
+        // Detenemos el caos
+        testsRunning = false;
+        await chaosPromise;
 
-      // Detenemos el caos
-      testsRunning = false;
-      await chaosPromise;
-
-      console.log("✅ [TEST] Staggered test completed successfully.");
+        console.log("✅ [TEST] Staggered test completed successfully.");
+      } finally {
+        testsRunning = false;
+        await Promise.all(users.map((u) => u.context.close().catch(() => {})));
+      }
     });
   });
   test.describe("Concurrency Stress Test - Slow Network (Chrome)", () => {
@@ -3434,29 +3441,39 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       };
 
       // -----------------------------------------------------------------------
-      // 2. LA "OLA" DE USUARIOS (Staggered Journey)
+      // 2. PRE-CREAR USUARIOS
       // -----------------------------------------------------------------------
-      const runUserJourney = async (id: any) => {
-        // A. EL DECALAGE (Espera inicial escalonada)
+      console.log(`🚀 [TEST] Initializing ${TOTAL_USERS} isolated browser contexts...`);
+      const users = await Promise.all(
+        Array.from({ length: TOTAL_USERS }).map(async (_, id) => {
+          const context = await browser.newContext();
+          const page = await context.newPage();
+          return { id, context, page };
+        })
+      );
+
+      // -----------------------------------------------------------------------
+      // 3. LA "OLA" DE USUARIOS (Staggered Journey)
+      // -----------------------------------------------------------------------
+      const runUserJourney = async (user: { id: number; context: any; page: any }) => {
+        const { id, page } = user;
         const startDelay = id * STAGGER_DELAY_MS;
         console.log(`👤 [USER ${id}] Waiting ${startDelay}ms to start...`);
         await new Promise((r) => setTimeout(r, startDelay));
 
         console.log(`▶️ [USER ${id}] Entering the site.`);
-        const context = await browser.newContext();
-        const page = await context.newPage();
 
-        // B. MONITORIZACIÓN
+        // Monitorización
         const errors: any = [];
-        page.on("console", (msg) => {
+        page.on("console", (msg: any) => {
           if (msg.type() === "error") errors.push(msg.text());
         });
-        page.on("response", (resp) => {
+        page.on("response", (resp: any) => {
           if (resp.status() >= 500)
             errors.push(`Status ${resp.status()} on ${resp.url()}`);
         });
 
-        // C. BUCLE DE NAVEGACIÓN
+        // BUCLE DE NAVEGACIÓN
         try {
           // Dentro de runUserJourney, antes del bucle for
           const client = await page.context().newCDPSession(page);
@@ -3467,8 +3484,6 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           });
 
           // 2. 🔥 ACTIVAR RED LENTA (Slow 3G)
-          // Esto hará que la descarga del HTML y RSC tarde mucho más,
-          // manteniendo el archivo 'open' en el servidor durante más tiempo.
           await client.send("Network.emulateNetworkConditions", {
             offline: false,
             latency: 500, // 500ms de latencia
@@ -3482,43 +3497,41 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
             // Verificamos que cargó algo coherente
             await expect(page.locator("h1")).toBeVisible({ timeout: 80000 });
 
-            // Pequeña pausa humana entre recargas (0.5s - 1s)
-            await page.waitForTimeout(Math.random() * 500 + 500);
+            // Pequeña pausa
+            await page.waitForTimeout(Math.random() * 200 + 100);
           }
           console.log(`🏁 [USER ${id}] Finished journey.`);
         } catch (err) {
           console.error(`❌ [USER ${id}] CRASHED:`, err);
           throw err;
         } finally {
-          // Si hubo errores, los reportamos
           if (errors.length > 0) {
             console.error(`⚠️ [USER ${id}] Encountered errors:`, errors);
           }
-          await context.close().catch(() => {});
         }
       };
 
       // -----------------------------------------------------------------------
-      // 3. EJECUCIÓN PARALELA
+      // 4. EJECUCIÓN PARALELA Y LIMPIEZA
       // -----------------------------------------------------------------------
+      try {
+        const chaosPromise = chaosLoop();
 
-      // Lanzamos el Chaos Monkey (no usamos await aquí para que corra en background)
-      const chaosPromise = chaosLoop();
+        console.log("🚀 [TEST] Launching user wave...");
+        const userPromises = users.map((u) => runUserJourney(u));
 
-      // Lanzamos a los usuarios
-      console.log("🚀 [TEST] Launching user wave...");
-      const userPromises = Array.from({ length: TOTAL_USERS }).map((_, i) =>
-        runUserJourney(i),
-      );
+        // Esperamos a que TODOS los usuarios terminen
+        await Promise.all(userPromises);
 
-      // Esperamos a que TODOS los usuarios terminen
-      await Promise.all(userPromises);
+        // Detenemos el caos
+        testsRunning = false;
+        await chaosPromise;
 
-      // Detenemos el caos
-      testsRunning = false;
-      await chaosPromise;
-
-      console.log("✅ [TEST] Staggered test completed successfully.");
+        console.log("✅ [TEST] Staggered test completed successfully.");
+      } finally {
+        testsRunning = false;
+        await Promise.all(users.map((u) => u.context.close().catch(() => {})));
+      }
     });
   });
 
