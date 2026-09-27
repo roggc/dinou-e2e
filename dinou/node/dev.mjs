@@ -648,6 +648,25 @@ function getCachedExports(filePath, code) {
   return entry.exports;
 }
 
+// Transform & File Content Cache for Server Plugins (mtimeMs based)
+const fileTransformCache = new Map();
+
+function getCachedFileTransform(filePath, type, transformFn) {
+  try {
+    const stats = fs.statSync(filePath);
+    const key = `${filePath}::${type}`;
+    const cached = fileTransformCache.get(key);
+    if (cached && cached.mtime === stats.mtimeMs) {
+      return cached.result;
+    }
+    const result = transformFn();
+    fileTransformCache.set(key, { mtime: stats.mtimeMs, result });
+    return result;
+  } catch (e) {
+    return transformFn();
+  }
+}
+
 // Plugins
 const clientReferencesPlugin = {
   name: "dinou-client-references",
@@ -668,28 +687,30 @@ const clientReferencesPlugin = {
       const normalizedPath = args.path.replace(/\\/g, "/");
       if (normalizedPath.includes("dinou/core/navigation")) return null;
 
-      let code;
-      try { code = fs.readFileSync(args.path, "utf8"); } catch (e) { return null; }
-      if (!isSupportedClientModule(args.path, code)) return null;
-      if (!useClientRegex.test(code.trim())) return null;
+      return getCachedFileTransform(args.path, "client-proxy", () => {
+        let code;
+        try { code = fs.readFileSync(args.path, "utf8"); } catch (e) { return null; }
+        if (!isSupportedClientModule(args.path, code)) return null;
+        if (!useClientRegex.test(code.trim())) return null;
 
-      const exports = getCachedExports(args.path, code);
-      const absPath = path.resolve(args.path);
-      const fileUrl = pathToFileURL(absPath).href;
+        const exports = getCachedExports(args.path, code);
+        const absPath = path.resolve(args.path);
+        const fileUrl = pathToFileURL(absPath).href;
 
-      let proxyCode = `import { createClientModuleProxy } from "react-server-dom-webpack/server.edge";\n`;
-      proxyCode += `const proxy = createClientModuleProxy(${JSON.stringify(fileUrl)});\n`;
-      for (const name of exports) {
-        if (name === "default") {
-          proxyCode += `export default proxy.default;\n`;
-        } else {
-          proxyCode += `export const ${name} = proxy[${JSON.stringify(name)}];\n`;
+        let proxyCode = `import { createClientModuleProxy } from "react-server-dom-webpack/server.edge";\n`;
+        proxyCode += `const proxy = createClientModuleProxy(${JSON.stringify(fileUrl)});\n`;
+        for (const name of exports) {
+          if (name === "default") {
+            proxyCode += `export default proxy.default;\n`;
+          } else {
+            proxyCode += `export const ${name} = proxy[${JSON.stringify(name)}];\n`;
+          }
         }
-      }
-      if (!exports.includes("default")) {
-        proxyCode += `export default proxy.default;\n`;
-      }
-      return { contents: proxyCode, loader: "js" };
+        if (!exports.includes("default")) {
+          proxyCode += `export default proxy.default;\n`;
+        }
+        return { contents: proxyCode, loader: "js" };
+      });
     });
   },
 };
@@ -699,24 +720,27 @@ const serverReferencesPlugin = {
   setup(build) {
     build.onLoad({ filter: /\.[jt]sx?$/ }, async (args) => {
       if (args.path.includes("node_modules")) return null;
-      let code;
-      try { code = fs.readFileSync(args.path, "utf8"); } catch (e) { return null; }
-      if (!useServerRegex.test(code.trim())) return null;
 
-      const exports = getCachedExports(args.path, code);
-      const absPath = path.resolve(args.path);
-      const relPath = path.relative(projectRoot, absPath).replace(/\\/g, "/");
-      const relativeFileUrl = "file:///" + relPath;
+      return getCachedFileTransform(args.path, "server-ref-rsc", () => {
+        let code;
+        try { code = fs.readFileSync(args.path, "utf8"); } catch (e) { return null; }
+        if (!useServerRegex.test(code.trim())) return null;
 
-      let transformed = code + "\n\n";
-      transformed += `import { registerServerReference } from "react-server-dom-webpack/server.edge";\n`;
-      for (const name of exports) {
-        if (name !== "default") {
-          transformed += `registerServerReference(${name}, ${JSON.stringify(relativeFileUrl)}, ${JSON.stringify(name)});\n`;
+        const exports = getCachedExports(args.path, code);
+        const absPath = path.resolve(args.path);
+        const relPath = path.relative(projectRoot, absPath).replace(/\\/g, "/");
+        const relativeFileUrl = "file:///" + relPath;
+
+        let transformed = code + "\n\n";
+        transformed += `import { registerServerReference } from "react-server-dom-webpack/server.edge";\n`;
+        for (const name of exports) {
+          if (name !== "default") {
+            transformed += `registerServerReference(${name}, ${JSON.stringify(relativeFileUrl)}, ${JSON.stringify(name)});\n`;
+          }
         }
-      }
-      const ext = path.extname(args.path);
-      return { contents: transformed, loader: ext === ".ts" ? "ts" : ext === ".tsx" ? "tsx" : ext === ".jsx" ? "jsx" : "js" };
+        const ext = path.extname(args.path);
+        return { contents: transformed, loader: ext === ".ts" ? "ts" : ext === ".tsx" ? "tsx" : ext === ".jsx" ? "jsx" : "js" };
+      });
     });
   },
 };
@@ -726,25 +750,28 @@ const serverReferencesPluginSsr = {
   setup(build) {
     build.onLoad({ filter: /\.[jt]sx?$/ }, async (args) => {
       if (args.path.includes("node_modules")) return null;
-      let code;
-      try { code = fs.readFileSync(args.path, "utf8"); } catch (e) { return null; }
-      if (!useServerRegex.test(code.trim())) return null;
 
-      const exports = getCachedExports(args.path, code);
-      const absPath = path.resolve(args.path);
-      const relPath = path.relative(projectRoot, absPath).replace(/\\/g, "/");
-      const relativeFileUrl = "file:///" + relPath;
+      return getCachedFileTransform(args.path, "server-ref-ssr", () => {
+        let code;
+        try { code = fs.readFileSync(args.path, "utf8"); } catch (e) { return null; }
+        if (!useServerRegex.test(code.trim())) return null;
 
-      let transformed = code + "\n\n";
-      transformed += `import { registerServerReference } from "react-server-dom-webpack/client.edge";\n`;
-      for (const name of exports) {
-        if (name !== "default") {
-          transformed += `registerServerReference(${name}, ${JSON.stringify(relativeFileUrl + "#" + name)});\n`;
-          transformed += `registerServerReference(${name}, ${JSON.stringify(pathToFileURL(absPath).href + "#" + name)});\n`;
+        const exports = getCachedExports(args.path, code);
+        const absPath = path.resolve(args.path);
+        const relPath = path.relative(projectRoot, absPath).replace(/\\/g, "/");
+        const relativeFileUrl = "file:///" + relPath;
+
+        let transformed = code + "\n\n";
+        transformed += `import { registerServerReference } from "react-server-dom-webpack/client.edge";\n`;
+        for (const name of exports) {
+          if (name !== "default") {
+            transformed += `registerServerReference(${name}, ${JSON.stringify(relativeFileUrl + "#" + name)});\n`;
+            transformed += `registerServerReference(${name}, ${JSON.stringify(pathToFileURL(absPath).href + "#" + name)});\n`;
+          }
         }
-      }
-      const ext = path.extname(args.path);
-      return { contents: transformed, loader: ext === ".ts" ? "ts" : ext === ".tsx" ? "tsx" : ext === ".jsx" ? "jsx" : "js" };
+        const ext = path.extname(args.path);
+        return { contents: transformed, loader: ext === ".ts" ? "ts" : ext === ".tsx" ? "tsx" : ext === ".jsx" ? "jsx" : "js" };
+      });
     });
   },
 };
@@ -821,6 +848,8 @@ const serverAssetPlugin = {
   },
 };
 
+const resolvePkgCache = new Map();
+
 function createDevExternalPackagesPlugin(isRsc = true) {
   return {
     name: `dinou-dev-external-packages-${isRsc ? "rsc" : "ssr"}`,
@@ -869,8 +898,17 @@ function createDevExternalPackagesPlugin(isRsc = true) {
         // In RSC (ctxA), client components need to be intercepted by clientReferencesPlugin to create the proxy.
         if (isRsc) {
           try {
-            const resolved = require.resolve(args.path, { paths: [args.resolveDir || projectRoot] });
-            if (knownClientFiles && knownClientFiles.has(path.resolve(resolved))) {
+            const cacheKey = `${args.path}::${args.resolveDir || projectRoot}`;
+            let resolved = resolvePkgCache.get(cacheKey);
+            if (resolved === undefined) {
+              try {
+                resolved = require.resolve(args.path, { paths: [args.resolveDir || projectRoot] });
+              } catch (e) {
+                resolved = null;
+              }
+              resolvePkgCache.set(cacheKey, resolved);
+            }
+            if (resolved && knownClientFiles && knownClientFiles.has(path.resolve(resolved))) {
               return null;
             }
           } catch (e) {}
@@ -1216,8 +1254,8 @@ const srcWatcher = chokidar.watch(srcDir, {
   ignoreInitial: true,
   ignored: [/node_modules/, /\.git/],
   awaitWriteFinish: {
-    stabilityThreshold: 60,
-    pollInterval: 20,
+    stabilityThreshold: 20,
+    pollInterval: 10,
   },
 });
 
@@ -1234,7 +1272,7 @@ srcWatcher.on("all", (event, fullPath) => {
     srcDebounce = null;
     logTimeline(`Debounce timer fired, triggering rebuild...`);
     triggerRebuild(pendingSrcPath, pendingSrcEvent);
-  }, 40);
+  }, 15);
 });
 
 // Watch manifest folder for client bundler output
