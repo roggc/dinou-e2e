@@ -17,6 +17,16 @@ const C_GREEN = "\x1b[32m";
 const C_YELLOW = "\x1b[33m";
 const C_MAGENTA = "\x1b[35m";
 
+export function getTerminalCols() {
+  if (process.stdout.isTTY && typeof process.stdout.getWindowSize === "function") {
+    try {
+      const [w] = process.stdout.getWindowSize();
+      if (w > 0) return w;
+    } catch (e) {}
+  }
+  return process.stdout.columns || 80;
+}
+
 let active = false;
 let frameIdx = 0;
 let currentText = "";
@@ -57,14 +67,14 @@ function hookStreams() {
 
 function render() {
   if (!active || !isTTY) return;
-  const cols = process.stdout.columns || 80;
-  const maxTextLen = Math.max(20, cols - 8);
+  const cols = getTerminalCols();
+  const maxTextLen = Math.max(20, Math.min(cols - 8, 60));
   let text = currentText;
   if (text.length > maxTextLen) {
-    text = text.slice(0, maxTextLen - 3) + "...";
+    text = text.slice(0, Math.max(1, maxTextLen - 3)) + "...";
   }
   const frame = FRAMES[frameIdx];
-  const line = `\r\x1b[2K  ${C_CYAN}${C_BOLD}${frame}${C_RESET} ${text}`;
+  const line = `\r\x1b[2K  ${C_CYAN}${C_BOLD}${frame}${C_RESET} ${text}\x1b[K`;
   originalStdoutWrite(line);
 }
 
@@ -109,9 +119,11 @@ let isBuildActive = false;
 
 function renderBuildProgress() {
   if (!isBuildActive || !isTTY) return;
-  const cols = (process.stdout.columns && process.stdout.columns > 10) ? process.stdout.columns : 80;
-  // Reserve 4 visual columns for "  " + frame + " " and 3 columns safety margin at the right to prevent auto-wrap
-  const maxLineLen = Math.max(20, cols - 3);
+  const cols = getTerminalCols();
+  // Strictly cap at 60 columns maximum (or cols - 4, whichever is smaller).
+  // This guarantees the progress line NEVER wraps in any standard terminal (>= 60 cols),
+  // even if the user resizes a wide terminal narrower during build!
+  const maxLineLen = Math.max(20, Math.min(cols - 4, 60));
   const maxTextLen = maxLineLen - 4;
 
   let safeText = currentBuildText;
