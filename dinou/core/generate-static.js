@@ -14,7 +14,12 @@ async function generateStatic() {
     rmSync(distFolder2, { recursive: true, force: true });
   }
 
+  const { startSpinner, updateSpinner, stopSpinner, isTTY } = await import("../node/terminal-status.mjs");
+
   // 1. Compile or ensure Dual-Bundle engines (Pass A & Pass B)
+  if (isTTY) {
+    startSpinner("[SSG] Compiling Dual-Engine for static generation...");
+  }
   const { bundleDualEngine } = await import("../node/bundle-dual-engine.mjs");
   const { rscEnginePath, ssrEnginePath } = await bundleDualEngine({
     isDev: false,
@@ -30,14 +35,25 @@ async function generateStatic() {
   const ssrModule = await import(pathToFileURL(ssrEnginePath).href);
 
   // 4. Discover static routes
+  if (isTTY) {
+    updateSpinner("[SSG] Discovering static routes...");
+  }
   await rscModule.buildStaticPages();
   const routes = rscModule.getStaticPaths();
-  console.log(`⚡ [SSG] Pre-rendering ${routes.length} static route(s) with in-memory Dual-Engine...`);
+
+  if (!isTTY) {
+    console.log(`⚡ [SSG] Pre-rendering ${routes.length} static route(s) with in-memory Dual-Engine...`);
+  }
 
   // 5. Pre-render all routes using identical Dual-Bundle ISG engine
   let renderedCount = 0;
+  let currentIndex = 0;
   for (const route of routes) {
+    currentIndex++;
     const reqPath = route.startsWith("/") ? route : "/" + route;
+    if (isTTY) {
+      updateSpinner(`[SSG] (${currentIndex}/${routes.length}) Pre-rendering: ${reqPath}`);
+    }
     try {
       const webReq = new Request(`http://localhost${reqPath}`);
       const res = await rscModule.handleRequest(webReq, {
@@ -57,6 +73,9 @@ async function generateStatic() {
     }
   }
 
+  if (isTTY) {
+    stopSpinner();
+  }
   console.log(`✓ [SSG] Pre-rendered ${renderedCount} static route(s) and RSC payload(s) to .dinou/dist2`);
 }
 

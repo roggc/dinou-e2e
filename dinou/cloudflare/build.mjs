@@ -9,6 +9,7 @@ import path from "node:path";
 import esbuild from "esbuild";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { startSpinner, updateSpinner, stopSpinner, isTTY } from "../node/terminal-status.mjs";
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -75,7 +76,11 @@ if (fs.existsSync(dist2Dir)) {
   const copiedCount = copyRecursive(dist2Dir, dist3Dir);
   console.log(`  📄 Synchronized ${copiedCount} pre-rendered static route(s) to .dinou/dist3`);
 }
-console.log("  ⚡ Generating route modules & manifests...");
+if (isTTY) {
+  startSpinner("Generating route modules & manifests...");
+} else {
+  console.log("  ⚡ Generating route modules & manifests...");
+}
 const routeModulesCode = generateRouteModulesCode(projectRoot, "../..");
 const routeModulesPath = path.join(cloudflareDir, "route-modules.js");
 fs.writeFileSync(routeModulesPath, routeModulesCode, "utf8");
@@ -977,7 +982,11 @@ const finalOutfile = path.join(cloudflareDir, "worker.js");
 
 try {
   // Pass A: RSC Engine
-  console.log("  ⚡ Bundling Pass A (RSC workerd) & Pass B (SSR workerd)...");
+  if (isTTY) {
+    updateSpinner("Bundling Pass A (RSC workerd) & Pass B (SSR workerd)...");
+  } else {
+    console.log("  ⚡ Bundling Pass A (RSC workerd) & Pass B (SSR workerd)...");
+  }
   await esbuild.build({
     entryPoints: [rscEntryPath],
     outfile: rscOutfile,
@@ -1024,7 +1033,11 @@ try {
   });
 
   // Pass C: Final Worker Orchestrator
-  console.log("  🚀 Bundling Pass C: Cloudflare Worker Orchestrator (.dinou/cloudflare/worker.js)...");
+  if (isTTY) {
+    updateSpinner("Bundling Pass C: Cloudflare Worker Orchestrator (.dinou/cloudflare/worker.js)...");
+  } else {
+    console.log("  🚀 Bundling Pass C: Cloudflare Worker Orchestrator (.dinou/cloudflare/worker.js)...");
+  }
   await esbuild.build({
     entryPoints: [workerEntryPath],
     outfile: finalOutfile,
@@ -1046,6 +1059,9 @@ try {
     logLevel: "warning",
   });
 
+  if (isTTY) {
+    stopSpinner();
+  }
   const relOutfile = path.relative(projectRoot, finalOutfile).replace(/\\/g, "/");
   console.log(`\n✓ Cloudflare Workers build complete!`);
   console.log(`  Output: ${relOutfile}`);

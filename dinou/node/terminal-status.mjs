@@ -2,7 +2,7 @@
 // Lightweight terminal status & animated spinner for Dinou Development Server.
 // Zero external dependencies. Fully TTY-aware and safe for CI/Playwright.
 
-const isTTY = Boolean(
+export const isTTY = Boolean(
   process.stdout.isTTY && !process.env.CI && process.env.TERM !== "dumb"
 );
 
@@ -55,8 +55,14 @@ function hookStreams() {
 
 function render() {
   if (!active || !isTTY) return;
+  const cols = process.stdout.columns || 80;
+  const maxTextLen = Math.max(20, cols - 8);
+  let text = currentText;
+  if (text.length > maxTextLen) {
+    text = text.slice(0, maxTextLen - 3) + "...";
+  }
   const frame = FRAMES[frameIdx];
-  const line = `\r\x1b[2K  ${C_CYAN}${C_BOLD}${frame}${C_RESET} ${currentText}`;
+  const line = `\r\x1b[2K  ${C_CYAN}${C_BOLD}${frame}${C_RESET} ${text}`;
   originalStdoutWrite(line);
 }
 
