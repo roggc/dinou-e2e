@@ -1,8 +1,8 @@
-// dinou.config.js
+// dinou.config.mjs
 // Configuration and Plugins for Dinou v7
-const { defineConfig } = require("dinou");
+import { defineConfig } from "dinou/config";
 
-const config = defineConfig({
+export default defineConfig({
   plugins: [
     {
       name: "e2e-auth-and-webhook-plugin",
@@ -54,6 +54,3 @@ const config = defineConfig({
     },
   ],
 });
-
-module.exports = config;
-module.exports.default = config;

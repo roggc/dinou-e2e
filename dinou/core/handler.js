@@ -52,17 +52,21 @@ async function getDinouConfig() {
       if (existsSync(p)) {
         try {
           let loaded;
-          const nodeReq = (typeof globalThis !== "undefined" && typeof globalThis.__dinou_require__ === "function")
-            ? globalThis.__dinou_require__
-            : (typeof require === "function" ? require : null);
-          if (nodeReq) {
-            try {
-              loaded = nodeReq(p);
-            } catch (e) {
+          if (p.endsWith(".mjs")) {
+            loaded = await import(pathToFileURL(p).href + (isDevelopment ? `?t=${Date.now()}` : ""));
+          } else {
+            const nodeReq = (typeof globalThis !== "undefined" && typeof globalThis.__dinou_require__ === "function")
+              ? globalThis.__dinou_require__
+              : (typeof require === "function" ? require : null);
+            if (nodeReq) {
+              try {
+                loaded = nodeReq(p);
+              } catch (e) {
+                loaded = await import(pathToFileURL(p).href + (isDevelopment ? `?t=${Date.now()}` : ""));
+              }
+            } else {
               loaded = await import(pathToFileURL(p).href + (isDevelopment ? `?t=${Date.now()}` : ""));
             }
-          } else {
-            loaded = await import(pathToFileURL(p).href + (isDevelopment ? `?t=${Date.now()}` : ""));
           }
           const cfg = (loaded && loaded.default) ? loaded.default : (loaded || { plugins: [] });
           if (cfg && cfg.storage) {
@@ -81,22 +85,27 @@ async function getDinouConfig() {
 }
 
 // Initial sync load attempt for immediate storage adapter setup
-const dinouConfigPath = typeof process !== "undefined" && typeof process.cwd === "function"
-  ? path.resolve(process.cwd(), "dinou.config.js")
-  : null;
-if (dinouConfigPath && existsSync(dinouConfigPath)) {
-  try {
-    const nodeReqSync = (typeof globalThis !== "undefined" && typeof globalThis.__dinou_require__ === "function")
-      ? globalThis.__dinou_require__
-      : (typeof require === "function" ? require : null);
-    if (nodeReqSync) {
-      const loaded = nodeReqSync(dinouConfigPath);
-      dinouConfig = (loaded && loaded.default) ? loaded.default : (loaded || { plugins: [] });
-      if (dinouConfig && dinouConfig.storage) {
-        setStorageAdapter(dinouConfig.storage);
-      }
+const cwdSync = typeof process !== "undefined" && typeof process.cwd === "function" ? process.cwd() : null;
+if (cwdSync) {
+  for (const filename of ["dinou.config.cjs", "dinou.config.js"]) {
+    const syncPath = path.resolve(cwdSync, filename);
+    if (existsSync(syncPath)) {
+      try {
+        const nodeReqSync = (typeof globalThis !== "undefined" && typeof globalThis.__dinou_require__ === "function")
+          ? globalThis.__dinou_require__
+          : (typeof require === "function" ? require : null);
+        if (nodeReqSync) {
+          const loaded = nodeReqSync(syncPath);
+          const cfg = (loaded && loaded.default) ? loaded.default : (loaded || { plugins: [] });
+          if (cfg && cfg.storage) {
+            setStorageAdapter(cfg.storage);
+          }
+          dinouConfig = cfg;
+        }
+      } catch (err) {}
+      break;
     }
-  } catch (err) {}
+  }
 }
 
 function copyCustomContextProperties(source, target) {
