@@ -52,9 +52,16 @@ async function getDinouConfig() {
       if (existsSync(p)) {
         try {
           let loaded;
-          try {
-            loaded = require(p);
-          } catch (e) {
+          const nodeReq = (typeof globalThis !== "undefined" && typeof globalThis.__dinou_require__ === "function")
+            ? globalThis.__dinou_require__
+            : (typeof require === "function" ? require : null);
+          if (nodeReq) {
+            try {
+              loaded = nodeReq(p);
+            } catch (e) {
+              loaded = await import(pathToFileURL(p).href + (isDevelopment ? `?t=${Date.now()}` : ""));
+            }
+          } else {
             loaded = await import(pathToFileURL(p).href + (isDevelopment ? `?t=${Date.now()}` : ""));
           }
           const cfg = (loaded && loaded.default) ? loaded.default : (loaded || { plugins: [] });
@@ -79,10 +86,15 @@ const dinouConfigPath = typeof process !== "undefined" && typeof process.cwd ===
   : null;
 if (dinouConfigPath && existsSync(dinouConfigPath)) {
   try {
-    const loaded = require(dinouConfigPath);
-    dinouConfig = (loaded && loaded.default) ? loaded.default : (loaded || { plugins: [] });
-    if (dinouConfig && dinouConfig.storage) {
-      setStorageAdapter(dinouConfig.storage);
+    const nodeReqSync = (typeof globalThis !== "undefined" && typeof globalThis.__dinou_require__ === "function")
+      ? globalThis.__dinou_require__
+      : (typeof require === "function" ? require : null);
+    if (nodeReqSync) {
+      const loaded = nodeReqSync(dinouConfigPath);
+      dinouConfig = (loaded && loaded.default) ? loaded.default : (loaded || { plugins: [] });
+      if (dinouConfig && dinouConfig.storage) {
+        setStorageAdapter(dinouConfig.storage);
+      }
     }
   } catch (err) {}
 }
