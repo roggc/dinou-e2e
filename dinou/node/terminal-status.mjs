@@ -103,28 +103,77 @@ export function stopSpinner() {
 }
 
 let buildFrameIdx = 0;
+let buildTimer = null;
+let currentBuildText = "";
+let isBuildActive = false;
 
-export function updateBuildProgress(text) {
-  if (!isTTY) return;
-  const cols = process.stdout.columns || 80;
-  const maxLen = Math.min(cols, 72) - 8;
-  let safeText = text;
-  if (safeText.length > maxLen) {
-    safeText = safeText.slice(0, maxLen - 3) + "...";
+function renderBuildProgress() {
+  if (!isBuildActive || !isTTY) return;
+  const cols = (process.stdout.columns && process.stdout.columns > 10) ? process.stdout.columns : 80;
+  // Reserve 4 visual columns for "  " + frame + " " and 3 columns safety margin at the right to prevent auto-wrap
+  const maxLineLen = Math.max(20, cols - 3);
+  const maxTextLen = maxLineLen - 4;
+
+  let safeText = currentBuildText;
+  if (safeText.length > maxTextLen) {
+    safeText = safeText.slice(0, Math.max(1, maxTextLen - 3)) + "...";
   }
+
   const frame = FRAMES[buildFrameIdx];
   buildFrameIdx = (buildFrameIdx + 1) % FRAMES.length;
 
-  readline.cursorTo(process.stdout, 0);
-  readline.clearLine(process.stdout, 0);
-  process.stdout.write(`  ${C_CYAN}${C_BOLD}${frame}${C_RESET} ${safeText}`);
+  // \r (carriage return) + \x1b[2K (clear line) + text + \x1b[K (clear trailing)
+  process.stdout.write(`\r\x1b[2K  ${C_CYAN}${C_BOLD}${frame}${C_RESET} ${safeText}\x1b[K`);
+}
+
+export function updateBuildProgress(text) {
+  if (!isTTY) return;
+  currentBuildText = text;
+  if (!isBuildActive) {
+    isBuildActive = true;
+    buildFrameIdx = 0;
+    // Hide cursor for smooth, flicker-free rendering
+    process.stdout.write("\x1b[?25l");
+    renderBuildProgress();
+    if (!buildTimer) {
+      buildTimer = setInterval(renderBuildProgress, 80);
+      if (buildTimer.unref) buildTimer.unref();
+    }
+  } else {
+    // Re-render immediately so text changes appear instantly without waiting 80ms
+    renderBuildProgress();
+  }
 }
 
 export function clearBuildProgress() {
   if (!isTTY) return;
-  readline.cursorTo(process.stdout, 0);
-  readline.clearLine(process.stdout, 0);
+  isBuildActive = false;
+  if (buildTimer) {
+    clearInterval(buildTimer);
+    buildTimer = null;
+  }
+  // Clear the line and restore cursor visibility
+  process.stdout.write("\r\x1b[2K\x1b[?25h");
 }
+
+// Handle terminal resize dynamically so the line is cleanly adapted to the new width
+if (typeof process.stdout.on === "function") {
+  process.stdout.on("resize", () => {
+    if (isBuildActive && isTTY) {
+      process.stdout.write("\r\x1b[2K");
+      renderBuildProgress();
+    }
+  });
+}
+
+// Ensure cursor is always restored on process exit
+process.on("exit", () => {
+  if (isTTY) {
+    try {
+      process.stdout.write("\x1b[?25h");
+    } catch (e) {}
+  }
+});
 
 export function logSuccess(text) {
   stopSpinner();
