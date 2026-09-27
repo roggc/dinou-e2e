@@ -140,9 +140,24 @@ function smartTruncate(text, maxLen) {
   return text.slice(0, Math.max(1, maxLen - 3)) + "...";
 }
 
+let lastBuildLineLen = 0;
+let lastBuildCols = 0;
+
 function renderBuildProgress() {
   if (!isBuildActive || !isTTY) return;
   const cols = getTerminalCols();
+
+  // If terminal narrowed since last render, the previous line reflowed across multiple physical rows.
+  // Move up linesOccupied - 1 rows and clear each one to stay on a single line!
+  if (lastBuildLineLen > 0 && lastBuildCols > cols) {
+    const linesOccupied = Math.ceil(lastBuildLineLen / Math.max(1, cols));
+    if (linesOccupied > 1) {
+      for (let i = 0; i < linesOccupied - 1; i++) {
+        process.stdout.write("\x1b[1A\r\x1b[2K");
+      }
+    }
+  }
+
   // Dynamically adapt to full terminal width with a 4-column margin against auto-wrap
   const maxLineLen = Math.max(20, cols - 4);
   const maxTextLen = maxLineLen - 4;
@@ -151,6 +166,9 @@ function renderBuildProgress() {
 
   const frame = FRAMES[buildFrameIdx];
   buildFrameIdx = (buildFrameIdx + 1) % FRAMES.length;
+
+  lastBuildLineLen = safeText.length + 4;
+  lastBuildCols = cols;
 
   // \r (carriage return) + \x1b[2K (clear line) + text + \x1b[K (clear trailing)
   process.stdout.write(`\r\x1b[2K  ${C_CYAN}${C_BOLD}${frame}${C_RESET} ${safeText}\x1b[K`);
@@ -162,6 +180,8 @@ export function updateBuildProgress(text) {
   if (!isBuildActive) {
     isBuildActive = true;
     buildFrameIdx = 0;
+    lastBuildLineLen = 0;
+    lastBuildCols = 0;
     // Hide cursor for smooth, flicker-free rendering
     process.stdout.write("\x1b[?25l");
     renderBuildProgress();
@@ -178,6 +198,8 @@ export function updateBuildProgress(text) {
 export function clearBuildProgress() {
   if (!isTTY) return;
   isBuildActive = false;
+  lastBuildLineLen = 0;
+  lastBuildCols = 0;
   if (buildTimer) {
     clearInterval(buildTimer);
     buildTimer = null;
@@ -190,7 +212,6 @@ export function clearBuildProgress() {
 if (typeof process.stdout.on === "function") {
   process.stdout.on("resize", () => {
     if (isBuildActive && isTTY) {
-      process.stdout.write("\r\x1b[2K");
       renderBuildProgress();
     }
   });
