@@ -15,7 +15,7 @@ fs.mkdirSync(nodeDir, { recursive: true });
 
 try {
   const bundlerName = process.env.DINOU_BUILD_TOOL || "esbuild";
-  console.log(`\n▲ Dinou v7 (Node.js • ${bundlerName})`);
+  console.log(`\n🦖 Dinou v7 (Node.js • ${bundlerName})`);
   console.log(`  ⚡ Compiling Pass A (RSC) and Pass B (SSR) via Dual-Engine...`);
   const engineResult = await bundleDualEngine({
     isDev: false,
