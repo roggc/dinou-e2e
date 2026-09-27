@@ -38,7 +38,14 @@ async function generateStatic() {
   if (isTTY) {
     updateSpinner("[SSG] Discovering static routes...");
   }
-  await rscModule.buildStaticPages();
+  await rscModule.buildStaticPages((info) => {
+    if (!isTTY) return;
+    if (info.phase === "discovering") {
+      updateSpinner(`[SSG] (${info.current}/${info.total}) Discovering: ${info.route}`);
+    } else if (info.phase === "crawling") {
+      updateSpinner(`[SSG] Crawling: ${info.route}`);
+    }
+  });
   const routes = rscModule.getStaticPaths();
 
   if (!isTTY) {

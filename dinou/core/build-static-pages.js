@@ -31,7 +31,7 @@ const { createBailoutProxy } = require("./bailout-proxy.js");
  * mock-renders them inside a server context, and serializes successful static renders
  * into RSC JSON payloads.
  */
-async function buildStaticPages() {
+async function buildStaticPages(onProgress = null) {
   const srcFolder = path.resolve(process.cwd(), "src");
 
   /**
@@ -681,8 +681,12 @@ async function buildStaticPages() {
         segments,
         params: dParams,
       });
+      const routeName = segments.join("/") ? "/" + segments.join("/") : "/";
+      if (typeof onProgress === "function") {
+        onProgress({ phase: "crawling", route: routeName, count: pages.length });
+      }
       if (process.env.DINOU_DEBUG) {
-        console.log(`Found static route: ${segments.join("/") || "/"}`);
+        console.log(`Found static route: ${routeName}`);
       }
     }
 
@@ -692,9 +696,14 @@ async function buildStaticPages() {
   // Crawl complete, start rendering and serialization loop for all discovered static pages
   const pages = await collectPages(srcFolder);
 
+  let pageIdx = 0;
   for (const { path: folderPath, segments, params } of pages) {
+    pageIdx++;
     try {
       const reqPath = segments.length ? "/" + segments.join("/") + "/" : "/";
+      if (typeof onProgress === "function") {
+        onProgress({ phase: "discovering", route: reqPath, current: pageIdx, total: pages.length });
+      }
       // ====================================================================
       // 1. MOCK RES: Fulfilling ResponseProxy interface
       // ====================================================================

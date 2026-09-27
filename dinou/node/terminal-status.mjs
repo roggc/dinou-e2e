@@ -90,14 +90,14 @@ export function updateSpinner(text) {
 }
 
 export function stopSpinner() {
+  active = false;
   if (timer) {
     clearInterval(timer);
     timer = null;
   }
-  if (active && isTTY) {
-    originalStdoutWrite("\r\x1b[2K");
+  if (isTTY) {
+    originalStdoutWrite("\r\x1b[2K\r");
   }
-  active = false;
 }
 
 export function logSuccess(text) {
