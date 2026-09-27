@@ -1,7 +1,7 @@
 // plugins-esbuild/esm-hmr-plugin.mjs
 import fs from "node:fs/promises";
 import path from "node:path";
-import { transformSync } from "@swc/core";
+import { transform } from "@swc/core";
 import { createServer } from "node:http";
 import { EsmHmrEngine } from "./esm-hmr/server.js";
 import { fileURLToPath } from "node:url";
@@ -126,7 +126,7 @@ export default function esmHmrPlugin({
             // HERE we DO apply SWC transformation to enable React Fast Refresh
             const source = await fs.readFile(args.path, "utf8");
             const tSwc0 = Date.now();
-            const { code } = transformSync(source, {
+            const { code } = await transform(source, {
               filename: abs,
               jsc: {
                 parser: {

@@ -80,7 +80,10 @@ const { regex: assetRegex } = require(path.join(dinouDir, "core/asset-extensions
 const {
   isSupportedClientModule,
   scanProjectDependenciesForClientComponents,
+  scanProjectDependenciesForClientComponentsAsync,
 } = require(path.join(dinouDir, "core/scan-dependency-components.js"));
+
+const yieldToEventLoop = () => new Promise((resolve) => setImmediate(resolve));
 
 // Initialize Dinou Storage
 try {
@@ -118,15 +121,15 @@ function generateAllUrlVariants(absPath) {
 const srcDir = path.resolve(projectRoot, "src");
 
 
-function findClientComponents(parsedClientManifest = {}) {
+async function findClientComponents(parsedClientManifest = {}) {
   const clientFiles = new Set();
-  function walk(dir) {
+  async function walk(dir) {
     if (!fs.existsSync(dir)) return;
     const entries = fs.readdirSync(dir, { withFileTypes: true });
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        walk(full);
+        await walk(full);
       } else if (/\.[jt]sx?$/.test(entry.name)) {
         try {
           const content = fs.readFileSync(full, "utf8");
@@ -136,14 +139,20 @@ function findClientComponents(parsedClientManifest = {}) {
         } catch (e) {}
       }
     }
+    await yieldToEventLoop();
   }
-  walk(srcDir);
+  await walk(srcDir);
 
   for (const f of [...candidateLinkPaths, ...candidateRedirectPaths]) {
     if (fs.existsSync(f)) clientFiles.add(path.resolve(f));
   }
 
-  scanProjectDependenciesForClientComponents(projectRoot, clientFiles, useClientRegex);
+  if (typeof scanProjectDependenciesForClientComponentsAsync === "function") {
+    await scanProjectDependenciesForClientComponentsAsync(projectRoot, clientFiles, useClientRegex);
+  } else {
+    scanProjectDependenciesForClientComponents(projectRoot, clientFiles, useClientRegex);
+  }
+  await yieldToEventLoop();
 
   for (const k of Object.keys(parsedClientManifest)) {
     const fileUrl = k.split("#")[0];
@@ -205,7 +214,7 @@ let clientComponents = [];
 const knownClientFiles = new Set();
 const knownServerFiles = new Set();
 
-function updateManifestsState() {
+async function updateManifestsState() {
   const cPath = findManifest("react-client-manifest.json", "react_client_manifest");
   const sfPath = findManifest("server-functions-manifest.json", "server_functions_manifest");
   const aPath = findManifest("manifest.json", "public");
@@ -314,8 +323,9 @@ function updateManifestsState() {
     }
   }
 
-  clientComponents = findClientComponents(parsedClientManifest);
+  clientComponents = await findClientComponents(parsedClientManifest);
   knownClientFiles.clear();
+  let compScanIdx = 0;
   for (const comp of clientComponents) {
     knownClientFiles.add(path.resolve(comp));
     const urlVariants = generateAllUrlVariants(comp);
@@ -326,6 +336,10 @@ function updateManifestsState() {
     } catch (e) {}
     if (!fileExports.includes("default")) {
       fileExports.push("default");
+    }
+
+    if (++compScanIdx % 3 === 0) {
+      await yieldToEventLoop();
     }
 
     // Check if parsedClientManifest already has an entry for this component
@@ -417,7 +431,7 @@ function updateManifestsState() {
 }
 
 // Initial manifest scan
-const { linkChunkId, redirectChunkId } = updateManifestsState();
+const { linkChunkId, redirectChunkId } = await updateManifestsState();
 
 // Generate route modules and entry files
 function generateEntryFiles() {
@@ -636,6 +650,7 @@ export async function renderHtml(rscStream, options = {}) {
 }
 
 generateEntryFiles();
+await yieldToEventLoop();
 
 // Exports Cache for fast parsing
 const exportsCache = new Map();
@@ -1178,7 +1193,7 @@ async function doRebuild(filePath = "", eventType = "change") {
     const needsStructureRebuild = isStructureChange || clientDirectiveChanged || serverDirectiveChanged;
 
     if (needsStructureRebuild) {
-      updateManifestsState();
+      await updateManifestsState();
       generateEntryFiles();
       await Promise.all([ctxA.rebuild(), ctxB.rebuild()]);
       engineVersion = Date.now();
@@ -1337,7 +1352,7 @@ async function onManifestUpdated() {
       do {
         pendingManifestSync = false;
         updateSpinner("Synchronizing Dual-Bundle engine with client build...");
-        updateManifestsState();
+        await updateManifestsState();
         generateEntryFiles();
         const tEngine0 = Date.now();
         await Promise.all([ctxA.rebuild(), ctxB.rebuild()]);
