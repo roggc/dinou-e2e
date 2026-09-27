@@ -1,5 +1,6 @@
 // plugins-esbuild/esm-hmr-plugin.mjs
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import { transform } from "@swc/core";
 import { createServer } from "node:http";
@@ -18,6 +19,45 @@ const normKey = (p) => {
   return s;
 };
 let serverStarted = false;
+
+const swcGlobalCache = new Map();
+let swcCacheLoaded = false;
+let swcCacheDirty = false;
+
+function getSwcCachePath() {
+  const dir = path.resolve(process.cwd(), ".dinou/cache");
+  return { dir, file: path.join(dir, "swc-dev-cache.json") };
+}
+
+function loadSwcCache() {
+  if (swcCacheLoaded) return;
+  swcCacheLoaded = true;
+  try {
+    const { file } = getSwcCachePath();
+    if (fsSync.existsSync(file)) {
+      const parsed = JSON.parse(fsSync.readFileSync(file, "utf8"));
+      for (const [k, v] of Object.entries(parsed)) {
+        swcGlobalCache.set(k, v);
+      }
+    }
+  } catch (e) {}
+}
+
+async function saveSwcCache() {
+  if (!swcCacheDirty) return;
+  swcCacheDirty = false;
+  try {
+    const { dir, file } = getSwcCachePath();
+    if (!fsSync.existsSync(dir)) {
+      fsSync.mkdirSync(dir, { recursive: true });
+    }
+    const data = {};
+    for (const [k, v] of swcGlobalCache.entries()) {
+      data[k] = v;
+    }
+    await fs.writeFile(file, JSON.stringify(data), "utf8");
+  } catch (e) {}
+}
 
 export default function esmHmrPlugin({
   entryNames = ["main", "error"],
@@ -60,7 +100,6 @@ export default function esmHmrPlugin({
 
       const rootEntryMap = new Map();
       let entryPointsSet = new Set();
-      const swcCache = new Map();
 
       build.onStart(async () => {
         swcTotalTime = 0;
@@ -113,8 +152,9 @@ export default function esmHmrPlugin({
         // CASE B: It is a user page or component
         if (isUserComponent) {
           try {
+            loadSwcCache();
             const stat = await fs.stat(args.path);
-            const cached = swcCache.get(absNorm);
+            const cached = swcGlobalCache.get(absNorm);
             if (cached && cached.mtime === stat.mtimeMs) {
               return {
                 contents: cached.code,
@@ -148,7 +188,12 @@ export default function esmHmrPlugin({
             swcCount++;
             globalThis.__DINOU_SWC_TIME__ = swcTotalTime;
             globalThis.__DINOU_SWC_COUNT__ = swcCount;
-            swcCache.set(absNorm, { mtime: stat.mtimeMs, code });
+            swcGlobalCache.set(absNorm, { mtime: stat.mtimeMs, code });
+            swcCacheDirty = true;
+
+            if (swcCount % 6 === 0) {
+              await new Promise((r) => setImmediate(r));
+            }
 
             return {
               contents: code,
@@ -295,6 +340,7 @@ export default function esmHmrPlugin({
       build.onEnd(write);
 
       build.onEnd(async (result) => {
+        saveSwcCache().catch(() => {});
         globalThis.__DINOU_SWC_TIME__ = swcTotalTime;
         globalThis.__DINOU_SWC_COUNT__ = swcCount;
         if (isInitialBuild) {
@@ -399,6 +445,7 @@ export default function esmHmrPlugin({
           }
           hmrEngine.value.broadcastMessage({ type: "reload" });
         }
+        saveSwcCache().catch(() => {});
         changedIds.clear();
       });
     },

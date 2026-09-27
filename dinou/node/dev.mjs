@@ -211,10 +211,33 @@ let parsedClientManifest = {};
 let parsedServerFunctionsManifest = {};
 let parsedAssetManifest = {};
 let clientComponents = [];
+let linkChunkId = null;
+let redirectChunkId = null;
 const knownClientFiles = new Set();
 const knownServerFiles = new Set();
+const compExportsCache = new Map();
 
-async function updateManifestsState() {
+function getCachedFileExports(filePath) {
+  try {
+    const stat = fs.statSync(filePath);
+    const cached = compExportsCache.get(filePath);
+    if (cached && cached.mtime === stat.mtimeMs) {
+      return cached.exports;
+    }
+    const content = fs.readFileSync(filePath, "utf8");
+    const exports = parseExports(content);
+    if (!exports.includes("default")) {
+      exports.push("default");
+    }
+    compExportsCache.set(filePath, { mtime: stat.mtimeMs, exports });
+    return exports;
+  } catch (e) {
+    return ["default"];
+  }
+}
+
+async function updateManifestsState(options = {}) {
+  const forceRescan = options.forceRescan || false;
   const cPath = findManifest("react-client-manifest.json", "react_client_manifest");
   const sfPath = findManifest("server-functions-manifest.json", "server_functions_manifest");
   const aPath = findManifest("manifest.json", "public");
@@ -284,20 +307,22 @@ async function updateManifestsState() {
     }
   }
 
-  let linkChunkId = null;
-  let redirectChunkId = null;
+  let resolvedLinkChunkId = null;
+  let resolvedRedirectChunkId = null;
   let linkEntry = null;
   let redirectEntry = null;
   for (const [k, v] of Object.entries(parsedClientManifest)) {
     const norm = k.replace(/\\/g, "/");
     if (norm.includes("/out/") || norm.includes("/dist/") || norm.includes("/.dinou/")) continue;
     if (k.includes("/core/link.jsx") || k.includes("dinouLink")) {
-      if (v?.id) { linkChunkId = v.id; linkEntry = v; }
+      if (v?.id) { resolvedLinkChunkId = v.id; linkEntry = v; }
     }
     if (k.includes("/core/client-redirect.jsx") || k.includes("dinouClientRedirect")) {
-      if (v?.id) { redirectChunkId = v.id; redirectEntry = v; }
+      if (v?.id) { resolvedRedirectChunkId = v.id; redirectEntry = v; }
     }
   }
+  linkChunkId = resolvedLinkChunkId;
+  redirectChunkId = resolvedRedirectChunkId;
 
   if (linkChunkId) {
     const linkChunks = isWebpackBuild ? (linkEntry?.chunks || [linkChunkId]) : "Link";
@@ -323,43 +348,96 @@ async function updateManifestsState() {
     }
   }
 
-  clientComponents = await findClientComponents(parsedClientManifest);
-  knownClientFiles.clear();
-  let compScanIdx = 0;
-  for (const comp of clientComponents) {
-    knownClientFiles.add(path.resolve(comp));
-    const urlVariants = generateAllUrlVariants(comp);
-    let fileExports = [];
-    try {
-      const content = fs.readFileSync(comp, "utf8");
-      fileExports = parseExports(content);
-    } catch (e) {}
-    if (!fileExports.includes("default")) {
-      fileExports.push("default");
-    }
-
-    if (++compScanIdx % 3 === 0) {
-      await yieldToEventLoop();
-    }
-
-    // Check if parsedClientManifest already has an entry for this component
-    let matchedEntry = null;
-    for (const u of urlVariants) {
-      if (parsedClientManifest[u]) { matchedEntry = parsedClientManifest[u]; break; }
-      if (parsedClientManifest[`${u}#default`]) { matchedEntry = parsedClientManifest[`${u}#default`]; break; }
-    }
-
-    const compId = matchedEntry?.id || pathToFileURL(comp).href;
-    const compChunks = matchedEntry?.chunks || [];
-
-    for (const u of urlVariants) {
-      if (!normalized[u]) {
-        normalized[u] = { id: compId, chunks: compChunks, name: "*" };
+  // Detect if parsedClientManifest introduces any brand new client components not in knownClientFiles
+  let hasNewClientFiles = false;
+  if (!forceRescan && clientComponents.length > 0) {
+    for (const k of Object.keys(parsedClientManifest)) {
+      const fileUrl = k.split("#")[0];
+      if (fileUrl.startsWith("file:///")) {
+        try {
+          const fp = fileURLToPath(fileUrl);
+          if (!knownClientFiles.has(path.resolve(fp)) && fs.existsSync(fp)) {
+            hasNewClientFiles = true;
+            break;
+          }
+        } catch (e) {}
       }
-      for (const exp of fileExports) {
-        const hashKey = `${u}#${exp}`;
-        if (!normalized[hashKey] || normalized[hashKey].name === "*") {
-          normalized[hashKey] = { id: compId, chunks: compChunks, name: exp };
+    }
+  }
+
+  let componentsChanged = false;
+  if (forceRescan || clientComponents.length === 0 || hasNewClientFiles) {
+    const prevSet = new Set(clientComponents.map((c) => path.resolve(c)));
+    clientComponents = await findClientComponents(parsedClientManifest);
+    knownClientFiles.clear();
+    let compScanIdx = 0;
+    for (const comp of clientComponents) {
+      const resolved = path.resolve(comp);
+      knownClientFiles.add(resolved);
+      if (!prevSet.has(resolved)) {
+        componentsChanged = true;
+      }
+      const urlVariants = generateAllUrlVariants(comp);
+      const fileExports = getCachedFileExports(comp);
+
+      if (++compScanIdx % 5 === 0) {
+        await yieldToEventLoop();
+      }
+
+      // Check if parsedClientManifest already has an entry for this component
+      let matchedEntry = null;
+      for (const u of urlVariants) {
+        if (parsedClientManifest[u]) { matchedEntry = parsedClientManifest[u]; break; }
+        if (parsedClientManifest[`${u}#default`]) { matchedEntry = parsedClientManifest[`${u}#default`]; break; }
+      }
+
+      const compId = matchedEntry?.id || pathToFileURL(comp).href;
+      const compChunks = matchedEntry?.chunks || [];
+
+      for (const u of urlVariants) {
+        if (!normalized[u]) {
+          normalized[u] = { id: compId, chunks: compChunks, name: "*" };
+        }
+        for (const exp of fileExports) {
+          const hashKey = `${u}#${exp}`;
+          if (!normalized[hashKey] || normalized[hashKey].name === "*") {
+            normalized[hashKey] = { id: compId, chunks: compChunks, name: exp };
+          }
+        }
+      }
+    }
+    if (prevSet.size !== clientComponents.length) {
+      componentsChanged = true;
+    }
+  } else {
+    // Fast path: update normalized mapping for known client components without re-reading files or parsing AST
+    for (const comp of clientComponents) {
+      const urlVariants = generateAllUrlVariants(comp);
+      const fileExports = getCachedFileExports(comp);
+      let matchedEntry = null;
+      for (const u of urlVariants) {
+        if (parsedClientManifest[u]) { matchedEntry = parsedClientManifest[u]; break; }
+        if (parsedClientManifest[`${u}#default`]) { matchedEntry = parsedClientManifest[`${u}#default`]; break; }
+      }
+
+      const compId = matchedEntry?.id || pathToFileURL(comp).href;
+      const compChunks = matchedEntry?.chunks || [];
+
+      for (const u of urlVariants) {
+        if (!normalized[u]) {
+          normalized[u] = { id: compId, chunks: compChunks, name: "*" };
+        } else {
+          normalized[u].id = compId;
+          normalized[u].chunks = compChunks;
+        }
+        for (const exp of fileExports) {
+          const hashKey = `${u}#${exp}`;
+          if (!normalized[hashKey] || normalized[hashKey].name === "*") {
+            normalized[hashKey] = { id: compId, chunks: compChunks, name: exp };
+          } else {
+            normalized[hashKey].id = compId;
+            normalized[hashKey].chunks = compChunks;
+          }
         }
       }
     }
@@ -427,11 +505,93 @@ async function updateManifestsState() {
   }
   globalThis.__DINOU_IMPORT_MAP_HTML__ = importMapHtml;
 
-  return { linkChunkId, redirectChunkId };
+  // Dynamic SSR module map and chunk reverse mapping for 0-rebuild dev SSR
+  const dynamicSsrModuleMap = {};
+  const chunkToFile = {};
+
+  const registerModuleMapEntry = (chunkId, fileUrl, expName) => {
+    if (!chunkId || !fileUrl) return;
+    const ids = [chunkId];
+    if (chunkId.startsWith("/")) ids.push(chunkId.slice(1));
+    else ids.push("/" + chunkId);
+
+    // Canonicalize fileUrl to 3 slashes (standard file URL)
+    let canonicalUrl = fileUrl;
+    if (canonicalUrl.startsWith("file://") && !canonicalUrl.startsWith("file:///")) {
+      canonicalUrl = "file:///" + canonicalUrl.slice(7);
+    }
+
+    const urls = [canonicalUrl];
+    if (canonicalUrl.startsWith("file:///c:/")) urls.push("file:///C:/" + canonicalUrl.slice(11));
+    else if (canonicalUrl.startsWith("file:///C:/")) urls.push("file:///c:/" + canonicalUrl.slice(11));
+
+    // Also include 2-slash variants
+    const twoSlashUrls = urls.map((u) => "file://" + u.slice(8));
+    const allUrls = [...urls, ...twoSlashUrls];
+
+    for (const id of ids) {
+      if (!dynamicSsrModuleMap[id]) {
+        dynamicSsrModuleMap[id] = { "*": { id: canonicalUrl, chunks: [], name: "*" } };
+      }
+      if (expName) {
+        dynamicSsrModuleMap[id][expName] = { id: canonicalUrl, chunks: [], name: expName };
+      }
+      chunkToFile[id] = canonicalUrl;
+    }
+
+    for (const u of allUrls) {
+      if (!dynamicSsrModuleMap[u]) {
+        dynamicSsrModuleMap[u] = { "*": { id: canonicalUrl, chunks: [], name: "*" } };
+      }
+      if (expName) {
+        dynamicSsrModuleMap[u][expName] = { id: canonicalUrl, chunks: [], name: expName };
+      }
+      chunkToFile[u] = canonicalUrl;
+    }
+  };
+
+  for (const [k, v] of Object.entries(parsedClientManifest)) {
+    const fileUrl = k.split("#")[0];
+    const expName = k.includes("#") ? k.split("#")[1] : null;
+    if (v?.id) {
+      registerModuleMapEntry(v.id, fileUrl, expName);
+    }
+  }
+
+  for (const [k, v] of Object.entries(normalized)) {
+    const fileUrl = k.split("#")[0];
+    const expName = k.includes("#") ? k.split("#")[1] : null;
+    if (v?.id && v.id.endsWith(".js")) {
+      registerModuleMapEntry(v.id, fileUrl, expName);
+    }
+  }
+
+  if (linkChunkId) {
+    const linkCompIndex = clientComponents.findIndex((c) => candidateLinkPaths.has(path.resolve(c)));
+    if (linkCompIndex !== -1) {
+      const fileUrl = pathToFileURL(clientComponents[linkCompIndex]).href;
+      registerModuleMapEntry(linkChunkId, fileUrl, "Link");
+      registerModuleMapEntry(linkChunkId, fileUrl, "default");
+    }
+  }
+
+  if (redirectChunkId) {
+    const redirectCompIndex = clientComponents.findIndex((c) => candidateRedirectPaths.has(path.resolve(c)));
+    if (redirectCompIndex !== -1) {
+      const fileUrl = pathToFileURL(clientComponents[redirectCompIndex]).href;
+      registerModuleMapEntry(redirectChunkId, fileUrl, "ClientRedirect");
+      registerModuleMapEntry(redirectChunkId, fileUrl, "default");
+    }
+  }
+
+  globalThis.__DINOU_DYNAMIC_SSR_MODULE_MAP__ = dynamicSsrModuleMap;
+  globalThis.__DINOU_SSR_CHUNK_TO_FILE__ = chunkToFile;
+
+  return { linkChunkId, redirectChunkId, componentsChanged };
 }
 
 // Initial manifest scan
-const { linkChunkId, redirectChunkId } = await updateManifestsState();
+await updateManifestsState({ forceRescan: true });
 
 // Generate route modules and entry files
 function generateEntryFiles() {
@@ -479,10 +639,9 @@ if (typeof globalThis.__webpack_chunk_load__ === 'undefined') {
   }
 
   clientComponents.forEach((compPath, index) => {
-    const fileUrl = pathToFileURL(compPath).href;
-    const altFileUrl = fileUrl.replace(/file:\/\/\/([a-zA-Z]):/, (m, d) => 'file:///' + (d === d.toLowerCase() ? d.toUpperCase() : d.toLowerCase()) + ':');
-    addClientModule(fileUrl, `mod_${index}`);
-    if (altFileUrl !== fileUrl) addClientModule(altFileUrl, `mod_${index}`);
+    for (const u of generateAllUrlVariants(compPath)) {
+      addClientModule(u, `mod_${index}`);
+    }
   });
 
   for (const [k, v] of Object.entries(parsedClientManifest)) {
@@ -491,8 +650,17 @@ if (typeof globalThis.__webpack_chunk_load__ === 'undefined') {
       (c) => pathToFileURL(c).href === fileUrl || pathToFileURL(c).href.toLowerCase() === fileUrl.toLowerCase()
     );
     if (compIndex !== -1) {
-      if (v?.id) addClientModule(v.id, `mod_${compIndex}`);
+      if (v?.id) {
+        addClientModule(v.id, `mod_${compIndex}`);
+        if (v.id.startsWith("/")) addClientModule(v.id.slice(1), `mod_${compIndex}`);
+        else addClientModule("/" + v.id, `mod_${compIndex}`);
+      }
       addClientModule(fileUrl, `mod_${compIndex}`);
+      if (fileUrl.startsWith("file://") && !fileUrl.startsWith("file:///")) {
+        addClientModule("file:///" + fileUrl.slice(7), `mod_${compIndex}`);
+      } else if (fileUrl.startsWith("file:///")) {
+        addClientModule("file://" + fileUrl.slice(8), `mod_${compIndex}`);
+      }
     }
   }
 
@@ -539,15 +707,20 @@ if (typeof globalThis.__webpack_chunk_load__ === 'undefined') {
 
   clientComponents.forEach((compPath) => {
     const fileUrl = pathToFileURL(compPath).href;
-    const altFileUrl = fileUrl.replace(/file:\/\/\/([a-zA-Z]):/, (m, d) => 'file:///' + (d === d.toLowerCase() ? d.toUpperCase() : d.toLowerCase()) + ':');
-    addModuleMap(fileUrl, `{ "*": { id: ${JSON.stringify(fileUrl)}, chunks: [], name: "*" } }`);
-    if (altFileUrl !== fileUrl) addModuleMap(altFileUrl, `{ "*": { id: ${JSON.stringify(fileUrl)}, chunks: [], name: "*" } }`);
+    for (const u of generateAllUrlVariants(compPath)) {
+      addModuleMap(u, `{ "*": { id: ${JSON.stringify(fileUrl)}, chunks: [], name: "*" } }`);
+    }
   });
 
   for (const [k, v] of Object.entries(parsedClientManifest)) {
     const fileUrl = k.split("#")[0];
     if (v?.id) {
       addModuleMap(v.id, `{ "*": { id: ${JSON.stringify(fileUrl)}, chunks: [], name: "*" } }`);
+      if (v.id.startsWith("/")) {
+        addModuleMap(v.id.slice(1), `{ "*": { id: ${JSON.stringify(fileUrl)}, chunks: [], name: "*" } }`);
+      } else {
+        addModuleMap("/" + v.id, `{ "*": { id: ${JSON.stringify(fileUrl)}, chunks: [], name: "*" } }`);
+      }
     }
   }
 
@@ -631,9 +804,59 @@ globalThis.__webpack_require__ = (id) => {
   let mod = clientModules[id];
   if (!mod && typeof id === "string") {
     if (lowerMap.size === 0) {
-      for (const k of Object.keys(clientModules)) lowerMap.set(k.toLowerCase(), clientModules[k]);
+      for (const k of Object.keys(clientModules)) {
+        lowerMap.set(k.toLowerCase(), clientModules[k]);
+        if (k.startsWith("file:///")) {
+          lowerMap.set(("file://" + k.slice(8)).toLowerCase(), clientModules[k]);
+        } else if (k.startsWith("file://")) {
+          lowerMap.set(("file:///" + k.slice(7)).toLowerCase(), clientModules[k]);
+        }
+      }
     }
     mod = lowerMap.get(id.toLowerCase());
+    if (!mod) {
+      if (id.startsWith("file://") && !id.startsWith("file:///")) {
+        const threeSlash = "file:///" + id.slice(7);
+        mod = clientModules[threeSlash] || lowerMap.get(threeSlash.toLowerCase());
+      } else if (id.startsWith("file:///")) {
+        const twoSlash = "file://" + id.slice(8);
+        mod = clientModules[twoSlash] || lowerMap.get(twoSlash.toLowerCase());
+      }
+    }
+  }
+  if (!mod && typeof id === "string") {
+    const chunkMap = globalThis.__DINOU_SSR_CHUNK_TO_FILE__;
+    let fileUrl = chunkMap?.[id] || chunkMap?.[id.startsWith("/") ? id.slice(1) : "/" + id];
+    if (!fileUrl && id.startsWith("file://")) {
+      const altId = id.startsWith("file:///") ? "file://" + id.slice(8) : "file:///" + id.slice(7);
+      fileUrl = chunkMap?.[altId];
+    }
+    if (!fileUrl) {
+      const clientManifest = globalThis.__DINOU_CLIENT_MANIFEST__ || globalThis.__DINOU_RAW_CLIENT_MANIFEST__;
+      if (clientManifest) {
+        const cleanId = id.startsWith("/") ? id.slice(1) : id;
+        for (const [k, v] of Object.entries(clientManifest)) {
+          if (!v?.id) continue;
+          const cleanVId = v.id.startsWith("/") ? v.id.slice(1) : v.id;
+          if (v.id === id || cleanVId === cleanId || ("/" + cleanVId) === id) {
+            fileUrl = k.split("#")[0];
+            break;
+          }
+        }
+      }
+    }
+    if (fileUrl) {
+      mod = clientModules[fileUrl] || lowerMap.get(fileUrl.toLowerCase());
+      if (!mod) {
+        if (fileUrl.startsWith("file://") && !fileUrl.startsWith("file:///")) {
+          const threeSlash = "file:///" + fileUrl.slice(7);
+          mod = clientModules[threeSlash] || lowerMap.get(threeSlash.toLowerCase());
+        } else if (fileUrl.startsWith("file:///")) {
+          const twoSlash = "file://" + fileUrl.slice(8);
+          mod = clientModules[twoSlash] || lowerMap.get(twoSlash.toLowerCase());
+        }
+      }
+    }
   }
   if (mod) return wrapModule(mod);
   console.error("[SSR Engine Dev] Module not found in __webpack_require__:", id);
@@ -642,8 +865,72 @@ globalThis.__webpack_require__ = (id) => {
 globalThis.__webpack_require__.u = (chunkId) => "" + chunkId + ".js";
 globalThis.__webpack_chunk_load__ = () => Promise.resolve();
 
+const dynamicModuleMap = new Proxy(ssrConsumerManifest.moduleMap || {}, {
+  get(target, prop) {
+    if (typeof prop !== "string") return target[prop];
+    if (prop === "__isDinouProxy") return true;
+    if (prop in target) return target[prop];
+
+    const dynamicMap = globalThis.__DINOU_DYNAMIC_SSR_MODULE_MAP__;
+    if (dynamicMap) {
+      if (prop in dynamicMap) {
+        target[prop] = dynamicMap[prop];
+        return dynamicMap[prop];
+      }
+      const altProp = prop.startsWith("/") ? prop.slice(1) : "/" + prop;
+      if (altProp in dynamicMap) {
+        target[prop] = dynamicMap[altProp];
+        return dynamicMap[altProp];
+      }
+      if (prop.startsWith("file://")) {
+        const slashAlt = prop.startsWith("file:///") ? "file://" + prop.slice(8) : "file:///" + prop.slice(7);
+        if (slashAlt in dynamicMap) {
+          target[prop] = dynamicMap[slashAlt];
+          return dynamicMap[slashAlt];
+        }
+      }
+    }
+
+    const clientManifest = globalThis.__DINOU_CLIENT_MANIFEST__ || globalThis.__DINOU_RAW_CLIENT_MANIFEST__;
+    if (clientManifest) {
+      const cleanProp = prop.startsWith("/") ? prop.slice(1) : prop;
+      for (const [k, v] of Object.entries(clientManifest)) {
+        if (!v?.id) continue;
+        const cleanVId = v.id.startsWith("/") ? v.id.slice(1) : v.id;
+        if (v.id === prop || cleanVId === cleanProp || ("/" + cleanVId) === prop) {
+          const fileUrl = k.split("#")[0];
+          const canonicalUrl = fileUrl.startsWith("file://") && !fileUrl.startsWith("file:///") ? "file:///" + fileUrl.slice(7) : fileUrl;
+          const entry = { "*": { id: canonicalUrl, chunks: [], name: "*" } };
+          target[prop] = entry;
+          return entry;
+        }
+      }
+    }
+
+    if (prop.startsWith("file://")) {
+      const canonicalProp = prop.startsWith("file:///") ? prop : "file:///" + prop.slice(7);
+      const entry = { "*": { id: canonicalProp, chunks: [], name: "*" } };
+      target[prop] = entry;
+      return entry;
+    }
+
+    return target[prop];
+  },
+  has(target, prop) {
+    if (prop === "__isDinouProxy") return true;
+    if (prop in target) return true;
+    const dynamicMap = globalThis.__DINOU_DYNAMIC_SSR_MODULE_MAP__;
+    if (dynamicMap && (prop in dynamicMap || (prop.startsWith("/") ? prop.slice(1) : "/" + prop) in dynamicMap)) return true;
+    return false;
+  }
+});
+
 export async function renderHtml(rscStream, options = {}) {
-  return renderRscStreamToHtmlStream(rscStream, ssrConsumerManifest, options);
+  const manifest = {
+    ...ssrConsumerManifest,
+    moduleMap: dynamicModuleMap,
+  };
+  return renderRscStreamToHtmlStream(rscStream, manifest, options);
 }
 `;
   fs.writeFileSync(path.join(devDir, "ssr-entry.mjs"), ssrEntryContent, "utf8");
@@ -1037,27 +1324,50 @@ const ctxB = await esbuild.context({
 
 let rscModule = null;
 let ssrModule = null;
+let ssrModulePromise = null;
 let engineVersion = 1;
 let activeRebuildPromise = null;
 let activeSsrSyncPromise = null;
+let initialEngineBuildPromise = null;
+
+function getSsrModule() {
+  if (ssrModule) return Promise.resolve(ssrModule);
+  if (!ssrModulePromise) {
+    const v = "?v=" + engineVersion;
+    ssrModulePromise = dynamicImportWithRetry(pathToFileURL(ssrOutfile).href + v).then((mod) => {
+      ssrModule = mod;
+      return mod;
+    });
+  }
+  return ssrModulePromise;
+}
 
 async function doInitialBuild() {
   const tBuild0 = Date.now();
   await Promise.all([ctxA.rebuild(), ctxB.rebuild()]);
   devTimings.engineBuild = Date.now() - tBuild0;
+  await yieldToEventLoop();
 
   const tImport0 = Date.now();
   const v = "?v=" + engineVersion;
   rscModule = await dynamicImportWithRetry(pathToFileURL(rscOutfile).href + v);
-  ssrModule = await dynamicImportWithRetry(pathToFileURL(ssrOutfile).href + v);
+  await yieldToEventLoop();
   devTimings.engineImport = Date.now() - tImport0;
 
-  updateSpinner("Dual-Bundle engine compiled. Starting client bundler...");
+  if (process.env.DINOU_STANDALONE_SERVER === "true") {
+    ssrModule = await dynamicImportWithRetry(pathToFileURL(ssrOutfile).href + v);
+    ssrModulePromise = Promise.resolve(ssrModule);
+    updateSpinner("Dual-Bundle engine compiled. Starting server...");
+  }
 }
 
 if (process.env.DINOU_STANDALONE_SERVER === "true") {
   await doInitialBuild();
 } else {
+  // Launch Dual-Bundle engine compilation and import concurrently in the background while client bundler runs
+  initialEngineBuildPromise = doInitialBuild().catch((err) => {
+    console.error("❌ [Dinou Dev] Initial Dual-Bundle engine build error:", err);
+  });
   updateSpinner("Starting in-process client bundler...");
 }
 
@@ -1193,7 +1503,7 @@ async function doRebuild(filePath = "", eventType = "change") {
     const needsStructureRebuild = isStructureChange || clientDirectiveChanged || serverDirectiveChanged;
 
     if (needsStructureRebuild) {
-      await updateManifestsState();
+      await updateManifestsState({ forceRescan: true });
       generateEntryFiles();
       await Promise.all([ctxA.rebuild(), ctxB.rebuild()]);
       engineVersion = Date.now();
@@ -1351,9 +1661,27 @@ async function onManifestUpdated() {
     try {
       do {
         pendingManifestSync = false;
+
+        // If initial background build of Dual-Bundle engine is still in flight, wait for it
+        if (initialEngineBuildPromise) {
+          updateSpinner("Finalizing Dual-Bundle engine...");
+          await initialEngineBuildPromise;
+          initialEngineBuildPromise = null;
+        }
+
+        const { componentsChanged } = await updateManifestsState({ forceRescan: false });
+
+        // If engines were already compiled and client component list hasn't changed,
+        // we take the instant in-memory fast path (<1ms) with zero rebuild or V8 re-eval!
+        if (rscModule && !componentsChanged) {
+          clientManifestReady = true;
+          break;
+        }
+
         updateSpinner("Synchronizing Dual-Bundle engine with client build...");
-        await updateManifestsState();
         generateEntryFiles();
+        await yieldToEventLoop();
+
         const tEngine0 = Date.now();
         await Promise.all([ctxA.rebuild(), ctxB.rebuild()]);
         if (devTimings.engineBuild == null) {
@@ -1361,9 +1689,15 @@ async function onManifestUpdated() {
         }
         engineVersion = Date.now();
         const v = "?v=" + engineVersion;
+        await yieldToEventLoop();
+
         const tImport0 = Date.now();
         rscModule = await dynamicImportWithRetry(pathToFileURL(rscOutfile).href + v);
-        ssrModule = await dynamicImportWithRetry(pathToFileURL(ssrOutfile).href + v);
+        await yieldToEventLoop();
+        ssrModule = null;
+        ssrModulePromise = null;
+        getSsrModule().catch(() => {});
+
         if (devTimings.engineImport == null) {
           devTimings.engineImport = Date.now() - tImport0;
         }
@@ -1407,7 +1741,13 @@ const candidateStaticDirs = [
 ];
 
 function isManifestReady() {
-  return clientManifestReady && !manifestSyncPromise && checkClientFilesPresent();
+  return (
+    clientManifestReady &&
+    !manifestSyncPromise &&
+    !initialEngineBuildPromise &&
+    !!rscModule &&
+    checkClientFilesPresent()
+  );
 }
 
 async function startClientBundler(tool) {
@@ -1622,6 +1962,9 @@ const server = http.createServer(async (req, res) => {
     if (clientBundlerPromise) {
       await clientBundlerPromise;
     }
+    if (initialEngineBuildPromise) {
+      await initialEngineBuildPromise;
+    }
     if (activeClientBuildPromise) {
       await activeClientBuildPromise;
     }
@@ -1771,9 +2114,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     const webReq = nodeToWebRequest(req);
+    const ssr = await getSsrModule();
     const webRes = await rscModule.handleRequest(webReq, {
       runtime: "node-bundle",
-      renderHtmlStream: ssrModule.renderHtml,
+      renderHtmlStream: ssr.renderHtml,
     });
 
     if (webRes.status === 404) {
@@ -1826,12 +2170,16 @@ server.listen(PORT, async () => {
       if (manifestSyncPromise) {
         await manifestSyncPromise;
       }
+      if (initialEngineBuildPromise) {
+        await initialEngineBuildPromise;
+      }
       printReadyBanner({
         port: PORT,
         tool: isWebpackBuild ? "Webpack" : buildTool,
         durationMs: Date.now() - devStartTime,
         timings: devTimings,
       });
+      getSsrModule().catch(() => {});
     } catch (err) {
       stopSpinner();
       console.error("❌ [Dinou Dev] Failed to start client bundler:", err);
@@ -1845,6 +2193,7 @@ server.listen(PORT, async () => {
       durationMs: Date.now() - devStartTime,
       timings: devTimings,
     });
+    getSsrModule().catch(() => {});
   }
 });
 
