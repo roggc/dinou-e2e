@@ -9,7 +9,6 @@ import path from "node:path";
 import esbuild from "esbuild";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { startSpinner, updateSpinner, stopSpinner, isTTY } from "../node/terminal-status.mjs";
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -51,11 +50,7 @@ const isWebpackBuild = process.env.DINOU_BUILD_TOOL === "webpack";
 const bundlerName = isWebpackBuild ? "webpack" : (process.env.DINOU_BUILD_TOOL || "esbuild");
 
 console.log(`\n▲ Dinou v7 (Bun • ${bundlerName})`);
-if (isTTY) {
-  startSpinner("Generating route modules & manifests...");
-} else {
-  console.log("  ⚡ Generating route modules & manifests...");
-}
+console.log("  ⚡ Generating route modules & manifests...");
 const routeModulesCode = generateRouteModulesCode(projectRoot, "../..");
 const routeModulesPath = path.join(bunDir, "route-modules.js");
 fs.writeFileSync(routeModulesPath, routeModulesCode, "utf8");
@@ -926,11 +921,7 @@ const finalOutfile = path.join(bunDir, "server.js");
 
 try {
   // Pass A: RSC Engine
-  if (isTTY) {
-    updateSpinner("Bundling Pass A (RSC bun) & Pass B (SSR bun)...");
-  } else {
-    console.log("  ⚡ Bundling Pass A (RSC bun) & Pass B (SSR bun)...");
-  }
+  console.log("  ⚡ Bundling Pass A (RSC bun) & Pass B (SSR bun)...");
   await esbuild.build({
     entryPoints: [rscEntryPath],
     outfile: rscOutfile,
@@ -977,11 +968,7 @@ try {
   });
 
   // Pass C: Final Bun Orchestrator
-  if (isTTY) {
-    updateSpinner("Bundling Pass C: Bun Orchestrator (.dinou/bun/server.js)...");
-  } else {
-    console.log("  🚀 Bundling Pass C: Bun Orchestrator (.dinou/bun/server.js)...");
-  }
+  console.log("  🚀 Bundling Pass C: Bun Orchestrator (.dinou/bun/server.js)...");
   await esbuild.build({
     entryPoints: [bunEntryPath],
     outfile: finalOutfile,
@@ -1003,9 +990,6 @@ try {
     logLevel: "warning",
   });
 
-  if (isTTY) {
-    stopSpinner();
-  }
   const relOutfile = path.relative(projectRoot, finalOutfile).replace(/\\/g, "/");
   console.log(`\n✓ Bun build complete!`);
   console.log(`  Output: ${relOutfile}`);

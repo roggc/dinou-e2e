@@ -8,7 +8,6 @@ import path from "node:path";
 import esbuild from "esbuild";
 import { fileURLToPath } from "node:url";
 import { bundleDualEngine } from "./bundle-dual-engine.mjs";
-import { startSpinner, updateSpinner, stopSpinner, isTTY } from "./terminal-status.mjs";
 
 const projectRoot = process.cwd();
 const nodeDir = path.resolve(projectRoot, ".dinou/node");
@@ -17,11 +16,7 @@ fs.mkdirSync(nodeDir, { recursive: true });
 try {
   const bundlerName = process.env.DINOU_BUILD_TOOL || "esbuild";
   console.log(`\n▲ Dinou v7 (Node.js • ${bundlerName})`);
-  if (isTTY) {
-    startSpinner("Compiling Pass A (RSC) and Pass B (SSR) via Dual-Engine...");
-  } else {
-    console.log(`  ⚡ Compiling Pass A (RSC) and Pass B (SSR) via Dual-Engine...`);
-  }
+  console.log(`  ⚡ Compiling Pass A (RSC) and Pass B (SSR) via Dual-Engine...`);
   const engineResult = await bundleDualEngine({
     isDev: false,
     projectRoot,
@@ -168,11 +163,7 @@ if (isMain) {
 
   // Pass C: Final Node Orchestrator
   const finalOutfile = path.join(nodeDir, "server.mjs");
-  if (isTTY) {
-    updateSpinner("Bundling Pass C: Node Orchestrator (.dinou/node/server.mjs)...");
-  } else {
-    console.log("  🚀 Bundling Pass C: Node Orchestrator (.dinou/node/server.mjs)...");
-  }
+  console.log("  🚀 Bundling Pass C: Node Orchestrator (.dinou/node/server.mjs)...");
   await esbuild.build({
     entryPoints: [nodeEntryPath],
     outfile: finalOutfile,
@@ -194,9 +185,6 @@ if (isMain) {
     logLevel: "warning",
   });
 
-  if (isTTY) {
-    stopSpinner();
-  }
   const relOutfile = path.relative(projectRoot, finalOutfile).replace(/\\/g, "/");
   console.log(`\n✓ Node.js production build complete!`);
   console.log(`  Output: ${relOutfile}`);

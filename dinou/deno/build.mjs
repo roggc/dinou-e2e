@@ -9,7 +9,6 @@ import path from "node:path";
 import esbuild from "esbuild";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { startSpinner, updateSpinner, stopSpinner, isTTY } from "../node/terminal-status.mjs";
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -76,11 +75,7 @@ if (fs.existsSync(dist2Dir)) {
   const copiedCount = copyRecursive(dist2Dir, dist3Dir);
   console.log(`  📄 Synchronized ${copiedCount} pre-rendered static route(s) to .dinou/dist3`);
 }
-if (isTTY) {
-  startSpinner("Generating route modules & manifests...");
-} else {
-  console.log("  ⚡ Generating route modules & manifests...");
-}
+console.log("  ⚡ Generating route modules & manifests...");
 const routeModulesCode = generateRouteModulesCode(projectRoot, "../..");
 const routeModulesPath = path.join(denoDir, "route-modules.js");
 fs.writeFileSync(routeModulesPath, routeModulesCode, "utf8");
@@ -972,11 +967,7 @@ const finalOutfile = path.join(denoDir, "main.js");
 
 try {
   // Pass A: RSC Engine
-  if (isTTY) {
-    updateSpinner("Bundling Pass A (RSC deno) & Pass B (SSR deno)...");
-  } else {
-    console.log("  ⚡ Bundling Pass A (RSC deno) & Pass B (SSR deno)...");
-  }
+  console.log("  ⚡ Bundling Pass A (RSC deno) & Pass B (SSR deno)...");
   await esbuild.build({
     entryPoints: [rscEntryPath],
     outfile: rscOutfile,
@@ -1023,11 +1014,7 @@ try {
   });
 
   // Pass C: Final Deno Orchestrator
-  if (isTTY) {
-    updateSpinner("Bundling Pass C: Deno Orchestrator (.dinou/deno/main.js)...");
-  } else {
-    console.log("  🚀 Bundling Pass C: Deno Orchestrator (.dinou/deno/main.js)...");
-  }
+  console.log("  🚀 Bundling Pass C: Deno Orchestrator (.dinou/deno/main.js)...");
   await esbuild.build({
     entryPoints: [denoEntryPath],
     outfile: finalOutfile,
@@ -1049,9 +1036,6 @@ try {
     logLevel: "warning",
   });
 
-  if (isTTY) {
-    stopSpinner();
-  }
   const relOutfile = path.relative(projectRoot, finalOutfile).replace(/\\/g, "/");
   console.log(`\n✓ Deno build complete!`);
   console.log(`  Output: ${relOutfile}`);

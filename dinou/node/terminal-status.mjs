@@ -2,6 +2,8 @@
 // Lightweight terminal status & animated spinner for Dinou Development Server.
 // Zero external dependencies. Fully TTY-aware and safe for CI/Playwright.
 
+import readline from "node:readline";
+
 export const isTTY = Boolean(
   process.stdout.isTTY && !process.env.CI && process.env.TERM !== "dumb"
 );
@@ -100,6 +102,30 @@ export function stopSpinner() {
   }
 }
 
+let buildFrameIdx = 0;
+
+export function updateBuildProgress(text) {
+  if (!isTTY) return;
+  const cols = process.stdout.columns || 80;
+  const maxLen = Math.min(cols, 72) - 8;
+  let safeText = text;
+  if (safeText.length > maxLen) {
+    safeText = safeText.slice(0, maxLen - 3) + "...";
+  }
+  const frame = FRAMES[buildFrameIdx];
+  buildFrameIdx = (buildFrameIdx + 1) % FRAMES.length;
+
+  readline.cursorTo(process.stdout, 0);
+  readline.clearLine(process.stdout, 0);
+  process.stdout.write(`  ${C_CYAN}${C_BOLD}${frame}${C_RESET} ${safeText}`);
+}
+
+export function clearBuildProgress() {
+  if (!isTTY) return;
+  readline.cursorTo(process.stdout, 0);
+  readline.clearLine(process.stdout, 0);
+}
+
 export function logSuccess(text) {
   stopSpinner();
   console.log(`  ${C_GREEN}✓${C_RESET} ${text}`);
@@ -186,6 +212,8 @@ export default {
   startSpinner,
   updateSpinner,
   stopSpinner,
+  updateBuildProgress,
+  clearBuildProgress,
   logSuccess,
   logInfo,
   showIdleStatus,

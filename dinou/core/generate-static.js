@@ -14,12 +14,10 @@ async function generateStatic() {
     rmSync(distFolder2, { recursive: true, force: true });
   }
 
-  const { startSpinner, updateSpinner, stopSpinner, isTTY } = await import("../node/terminal-status.mjs");
+  const { updateBuildProgress, clearBuildProgress, isTTY } = await import("../node/terminal-status.mjs");
 
   // 1. Compile or ensure Dual-Bundle engines (Pass A & Pass B)
-  if (isTTY) {
-    startSpinner("[SSG] Compiling Dual-Engine for static generation...");
-  }
+  updateBuildProgress("[SSG] Compiling Dual-Engine for static generation...");
   const { bundleDualEngine } = await import("../node/bundle-dual-engine.mjs");
   const { rscEnginePath, ssrEnginePath } = await bundleDualEngine({
     isDev: false,
@@ -35,15 +33,12 @@ async function generateStatic() {
   const ssrModule = await import(pathToFileURL(ssrEnginePath).href);
 
   // 4. Discover static routes
-  if (isTTY) {
-    updateSpinner("[SSG] Discovering static routes...");
-  }
+  updateBuildProgress("[SSG] Discovering static routes...");
   await rscModule.buildStaticPages((info) => {
-    if (!isTTY) return;
     if (info.phase === "discovering") {
-      updateSpinner(`[SSG] (${info.current}/${info.total}) Discovering: ${info.route}`);
+      updateBuildProgress(`[SSG] (${info.current}/${info.total}) Discovering: ${info.route}`);
     } else if (info.phase === "crawling") {
-      updateSpinner(`[SSG] Crawling: ${info.route}`);
+      updateBuildProgress(`[SSG] Crawling: ${info.route}`);
     }
   });
   const routes = rscModule.getStaticPaths();
@@ -58,9 +53,7 @@ async function generateStatic() {
   for (const route of routes) {
     currentIndex++;
     const reqPath = route.startsWith("/") ? route : "/" + route;
-    if (isTTY) {
-      updateSpinner(`[SSG] (${currentIndex}/${routes.length}) Pre-rendering: ${reqPath}`);
-    }
+    updateBuildProgress(`[SSG] (${currentIndex}/${routes.length}) Pre-rendering: ${reqPath}`);
     try {
       const webReq = new Request(`http://localhost${reqPath}`);
       const res = await rscModule.handleRequest(webReq, {
@@ -80,9 +73,7 @@ async function generateStatic() {
     }
   }
 
-  if (isTTY) {
-    stopSpinner();
-  }
+  clearBuildProgress();
   console.log(`✓ [SSG] Pre-rendered ${renderedCount} static route(s) and RSC payload(s) to .dinou/dist2`);
 }
 
