@@ -1472,6 +1472,8 @@ function notifyClientBuildEnd() {
     if (rcm > 0) details.push(`RCM: ${rcm}ms`);
     const detailsStr = details.length > 0 ? ` [${details.join(" | ")}]` : "";
     lastClientBuildDetails = detailsStr;
+    delete globalThis.__DINOU_SWC_TIME__;
+    delete globalThis.__DINOU_SWC_COUNT__;
     logTimeline(`Client Bundler (esbuild) build finished in ${elapsed}ms${detailsStr}`);
   } else if (tool === "rollup") {
     const manifestTime = globalThis.__DINOU_ROLLUP_MANIFEST_TIME__ || 0;

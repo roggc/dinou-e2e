@@ -32,13 +32,19 @@ export default function stableChunkNamesAndMapsPlugin({ dev = true, changedIds }
             result.metafile.outputs
           )) {
             if (info.entryPoint || !oldRelPath.endsWith(".js")) continue;
-            const inputs = Object.keys(info.inputs);
+            const inputs = Object.keys(info.inputs || {});
             const sourceFile = inputs.find(
-              (f) => f.startsWith("src/") && /\.(js|jsx|ts|tsx)$/.test(f)
+              (f) =>
+                (f.startsWith("src/") ||
+                  f.includes(".dinou/swc/src/") ||
+                  f.includes(".dinou\\swc\\src\\")) &&
+                /\.(js|jsx|ts|tsx)$/.test(f)
             );
             if (!sourceFile) continue;
+            // Clean source file if it was loaded from .dinou/swc/
+            const cleanSourceFile = sourceFile.replace(/^.*\.dinou[/\\]swc[/\\]/, "");
             // Stable name based on the source file (always the same)
-            const rel = path.relative("src", sourceFile);
+            const rel = path.relative("src", cleanSourceFile);
             const normalizedRel = rel.replace(/\\/g, "/");
             const dir = path.dirname(normalizedRel);
             const base = path.basename(
