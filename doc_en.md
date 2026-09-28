@@ -444,9 +444,65 @@ Dinou v7 organizes all operations into a structured matrix categorized by **Targ
 
 ---
 
-## 8. Conclusion: Freedom, Performance, and Future-Proofing
+## 8. Dev Engine & HMR Performance: The SWC Disk-Mirror Architecture
+
+### 8.1. The Scaling Challenge in Massive Projects
+In standard-sized applications (20-50 routes, such as `dinou-e2e`), Hot Module Replacement (HMR) powered by `esbuild.context()` is virtually instantaneous (**~90 ms - 110 ms**). However, when scaling to large projects such as `dinou-docs` (**163 full documentation routes, 1,107 output chunks, and 23.5 MB of emitted JavaScript**), the rebuild time degraded to **~4,065 ms** (~4 seconds).
+
+### 8.2. Forensic Diagnosis: The Two Critical Latency Bottlenecks
+By systematically auditing the rebuild lifecycle in `dinou-docs`, two critical latency bottlenecks were identified:
+1. **IPC Serialization Overhead in `build.onLoad`**:
+   To inject the React Fast Refresh runtime, a JavaScript `onLoad` hook was previously used. When a Node.js hook returns `contents`, esbuild invalidates its native Go in-memory cache and is forced to transfer the entire file contents across the Node-to-Go IPC bridge, forcing full AST re-parsing of every file on each save.
+2. **IPC Resolution Avalanche (13,318 Synchronous Calls)**:
+   A `build.onResolve({ filter: /^\./ })` hook captured all relative imports across the project, including internal imports within `node_modules` (React, Lucide icons, UI components, syntax highlighters). This triggered **13,318 IPC context switches between Go and Node.js** on every file save on Windows, running thousands of synchronous disk checks (`fs.statSync`).
+
+### 8.3. The Adopted Solution: SWC Disk-Mirror (`.dinou/swc/`)
+Instead of transforming code in memory inside esbuild's `onLoad` hook, a **Disk-Mirror Architecture with SWC** was designed:
+1. **Disk Pre-transformation (`.dinou/swc/`)**:
+   SWC compiles modified files directly into `.dinou/swc/src/...` with inline sourcemaps and React Fast Refresh annotations in just **~5 ms**.
+2. **Native Go AST Cache**:
+   By pointing esbuild's entrypoints directly to the `.js` files generated in `.dinou/swc/`, esbuild reads them straight from disk using its native Go loader, unlocking the in-memory AST cache across rebuilds for all unchanged modules.
+3. **Native Alias Resolution with `tsconfigRaw`**:
+   Instead of resolving `@/*` and `~/*` through JavaScript plugins, a `tsconfigRaw` object is dynamically injected into esbuild's configuration, mapping `@/*` to `[".dinou/swc/src/*", "src/*"]`. esbuild's Go engine resolves path aliases at native speed in memory with **zero calls to Node.js**.
+4. **Strict Asset and Stylesheet Filtering (`asset-extensions.js`)**:
+   The `onResolve` hook was constrained strictly to asset and stylesheet extensions (`.css`, `.png`, `.svg`, etc.), reusing the canonical list from `dinou/core/asset-extensions.js` backed by an in-memory resolution cache (`resolveCache`). Calls to Node.js dropped from **13,318 to just 4 calls (0 ms)**.
+
+```
+[src/ (Source Code)]
+  ├── page.tsx  ──────(SWC: Fast Refresh in 5ms)──────>  [.dinou/swc/src/page.js]
+  │                                                                 │
+  ├── button.tsx ─────(SWC: Fast Refresh in 5ms)──────>  [.dinou/swc/src/button.js]
+  │                                                                 │ (esbuild Go reads here)
+  │                                                                 ▼
+  ├── styles.css  <═══════ [swcRedirectPlugin (0ms)] ═══════════════╝ (if page.js imports CSS)
+  └── logo.png    <═══════ [swcRedirectPlugin (0ms)] ═══════════════╝ (if page.js imports Asset)
+```
+
+### 8.4. Why Vendor Pre-bundling (`node_modules`) Was Rejected
+During the research phase, pre-bundling `node_modules` dependencies (Vite-style) was thoroughly evaluated. It was verified that this approach is **unviable in an architecture with React Server Components (RSC)** due to four deterministic technical reasons:
+1. **Synchronous CommonJS `require()` Incompatibility**:
+   The RSC browser deserializer (`@roggc/react-server-dom-esm`) is packaged as CommonJS and executes `const React = require("react")`. If `react` is pre-bundled as an external ESM module (`/@deps/react.js`), the browser cannot execute a synchronous `require()` on an external ESM module, throwing the fatal error: `Dynamic require of "/@deps/react.js" is not supported`.
+2. **The "React Singleton" Rule**:
+   React strictly requires a single shared instance in browser memory. Pre-bundling certain dependencies externally while leaving others bundled internally duplicates the React runtime instance, breaking context providers (`createContext`), React hooks (`Invalid hook call`), and the React Fast Refresh dispatcher.
+3. **Hybrid Package Contamination in npm**:
+   Automatically scanning `node_modules` for the browser encounters dozens of packaging errors in libraries containing isomorphic code or importing Node.js built-ins (`fs`, `path`, `assert`, `stream`).
+4. **Coupling with the RSC Client Manifest**:
+   The React 19 client runtime must hydrate the Server Components stream in strict synchronization with the chunk identifiers in `react-client-manifest.json`, requiring a consistent, unified chunk graph.
+
+### 8.5. Performance Benchmarks and Gains
+With this architecture:
+* **Standard projects (20-50 routes)**: HMR rebuild in **~90 ms - 100 ms**.
+* **Massive projects (`dinou-docs`, 163 routes, 1,107 chunks, 23.5 MB)**:
+  - Before: **4,065 ms** (~4.1 seconds).
+  - After: **~1,100 ms - 1.500 ms** (nearly **4x** speedup).
+* **100% Robustness**: Deterministic consistency of the full esbuild graph is preserved without resorting to fragile micro-compilation heuristics.
+
+---
+
+## 9. Conclusion: Freedom, Performance, and Future-Proofing
 
 The architecture of **Dinou v7** demonstrates that it is entirely possible to leverage the full power of **React 19 (Server Components, Streaming SSR, Server Functions, and ISR)** without submitting to cloud platform lock-in:
 * **Zero Child Processes (`fork`)**: A unified, lightweight, and ultra-fast in-process AOT architecture.
 * **No Platform Lock-in**: The exact same codebase runs in a Cloudflare Edge Worker, inside a Kubernetes cluster on Node.js, on a bare-metal Bun VM, or as a standalone native binary executable.
+* **Instantaneous, Scalable Development**: Two-tier architecture with SWC Disk-Mirror and native Go resolution for fast, deterministic HMR.
 * **Built on Web Standards**: Your application code relies not on proprietary vendor SDKs, but on the universal open web standards of the W3C.
