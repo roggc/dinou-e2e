@@ -2037,10 +2037,23 @@ const server = http.createServer(async (req, res) => {
 
       // 2.a In-memory fast path for client bundles and assets generated in dev
       if (globalThis.__DINOU_MEM_FILES__) {
-        const memBuf =
+        let memBuf =
           globalThis.__DINOU_MEM_FILES__.get(cleanPath) ||
           globalThis.__DINOU_MEM_FILES__.get(mappedPath) ||
           globalThis.__DINOU_MEM_FILES__.get("/" + cleanPath);
+
+        // Active Route Bundling: On-demand compilation of requested client bundle
+        if (!memBuf && cleanPath.endsWith(".js") && clientBundlerHandle?.ensureActiveRoute) {
+          const base = path.basename(cleanPath, ".js");
+          const activated = await clientBundlerHandle.ensureActiveRoute(base);
+          if (activated) {
+            memBuf =
+              globalThis.__DINOU_MEM_FILES__.get(cleanPath) ||
+              globalThis.__DINOU_MEM_FILES__.get(mappedPath) ||
+              globalThis.__DINOU_MEM_FILES__.get("/" + cleanPath);
+          }
+        }
+
         if (memBuf) {
           const fileExt = path.extname(cleanPath).toLowerCase();
           const contentType = MIME_TYPES[fileExt] || "application/octet-stream";
@@ -2144,6 +2157,14 @@ const server = http.createServer(async (req, res) => {
     }
     if (activeSsrSyncPromise) {
       await activeSsrSyncPromise;
+    }
+
+    // Active Route Bundling: Proactively activate requested route in dev
+    const routePath = pathname.replace(/^\/____rsc_payload____/, "");
+    if (clientBundlerHandle?.ensureActiveRoute && routePath && routePath !== "/") {
+      try {
+        await clientBundlerHandle.ensureActiveRoute(routePath);
+      } catch (e) {}
     }
 
     const webReq = nodeToWebRequest(req);

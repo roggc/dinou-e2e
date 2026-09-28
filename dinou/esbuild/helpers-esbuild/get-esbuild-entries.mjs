@@ -255,6 +255,14 @@ export default async function getEsbuildEntries({
     const outfileName = `${dCE.name}-${hash}`;
     dCE.outfile = `${outfileName}.js`;
     dCE.outfileName = outfileName;
+    if (manifest) {
+      const fileUrl = pathToFileURL(dCE.absPath).href;
+      for (const key in manifest) {
+        if (key === fileUrl || key.startsWith(fileUrl + "#")) {
+          manifest[key].id = "/" + dCE.outfile;
+        }
+      }
+    }
   }
 
   for (const dCSSE of detectedCSSEntries) {

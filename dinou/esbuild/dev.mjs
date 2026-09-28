@@ -65,6 +65,11 @@ export async function startEsbuildDev(options = {}) {
 
   let manifest = {};
   let entryPoints = {};
+  let cssEntryPoints = {};
+  let allComponentEntries = {};
+  let activeComponentEntries = new Map();
+  let pathToOutfile = new Map();
+  let outfileNameToPath = new Map();
 
   async function updateEntriesAndComponents() {
     manifest = {};
@@ -99,7 +104,7 @@ export async function startEsbuildDev(options = {}) {
 
     clientComponentsPaths = Object.values(componentEntryPoints);
 
-    const cssEntryPoints = [...detectedCSSEntries].reduce(
+    cssEntryPoints = [...detectedCSSEntries].reduce(
       (acc, dCSSE) => ({ ...acc, [dCSSE.outfileName]: dCSSE.absPath }),
       {}
     );
@@ -108,6 +113,13 @@ export async function startEsbuildDev(options = {}) {
       (acc, dAE) => ({ ...acc, [dAE.outfileName]: dAE.absPath }),
       {}
     );
+
+    allComponentEntries = componentEntryPoints;
+    for (const [outName, absP] of Object.entries(componentEntryPoints)) {
+      const norm = normKey(absP);
+      pathToOutfile.set(norm, outName);
+      outfileNameToPath.set(outName, absP);
+    }
 
     entryPoints = {
       ...frameworkEntryPoints,
@@ -200,9 +212,12 @@ export async function startEsbuildDev(options = {}) {
     broadcast: (msg) => {
       hmrEngine.value?.broadcastMessage?.(msg);
     },
-    notifyFileChanged: (filePath) => {
+    ensureActiveRoute: async () => true,
+    notifyFileChanged: async (filePath) => {
       if (filePath) {
-        changedIds.add(normKey(filePath));
+        const norm = normKey(filePath);
+        changedIds.add(norm);
+
         if (currentCtx) {
           const t0 = Date.now();
           return currentCtx.rebuild().then((result) => {

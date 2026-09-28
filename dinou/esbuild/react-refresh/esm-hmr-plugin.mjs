@@ -327,9 +327,11 @@ export default function esmHmrPlugin({
             source.matchAll(/import\s+["'](.+?)["']/g),
           ).map((m) => m[1]);
 
-          hmrEngine.value.setEntry(urlId, imports, true);
-          const acceptedEntry = hmrEngine.value.getEntry(urlId, true);
-          acceptedEntry.isHmrAccepted = true;
+          if (hmrEngine.value) {
+            hmrEngine.value.setEntry(urlId, imports, true);
+            const acceptedEntry = hmrEngine.value.getEntry(urlId, true);
+            if (acceptedEntry) acceptedEntry.isHmrAccepted = true;
+          }
           const wrappedCode = `
           const RefreshRuntime = window.__reactRefreshRuntime;
           let prevRefreshReg = window.$RefreshReg$;
