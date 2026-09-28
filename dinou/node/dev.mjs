@@ -3,6 +3,11 @@
 // Eliminates child_process.fork() by compiling Pass A (RSC) and Pass B (SSR)
 // using esbuild.context() in memory, running a single unified streaming process.
 
+process.env.DINOU_DEV = "true";
+if (!process.env.NODE_ENV) {
+  process.env.NODE_ENV = "development";
+}
+
 import http from "node:http";
 import path from "node:path";
 import fs from "node:fs";

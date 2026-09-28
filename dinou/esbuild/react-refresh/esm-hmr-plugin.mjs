@@ -186,6 +186,7 @@ export default function esmHmrPlugin({
             const tSwc0 = Date.now();
             const { code } = await transform(source, {
               filename: abs,
+              sourceMaps: "inline",
               jsc: {
                 parser: {
                   syntax: "typescript",

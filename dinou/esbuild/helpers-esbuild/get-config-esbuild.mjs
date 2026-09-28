@@ -82,13 +82,16 @@ export default function getConfigEsbuild({
 
   const tsconfigPath = fs.existsSync("tsconfig.json") ? path.resolve("tsconfig.json") : undefined;
 
+  const isDev = process.env.NODE_ENV !== "production";
+
   return {
     entryPoints,
     outdir,
     format: "esm",
     bundle: true,
     splitting: true,
-    sourcemap: true,
+    sourcemap: !isDev,
+    treeShaking: !isDev,
     tsconfig: tsconfigPath,
     jsx: "automatic",
     target: "es2022",

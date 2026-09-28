@@ -1,3 +1,8 @@
+process.env.DINOU_DEV = "true";
+if (!process.env.NODE_ENV) {
+  process.env.NODE_ENV = "development";
+}
+
 import esbuild from "esbuild";
 import fs from "node:fs/promises";
 import getConfigEsbuild from "./helpers-esbuild/get-config-esbuild.mjs";
