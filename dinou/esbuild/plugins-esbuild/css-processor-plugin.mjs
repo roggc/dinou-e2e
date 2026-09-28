@@ -71,7 +71,6 @@ export default function cssProcessorPlugin({ outdir = ".dinou/public", hmrEngine
       });
 
       build.onLoad({ filter: /\.css$/ }, async (args) => {
-        hasCssChange = true;
         const filePath = args.path;
         loadCssCache();
         const stat = await fs.stat(filePath);
@@ -85,15 +84,18 @@ export default function cssProcessorPlugin({ outdir = ".dinou/public", hmrEngine
             return {
               contents: `export default ${JSON.stringify(cached.map || {})};`,
               loader: "js",
+              watchFiles: [filePath],
             };
           } else {
             return {
               contents: `/* global: ${path.basename(filePath)} */`,
               loader: "js",
+              watchFiles: [filePath],
             };
           }
         }
 
+        hasCssChange = true;
         const tPostCss0 = Date.now();
         const source = await fs.readFile(filePath, "utf8");
 
@@ -157,11 +159,13 @@ export default function cssProcessorPlugin({ outdir = ".dinou/public", hmrEngine
           return {
             contents: `export default ${JSON.stringify(map)};`,
             loader: "js",
+            watchFiles: [filePath],
           };
         } else {
           return {
             contents: `/* global: ${path.basename(filePath)} */`,
             loader: "js",
+            watchFiles: [filePath],
           };
         }
       });

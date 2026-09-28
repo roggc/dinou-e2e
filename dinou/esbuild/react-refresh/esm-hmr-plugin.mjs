@@ -99,29 +99,38 @@ export default function esmHmrPlugin({
       }
 
       const rootEntryMap = new Map();
-      let entryPointsSet = new Set();
+      let entryPointsSet = null;
+
+      let onLoadCount = 0;
+      let onLoadTime = 0;
 
       build.onStart(async () => {
         swcTotalTime = 0;
         swcCount = 0;
-        rootEntryMap.clear();
-        entryPointsSet = new Set(
-          Object.values(entryPoints || {}).map((val) => normKey(path.resolve(val)))
-        );
-        for (const entryName of entryNames) {
-          const entryPath = entryPoints?.[entryName];
-          if (!entryPath) continue;
+        onLoadCount = 0;
+        onLoadTime = 0;
+        if (!entryPointsSet) {
+          entryPointsSet = new Set(
+            Object.values(entryPoints || {}).map((val) => normKey(path.resolve(val)))
+          );
+        }
+        if (rootEntryMap.size === 0) {
+          for (const entryName of entryNames) {
+            const entryPath = entryPoints?.[entryName];
+            if (!entryPath) continue;
 
-          const absPath = path.resolve(entryPath);
-          const source = await fs.readFile(absPath, "utf8");
-          entryAbsPaths.push(absPath);
-          entrySources.push(source);
-          entryOutputNames.push(entryName + ".js");
-          rootEntryMap.set(normKey(absPath), source);
+            const absPath = path.resolve(entryPath);
+            const source = await fs.readFile(absPath, "utf8");
+            entryAbsPaths.push(absPath);
+            entrySources.push(source);
+            entryOutputNames.push(entryName + ".js");
+            rootEntryMap.set(normKey(absPath), source);
+          }
         }
       });
 
       build.onLoad({ filter: /(?:src|dinou)[\\/].*\.[jt]sx?$/i }, async (args) => {
+        const tStart = Date.now();
         const abs = path.resolve(args.path);
         const absNorm = normKey(abs);
 
@@ -153,8 +162,17 @@ export default function esmHmrPlugin({
         if (isUserComponent) {
           try {
             loadSwcCache();
-            const stat = await fs.stat(args.path);
             const cached = swcGlobalCache.get(absNorm);
+            const isKnownUnchanged = !isInitialBuild && changedIds && changedIds.size > 0 && !changedIds.has(absNorm);
+            if (cached && isKnownUnchanged) {
+              return {
+                contents: cached.code,
+                loader: "js",
+                watchFiles: [abs],
+              };
+            }
+
+            const stat = await fs.stat(args.path);
             if (cached && cached.mtime === stat.mtimeMs) {
               return {
                 contents: cached.code,
@@ -203,10 +221,15 @@ export default function esmHmrPlugin({
           } catch (e) {
             console.error("SWC Error:", e);
             return null;
+          } finally {
+            onLoadCount++;
+            onLoadTime += Date.now() - tStart;
           }
         }
 
         // CASE C: It is not an entry point (libraries, internal helpers, node_modules...)
+        onLoadCount++;
+        onLoadTime += Date.now() - tStart;
         return null;
       });
 
@@ -235,6 +258,7 @@ export default function esmHmrPlugin({
       const wrappedChunkCache = new Map();
 
       build.onEnd(async (result) => {
+        const tWrap0 = Date.now();
         if (!result.metafile) {
           // console.warn(
           //   "[hmr-plugin] Metafile is missing. Enable 'metafile: true'"
@@ -335,11 +359,13 @@ export default function esmHmrPlugin({
           outputFile.contents = encodedWrapped;
           wrappedChunkCache.set(relPath, encodedWrapped);
         }
+        globalThis.__DINOU_WRAP_TIME__ = Date.now() - tWrap0;
       });
 
       build.onEnd(write);
 
       build.onEnd(async (result) => {
+        const tBroadcast0 = Date.now();
         saveSwcCache().catch(() => {});
         globalThis.__DINOU_SWC_TIME__ = swcTotalTime;
         globalThis.__DINOU_SWC_COUNT__ = swcCount;
@@ -447,6 +473,7 @@ export default function esmHmrPlugin({
         }
         saveSwcCache().catch(() => {});
         changedIds.clear();
+        globalThis.__DINOU_BROADCAST_TIME__ = Date.now() - tBroadcast0;
       });
     },
   };

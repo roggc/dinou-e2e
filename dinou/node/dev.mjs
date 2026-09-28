@@ -1329,8 +1329,44 @@ let engineVersion = 1;
 let activeRebuildPromise = null;
 let activeSsrSyncPromise = null;
 let initialEngineBuildPromise = null;
+let ssrSyncTimeout = null;
+
+function scheduleSsrSync(delay = 2500) {
+  if (ssrSyncTimeout) clearTimeout(ssrSyncTimeout);
+  ssrSyncTimeout = setTimeout(() => {
+    ssrSyncTimeout = null;
+    const ssrSync = (async () => {
+      try {
+        const tB = Date.now();
+        await ctxB.rebuild();
+        logTimeline(`ctxB (SSR Engine) rebuilt in ${Date.now() - tB}ms`);
+        const v = "?v=" + Date.now();
+        ssrModule = await dynamicImportWithRetry(pathToFileURL(ssrOutfile).href + v);
+        logTimeline(`SSR module imported into V8 runtime`);
+      } catch (err) {
+        console.error("❌ [SSR Engine Rebuild Error]:", err);
+      }
+    })();
+    activeSsrSyncPromise = ssrSync;
+    ssrSync.finally(() => {
+      if (activeSsrSyncPromise === ssrSync) activeSsrSyncPromise = null;
+    });
+  }, delay);
+}
 
 function getSsrModule() {
+  if (ssrSyncTimeout) {
+    clearTimeout(ssrSyncTimeout);
+    ssrSyncTimeout = null;
+    const v = "?v=" + Date.now();
+    ssrModulePromise = (async () => {
+      await ctxB.rebuild();
+      const mod = await dynamicImportWithRetry(pathToFileURL(ssrOutfile).href + v);
+      ssrModule = mod;
+      return mod;
+    })();
+    return ssrModulePromise;
+  }
   if (ssrModule) return Promise.resolve(ssrModule);
   if (!ssrModulePromise) {
     const v = "?v=" + engineVersion;
@@ -1404,22 +1440,33 @@ function notifyClientBuildStart() {
   }
 }
 
+let lastClientBuildDetails = "";
+
 function notifyClientBuildEnd() {
   const elapsed = Date.now() - clientBuildStartTime;
   const tool = (isWebpackBuild ? "webpack" : (process.env.DINOU_BUILD_TOOL || "esbuild")).toLowerCase();
 
   if (tool === "esbuild") {
+    const core = globalThis.__ESBUILD_CORE_TIME__ || 0;
     const swc = globalThis.__DINOU_SWC_TIME__ || 0;
     const swcCount = globalThis.__DINOU_SWC_COUNT__ || 0;
     const assetsTime = globalThis.__DINOU_ASSETS_TIME__ || 0;
     const stable = globalThis.__DINOU_STABLE_TIME__ || 0;
-    const writeDisk = globalThis.__DINOU_WRITE_TIME__ || 0;
+    const wrap = globalThis.__DINOU_WRAP_TIME__ || 0;
+    const writeTotal = globalThis.__DINOU_WRITE_TOTAL__ || 0;
+    const broadcast = globalThis.__DINOU_BROADCAST_TIME__ || 0;
+    const rcm = globalThis.__DINOU_RCM_TIME__ || 0;
     const details = [];
+    if (core > 0) details.push(`core: ${core}ms`);
     if (swcCount > 0) details.push(`SWC: ${swc}ms (${swcCount} files)`);
     if (assetsTime > 0) details.push(`Assets: ${assetsTime}ms`);
     if (stable > 0) details.push(`Stable: ${stable}ms`);
-    if (writeDisk > 0) details.push(`Disk: ${writeDisk}ms`);
+    if (wrap > 0) details.push(`Wrap: ${wrap}ms`);
+    if (writeTotal > 0) details.push(`Write: ${writeTotal}ms`);
+    if (broadcast > 0) details.push(`Bcast: ${broadcast}ms`);
+    if (rcm > 0) details.push(`RCM: ${rcm}ms`);
     const detailsStr = details.length > 0 ? ` [${details.join(" | ")}]` : "";
+    lastClientBuildDetails = detailsStr;
     logTimeline(`Client Bundler (esbuild) build finished in ${elapsed}ms${detailsStr}`);
   } else if (tool === "rollup") {
     const manifestTime = globalThis.__DINOU_ROLLUP_MANIFEST_TIME__ || 0;
@@ -1485,9 +1532,10 @@ async function doRebuild(filePath = "", eventType = "change") {
     const wasServerFile = absFilePath ? knownServerFiles.has(absFilePath) : false;
     const serverDirectiveChanged = isServerFile !== wasServerFile;
 
+    let clientRebuildPromise = null;
     const isClientRelevant = isClientFile || wasClientFile || clientDirectiveChanged || isCssFile;
     if (clientBundlerHandle?.notifyFileChanged && absFilePath && isClientRelevant) {
-      clientBundlerHandle.notifyFileChanged(absFilePath);
+      clientRebuildPromise = clientBundlerHandle.notifyFileChanged(absFilePath);
     }
 
     const needsClientBundlerRestart = clientDirectiveChanged || (isStructureChange && isCssFile);
@@ -1519,33 +1567,16 @@ async function doRebuild(filePath = "", eventType = "change") {
         await broadcastToClients({ type: "reload" });
       }
     } else if (isClientFile) {
-      if (activeClientBuildPromise) {
-        logTimeline(`Prioritizing client HMR broadcast before SSR update...`);
+      if (clientRebuildPromise) {
+        await clientRebuildPromise;
+      } else if (activeClientBuildPromise) {
         await activeClientBuildPromise;
-      } else {
-        await new Promise((r) => setTimeout(r, 20));
-        if (activeClientBuildPromise) {
-          await activeClientBuildPromise;
-        }
       }
-      logSuccess(`Rebuilt in ${Date.now() - t0}ms (${eventType} ${baseName})`);
-      // Rebuild SSR engine asynchronously in the background so client HMR is instant
-      const ssrSync = (async () => {
-        try {
-          const tB = Date.now();
-          await ctxB.rebuild();
-          logTimeline(`ctxB (SSR Engine) rebuilt in ${Date.now() - tB}ms`);
-          const v = "?v=" + Date.now();
-          ssrModule = await dynamicImportWithRetry(pathToFileURL(ssrOutfile).href + v);
-          logTimeline(`SSR module imported into V8 runtime`);
-        } catch (err) {
-          console.error("❌ [SSR Engine Rebuild Error]:", err);
-        }
-      })();
-      activeSsrSyncPromise = ssrSync;
-      ssrSync.finally(() => {
-        if (activeSsrSyncPromise === ssrSync) activeSsrSyncPromise = null;
-      });
+      const buildDetails = lastClientBuildDetails || "";
+      lastClientBuildDetails = "";
+      logSuccess(`Rebuilt in ${Date.now() - t0}ms (${eventType} ${baseName})${buildDetails}`);
+      // Rebuild SSR engine asynchronously in the background with debounce so client HMR is instant
+      scheduleSsrSync(2500);
     } else {
       await ctxA.rebuild();
       engineVersion = Date.now();
@@ -1610,9 +1641,6 @@ srcWatcher.on("all", (event, fullPath) => {
   logTimeline(`File change detected: ${event} ${path.basename(fullPath)}`);
   pendingSrcPath = fullPath;
   pendingSrcEvent = event;
-  if (clientBundlerHandle?.notifyFileChanged && fullPath) {
-    clientBundlerHandle.notifyFileChanged(fullPath);
-  }
   if (srcDebounce) clearTimeout(srcDebounce);
   srcDebounce = setTimeout(() => {
     srcDebounce = null;
@@ -1968,9 +1996,6 @@ const server = http.createServer(async (req, res) => {
     if (activeClientBuildPromise) {
       await activeClientBuildPromise;
     }
-    if (activeSsrSyncPromise) {
-      await activeSsrSyncPromise;
-    }
     // If a source change is pending debounce, process it
     if (srcDebounce) {
       clearTimeout(srcDebounce);
@@ -2111,6 +2136,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (manifestSyncPromise) {
       await manifestSyncPromise;
+    }
+    if (activeSsrSyncPromise) {
+      await activeSsrSyncPromise;
     }
 
     const webReq = nodeToWebRequest(req);
