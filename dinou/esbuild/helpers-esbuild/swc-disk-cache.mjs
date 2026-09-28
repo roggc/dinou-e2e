@@ -4,6 +4,12 @@ import path from "node:path";
 import glob from "fast-glob";
 import { transform } from "@swc/core";
 import { useServerRegex } from "../../constants.js";
+import { extensions as assetExtensions } from "../../core/asset-extensions.js";
+
+const styleExtensions = ["css", "scss", "less", "sass"];
+const fontExtensions = ["woff", "woff2", "ttf", "eot", "otf"];
+const redirectExtensions = [...styleExtensions, ...assetExtensions, ...fontExtensions];
+const redirectFilter = new RegExp(`\\.(${redirectExtensions.join("|")})$`, "i");
 
 export function getMirrorPath(srcPath, projectRoot = process.cwd()) {
   if (!srcPath) return "";
@@ -125,7 +131,7 @@ export function swcRedirectPlugin({ projectRoot = process.cwd() } = {}) {
 
       // Redirect CSS and assets imported from inside .dinou/swc back to src/
       build.onResolve(
-        { filter: /\.(css|scss|less|png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf|eot)$/i },
+        { filter: redirectFilter },
         (args) => {
           const importer = args.importer || "";
           if (!importer.includes(".dinou/swc") && !importer.includes(".dinou\\swc")) {
