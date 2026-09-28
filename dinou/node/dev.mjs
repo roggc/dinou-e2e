@@ -1808,6 +1808,27 @@ async function startClientBundler(tool) {
     reactClientManifestPlugin.setOnManifestUpdated?.(() => onManifestUpdated());
 
     let currentWatcher = null;
+    let nextRollupBuildPromise = null;
+    let nextRollupBuildResolve = null;
+    let rollupBuildSafetyTimeout = null;
+
+    function getOrCreateNextRollupBuildPromise() {
+      if (!nextRollupBuildPromise) {
+        nextRollupBuildPromise = new Promise((resolve) => {
+          nextRollupBuildResolve = resolve;
+        });
+        // Safety timeout: if Rollup does not trigger or finish within 800ms (e.g. unchanged or ignored file), resolve
+        rollupBuildSafetyTimeout = setTimeout(() => {
+          if (!activeClientBuildPromise && nextRollupBuildResolve) {
+            const r = nextRollupBuildResolve;
+            nextRollupBuildResolve = null;
+            nextRollupBuildPromise = null;
+            r();
+          }
+        }, 800);
+      }
+      return nextRollupBuildPromise;
+    }
 
     async function startRollupWatcher() {
       if (currentWatcher) {
@@ -1835,9 +1856,18 @@ async function startClientBundler(tool) {
         let initialResolved = false;
         currentWatcher.on("event", (event) => {
           if (event.code === "BUNDLE_START") {
+            if (rollupBuildSafetyTimeout) {
+              clearTimeout(rollupBuildSafetyTimeout);
+              rollupBuildSafetyTimeout = null;
+            }
             updateSpinner("Bundling client with Rollup...");
             notifyClientBuildStart();
+            getOrCreateNextRollupBuildPromise();
           } else if (event.code === "BUNDLE_END") {
+            if (rollupBuildSafetyTimeout) {
+              clearTimeout(rollupBuildSafetyTimeout);
+              rollupBuildSafetyTimeout = null;
+            }
             logSuccess(`Client bundle completed in ${event.duration}ms`);
             if (event.result?.getTimings) {
               const rawTimings = event.result.getTimings();
@@ -1851,14 +1881,30 @@ async function startClientBundler(tool) {
               globalThis.__DINOU_ROLLUP_TIMINGS__ = pluginTimes;
             }
             notifyClientBuildEnd();
+            if (nextRollupBuildResolve) {
+              const r = nextRollupBuildResolve;
+              nextRollupBuildResolve = null;
+              nextRollupBuildPromise = null;
+              r();
+            }
             if (!initialResolved) {
               onManifestUpdated();
               initialResolved = true;
               resolve();
             }
           } else if (event.code === "ERROR") {
+            if (rollupBuildSafetyTimeout) {
+              clearTimeout(rollupBuildSafetyTimeout);
+              rollupBuildSafetyTimeout = null;
+            }
             console.error("❌ [Rollup Dev Error]:", event.error);
             notifyClientBuildEnd();
+            if (nextRollupBuildResolve) {
+              const r = nextRollupBuildResolve;
+              nextRollupBuildResolve = null;
+              nextRollupBuildPromise = null;
+              r();
+            }
             if (!initialResolved) {
               initialResolved = true;
               resolve();
@@ -1873,6 +1919,7 @@ async function startClientBundler(tool) {
     return {
       notifyFileChanged: (filePath) => {
         notifyFileChanged?.(filePath);
+        return getOrCreateNextRollupBuildPromise();
       },
       broadcast: (msg) => {
         getHmrEngine()?.broadcastMessage?.(msg);
