@@ -4298,5 +4298,29 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("#sf-user-role")).toHaveText("visitor");
     });
   });
+
+  test.describe("Dinou Core: React StrictMode", () => {
+    test("StrictMode is active by default in dev (double effects) and disabled in prod (single effect)", async ({ page }) => {
+      await page.goto("/t-strict-mode", { waitUntil: "commit" });
+      await page.waitForSelector('body[data-hydrated="true"]');
+      await expect(page.locator("#strict-mode-title")).toHaveText("React StrictMode Test");
+
+      const effectCount = await page.evaluate(() => (window as any).__STRICT_MODE_EFFECT_COUNT__);
+      const strictModeFlag = await page.evaluate(() => (window as any).__DINOU_STRICT_MODE__);
+
+      if (!isProd) {
+        // En desarrollo (StrictMode activo por defecto):
+        expect(strictModeFlag).toBe(true);
+        // React monta -> desmonta -> vuelve a montar, ejecutando useEffect exactamente 2 veces
+        expect(effectCount).toBe(2);
+        await expect(page.locator("#strict-mode-effect-count")).toHaveText("2");
+      } else {
+        // En producción: StrictMode desactivado para máximo rendimiento, efecto ejecutado exactamente 1 vez
+        expect(effectCount).toBe(1);
+        await expect(page.locator("#strict-mode-effect-count")).toHaveText("1");
+      }
+    });
+  });
 });
+
 
