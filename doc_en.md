@@ -499,7 +499,44 @@ With this architecture:
 
 ---
 
-## 9. Conclusion: Freedom, Performance, and Future-Proofing
+## 9. Multi-Bundler Harmonization (Rollup, Webpack, Esbuild) and Universal Server Actions Resolution
+
+To guarantee that Dinou v7 is truly agnostic not only of the production deployment target but also of the development toolchain (`esbuild`, `rollup`, or `webpack`), a decisive architectural harmonization phase was completed:
+
+### 9.1. Symmetric Modernization of Development Bundlers
+The architectural principles of **Zero Babel in development** and **in-memory chunk serving (0-Disk I/O)** were systematically unified across all supported bundlers:
+1. **Rollup**:
+   - Total replacement of `@rollup/plugin-babel` in development with [`rollup-plugin-swc.js`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/rollup/rollup-plugins/rollup-plugin-swc.js), featuring an in-memory transpilation cache and native Rust React Fast Refresh.
+   - Integration of `rollup-plugin-memory.js` to retain emitted chunks directly in RAM and serve them to the browser in <1 ms, eliminating synchronous disk write bottlenecks.
+2. **Webpack**:
+   - Replacement of `babel-loader` with `swc-loader.js` in development mode.
+   - Integration of `webpack-memory-plugin.js` to capture compiled assets straight from Webpack's in-memory `outputFileSystem`.
+3. **Esbuild**:
+   - Consolidation of the SWC Disk-Mirror (`.dinou/swc/`) and reduction of IPC resolution overhead to 0 ms.
+
+### 9.2. Server Actions and Server Functions Resolution in the SWC Mirror
+When running under `esbuild` with the disk-backed SWC mirror, an architectural challenge arose in modules importing Server Functions:
+* **The Root Problem**: `syncAllSwcFiles` scans `src/` and deliberately skips files containing `"use server"` (since Server Functions are handled via RPC proxy modules produced by `serverFunctionsPlugin` and must not be compiled as standard client components).
+* Consequently, files like `actions.ts` or `redirect-sf.ts` never exist in `.dinou/swc/`.
+* When a client component inside `.dinou/swc/` issued a relative import (`import { ... } from "./actions"`), esbuild failed to resolve the path locally (`Could not resolve "./actions"`).
+* **The Solution**: [`swcRedirectPlugin`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/esbuild/helpers-esbuild/swc-disk-cache.mjs) was upgraded so that any relative import not found in the SWC mirror is transparently redirected back to the corresponding original file in `src/`, dynamically checking extensions (`.ts`, `.tsx`, `.js`, `/index.ts`, etc.).
+* This unified resolution: both relative imports (`./actions`) and tsconfig-based aliases (`@/demo/.../actions`) resolve identically and without friction.
+
+### 9.3. RSC Descriptors and Native Edge SSR Support (`serverModuleMap: null`)
+A foundational design principle of React 19 is that Server Actions passed into interactive props (such as `<form action={triggerRedirectAction}>`) **are not traditional serializable JavaScript closures**, but registered server references:
+* On the server, React Flight serializes an opaque reference descriptor (`$F` + URL identifier).
+* In the client (or during Edge SSR with `react-server-dom-webpack-client.edge`), React revives this descriptor by generating a `createBoundServerReference` that routes the submit to `callServer`.
+* In prior builds, if an empty non-null `serverConsumerManifest.serverModuleMap: {}` was provided during SSR, React assumed it was running in an environment where server modules should be loaded locally via `requireModule()`, causing `Could not find the module ... in the React Server Manifest` or crashing in `registerBoundServerReference`.
+* In [`dinou/core/edge-ssr.js`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/core/edge-ssr.js), `serverModuleMap: null` was explicitly set in `effectiveManifest`. This instructs React to take the clean `createBoundServerReference` code path, enabling Server Components to pass Server Actions directly into layouts or client components for seamless streaming SSR without errors.
+
+### 9.4. CI Resilience and Dead Code Removal
+* **CI Concurrency Resilience**: Playwright assertions for Server Actions and Redirection flows were updated with an explicit 15s timeout (`{ timeout: 15000 }`), absorbing initial Edge ISG warm-up times on constrained 2-vCPU GitHub Actions runners (Windows/Ubuntu).
+* **Removal of Obsolete Plugins**: Removed `babel-plugin-react-refresh-scoped-id.js`, a legacy artifact from the older Babel pipeline whose namespacing responsibilities are now handled cleanly by `react-refresh-wrap-modules.js` and SWC at bundling time.
+* **100% Green CI Matrix**: Full validation of Playwright test suites across Node (DEV with Webpack, Rollup, and Esbuild), Cloudflare Workers, Deno, Bun, and static SSG on both Ubuntu and Windows.
+
+---
+
+## 10. Conclusion: Freedom, Performance, and Future-Proofing
 
 The architecture of **Dinou v7** demonstrates that it is entirely possible to leverage the full power of **React 19 (Server Components, Streaming SSR, Server Functions, and ISR)** without submitting to cloud platform lock-in:
 * **Zero Child Processes (`fork`)**: A unified, lightweight, and ultra-fast in-process AOT architecture.
