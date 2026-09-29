@@ -536,7 +536,39 @@ Un principio clave de React 19 es que las Server Actions pasadas a props interac
 
 ---
 
-## 10. Conclusión: Independencia, Rendimiento y Futuro
+## 10. Refinamiento del CLI Público, Scripts de Eject y Nombres Canónicos en Modo Librería
+
+Para perfeccionar la ergonomía tanto del desarrollador que consume Dinou como librería como del que decide eyectar la infraestructura, se implementó una serie de refinamientos clave en la interfaz de comandos y en el sistema de manifiestos:
+
+### 10.1. Limpieza y Claridad del CLI Público (`cli.js`)
+* **Eliminación de Comandos Redundantes y Confusos**: Se suprimieron los comandos de nivel superior `dinou build:esbuild`, `dinou build:rollup` y `dinou build:webpack`, así como los alias `dinou start:esbuild`, `start:rollup` y `start:webpack`. Estos comandos ejecutaban únicamente el empaquetado del bundle de cliente en aislamiento, lo que generaba confusión en usuarios que esperaban una compilación completa del proyecto para producción (para la cual el comando canónico es `dinou build:node:esbuild`, `dinou build:bun`, etc.).
+* **Jerarquía Clara y Determinista**: La interfaz pública de comandos queda estructurada de forma predecible:
+  * Comandos de ciclo de vida general: `dinou dev`, `dinou build`, `dinou start`.
+  * Comandos específicos por runtime y empaquetador: `dinou build:<runtime>[:bundler]` y `dinou start:<runtime>[:bundler]`.
+
+### 10.2. Alineación de Scripts en Proyectos Eyectados (`eject.js`)
+* **Sub-tareas Internas Explícitas (`build:client:*`)**: En el `package.json` generado al ejecutar `dinou eject`, los scripts de bundle de cliente pasaron a denominarse `build:client:esbuild`, `build:client:rollup` y `build:client:webpack`.
+* **Reorganización al Final de `scripts`**: Estos comandos se movieron a la parte final de la sección `scripts`, evitando que aparezcan al principio como si fueran comandos de primer nivel y clarificando que son pasos auxiliares invocados por las tareas de build completas (`build:node`, `build:cloudflare`, etc.).
+
+### 10.3. Exportación Universal de Configuración (`dinou/config`)
+* **Paridad entre Paquete Raíz y Eyectado**: Se añadió explícitamente el sub-path `"./config"` al mapa de `"exports"` del `package.json` principal de Dinou:
+  ```json
+  "./config": {
+    "types": "./dinou/index.d.ts",
+    "import": "./dinou/core/config.js",
+    "require": "./dinou/core/config.js"
+  }
+  ```
+* **Resolución Universal**: Permite que cualquier aplicación externa consuma `import { defineConfig } from "dinou/config"` tanto si Dinou está instalado como dependencia en `node_modules` como si el proyecto ha sido eyectado.
+
+### 10.4. Nombres Canónicos de Manifiesto y Soporte de Dinou en `node_modules`
+* **Nombres Canónicos Fijos (`dinouClientRedirect` y `dinouLink`)**: Los componentes cliente internos del core (`client-redirect.jsx` y `link.jsx`) se identifican con nombres de entrada estables en todos los empaquetadores (Esbuild, Rollup y Webpack), garantizando que en modo desarrollo se emitan invariablemente como `/dinouClientRedirect.js` y `/dinouLink.js`.
+* **Resolución en Rollup dentro de `node_modules`**: Se actualizó [`rollup-plugin-react-client-manifest.js`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/rollup/rollup-plugins/rollup-plugin-react-client-manifest.js) para que los módulos del core de Dinou no sean descartados por filtros de exclusión de terceros (`node_modules`) durante las fases de `transform` y `generateBundle`. Esto erradica URLs provisionales erróneas (`/node_modules_dinou_dinou_core_client-redirect.js`) en el stream de RSC.
+* **Salvaguarda Defensiva en `dev.mjs`**: Se incorporó una normalización defensiva en el servidor de desarrollo que garantiza que cualquier referencia a los componentes cliente del core resuelva de inmediato a `/dinouClientRedirect.js` y `/dinouLink.js` en runtimes ESM (Esbuild y Rollup).
+
+---
+
+## 11. Conclusión: Independencia, Rendimiento y Futuro
 
 La arquitectura de **Dinou v7** demuestra que es posible disfrutar de toda la potencia de **React 19 (Server Components, Streaming SSR, Server Functions e ISR)** sin renunciar a la libertad de infraestructura:
 * **Sin procesos hijos (`fork`)**: Arquitectura AOT unificada, ligera y ultrarrápida.
