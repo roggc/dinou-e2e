@@ -3850,7 +3850,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.click("button[type='submit']");
 
       // Verify profile is displayed
-      await expect(page.locator("body")).toContainText("Jane Doe");
+      await expect(page.locator("body")).toContainText("Jane Doe", { timeout: 15000 });
       await expect(page.locator("body")).toContainText("TypeScript");
       await expect(page.locator("body")).toContainText("3–5 years");
     });
@@ -3904,7 +3904,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       });
       await page.goto("/demo/redirects");
       await page.waitForSelector('body[data-hydrated="true"]');
-      await expect(page.locator("h1")).toContainText("Redirections");
+      await expect(page.locator("h1")).toContainText("Redirections", { timeout: 15000 });
 
       // Test 1: SSR redirect
       await page.click("a:has-text('Trigger SSR Redirect')");

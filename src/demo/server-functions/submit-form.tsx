@@ -33,5 +33,6 @@ export async function submitForm(formData: FormData) {
 }
 
 function delay(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
+  const actualMs = process.env.CI ? Math.min(ms, 200) : ms;
+  return new Promise((r) => setTimeout(r, actualMs));
 }

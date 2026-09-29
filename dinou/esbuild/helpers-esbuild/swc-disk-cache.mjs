@@ -120,21 +120,41 @@ export function swcRedirectPlugin({ projectRoot = process.cwd() } = {}) {
   let redirCalls = 0;
   let redirHits = 0;
 
+  const candidateExtensions = [
+    "",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    "/index.js",
+    "/index.jsx",
+    "/index.ts",
+    "/index.tsx",
+  ];
+
   return {
     name: "swc-disk-cache-redirect",
     setup(build) {
       build.onStart(() => {
+        resolveCache.clear();
         redirTime = 0;
         redirCalls = 0;
         redirHits = 0;
       });
 
-      // Redirect CSS and assets imported from inside .dinou/swc back to src/
+      // Redirect CSS, assets, and server functions / source files imported from inside .dinou/swc back to src/
       build.onResolve(
-        { filter: redirectFilter },
+        { filter: /.*/ },
         (args) => {
           const importer = args.importer || "";
           if (!importer.includes(".dinou/swc") && !importer.includes(".dinou\\swc")) {
+            return null;
+          }
+
+          // Only process relative imports or assets
+          const isRelative = args.path.startsWith(".");
+          const isAsset = redirectFilter.test(args.path);
+          if (!isRelative && !isAsset) {
             return null;
           }
 
@@ -148,23 +168,36 @@ export function swcRedirectPlugin({ projectRoot = process.cwd() } = {}) {
             return resolveCache.get(cacheKey);
           }
 
-          // Check if it exists directly in .dinou/swc
+          // 1. Check if it exists directly in .dinou/swc
           const candidateBase = path.resolve(path.dirname(importer), args.path);
-          if (fsSync.existsSync(candidateBase)) {
+          if (fsSync.existsSync(candidateBase) && !fsSync.statSync(candidateBase).isDirectory()) {
             resolveCache.set(cacheKey, null);
             redirTime += Date.now() - tStart;
             return null;
           }
 
-          // Otherwise redirect to original in src/
+          for (const ext of [".js", ".jsx", ".ts", ".tsx", "/index.js", "/index.jsx"]) {
+            const candidate = candidateBase + ext;
+            if (fsSync.existsSync(candidate) && !fsSync.statSync(candidate).isDirectory()) {
+              resolveCache.set(cacheKey, null);
+              redirTime += Date.now() - tStart;
+              return null;
+            }
+          }
+
+          // 2. Otherwise redirect to original in src/
           const relFromSwc = path.relative(swcDir, path.dirname(importer));
           const originalDir = path.join(projectRoot, relFromSwc);
-          const target = path.resolve(originalDir, args.path);
-          if (fsSync.existsSync(target)) {
-            const res = { path: target };
-            resolveCache.set(cacheKey, res);
-            redirTime += Date.now() - tStart;
-            return res;
+          const targetBase = path.resolve(originalDir, args.path);
+
+          for (const ext of candidateExtensions) {
+            const target = targetBase + ext;
+            if (fsSync.existsSync(target) && !fsSync.statSync(target).isDirectory()) {
+              const res = { path: target };
+              resolveCache.set(cacheKey, res);
+              redirTime += Date.now() - tStart;
+              return res;
+            }
           }
 
           resolveCache.set(cacheKey, null);
