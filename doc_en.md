@@ -566,6 +566,20 @@ To perfect the developer experience both when consuming Dinou as a dependency an
 * **Rollup Resolution for Modules in `node_modules`**: Updated [`rollup-plugin-react-client-manifest.js`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/rollup/rollup-plugins/rollup-plugin-react-client-manifest.js) so that Dinou's internal modules are not discarded by third-party exclusion filters (`node_modules`) during the `transform` and `generateBundle` passes. This prevents unbundled provisional URLs (`/node_modules_dinou_dinou_core_client-redirect.js`) from leaking into RSC payloads.
 * **Defensive Normalization in `dev.mjs`**: Introduced a defensive fallback in the development server ensuring that core client component references resolve immediately to `/dinouClientRedirect.js` and `/dinouLink.js` across ESM runtimes (Esbuild and Rollup).
 
+### 10.5. Configurable `React.StrictMode` Integration and DEV-PROD Parity with React Compiler
+* **Default-On in Development**: In development mode (`dev`), the client component root (`Router` in `client.jsx`, `client-webpack.jsx`, `client-error.jsx`, and `client-error-webpack.jsx`) is automatically wrapped in `<React.StrictMode>`.
+* **Purity Gatekeeper for React Compiler**: Strict Mode double-invokes component rendering and runs a double mount-unmount-remount cycle for `useEffect` in development. This immediately surfaces impure renders, direct prop/state mutations, or missing cleanup functions (`return () => cleanup()`). By strictly enforcing the Rules of React in development (where SWC runs without the compiler for instant HMR), Dinou guarantees that when **React Compiler** (Babel) runs in production (`build`), its fine-grained auto-memoization executes with 100% fidelity without behavioral discrepancies between environments.
+* **Configurable via `dinou.config.mjs` (`reactStrictMode`)**: The `reactStrictMode?: boolean;` option was added to the `DinouConfig` interface in [`dinou/index.d.ts`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/index.d.ts) (defaulting to `true`). Developers can explicitly disable Strict Mode when integrating third-party libraries that do not tolerate double effect invocations:
+  ```javascript
+  import { defineConfig } from "dinou/config";
+
+  export default defineConfig({
+    reactStrictMode: false, // Optional (true by default)
+  });
+  ```
+* **SSR In-Memory Injection and Zero Production Overhead**: The SSR server ([`dinou/core/handler.js`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/core/handler.js)) dynamically injects `window.__DINOU_STRICT_MODE__` into the initial bootstrap script in development. In production builds (`NODE_ENV === "production"`), Strict Mode is completely bypassed, ensuring zero runtime overhead.
+* **Automated Playwright E2E Validation (`e2e/example.spec.ts`)**: Added a dedicated test route (`src/t-strict-mode`) verifying deterministically that in development the effect runs exactly twice (`effectCount === 2`) with `__DINOU_STRICT_MODE__ === true`, while in production it runs exactly once (`effectCount === 1`).
+
 ---
 
 ## 11. Conclusion: Freedom, Performance, and Future-Proofing
