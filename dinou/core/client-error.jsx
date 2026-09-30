@@ -1,6 +1,6 @@
 // dinou/core/client-error.jsx
 if (typeof window !== "undefined") {
-  if (!window.$RefreshReg$) window.$RefreshReg$ = () => {};
+  if (!window.$RefreshReg$) window.$RefreshReg$ = () => { };
   if (!window.$RefreshSig$) window.$RefreshSig$ = () => (type) => type;
 }
 import {
@@ -82,7 +82,7 @@ const getRSCPayload = (rscKey, isPrefetch = false) => {
               window.location.href = redirectUrl;
             }
           }
-          return new Promise(() => {});
+          return new Promise(() => { });
         }
         return res;
       }),
@@ -114,7 +114,7 @@ const getRSCPayload = (rscKey, isPrefetch = false) => {
               window.location.href = redirectUrl;
             }
           }
-          return new Promise(() => {});
+          return new Promise(() => { });
         }
         return res;
       }),
@@ -161,7 +161,7 @@ const getErrorRSCPayload = (route, error) => {
         } else {
           window.location.href = redirectUrl;
         }
-        return new Promise(() => {});
+        return new Promise(() => { });
       }
       return res;
     }),
@@ -440,7 +440,25 @@ const app = useStrictMode
   ? createElement(StrictMode, null, routerElement)
   : routerElement;
 
-hydrateRoot(document, app);
+const onRecoverableError = (error) => {
+  if (
+    error?.name === "InvalidStateError" &&
+    (error?.message?.includes("Document hidden") || (typeof document !== "undefined" && document.hidden))
+  ) {
+    return;
+  }
+  if (error?.name === "AbortError" && error?.message?.includes("transition")) {
+    return;
+  }
+
+  if (typeof reportError === "function") {
+    reportError(error);
+  } else {
+    console.error(error);
+  }
+};
+
+hydrateRoot(document, app, { onRecoverableError });
 
 if (import.meta.hot) {
   import.meta.hot.accept();

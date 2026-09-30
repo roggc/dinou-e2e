@@ -404,7 +404,25 @@ const app = useStrictMode
   ? createElement(StrictMode, null, routerElement)
   : routerElement;
 
-hydrateRoot(document, app);
+const onRecoverableError = (error) => {
+  if (
+    error?.name === "InvalidStateError" &&
+    (error?.message?.includes("Document hidden") || (typeof document !== "undefined" && document.hidden))
+  ) {
+    return;
+  }
+  if (error?.name === "AbortError" && error?.message?.includes("transition")) {
+    return;
+  }
+
+  if (typeof reportError === "function") {
+    reportError(error);
+  } else {
+    console.error(error);
+  }
+};
+
+hydrateRoot(document, app, { onRecoverableError });
 
 if (import.meta.hot) {
   import.meta.hot.accept();

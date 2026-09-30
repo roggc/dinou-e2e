@@ -51,6 +51,9 @@ async function buildStaticPages(onProgress = null) {
 
     for (const entry of entries) {
       if (entry.isDirectory()) {
+        if (entry.name.startsWith("_")) {
+          continue;
+        }
         if (entry.name.startsWith("(") && entry.name.endsWith(")")) {
           pages.push(
             ...(await collectPages(
@@ -1023,7 +1026,8 @@ async function buildStaticPage(reqPath, isDynamic = null) {
         segment &&
         ((segment.startsWith("(") && segment.endsWith(")")) ||
           (segment.startsWith("[") && segment.endsWith("]")) ||
-          segment.startsWith("@"));
+          segment.startsWith("@") ||
+          segment.startsWith("_"));
       const currentPath = path.join(folderPath, segment);
       if (existsSync(currentPath) && !isRouterSyntaxInSegment) {
         folderPath = currentPath;

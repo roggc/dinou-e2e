@@ -23,8 +23,9 @@ async function getJSX(
 
     const isDynamic = seg.startsWith("[") && seg.endsWith("]");
     const isSlot = seg.startsWith("@");
+    const isPrivate = seg.startsWith("_");
 
-    return isGroup || isDynamic || isSlot;
+    return isGroup || isDynamic || isSlot || isPrivate;
   });
 
   let pagePath;

@@ -1628,7 +1628,13 @@ async function doRebuild(filePath = "", eventType = "change") {
     const serverDirectiveChanged = isServerFile !== wasServerFile;
 
     let clientRebuildPromise = null;
-    const isClientRelevant = isClientFile || wasClientFile || clientDirectiveChanged || isCssFile;
+    const isClientRelevant =
+      isClientFile ||
+      wasClientFile ||
+      clientDirectiveChanged ||
+      isCssFile ||
+      normLower.endsWith(".tsx") ||
+      normLower.endsWith(".jsx");
     if (clientBundlerHandle?.notifyFileChanged && absFilePath && isClientRelevant) {
       clientRebuildPromise = clientBundlerHandle.notifyFileChanged(absFilePath);
     }
@@ -1638,9 +1644,11 @@ async function doRebuild(filePath = "", eventType = "change") {
     if (needsClientBundlerRestart && clientBundlerHandle?.restart) {
       updateSpinner(`${clientDirectiveChanged ? "Directive change" : "CSS change"} in ${baseName}. Recreating bundle...`);
       await clientBundlerHandle.restart();
-      await broadcastToClients({ type: "reload" });
-      logSuccess(`Recreated bundle for ${baseName} in ${Date.now() - t0}ms`);
-      return;
+      if (!clientDirectiveChanged) {
+        await broadcastToClients({ type: "reload" });
+        logSuccess(`Recreated bundle for ${baseName} in ${Date.now() - t0}ms`);
+        return;
+      }
     }
 
     const needsStructureRebuild = isStructureChange || clientDirectiveChanged || serverDirectiveChanged;
