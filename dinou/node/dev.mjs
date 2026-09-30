@@ -11,6 +11,7 @@ if (!process.env.NODE_ENV) {
 import http from "node:http";
 import path from "node:path";
 import fs from "node:fs";
+import crypto from "node:crypto";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Readable } from "node:stream";
@@ -74,6 +75,20 @@ const dinouDir = fs.existsSync(path.resolve(projectRoot, "dinou"))
   ? path.resolve(projectRoot, "dinou")
   : path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dinouDirSlash = dinouDir.replace(/\\/g, "/");
+
+function getFallbackChunkId(absPath) {
+  const norm = absPath.replace(/\\/g, "/");
+  const name = path.basename(absPath, path.extname(absPath));
+  if (isWebpackBuild) {
+    return `/${name}.js`;
+  }
+  const buildTool = (process.env.DINOU_BUILD_TOOL || "esbuild").toLowerCase();
+  if (buildTool === "rollup") {
+    return `/${name}.js`;
+  }
+  const hash = crypto.createHash("sha1").update(norm).digest("hex").slice(0, 8);
+  return `/${name}-${hash}.js`;
+}
 
 const { generateRouteModulesCode } = require(path.join(dinouDir, "core/route-generator.js"));
 const parseExports = require(path.join(dinouDir, "core/parse-exports.js"));
@@ -401,21 +416,56 @@ async function updateManifestsState(options = {}) {
       // Check if parsedClientManifest already has an entry for this component
       let matchedEntry = null;
       for (const u of urlVariants) {
-        if (parsedClientManifest[u]) { matchedEntry = parsedClientManifest[u]; break; }
-        if (parsedClientManifest[`${u}#default`]) { matchedEntry = parsedClientManifest[`${u}#default`]; break; }
+        if (parsedClientManifest[u]?.id?.endsWith(".js")) { matchedEntry = parsedClientManifest[u]; break; }
+        if (parsedClientManifest[`${u}#default`]?.id?.endsWith(".js")) { matchedEntry = parsedClientManifest[`${u}#default`]; break; }
+        for (const exp of fileExports) {
+          const expEntry = parsedClientManifest[`${u}#${exp}`];
+          if (expEntry?.id?.endsWith(".js")) {
+            matchedEntry = expEntry;
+            break;
+          }
+        }
+        if (matchedEntry) break;
+      }
+      if (!matchedEntry) {
+        for (const u of urlVariants) {
+          const uLower = u.toLowerCase();
+          for (const [k, v] of Object.entries(parsedClientManifest)) {
+            const kLower = k.toLowerCase();
+            if ((kLower === uLower || kLower.startsWith(uLower + "#")) && v?.id?.endsWith(".js")) {
+              matchedEntry = v;
+              break;
+            }
+          }
+          if (matchedEntry) break;
+        }
       }
 
-      const compId = matchedEntry?.id || pathToFileURL(comp).href;
+      const compId = (matchedEntry?.id && matchedEntry.id.endsWith(".js"))
+        ? matchedEntry.id
+        : getFallbackChunkId(comp);
       const compChunks = matchedEntry?.chunks || [];
 
       for (const u of urlVariants) {
-        if (!normalized[u]) {
+        if (!normalized[u] || !normalized[u].id || !normalized[u].id.endsWith(".js")) {
           normalized[u] = { id: compId, chunks: compChunks, name: "*" };
+        } else if (matchedEntry?.id && matchedEntry.id.endsWith(".js")) {
+          normalized[u].id = compId;
+          normalized[u].chunks = compChunks;
         }
         for (const exp of fileExports) {
           const hashKey = `${u}#${exp}`;
-          if (!normalized[hashKey] || normalized[hashKey].name === "*") {
-            normalized[hashKey] = { id: compId, chunks: compChunks, name: exp };
+          const expEntry = parsedClientManifest[hashKey];
+          const expId = (expEntry?.id && expEntry.id.endsWith(".js"))
+            ? expEntry.id
+            : compId;
+          const expChunks = expEntry?.chunks || compChunks;
+
+          if (!normalized[hashKey] || normalized[hashKey].name === "*" || !normalized[hashKey].id?.endsWith(".js")) {
+            normalized[hashKey] = { id: expId, chunks: expChunks, name: exp };
+          } else if (expEntry?.id && expEntry.id.endsWith(".js")) {
+            normalized[hashKey].id = expId;
+            normalized[hashKey].chunks = expChunks;
           }
         }
       }
@@ -430,27 +480,56 @@ async function updateManifestsState(options = {}) {
       const fileExports = getCachedFileExports(comp);
       let matchedEntry = null;
       for (const u of urlVariants) {
-        if (parsedClientManifest[u]) { matchedEntry = parsedClientManifest[u]; break; }
-        if (parsedClientManifest[`${u}#default`]) { matchedEntry = parsedClientManifest[`${u}#default`]; break; }
+        if (parsedClientManifest[u]?.id?.endsWith(".js")) { matchedEntry = parsedClientManifest[u]; break; }
+        if (parsedClientManifest[`${u}#default`]?.id?.endsWith(".js")) { matchedEntry = parsedClientManifest[`${u}#default`]; break; }
+        for (const exp of fileExports) {
+          const expEntry = parsedClientManifest[`${u}#${exp}`];
+          if (expEntry?.id?.endsWith(".js")) {
+            matchedEntry = expEntry;
+            break;
+          }
+        }
+        if (matchedEntry) break;
+      }
+      if (!matchedEntry) {
+        for (const u of urlVariants) {
+          const uLower = u.toLowerCase();
+          for (const [k, v] of Object.entries(parsedClientManifest)) {
+            const kLower = k.toLowerCase();
+            if ((kLower === uLower || kLower.startsWith(uLower + "#")) && v?.id?.endsWith(".js")) {
+              matchedEntry = v;
+              break;
+            }
+          }
+          if (matchedEntry) break;
+        }
       }
 
-      const compId = matchedEntry?.id || pathToFileURL(comp).href;
+      const compId = (matchedEntry?.id && matchedEntry.id.endsWith(".js"))
+        ? matchedEntry.id
+        : getFallbackChunkId(comp);
       const compChunks = matchedEntry?.chunks || [];
 
       for (const u of urlVariants) {
-        if (!normalized[u]) {
+        if (!normalized[u] || !normalized[u].id || !normalized[u].id.endsWith(".js")) {
           normalized[u] = { id: compId, chunks: compChunks, name: "*" };
-        } else {
+        } else if (matchedEntry?.id && matchedEntry.id.endsWith(".js")) {
           normalized[u].id = compId;
           normalized[u].chunks = compChunks;
         }
         for (const exp of fileExports) {
           const hashKey = `${u}#${exp}`;
-          if (!normalized[hashKey] || normalized[hashKey].name === "*") {
-            normalized[hashKey] = { id: compId, chunks: compChunks, name: exp };
-          } else {
-            normalized[hashKey].id = compId;
-            normalized[hashKey].chunks = compChunks;
+          const expEntry = parsedClientManifest[hashKey];
+          const expId = (expEntry?.id && expEntry.id.endsWith(".js"))
+            ? expEntry.id
+            : compId;
+          const expChunks = expEntry?.chunks || compChunks;
+
+          if (!normalized[hashKey] || normalized[hashKey].name === "*" || !normalized[hashKey].id?.endsWith(".js")) {
+            normalized[hashKey] = { id: expId, chunks: expChunks, name: exp };
+          } else if (expEntry?.id && expEntry.id.endsWith(".js")) {
+            normalized[hashKey].id = expId;
+            normalized[hashKey].chunks = expChunks;
           }
         }
       }
