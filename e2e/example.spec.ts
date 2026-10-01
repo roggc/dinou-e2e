@@ -4526,6 +4526,71 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
   });
 
+  test.describe("Dinou Core: Named Exports in Client Components", () => {
+    test("Multiple named client components render correctly on initial SSR", async ({ page }) => {
+      await page.goto("/t-named-exports", { waitUntil: "commit" });
+      await page.waitForSelector('body[data-hydrated="true"]');
+
+      // Verify Layout named client component rendered
+      await expect(page.locator("#named-exports-layout-title")).toBeVisible();
+      await expect(page.locator("#named-header-title")).toHaveText("Named Header Component");
+      await expect(page.locator("#val-named-header-count")).toHaveText("0");
+
+      // Verify Page named client components rendered
+      await expect(page.locator("#named-exports-title")).toHaveText("Named Exports Test Page");
+      await expect(page.locator("#named-client-card")).toHaveText("Card: RSC Named Export Success");
+      await expect(page.locator("#named-client-badge")).toHaveText("Verified Client Component");
+      await expect(page.locator("#val-named-multiplier")).toHaveText("2");
+    });
+
+    test("Named client components hydrate and maintain interactivity", async ({ page }) => {
+      await page.goto("/t-named-exports", { waitUntil: "commit" });
+      await page.waitForSelector('body[data-hydrated="true"]');
+
+      // 1. Interactivity in Header named component
+      await page.locator("#btn-named-header-inc").click();
+      await expect(page.locator("#val-named-header-count")).toHaveText("1");
+
+      // 2. Interactivity in Page named component
+      await page.locator("#btn-named-multiplier").click();
+      await expect(page.locator("#val-named-multiplier")).toHaveText("4");
+      await page.locator("#btn-named-multiplier").click();
+      await expect(page.locator("#val-named-multiplier")).toHaveText("8");
+
+      // 3. Verify header state was not affected by page state
+      await expect(page.locator("#val-named-header-count")).toHaveText("1");
+    });
+
+    test("Soft navigation preserves layout named component state while mounting new page named components", async ({ page }) => {
+      await page.goto("/t-named-exports", { waitUntil: "commit" });
+      await page.waitForSelector('body[data-hydrated="true"]');
+
+      // 1. Modify header named component state
+      await page.locator("#btn-named-header-inc").click();
+      await expect(page.locator("#val-named-header-count")).toHaveText("1");
+
+      // 2. Soft navigate to subpage
+      await page.locator("#link-to-subpage").click();
+      await expect(page).toHaveURL(/\/t-named-exports\/sub/);
+
+      // 3. Header named component state is preserved!
+      await expect(page.locator("#val-named-header-count")).toHaveText("1");
+
+      // 4. Subpage named components are mounted and interactive
+      await expect(page.locator("#named-exports-sub-title")).toHaveText("Named Exports Subpage");
+      await expect(page.locator("#named-client-badge")).toHaveText("Subpage Badge");
+      await expect(page.locator("#val-named-multiplier")).toHaveText("5");
+
+      await page.locator("#btn-named-multiplier").click();
+      await expect(page.locator("#val-named-multiplier")).toHaveText("10");
+
+      // 5. Navigate back and verify state
+      await page.locator("#link-back-main").click();
+      await expect(page).toHaveURL(/\/t-named-exports/);
+      await expect(page.locator("#val-named-header-count")).toHaveText("1");
+    });
+  });
+
 });
 
 
