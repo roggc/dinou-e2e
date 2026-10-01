@@ -2510,6 +2510,41 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("body")).toContainText("Prop: ASYNC_DATA");
     });
   });
+  test.describe("Dinou layout_functions", () => {
+    test("Should independently supply props to layout and page without hijacking 'page' prop", async ({
+      page,
+    }) => {
+      // 1. Initial full SSR render
+      const res = await page.goto("/t-layout-functions");
+      expect(res?.status()).toBe(200);
+
+      // Verify layout props from layout_functions.ts
+      await expect(page.locator("#layout-title")).toHaveText("Dinou Layout Functions Title");
+      await expect(page.locator("#layout-menu li")).toHaveText(["Home", "Settings", "Profile"]);
+
+      // Verify page props from page_functions.ts (including unhijacked 'page' prop)
+      await expect(page.locator("#page-title")).toHaveText("Page Independent Title");
+      await expect(page.locator("#page-prop")).toHaveText("Current Page: 42");
+
+      // 2. Client soft navigation to subpage
+      await page.click("#go-to-sub");
+      await expect(page).toHaveURL("/t-layout-functions/sub");
+
+      // Verify layout is preserved and still has its props
+      await expect(page.locator("#layout-title")).toHaveText("Dinou Layout Functions Title");
+      await expect(page.locator("#layout-menu li")).toHaveText(["Home", "Settings", "Profile"]);
+
+      // Verify subpage received its own independent props
+      await expect(page.locator("#subpage-content #page-title")).toHaveText("Subpage Independent Title");
+      await expect(page.locator("#subpage-content #page-prop")).toHaveText("Current Page: 99");
+
+      // 3. Client soft navigation back to parent
+      await page.click("#back-to-parent");
+      await expect(page).toHaveURL("/t-layout-functions");
+      await expect(page.locator("#page-title")).toHaveText("Page Independent Title");
+      await expect(page.locator("#page-prop")).toHaveText("Current Page: 42");
+    });
+  });
   test.describe("Dinou not found", () => {
     // TEST 3: Custom 404
     test("Should render Custom 404 page instead of default", async ({

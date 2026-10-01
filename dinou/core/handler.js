@@ -22,6 +22,7 @@ const { getFilePathAndDynamicParams } = require("./get-file-path-and-dynamic-par
 const getJSX = require("./get-jsx.js");
 const { getErrorJSX } = require("./get-error-jsx.js");
 const importModule = require("./import-module.js");
+const { resolveLayoutFunctionsConfig } = require("./layout-functions.js");
 const { revalidating, regenerating, inFlightGenerations } = require("./revalidating.js");
 const { generatingISG } = require("./generating-isg.js");
 const { requestStorage, setCurrentContext } = require("./request-context.js");
@@ -1049,10 +1050,38 @@ async function handleRequest(request, platformContext = {}) {
     const srcFolder = path.resolve(process.cwd(), "src");
     const [pagePath, dynamicParams] = getFilePathAndDynamicParams(reqSegments, queryObj, srcFolder);
 
+    let layoutPath = null;
+    let layoutParams = dynamicParams;
+    if (isLayoutReq) {
+      const layouts = getFilePathAndDynamicParams(
+        reqSegments,
+        queryObj,
+        srcFolder,
+        "layout",
+        true,
+        false,
+        undefined,
+        0,
+        {},
+        true
+      );
+      if (layouts && layouts.length > 0) {
+        layoutPath = layouts[0][0];
+        layoutParams = layouts[0][1] || dynamicParams;
+      }
+    }
+
     if (!isDynamic.has(cleanPath)) {
       isDynamic.set(cleanPath, { value: false });
     }
     const dynamicState = isDynamic.get(cleanPath);
+
+    if (isLayoutReq) {
+      const layoutConfig = await resolveLayoutFunctionsConfig(layoutPath, layoutParams);
+      if (layoutConfig.isDynamic) {
+        dynamicState.value = true;
+      }
+    }
 
     const nonBuildIdQueryKeys = Object.keys(queryObj).filter((k) => k !== "buildId");
     const hasQueryParams = nonBuildIdQueryKeys.length > 0;
@@ -1164,13 +1193,26 @@ async function handleRequest(request, platformContext = {}) {
     }
 
     const reqPath = cleanPath.endsWith("/") ? cleanPath : cleanPath + "/";
-    const { isPathBlocked } = await resolvePageFunctionsConfig(
-      pagePath,
-      reqSegments,
-      queryObj,
-      dynamicParams,
-      reqPath,
-    );
+    let isPathBlocked = false;
+
+    if (isLayoutReq) {
+      const layoutConfig = await resolveLayoutFunctionsConfig(layoutPath, layoutParams);
+      if (layoutConfig.validateParams) {
+        const isValid = await layoutConfig.validateParams(layoutParams);
+        if (!isValid) {
+          isPathBlocked = true;
+        }
+      }
+    } else {
+      const pageConfig = await resolvePageFunctionsConfig(
+        pagePath,
+        reqSegments,
+        queryObj,
+        dynamicParams,
+        reqPath,
+      );
+      isPathBlocked = pageConfig.isPathBlocked;
+    }
 
     const context = createRequestContext(simReq, bridge, platformContext, dynamicState);
     copyCustomContextProperties(rootContext, context);

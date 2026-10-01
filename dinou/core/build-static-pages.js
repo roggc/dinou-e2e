@@ -7,6 +7,7 @@ const {
 } = require("./get-file-path-and-dynamic-params");
 const importModule = require("./import-module");
 const { requestStorage } = require("./request-context.js");
+const { getLayoutProps } = require("./layout-functions");
 
 const staticRoutes = new Set();
 const staticMetadata = new Map();
@@ -861,7 +862,7 @@ async function buildStaticPages(onProgress = null) {
             }
           }
           pageFunctionsProps = await getProps?.(params);
-          props = { ...props, ...(pageFunctionsProps?.page ?? {}) };
+          props = { ...props, ...(pageFunctionsProps ?? {}) };
         }
 
         let jsx = React.createElement(Page, props);
@@ -965,13 +966,12 @@ async function buildStaticPages(onProgress = null) {
                 }
                 updatedSlots[slotName] = updatedSlotElement;
               }
+              const layoutProps = await getLayoutProps(layoutPath, dParams);
               let props = {
                 params: dParams,
                 ...updatedSlots,
+                ...(layoutProps ?? {}),
               };
-              if (index === layouts.length - 1 || resetLayoutPath) {
-                props = { ...props, ...(pageFunctionsProps?.layout ?? {}) };
-              }
               jsx = React.createElement(Layout, props, jsx);
               jsx = { ...jsx, __modulePath: layoutPath };
               if (resetLayoutPath) {
@@ -1214,7 +1214,7 @@ async function buildStaticPage(reqPath, isDynamic = null) {
           }
         }
         pageFunctionsProps = await getProps?.(dParams);
-        props = { ...props, ...(pageFunctionsProps?.page ?? {}) };
+        props = { ...props, ...(pageFunctionsProps ?? {}) };
       }
 
       let jsx = React.createElement(Page, props);
@@ -1320,12 +1320,11 @@ async function buildStaticPage(reqPath, isDynamic = null) {
               params: dParams,
               ...updatedSlots,
             };
-            if (index === layouts.length - 1 || resetLayoutPath) {
-              layoutProps = {
-                ...layoutProps,
-                ...(pageFunctionsProps?.layout ?? {}),
-              };
-            }
+            const customLayoutProps = await getLayoutProps(layoutPath, dParams);
+            layoutProps = {
+              ...layoutProps,
+              ...(customLayoutProps ?? {}),
+            };
             jsx = React.createElement(Layout, layoutProps, jsx);
             jsx = { ...jsx, __modulePath: layoutPath };
             if (resetLayoutPath) {

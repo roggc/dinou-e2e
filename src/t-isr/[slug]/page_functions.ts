@@ -3,5 +3,5 @@ export function revalidate() {
 }
 
 export async function getProps() {
-  return { page: { timestamp: new Date().toISOString() } };
+  return { timestamp: new Date().toISOString() };
 }

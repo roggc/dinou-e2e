@@ -153,6 +153,12 @@ async function revalidatePath(reqPath) {
         path.join(dist2Folder, reqPathWithSlash, "page._old.rsc")
       );
     }
+    if (existsSync(path.join(dist2Folder, reqPathWithSlash, "layout.rsc"))) {
+      copyFileSync(
+        path.join(dist2Folder, reqPathWithSlash, "layout.rsc"),
+        path.join(dist2Folder, reqPathWithSlash, "layout._old.rsc")
+      );
+    }
     if (existsSync(path.join(dist2Folder, reqPathWithSlash, "rsc.rsc"))) {
       copyFileSync(
         path.join(dist2Folder, reqPathWithSlash, "rsc.rsc"),
@@ -182,6 +188,19 @@ async function revalidatePath(reqPath) {
     }
 
     await getSafeRename()(rscResult.tempPath, rscResult.finalPath);
+
+    try {
+      const layoutFinalPath = path.join(dist2Folder, reqPathWithSlash, "layout.rsc");
+      const layoutOldPath = path.join(dist2Folder, reqPathWithSlash, "layout._old.rsc");
+      if (existsSync(layoutFinalPath) || existsSync(layoutOldPath)) {
+        const layoutRscResult = await getGenerateStaticRSC()(cleanPath, { segment: "layout" });
+        if (layoutRscResult && layoutRscResult.success) {
+          await getSafeRename()(layoutRscResult.tempPath, layoutRscResult.finalPath);
+        }
+      }
+    } catch (e) {
+      // Ignore layout revalidation error if no layout exists for this segment
+    }
 
     const pageResult = await getGenerateStaticPage()(cleanPath);
     if (pageResult.success) {
