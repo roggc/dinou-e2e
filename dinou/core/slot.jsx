@@ -8,7 +8,14 @@ const use = React.use;
 const createElement = React.createElement;
 const Component = typeof React.Component === "function" ? React.Component : class {};
 
-export const DinouPageContext = typeof createContext === "function" ? createContext(null) : null;
+export const DinouPageContext =
+  typeof globalThis !== "undefined" && globalThis.__DINOU_PAGE_CONTEXT__
+    ? globalThis.__DINOU_PAGE_CONTEXT__
+    : (typeof createContext === "function"
+        ? (typeof globalThis !== "undefined"
+            ? (globalThis.__DINOU_PAGE_CONTEXT__ = createContext(null))
+            : createContext(null))
+        : null);
 
 export function cleanErrorStack(stack) {
   if (!stack || typeof stack !== "string") return "";

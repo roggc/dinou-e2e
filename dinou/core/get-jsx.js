@@ -287,9 +287,9 @@ async function getJSX(
         props = { ...props, ...(pageFunctionsProps?.layout ?? {}) };
       }
       try {
-        const testElement = React.createElement(Layout, props, jsx);
+        const testElement = React.createElement(Layout, props, null);
         await asyncRenderJSXToClientJSX(testElement);
-        jsx = testElement;
+        jsx = React.createElement(Layout, props, jsx);
       } catch (layoutErr) {
         console.warn(
           `[Dinou] Layout ${layoutPath} failed during render, isolating layout error:`,
