@@ -4321,6 +4321,211 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       }
     });
   });
+  test.describe("Dinou Core: Segmented RSC Routing & Layout State Preservation", () => {
+    test("Intra-segment navigation preserves both root layout and nested layout state", async ({ page }) => {
+      // 1. Initial hard navigation to Nested A - Page 1
+      await page.goto("/t-seg-rsc/nested-a/page-1", { waitUntil: "commit" });
+      await page.waitForSelector('body[data-hydrated="true"]');
+
+      await expect(page.locator("#seg-top-title")).toHaveText("RSC Segmentation Root Layout");
+      await expect(page.locator("#nested-a-title")).toHaveText("Nested Layout Section A");
+      await expect(page.locator("#page-title")).toHaveText("Page A1 Content");
+
+      // 2. Modify state in Root Layout and in Nested Layout A
+      await page.locator("#btn-top-inc").click();
+      await expect(page.locator("#val-top-count")).toHaveText("1");
+
+      await page.locator("#input-top-text").fill("Dinou Segmentation Test");
+      await expect(page.locator("#input-top-text")).toHaveValue("Dinou Segmentation Test");
+
+      await page.locator("#btn-nested-a-inc").click();
+      await expect(page.locator("#val-nested-a-count")).toHaveText("1");
+
+      // 3. Soft navigate to Section A - Page 2 (shares root layout AND nested layout A)
+      await page.locator("#link-seg-a2").click();
+
+      await expect(page).toHaveURL(/\/t-seg-rsc\/nested-a\/page-2/);
+      await expect(page.locator("#page-title")).toHaveText("Page A2 Content");
+
+      // 4. Verify ROOT layout state was NOT reset
+      await expect(page.locator("#val-top-count")).toHaveText("1");
+      await expect(page.locator("#input-top-text")).toHaveValue("Dinou Segmentation Test");
+
+      // 5. Verify NESTED layout state was NOT reset (segmented payload only replaced page)
+      await expect(page.locator("#val-nested-a-count")).toHaveText("1");
+
+      // 6. Test browser history Back: state must remain intact
+      await page.goBack();
+      await expect(page).toHaveURL(/\/t-seg-rsc\/nested-a\/page-1/);
+      await expect(page.locator("#page-title")).toHaveText("Page A1 Content");
+      await expect(page.locator("#val-top-count")).toHaveText("1");
+      await expect(page.locator("#input-top-text")).toHaveValue("Dinou Segmentation Test");
+      await expect(page.locator("#val-nested-a-count")).toHaveText("1");
+    });
+
+    test("Inter-segment navigation unmounts previous nested layout but preserves root layout state", async ({ page }) => {
+      // 1. Initial load on Nested A - Page 1
+      await page.goto("/t-seg-rsc/nested-a/page-1", { waitUntil: "commit" });
+      await page.waitForSelector('body[data-hydrated="true"]');
+
+      // 2. Mutate root layout state
+      await page.locator("#btn-top-inc").click();
+      await page.locator("#btn-top-inc").click();
+      await expect(page.locator("#val-top-count")).toHaveText("2");
+      await page.locator("#input-top-text").fill("Preserved Root State");
+
+      // 3. Soft navigate across segments to Nested B - Page 1
+      await page.locator("#link-seg-b1").click();
+
+      await expect(page).toHaveURL(/\/t-seg-rsc\/nested-b\/page-1/);
+      await expect(page.locator("#nested-b-title")).toHaveText("Nested Layout Section B");
+      await expect(page.locator("#page-title")).toHaveText("Page B1 Content");
+
+      // 4. Root layout state is STILL intact
+      await expect(page.locator("#val-top-count")).toHaveText("2");
+      await expect(page.locator("#input-top-text")).toHaveValue("Preserved Root State");
+
+      // 5. Nested A layout is gone from DOM
+      await expect(page.locator("#nested-a-title")).toHaveCount(0);
+    });
+  });
+
+  test.describe("Dinou Core: Granular Error Isolation & Recovery", () => {
+    test("Direct SSR of Broken Page keeps parent layout intact and recovers on soft nav", async ({ page }) => {
+      const response = await page.goto("/t-err-page/broken", { waitUntil: "commit" });
+      expect([200, 500]).toContain(response?.status());
+
+      // 1. Parent layout rendered despite page error
+      await expect(page.locator("#err-page-layout-title")).toBeVisible();
+      await expect(page.locator("#link-err-page-healthy")).toBeVisible();
+
+      // 2. Error message displayed inside slot
+      const slot = page.locator("#err-page-slot");
+      if (!isProd) {
+        await expect(slot).toContainText("Deliberate Server Page Error");
+      } else {
+        await expect(slot).toContainText("Application Error");
+      }
+
+      // 3. Hydration finishes without fatal blank screen
+      await page.waitForSelector('body[data-hydrated="true"]');
+
+      // 4. Soft navigate to healthy page -> recovers cleanly!
+      await page.locator("#link-err-page-healthy").click();
+      await expect(page).toHaveURL(/\/t-err-page\/healthy/);
+      await expect(page.locator("#err-page-healthy-content")).toBeVisible();
+      await expect(page.locator("#err-page-layout-title")).toBeVisible();
+    });
+
+    test("Soft navigation into Broken Page keeps parent layout mounted and interactive", async ({ page }) => {
+      await page.goto("/t-err-page/healthy", { waitUntil: "commit" });
+      await page.waitForSelector('body[data-hydrated="true"]');
+
+      // 1. Mutate layout state
+      await page.locator("#btn-err-page-inc").click();
+      await expect(page.locator("#val-err-page-count")).toHaveText("1");
+
+      // 2. Soft navigate into broken page
+      await page.locator("#link-err-page-broken").click();
+      await expect(page).toHaveURL(/\/t-err-page\/broken/);
+
+      // 3. Parent layout remains intact, counter state is preserved!
+      await expect(page.locator("#err-page-layout-title")).toBeVisible();
+      await expect(page.locator("#val-err-page-count")).toHaveText("1");
+
+      // 4. Error displayed inside slot
+      const slot = page.locator("#err-page-slot");
+      if (!isProd) {
+        await expect(slot).toContainText("Deliberate Server Page Error");
+      } else {
+        await expect(slot).toContainText("Application Error");
+      }
+
+      // 5. Soft navigate back to healthy page -> recovers and retains counter
+      await page.locator("#link-err-page-healthy").click();
+      await expect(page).toHaveURL(/\/t-err-page\/healthy/);
+      await expect(page.locator("#err-page-healthy-content")).toBeVisible();
+      await expect(page.locator("#val-err-page-count")).toHaveText("1");
+    });
+
+    test("Direct SSR of Broken Nested Layout renders parent layout and hydrates safely", async ({ page }) => {
+      const response = await page.goto("/t-err-nested/child", { waitUntil: "commit" });
+      expect([200, 500]).toContain(response?.status());
+
+      // 1. Parent layout is rendered
+      await expect(page.locator("#err-nested-parent-title")).toBeVisible();
+      await expect(page.locator("#link-nested-healthy")).toBeVisible();
+
+      // 2. Content slot contains error
+      const slot = page.locator("#err-nested-parent-slot");
+      if (!isProd) {
+        await expect(slot).toContainText("Deliberate Nested Layout Error");
+      } else {
+        await expect(slot).toContainText("Application Error");
+      }
+
+      // 3. Hydrates cleanly without blanking out
+      await page.waitForSelector('body[data-hydrated="true"]');
+      await expect(page.locator("#err-nested-parent-title")).toBeVisible();
+
+      // 4. Recover via soft nav
+      await page.locator("#link-nested-healthy").click();
+      await expect(page).toHaveURL(/\/t-err-nested\/healthy/);
+      await expect(page.locator("#nested-healthy-content")).toBeVisible();
+    });
+
+    test("Soft navigation into Broken Nested Layout isolates error to slot without crashing outer layout", async ({ page }) => {
+      await page.goto("/t-err-nested/healthy", { waitUntil: "commit" });
+      await page.waitForSelector('body[data-hydrated="true"]');
+
+      // 1. Mutate parent layout
+      await page.locator("#btn-err-nested-inc").click();
+      await expect(page.locator("#val-err-nested-count")).toHaveText("1");
+
+      // 2. Soft navigate to broken nested layout
+      await page.locator("#link-nested-broken").click();
+      await expect(page).toHaveURL(/\/t-err-nested\/child/);
+
+      // 3. Parent layout MUST stay visible (not full screen error!) and counter preserved
+      await expect(page.locator("#err-nested-parent-title")).toBeVisible();
+      await expect(page.locator("#val-err-nested-count")).toHaveText("1");
+
+      // 4. Error is contained inside parent slot
+      const slot = page.locator("#err-nested-parent-slot");
+      if (!isProd) {
+        await expect(slot).toContainText("Deliberate Nested Layout Error");
+      } else {
+        await expect(slot).toContainText("Application Error");
+      }
+
+      // 5. Recover to healthy sibling via soft nav
+      await page.locator("#link-nested-healthy").click();
+      await expect(page).toHaveURL(/\/t-err-nested\/healthy/);
+      await expect(page.locator("#nested-healthy-content")).toBeVisible();
+      await expect(page.locator("#val-err-nested-count")).toHaveText("1");
+    });
+
+    test("Root Layout Error renders full-screen error HTML without DOM hierarchy crash", async ({ page }) => {
+      const pageErrors = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      const response = await page.goto("/t-err-root", { waitUntil: "commit" });
+      // Permite 200 (recuperación parcial graceful) o 500
+      expect([200, 500]).toContain(response?.status());
+
+      // 1. HierarchyRequestError check
+      const hasHierarchyError = pageErrors.some((e) => e.includes("HierarchyRequestError"));
+      expect(hasHierarchyError).toBe(false);
+
+      // 2. Error rendered in body
+      if (!isProd) {
+        await expect(page.locator("body")).toContainText("Deliberate Root Layout Crash");
+      } else {
+        await expect(page.locator("body")).toContainText("Application Error");
+      }
+    });
+  });
+
 });
 
 

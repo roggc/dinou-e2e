@@ -10,6 +10,7 @@ const { requestStorage } = require("./request-context.js");
 
 const staticRoutes = new Set();
 const staticMetadata = new Map();
+const staticLayouts = new Map();
 
 function safeDecode(val) {
   try {
@@ -48,6 +49,22 @@ async function buildStaticPages(onProgress = null) {
   ) {
     const entries = readdirSync(currentPath, { withFileTypes: true });
     const pages = [];
+
+    // 🛡️ Descubrir layout en esta carpeta si existe
+    const layoutExtensions = [".tsx", ".jsx", ".ts", ".js"];
+    for (const ext of layoutExtensions) {
+      const candidateLayout = path.join(currentPath, `layout${ext}`);
+      if (existsSync(candidateLayout)) {
+        const routePath = segments.length ? "/" + segments.join("/") : "/";
+        staticLayouts.set(currentPath, {
+          folderPath: currentPath,
+          layoutPath: candidateLayout,
+          routePath,
+          segments,
+        });
+        break;
+      }
+    }
 
     for (const entry of entries) {
       if (entry.isDirectory()) {
@@ -1364,9 +1381,15 @@ function getStaticMetadata(reqPath) {
   return staticMetadata.get(reqPath);
 }
 
+function getStaticLayouts() {
+  return Array.from(staticLayouts.values());
+}
+
 module.exports = {
   buildStaticPages,
   buildStaticPage,
   getStaticPaths,
   getStaticMetadata,
+  getStaticLayouts,
 };
+

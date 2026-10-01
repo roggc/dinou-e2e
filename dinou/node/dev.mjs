@@ -122,9 +122,12 @@ const candidateDinouRoots = [
 ];
 const candidateLinkPaths = new Set();
 const candidateRedirectPaths = new Set();
+const candidateSlotPaths = new Set();
 for (const r of candidateDinouRoots) {
   candidateLinkPaths.add(path.resolve(r, "core/link.jsx"));
   candidateRedirectPaths.add(path.resolve(r, "core/client-redirect.jsx"));
+  candidateSlotPaths.add(path.resolve(r, "core/slot.js"));
+  candidateSlotPaths.add(path.resolve(r, "core/slot.jsx"));
 }
 
 function generateAllUrlVariants(absPath) {
@@ -163,7 +166,7 @@ async function findClientComponents(parsedClientManifest = {}) {
   }
   await walk(srcDir);
 
-  for (const f of [...candidateLinkPaths, ...candidateRedirectPaths]) {
+  for (const f of [...candidateLinkPaths, ...candidateRedirectPaths, ...candidateSlotPaths]) {
     if (fs.existsSync(f)) clientFiles.add(path.resolve(f));
   }
 
@@ -184,9 +187,7 @@ async function findClientComponents(parsedClientManifest = {}) {
         const base = path.basename(filePath);
         if (
           base === "client.jsx" ||
-          base === "client-error.jsx" ||
           base === "client-webpack.jsx" ||
-          base === "client-error-webpack.jsx" ||
           base.startsWith("react-refresh") ||
           base === "runtime.js" ||
           filePath.includes("react-refresh")
@@ -233,6 +234,7 @@ let parsedAssetManifest = {};
 let clientComponents = [];
 let linkChunkId = null;
 let redirectChunkId = null;
+let slotChunkId = null;
 const knownClientFiles = new Set();
 const knownServerFiles = new Set();
 const compExportsCache = new Map();
@@ -373,6 +375,31 @@ async function updateManifestsState(options = {}) {
         normalized[`${url}#ClientRedirect`] = { id: redirectChunkId, chunks: redirectChunks, name: "ClientRedirect" };
         normalized[`${url}#default`] = { id: redirectChunkId, chunks: redirectDefaultChunks, name: "default" };
         normalized[url] = { id: redirectChunkId, chunks: redirectDefaultChunks, name: "default" };
+      }
+    }
+  }
+
+  slotChunkId = null;
+  let slotEntry = null;
+  for (const [k, v] of Object.entries(parsedClientManifest)) {
+    if (k.includes("/core/slot.") || k.includes("dinouSlot")) {
+      if (v && v.id) {
+        slotChunkId = v.id;
+        slotEntry = v;
+      }
+    }
+  }
+  if (!isWebpackBuild && (!slotChunkId || slotChunkId.includes("node_modules"))) {
+    slotChunkId = "/dinouSlot.js";
+  }
+  if (slotChunkId) {
+    const slotChunks = isWebpackBuild ? (slotEntry?.chunks || [slotChunkId]) : "DinouPageSlot";
+    const slotDefaultChunks = isWebpackBuild ? (slotEntry?.chunks || [slotChunkId]) : "default";
+    for (const sp of candidateSlotPaths) {
+      for (const url of generateAllUrlVariants(sp)) {
+        normalized[`${url}#DinouPageSlot`] = { id: slotChunkId, chunks: slotChunks, name: "DinouPageSlot" };
+        normalized[`${url}#default`] = { id: slotChunkId, chunks: slotDefaultChunks, name: "default" };
+        normalized[url] = { id: slotChunkId, chunks: slotDefaultChunks, name: "default" };
       }
     }
   }
@@ -594,6 +621,16 @@ async function updateManifestsState(options = {}) {
         for (const u of generateAllUrlVariants(rp)) imports[u] = redirectChunkId;
       }
     }
+    if (slotChunkId) {
+      imports["dinou/core/slot.js"] = slotChunkId;
+      imports["dinou/core/slot.jsx"] = slotChunkId;
+      imports["dinou/core/slot"] = slotChunkId;
+      imports["/dinou/core/slot.js"] = slotChunkId;
+      imports["./dinou/core/slot.js"] = slotChunkId;
+      for (const sp of candidateSlotPaths) {
+        for (const u of generateAllUrlVariants(sp)) imports[u] = slotChunkId;
+      }
+    }
     importMapHtml = `<script type="importmap">{"imports":${JSON.stringify(imports)}}</script>`;
   }
   globalThis.__DINOU_IMPORT_MAP_HTML__ = importMapHtml;
@@ -677,10 +714,19 @@ async function updateManifestsState(options = {}) {
     }
   }
 
+  if (slotChunkId) {
+    const slotCompIndex = clientComponents.findIndex((c) => candidateSlotPaths.has(path.resolve(c)));
+    if (slotCompIndex !== -1) {
+      const fileUrl = pathToFileURL(clientComponents[slotCompIndex]).href;
+      registerModuleMapEntry(slotChunkId, fileUrl, "DinouPageSlot");
+      registerModuleMapEntry(slotChunkId, fileUrl, "default");
+    }
+  }
+
   globalThis.__DINOU_DYNAMIC_SSR_MODULE_MAP__ = dynamicSsrModuleMap;
   globalThis.__DINOU_SSR_CHUNK_TO_FILE__ = chunkToFile;
 
-  return { linkChunkId, redirectChunkId, componentsChanged };
+  return { linkChunkId, redirectChunkId, slotChunkId, componentsChanged };
 }
 
 // Initial manifest scan
@@ -777,6 +823,16 @@ if (typeof globalThis.__webpack_chunk_load__ === 'undefined') {
     }
   }
 
+  if (slotChunkId) {
+    const slotCompIndex = clientComponents.findIndex((c) => candidateSlotPaths.has(path.resolve(c)));
+    if (slotCompIndex !== -1) {
+      addClientModule(slotChunkId, `mod_${slotCompIndex}`);
+      for (const sp of candidateSlotPaths) {
+        for (const u of generateAllUrlVariants(sp)) addClientModule(u, `mod_${slotCompIndex}`);
+      }
+    }
+  }
+
   serverFunctionFiles.forEach((relPath, index) => {
     const normRel = relPath.replace(/\\/g, "/");
     const relFileUrl = "file:///" + normRel;
@@ -835,6 +891,17 @@ if (typeof globalThis.__webpack_chunk_load__ === 'undefined') {
       addModuleMap(redirectChunkId, `{ "*": { id: ${JSON.stringify(fileUrl)}, chunks: [], name: "*" } }`);
       for (const rp of candidateRedirectPaths) {
         for (const u of generateAllUrlVariants(rp)) addModuleMap(u, `{ "*": { id: ${JSON.stringify(fileUrl)}, chunks: [], name: "*" } }`);
+      }
+    }
+  }
+
+  if (slotChunkId) {
+    const slotCompIndex = clientComponents.findIndex((c) => candidateSlotPaths.has(path.resolve(c)));
+    if (slotCompIndex !== -1) {
+      const fileUrl = pathToFileURL(clientComponents[slotCompIndex]).href;
+      addModuleMap(slotChunkId, `{ "*": { id: ${JSON.stringify(fileUrl)}, chunks: [], name: "*" } }`);
+      for (const sp of candidateSlotPaths) {
+        for (const u of generateAllUrlVariants(sp)) addModuleMap(u, `{ "*": { id: ${JSON.stringify(fileUrl)}, chunks: [], name: "*" } }`);
       }
     }
   }
@@ -2305,7 +2372,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Active Route Bundling: Proactively activate requested route in dev
-    const routePath = pathname.replace(/^\/____rsc_payload____/, "");
+    const routePath = pathname.replace(/^\/____rsc_(?:payload|page|layout|payload_static|payload_old|page_static|layout_static)____/, "");
     if (clientBundlerHandle?.ensureActiveRoute && routePath && routePath !== "/") {
       try {
         await clientBundlerHandle.ensureActiveRoute(routePath);
@@ -2328,8 +2395,10 @@ const server = http.createServer(async (req, res) => {
     console.error("[Dinou Dev Server] Request error:", err);
     if (!res.headersSent) {
       res.statusCode = 500;
-      res.setHeader("content-type", "text/plain; charset=utf-8");
-      res.end("Internal Server Error: " + (err?.message || String(err)));
+      res.setHeader("content-type", "text/html; charset=utf-8");
+      const errMsg = (err?.message || String(err)).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const errStack = (err?.stack || "").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      res.end(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dinou Dev Error</title></head><body style="margin:0;background:#fff1f2;padding:20px;"><div style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:32px;max-width:960px;margin:40px auto;background-color:#fff1f2;border:1px solid #fecdd3;border-radius:12px;color:#9f1239;box-shadow:0 10px 25px -5px rgba(0,0,0,0.1);"><div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;"><span style="background:#e11d48;color:white;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:bold;">Dinou Dev Error</span><h2 style="margin:0;font-size:1.25rem;font-weight:700;color:#881337;">${errMsg}</h2></div><p style="margin:0 0 16px 0;font-size:0.875rem;color:#9f1239;line-height:1.5;">An unhandled error occurred in the dev server request handler.</p>${errStack ? `<pre style="background:#0f172a;color:#f8fafc;padding:16px;border-radius:8px;overflow-x:auto;font-size:0.8125rem;line-height:1.6;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;">${errStack}</pre>` : ""}</div></body></html>`);
     }
   }
 });
