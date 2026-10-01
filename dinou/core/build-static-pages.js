@@ -1006,7 +1006,7 @@ async function buildStaticPages(onProgress = null) {
 
       staticRoutes.add(reqPath);
       staticMetadata.set(reqPath, {
-        revalidate: revalidate?.(),
+        revalidate: typeof revalidate === "function" ? revalidate() : revalidate,
         effects: sideEffects,
         tags: cacheTags,
       });

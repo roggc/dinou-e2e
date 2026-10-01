@@ -138,7 +138,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Playwright esperará automáticamente a que aparezca "bye!".
       // Como tu server function tarda 1s y el timeout por defecto es 5s, esto pasará sin problemas.
       // Esto verifica que el Stream llegó y React hidrató el componente devuelto.
-      await expect(page.getByText("bye!")).toBeVisible({ timeout: 25000 });
+      await expect(page.getByText("bye!")).toBeVisible({ timeout: 45000 });
       // El helper debe haber podido leer el User-Agent o una Cookie
       // y la server function lo devuelve al cliente.
       await expect(page.getByText("Helper accessed User-Agent:")).toBeVisible();

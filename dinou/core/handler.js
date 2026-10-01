@@ -1324,7 +1324,17 @@ async function handleRequest(request, platformContext = {}) {
                 const htmlText = await new Response(htmlStream).text();
                 const pageRscKey = cleanPath ? `${cleanPath}/page.rsc` : "page.rsc";
                 const rscKey = cleanPath ? `${cleanPath}/rsc.rsc` : "rsc.rsc";
-                await storage.set(pageRscKey, rscText);
+
+                let pageRscText = "";
+                try {
+                  const pageJsx = await getJSX(reqPath, queryObj, isNotFound, false, false, { segment: "page" });
+                  const pageStream = renderRSCStream(pageJsx, clientManifest, { runtime: "edge" });
+                  pageRscText = await new Response(pageStream).text();
+                } catch (e) {
+                  pageRscText = rscText;
+                }
+
+                await storage.set(pageRscKey, pageRscText);
                 await storage.set(rscKey, rscText);
                 const updatedMeta = {
                   status: 200,
@@ -1338,7 +1348,17 @@ async function handleRequest(request, platformContext = {}) {
                 const rscText = await new Response(rscStream).text();
                 const pageRscKey = cleanPath ? `${cleanPath}/page.rsc` : "page.rsc";
                 const rscKey = cleanPath ? `${cleanPath}/rsc.rsc` : "rsc.rsc";
-                await storage.set(pageRscKey, rscText);
+
+                let pageRscText = "";
+                try {
+                  const pageJsx = await getJSX(reqPath, queryObj, isNotFound, false, false, { segment: "page" });
+                  const pageStream = renderRSCStream(pageJsx, clientManifest, { runtime: "edge" });
+                  pageRscText = await new Response(pageStream).text();
+                } catch (e) {
+                  pageRscText = rscText;
+                }
+
+                await storage.set(pageRscKey, pageRscText);
                 await storage.set(rscKey, rscText);
 
                 // Update HTML with new timestamp

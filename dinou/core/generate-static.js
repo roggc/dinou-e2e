@@ -32,7 +32,8 @@ async function generateStatic() {
   });
 
   // 2. Initialize FileSystemStorage for writing .dinou/dist2
-  setStorageAdapter(new FileSystemStorage(distFolder2));
+  const storage = new FileSystemStorage(distFolder2);
+  setStorageAdapter(storage);
 
   // 3. Load compiled engines
   const rscModule = await import(pathToFileURL(rscEnginePath).href);
@@ -67,18 +68,29 @@ async function generateStatic() {
         : "/" + layoutInfo.routePath;
       updateBuildProgress(`[SSG] Compiling layout: ${layoutReqPath}`);
       try {
-        const layoutResult = await generateStaticLayoutRSC(
-          layoutReqPath,
-          layoutInfo.layoutPath
-        );
-        if (
-          layoutResult &&
-          layoutResult.tempPath &&
-          layoutResult.finalPath &&
-          existsSync(layoutResult.tempPath)
-        ) {
-          mkdirSync(path.dirname(layoutResult.finalPath), { recursive: true });
-          renameSync(layoutResult.tempPath, layoutResult.finalPath);
+        const layoutReq = new Request(`http://localhost/____rsc_layout____${layoutReqPath}`);
+        const layoutRes = await rscModule.handleRequest(layoutReq, {
+          runtime: "node-bundle",
+        });
+        if (layoutRes.status === 200) {
+          const layoutRscText = await layoutRes.text();
+          const cleanLayoutPath = layoutReqPath.replace(/^\/+/, "").replace(/\/+$/, "");
+          const layoutRscKey = cleanLayoutPath ? `${cleanLayoutPath}/layout.rsc` : "layout.rsc";
+          await storage.set(layoutRscKey, layoutRscText);
+        } else {
+          const layoutResult = await generateStaticLayoutRSC(
+            layoutReqPath,
+            layoutInfo.layoutPath
+          );
+          if (
+            layoutResult &&
+            layoutResult.tempPath &&
+            layoutResult.finalPath &&
+            existsSync(layoutResult.tempPath)
+          ) {
+            mkdirSync(path.dirname(layoutResult.finalPath), { recursive: true });
+            renameSync(layoutResult.tempPath, layoutResult.finalPath);
+          }
         }
       } catch (layoutErr) {
         console.error(
@@ -122,15 +134,39 @@ async function generateStatic() {
       }
 
       // B. Pre-render isolated page RSC segment (page.rsc)
-      const pageResult = await generateStaticPageRSC(reqPath);
-      if (
-        pageResult &&
-        pageResult.tempPath &&
-        pageResult.finalPath &&
-        existsSync(pageResult.tempPath)
-      ) {
-        mkdirSync(path.dirname(pageResult.finalPath), { recursive: true });
-        renameSync(pageResult.tempPath, pageResult.finalPath);
+      try {
+        const pageReq = new Request(`http://localhost/____rsc_page____${reqPath}`);
+        const pageRes = await rscModule.handleRequest(pageReq, {
+          runtime: "node-bundle",
+        });
+        if (pageRes.status === 200) {
+          const pageRscText = await pageRes.text();
+          const cleanPagePath = reqPath.replace(/^\/+/, "").replace(/\/+$/, "");
+          const pageRscKey = cleanPagePath ? `${cleanPagePath}/page.rsc` : "page.rsc";
+          await storage.set(pageRscKey, pageRscText);
+        } else {
+          const pageResult = await generateStaticPageRSC(reqPath);
+          if (
+            pageResult &&
+            pageResult.tempPath &&
+            pageResult.finalPath &&
+            existsSync(pageResult.tempPath)
+          ) {
+            mkdirSync(path.dirname(pageResult.finalPath), { recursive: true });
+            renameSync(pageResult.tempPath, pageResult.finalPath);
+          }
+        }
+      } catch (pageErr) {
+        const pageResult = await generateStaticPageRSC(reqPath);
+        if (
+          pageResult &&
+          pageResult.tempPath &&
+          pageResult.finalPath &&
+          existsSync(pageResult.tempPath)
+        ) {
+          mkdirSync(path.dirname(pageResult.finalPath), { recursive: true });
+          renameSync(pageResult.tempPath, pageResult.finalPath);
+        }
       }
     } catch (err) {
       console.error(`❌ [SSG] Error pre-rendering ${reqPath}:`, err);
