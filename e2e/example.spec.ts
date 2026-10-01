@@ -3969,7 +3969,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       }
 
       // Verify layout is still functional: navigate to Home
-      await page.locator("#link-back-home, text=← Back to Home").first().click();
+      await page.locator("#link-back-home").or(page.getByText("← Back to Home")).first().click();
       await expect(page).toHaveURL("/", { timeout: 15000 });
       await expect(page.locator("body")).toContainText("hello!", { timeout: 15000 });
     });
