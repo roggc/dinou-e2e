@@ -3740,9 +3740,12 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
       expect(response?.status()).toBe(200);
 
+      // Wait for hydration to complete on client-side
+      await page.waitForSelector('body[data-hydrated="true"]');
+
       // The page should eventually display the query parameters hydrated from the URL
-      await expect(page.locator("body")).toContainText('"q": "playwright"');
-      await expect(page.locator("body")).toContainText('"mode": "headless"');
+      await expect(page.locator("body")).toContainText('"q": "playwright"', { timeout: 15000 });
+      await expect(page.locator("body")).toContainText('"mode": "headless"', { timeout: 15000 });
 
       // Verify no hydration or other runtime console errors were thrown
       expect(consoleErrors).toHaveLength(0);
@@ -3976,13 +3979,26 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Test 1: SSR redirect
       await page.click("a:has-text('Trigger SSR Redirect')");
       await expect(page).toHaveURL(/\/demo\/cookies/, { timeout: 15000 });
+      await page.waitForSelector('body[data-hydrated="true"]');
+      await expect(page.locator("h1")).toContainText("Cookies & Header Spies", { timeout: 15000 });
 
       // Test 2: Server Action redirect
-      await page.goto("/demo/redirects");
+      try {
+        await page.goto("/demo/redirects");
+      } catch (err: any) {
+        if (err?.message?.includes("WebKit encountered an internal error")) {
+          await page.waitForTimeout(500);
+          await page.goto("/demo/redirects");
+        } else {
+          throw err;
+        }
+      }
       await page.waitForSelector('body[data-hydrated="true"]');
       await page.selectOption("select[name='destination']", "/demo/mixed");
       await page.click("button:has-text('Submit Action & Redirect')");
       await expect(page).toHaveURL(/\/demo\/mixed/, { timeout: 15000 });
+      await page.waitForSelector('body[data-hydrated="true"]');
+      await expect(page.locator("h1")).toContainText("Mixed Patterns", { timeout: 15000 });
     });
 
     test("File Uploads: uploads and parses files successfully", async ({ page }) => {
