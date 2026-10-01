@@ -105,7 +105,7 @@ function getStableChunkName(absPath) {
   if (norm.endsWith("/core/link.jsx") || norm.endsWith("/core/link.js")) {
     return "dinouLink";
   }
-  if (norm.endsWith("/core/slot.jsx") || norm.endsWith("/core/slot.js")) {
+  if (norm.endsWith("/core/slot.js")) {
     return "dinouSlot";
   }
   const rel = path.relative(process.cwd(), absPath).replace(/\\/g, "/");

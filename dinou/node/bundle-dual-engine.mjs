@@ -48,7 +48,6 @@ export async function bundleDualEngine(options = {}) {
     candidateLinkPaths.add(path.resolve(r, "core/link.jsx"));
     candidateRedirectPaths.add(path.resolve(r, "core/client-redirect.jsx"));
     candidateSlotPaths.add(path.resolve(r, "core/slot.js"));
-    candidateSlotPaths.add(path.resolve(r, "core/slot.jsx"));
   }
 
   // 1. Generate route modules
@@ -374,7 +373,6 @@ export async function bundleDualEngine(options = {}) {
     }
     if (slotChunkId) {
       imports["dinou/core/slot.js"] = slotChunkId;
-      imports["dinou/core/slot.jsx"] = slotChunkId;
       imports["dinou/core/slot"] = slotChunkId;
       imports["/dinou/core/slot.js"] = slotChunkId;
       imports["./dinou/core/slot.js"] = slotChunkId;

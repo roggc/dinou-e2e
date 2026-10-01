@@ -127,7 +127,6 @@ for (const r of candidateDinouRoots) {
   candidateLinkPaths.add(path.resolve(r, "core/link.jsx"));
   candidateRedirectPaths.add(path.resolve(r, "core/client-redirect.jsx"));
   candidateSlotPaths.add(path.resolve(r, "core/slot.js"));
-  candidateSlotPaths.add(path.resolve(r, "core/slot.jsx"));
 }
 
 function generateAllUrlVariants(absPath) {
@@ -626,7 +625,6 @@ async function updateManifestsState(options = {}) {
     }
     if (slotChunkId) {
       imports["dinou/core/slot.js"] = slotChunkId;
-      imports["dinou/core/slot.jsx"] = slotChunkId;
       imports["dinou/core/slot"] = slotChunkId;
       imports["/dinou/core/slot.js"] = slotChunkId;
       imports["./dinou/core/slot.js"] = slotChunkId;

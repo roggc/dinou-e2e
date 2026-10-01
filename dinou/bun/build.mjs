@@ -46,7 +46,6 @@ for (const r of candidateDinouRoots) {
   candidateLinkPaths.add(path.resolve(r, "core/link.jsx"));
   candidateRedirectPaths.add(path.resolve(r, "core/client-redirect.jsx"));
   candidateSlotPaths.add(path.resolve(r, "core/slot.js"));
-  candidateSlotPaths.add(path.resolve(r, "core/slot.jsx"));
 }
 
 const isWebpackBuild = process.env.DINOU_BUILD_TOOL === "webpack";
