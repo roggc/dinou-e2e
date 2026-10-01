@@ -440,14 +440,16 @@ async function updateManifestsState(options = {}) {
         await yieldToEventLoop();
       }
 
+      const isValidEntryId = (entry) => Boolean(entry?.id && (isWebpackBuild || entry.id.endsWith(".js")));
+
       // Check if parsedClientManifest already has an entry for this component
       let matchedEntry = null;
       for (const u of urlVariants) {
-        if (parsedClientManifest[u]?.id?.endsWith(".js")) { matchedEntry = parsedClientManifest[u]; break; }
-        if (parsedClientManifest[`${u}#default`]?.id?.endsWith(".js")) { matchedEntry = parsedClientManifest[`${u}#default`]; break; }
+        if (isValidEntryId(parsedClientManifest[u])) { matchedEntry = parsedClientManifest[u]; break; }
+        if (isValidEntryId(parsedClientManifest[`${u}#default`])) { matchedEntry = parsedClientManifest[`${u}#default`]; break; }
         for (const exp of fileExports) {
           const expEntry = parsedClientManifest[`${u}#${exp}`];
-          if (expEntry?.id?.endsWith(".js")) {
+          if (isValidEntryId(expEntry)) {
             matchedEntry = expEntry;
             break;
           }
@@ -459,7 +461,7 @@ async function updateManifestsState(options = {}) {
           const uLower = u.toLowerCase();
           for (const [k, v] of Object.entries(parsedClientManifest)) {
             const kLower = k.toLowerCase();
-            if ((kLower === uLower || kLower.startsWith(uLower + "#")) && v?.id?.endsWith(".js")) {
+            if ((kLower === uLower || kLower.startsWith(uLower + "#")) && isValidEntryId(v)) {
               matchedEntry = v;
               break;
             }
@@ -468,29 +470,29 @@ async function updateManifestsState(options = {}) {
         }
       }
 
-      const compId = (matchedEntry?.id && matchedEntry.id.endsWith(".js"))
+      const compId = isValidEntryId(matchedEntry)
         ? matchedEntry.id
         : getFallbackChunkId(comp);
       const compChunks = matchedEntry?.chunks || [];
 
       for (const u of urlVariants) {
-        if (!normalized[u] || !normalized[u].id || !normalized[u].id.endsWith(".js")) {
+        if (!normalized[u] || !normalized[u].id || !isValidEntryId(normalized[u])) {
           normalized[u] = { id: compId, chunks: compChunks, name: "*" };
-        } else if (matchedEntry?.id && matchedEntry.id.endsWith(".js")) {
+        } else if (isValidEntryId(matchedEntry)) {
           normalized[u].id = compId;
           normalized[u].chunks = compChunks;
         }
         for (const exp of fileExports) {
           const hashKey = `${u}#${exp}`;
           const expEntry = parsedClientManifest[hashKey];
-          const expId = (expEntry?.id && expEntry.id.endsWith(".js"))
+          const expId = isValidEntryId(expEntry)
             ? expEntry.id
             : compId;
           const expChunks = expEntry?.chunks || compChunks;
 
-          if (!normalized[hashKey] || normalized[hashKey].name === "*" || !normalized[hashKey].id?.endsWith(".js")) {
+          if (!normalized[hashKey] || normalized[hashKey].name === "*" || !isValidEntryId(normalized[hashKey])) {
             normalized[hashKey] = { id: expId, chunks: expChunks, name: exp };
-          } else if (expEntry?.id && expEntry.id.endsWith(".js")) {
+          } else if (isValidEntryId(expEntry)) {
             normalized[hashKey].id = expId;
             normalized[hashKey].chunks = expChunks;
           }
@@ -502,16 +504,17 @@ async function updateManifestsState(options = {}) {
     }
   } else {
     // Fast path: update normalized mapping for known client components without re-reading files or parsing AST
+    const isValidEntryId = (entry) => Boolean(entry?.id && (isWebpackBuild || entry.id.endsWith(".js")));
     for (const comp of clientComponents) {
       const urlVariants = generateAllUrlVariants(comp);
       const fileExports = getCachedFileExports(comp);
       let matchedEntry = null;
       for (const u of urlVariants) {
-        if (parsedClientManifest[u]?.id?.endsWith(".js")) { matchedEntry = parsedClientManifest[u]; break; }
-        if (parsedClientManifest[`${u}#default`]?.id?.endsWith(".js")) { matchedEntry = parsedClientManifest[`${u}#default`]; break; }
+        if (isValidEntryId(parsedClientManifest[u])) { matchedEntry = parsedClientManifest[u]; break; }
+        if (isValidEntryId(parsedClientManifest[`${u}#default`])) { matchedEntry = parsedClientManifest[`${u}#default`]; break; }
         for (const exp of fileExports) {
           const expEntry = parsedClientManifest[`${u}#${exp}`];
-          if (expEntry?.id?.endsWith(".js")) {
+          if (isValidEntryId(expEntry)) {
             matchedEntry = expEntry;
             break;
           }
@@ -523,7 +526,7 @@ async function updateManifestsState(options = {}) {
           const uLower = u.toLowerCase();
           for (const [k, v] of Object.entries(parsedClientManifest)) {
             const kLower = k.toLowerCase();
-            if ((kLower === uLower || kLower.startsWith(uLower + "#")) && v?.id?.endsWith(".js")) {
+            if ((kLower === uLower || kLower.startsWith(uLower + "#")) && isValidEntryId(v)) {
               matchedEntry = v;
               break;
             }
@@ -532,29 +535,29 @@ async function updateManifestsState(options = {}) {
         }
       }
 
-      const compId = (matchedEntry?.id && matchedEntry.id.endsWith(".js"))
+      const compId = isValidEntryId(matchedEntry)
         ? matchedEntry.id
         : getFallbackChunkId(comp);
       const compChunks = matchedEntry?.chunks || [];
 
       for (const u of urlVariants) {
-        if (!normalized[u] || !normalized[u].id || !normalized[u].id.endsWith(".js")) {
+        if (!normalized[u] || !normalized[u].id || !isValidEntryId(normalized[u])) {
           normalized[u] = { id: compId, chunks: compChunks, name: "*" };
-        } else if (matchedEntry?.id && matchedEntry.id.endsWith(".js")) {
+        } else if (isValidEntryId(matchedEntry)) {
           normalized[u].id = compId;
           normalized[u].chunks = compChunks;
         }
         for (const exp of fileExports) {
           const hashKey = `${u}#${exp}`;
           const expEntry = parsedClientManifest[hashKey];
-          const expId = (expEntry?.id && expEntry.id.endsWith(".js"))
+          const expId = isValidEntryId(expEntry)
             ? expEntry.id
             : compId;
           const expChunks = expEntry?.chunks || compChunks;
 
-          if (!normalized[hashKey] || normalized[hashKey].name === "*" || !normalized[hashKey].id?.endsWith(".js")) {
+          if (!normalized[hashKey] || normalized[hashKey].name === "*" || !isValidEntryId(normalized[hashKey])) {
             normalized[hashKey] = { id: expId, chunks: expChunks, name: exp };
-          } else if (expEntry?.id && expEntry.id.endsWith(".js")) {
+          } else if (isValidEntryId(expEntry)) {
             normalized[hashKey].id = expId;
             normalized[hashKey].chunks = expChunks;
           }
@@ -691,7 +694,7 @@ async function updateManifestsState(options = {}) {
   for (const [k, v] of Object.entries(normalized)) {
     const fileUrl = k.split("#")[0];
     const expName = k.includes("#") ? k.split("#")[1] : null;
-    if (v?.id && v.id.endsWith(".js")) {
+    if (v?.id && (isWebpackBuild || v.id.endsWith(".js"))) {
       registerModuleMapEntry(v.id, fileUrl, expName);
     }
   }
