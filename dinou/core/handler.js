@@ -1052,8 +1052,9 @@ async function handleRequest(request, platformContext = {}) {
 
     let layoutPath = null;
     let layoutParams = dynamicParams;
+    let layouts = null;
     if (isLayoutReq) {
-      const layouts = getFilePathAndDynamicParams(
+      layouts = getFilePathAndDynamicParams(
         reqSegments,
         queryObj,
         srcFolder,
@@ -1066,8 +1067,9 @@ async function handleRequest(request, platformContext = {}) {
         true
       );
       if (layouts && layouts.length > 0) {
-        layoutPath = layouts[0][0];
-        layoutParams = layouts[0][1] || dynamicParams;
+        const leafLayout = layouts[layouts.length - 1];
+        layoutPath = leafLayout[0];
+        layoutParams = leafLayout[1] || dynamicParams;
       }
     }
 
@@ -1076,8 +1078,9 @@ async function handleRequest(request, platformContext = {}) {
     }
     const dynamicState = isDynamic.get(cleanPath);
 
+    let layoutConfig = null;
     if (isLayoutReq) {
-      const layoutConfig = await resolveLayoutFunctionsConfig(layoutPath, layoutParams);
+      layoutConfig = await resolveLayoutFunctionsConfig(layoutPath, layoutParams);
       if (layoutConfig.isDynamic) {
         dynamicState.value = true;
       }
@@ -1097,7 +1100,8 @@ async function handleRequest(request, platformContext = {}) {
     if (!isDevelopment && !dynamicState.value && (!hasQueryParams || isStatic)) {
       let currentGeneratedAt = null;
       try {
-        const metadataPath = path.join(".dinou/dist2", cleanPath, "metadata.json");
+        const metaFileName = isLayoutReq ? "layout.metadata.json" : "metadata.json";
+        const metadataPath = path.join(".dinou/dist2", cleanPath, metaFileName);
         if (existsSync(metadataPath)) {
           const metaObj = JSON.parse(readFileSync(metadataPath, "utf8"));
           currentGeneratedAt = metaObj.generatedAt || null;
@@ -1150,12 +1154,21 @@ async function handleRequest(request, platformContext = {}) {
             cached = await storage.get(cleanRel ? `${cleanRel}/rsc.rsc` : "rsc.rsc");
           }
           if (cached && cached.content) {
-            const contentStr = typeof cached.content === "string" ? cached.content : "";
-            if (!contentStr.trimStart().startsWith("<")) {
-              bridge.setHeader("Content-Type", "text/x-component");
-              bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-              bridge.end(cached.content);
-              return bridge.toResponse();
+            let isExpired = false;
+            if (isLayoutReq && cached.metadata) {
+              const { revalidate, generatedAt } = cached.metadata;
+              if (typeof revalidate === "number" && revalidate > 0 && Date.now() > (generatedAt || 0) + revalidate) {
+                isExpired = true;
+              }
+            }
+            if (!isExpired) {
+              const contentStr = typeof cached.content === "string" ? cached.content : "";
+              if (!contentStr.trimStart().startsWith("<")) {
+                bridge.setHeader("Content-Type", "text/x-component");
+                bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+                bridge.end(cached.content);
+                return bridge.toResponse();
+              }
             }
           }
         } catch (e) {}
@@ -1196,12 +1209,36 @@ async function handleRequest(request, platformContext = {}) {
     let isPathBlocked = false;
 
     if (isLayoutReq) {
-      const layoutConfig = await resolveLayoutFunctionsConfig(layoutPath, layoutParams);
-      if (layoutConfig.validateParams) {
-        const isValid = await layoutConfig.validateParams(layoutParams);
-        if (!isValid) {
-          isPathBlocked = true;
+      if (layouts && Array.isArray(layouts)) {
+        for (const [lPath, lParams] of layouts) {
+          const lConfig = await resolveLayoutFunctionsConfig(lPath, lParams);
+          if (!isDevelopment && lConfig.allowISG === false) {
+            return new Response("Not Found", { status: 404 });
+          }
+          if (lConfig.validateParams) {
+            const isValid = await lConfig.validateParams(lParams);
+            if (!isValid) {
+              isPathBlocked = true;
+              break;
+            }
+          }
         }
+      } else {
+        if (!layoutConfig) {
+          layoutConfig = await resolveLayoutFunctionsConfig(layoutPath, layoutParams);
+        }
+        if (!isDevelopment && layoutConfig.allowISG === false) {
+          return new Response("Not Found", { status: 404 });
+        }
+        if (layoutConfig.validateParams) {
+          const isValid = await layoutConfig.validateParams(layoutParams);
+          if (!isValid) {
+            isPathBlocked = true;
+          }
+        }
+      }
+      if (isPathBlocked) {
+        return new Response("Not Found", { status: 404 });
       }
     } else {
       const pageConfig = await resolvePageFunctionsConfig(
@@ -1227,7 +1264,7 @@ async function handleRequest(request, platformContext = {}) {
         if (bridge.headers.has("x-rsc-redirect") || bridge.headers.has("Location")) {
           return;
         }
-        if (isNotFound.value && !isLayoutReq) {
+        if ((isNotFound.value && !isLayoutReq) || isPathBlocked) {
           bridge.status(404);
         }
         bridge.setHeader("Content-Type", "text/x-component");
@@ -1267,7 +1304,7 @@ async function handleRequest(request, platformContext = {}) {
   }
   const dynamicState = isDynamic.get(reqPath);
 
-  const { isPathBlocked, allowISGValue, isDynamicConfig, revalidate, tags } = await resolvePageFunctionsConfig(
+  let { isPathBlocked, allowISGValue, isDynamicConfig, revalidate, tags } = await resolvePageFunctionsConfig(
     pagePath,
     reqSegments,
     queryObj,
@@ -1276,6 +1313,85 @@ async function handleRequest(request, platformContext = {}) {
   );
   if (isDynamicConfig) {
     dynamicState.value = true;
+  }
+
+  const layouts = getFilePathAndDynamicParams(
+    reqSegments,
+    queryObj,
+    srcFolder,
+    "layout",
+    true,
+    false,
+    undefined,
+    0,
+    {},
+    true
+  );
+
+  let combinedTags = Array.isArray(tags) ? [...tags] : [];
+  let combinedRevalidate = revalidate;
+
+  if (layouts && Array.isArray(layouts)) {
+    for (const [layoutPath, layoutParams] of layouts) {
+      const layoutConfig = await resolveLayoutFunctionsConfig(layoutPath, layoutParams);
+
+      if (layoutConfig.validateParams) {
+        try {
+          const isValid = await layoutConfig.validateParams(layoutParams);
+          if (!isValid) {
+            isPathBlocked = true;
+          }
+        } catch (e) {
+          console.error(`[Dinou] Error executing validateParams for layout ${layoutPath}:`, e);
+        }
+      }
+
+      if (layoutConfig.isDynamic) {
+        dynamicState.value = true;
+      }
+
+      if (layoutConfig.allowISG === false) {
+        allowISGValue = false;
+        let isPathAllowed = false;
+        if (layoutConfig.staticPathsSet) {
+          const sortedEntries = Object.entries(layoutParams || {})
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([k, v]) => {
+              if (Array.isArray(v)) return [k, v.join(",")];
+              return [k, String(v)];
+            });
+          const serializedQuery = JSON.stringify(sortedEntries);
+          isPathAllowed = layoutConfig.staticPathsSet.has(serializedQuery);
+        }
+        if (!isPathAllowed) {
+          if (isDevelopment) {
+            isPathBlocked = true;
+          } else {
+            const cleanReq = reqPath.replace(/^\//, "").replace(/\/$/, "");
+            const htmlPath = path.join(process.cwd(), ".dinou/dist2", cleanReq, "index.html");
+            if (!existsSync(htmlPath)) {
+              isPathBlocked = true;
+            }
+          }
+        }
+      }
+
+      if (typeof layoutConfig.revalidate === "number" && layoutConfig.revalidate >= 0) {
+        if (typeof combinedRevalidate === "number") {
+          combinedRevalidate = Math.min(combinedRevalidate, layoutConfig.revalidate);
+        } else {
+          combinedRevalidate = layoutConfig.revalidate;
+        }
+      }
+
+      if (Array.isArray(layoutConfig.tags)) {
+        for (const t of layoutConfig.tags) {
+          if (!combinedTags.includes(t)) {
+            combinedTags.push(t);
+          }
+        }
+      }
+    }
   }
 
   // Edge Runtime: ISR, ISG & Static Delivery via storageAdapter and env.ASSETS
@@ -1511,7 +1627,7 @@ async function handleRequest(request, platformContext = {}) {
         const genMeta = {
           status: isError ? 500 : isNotFound.value ? 404 : 200,
           generatedAt: Date.now(),
-          revalidate,
+          revalidate: combinedRevalidate,
           tags: tags || [],
           effects: {
             redirect: bridge.headers.get("Location") || null,

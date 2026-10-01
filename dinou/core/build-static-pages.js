@@ -57,12 +57,17 @@ async function buildStaticPages(onProgress = null) {
       const candidateLayout = path.join(currentPath, `layout${ext}`);
       if (existsSync(candidateLayout)) {
         const routePath = segments.length ? "/" + segments.join("/") : "/";
-        staticLayouts.set(currentPath, {
-          folderPath: currentPath,
-          layoutPath: candidateLayout,
-          routePath,
-          segments,
-        });
+        const { resolveLayoutFunctionsConfig } = require("./layout-functions");
+        const layoutConfig = await resolveLayoutFunctionsConfig(candidateLayout, params);
+        if (!layoutConfig.isDynamic) {
+          staticLayouts.set(routePath, {
+            folderPath: currentPath,
+            layoutPath: candidateLayout,
+            routePath,
+            segments,
+            params,
+          });
+        }
         break;
       }
     }
@@ -488,9 +493,32 @@ async function buildStaticPages(onProgress = null) {
             getStaticPaths = module.getStaticPaths;
             dynamic = module.dynamic;
           }
+          const { getLayoutFunctionsPath } = require("./layout-functions");
+          const lfPath = getLayoutFunctionsPath(dynamicPath);
+          if (lfPath) {
+            const lmod = await importModule(lfPath);
+            if (!getStaticPaths && typeof lmod.getStaticPaths === "function") {
+              getStaticPaths = lmod.getStaticPaths;
+            }
+            if (!dynamic && lmod.dynamic) {
+              dynamic = lmod.dynamic;
+            }
+          }
           const isLocalPage =
             pagePath && path.dirname(pagePath) === dynamicPath;
-          if (isLocalPage && !resolveDynamic(dynamic)) {
+          const [layoutPath] = getFilePathAndDynamicParams(
+            segments,
+            {},
+            dynamicPath,
+            "layout",
+            true,
+            true,
+            undefined,
+            segments.length,
+          );
+          const hasLocalLayout =
+            layoutPath && path.dirname(layoutPath) === dynamicPath;
+          if ((isLocalPage || hasLocalLayout) && !resolveDynamic(dynamic)) {
             if (process.env.DINOU_DEBUG) {
               console.log(
                 `Found dynamic route: ${segments.join("/") ?? ""}/[${paramName}]`,
