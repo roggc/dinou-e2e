@@ -2517,6 +2517,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // 1. Initial full SSR render
       const res = await page.goto("/t-layout-functions");
       expect(res?.status()).toBe(200);
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
 
       // Verify layout props from layout_functions.ts
       await expect(page.locator("#layout-title")).toHaveText("Dinou Layout Functions Title");
@@ -2551,6 +2552,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // 1. Valid parameter
       const validRes = await page.goto("/t-layout-functions/dyn/1");
       expect(validRes?.status()).toBe(200);
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
       await expect(page.locator("#dyn-layout-heading")).toHaveText("Layout Param: 1");
       await expect(page.locator("#dyn-layout-data")).toHaveText("Data for 1");
       await expect(page.locator("#dyn-page-msg")).toHaveText("Page message for 1");
