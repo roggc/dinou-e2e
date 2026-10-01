@@ -21,6 +21,7 @@ export default function ErrorDemoLayout({
         </div>
         <nav className="flex items-center gap-4">
           <a
+            id="link-back-home"
             href="/"
             className="text-sm text-slate-400 hover:text-white transition-colors"
           >

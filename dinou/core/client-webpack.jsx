@@ -641,6 +641,9 @@ if (!isLayoutError) {
     window.__DINOU_ERROR_MESSAGE__,
     "- skipping client hydration to preserve the server-rendered error screen."
   );
+  if (typeof document !== "undefined" && document.body) {
+    document.body.setAttribute("data-hydrated", "true");
+  }
 }
 
 if (import.meta.hot) {

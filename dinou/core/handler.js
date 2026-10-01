@@ -1541,7 +1541,9 @@ async function handleRequest(request, platformContext = {}) {
             )};window.__DINOU_ACTIVE_LAYOUT__=${JSON.stringify(
               errorMeta?.appliedLayoutKey || null
             )};\n`;
-            bootstrapScriptContent += 'document.body.setAttribute("data-hydrated", "true");\n';
+            if (!errorMeta?.hasLayout) {
+              bootstrapScriptContent += 'document.body.setAttribute("data-hydrated", "true");\n';
+            }
           }
           if (bridge._injectedScripts) {
             const clean = bridge._injectedScripts.replace(/<\/?script>/g, "");
@@ -1647,7 +1649,9 @@ async function handleRequest(request, platformContext = {}) {
             )};window.__DINOU_ACTIVE_LAYOUT__=${JSON.stringify(
               errorMeta?.appliedLayoutKey || null
             )};\n`;
-            errorBootstrapScript += 'document.body.setAttribute("data-hydrated", "true");\n';
+            if (!errorMeta?.hasLayout) {
+              errorBootstrapScript += 'document.body.setAttribute("data-hydrated", "true");\n';
+            }
             if (isDevelopment) {
               const isStrictMode = dinouConfig?.reactStrictMode !== false;
               errorBootstrapScript += `window.__DINOU_STRICT_MODE__ = ${isStrictMode ? "true" : "false"};\n`;

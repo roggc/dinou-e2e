@@ -3956,6 +3956,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // Wait for hydration so the link click handler is ready
       await page.waitForSelector('body[data-hydrated="true"]');
+      await page.waitForFunction(() => typeof (window as any).__DINOU_ROUTER_NAVIGATE__ === "function");
 
       // Verify the custom server error page is shown
       await expect(page.locator("body")).toContainText("Dinou Page Boundary Captured an Error");
@@ -3968,9 +3969,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       }
 
       // Verify layout is still functional: navigate to Home
-      await page.click("text=← Back to Home");
-      await expect(page).toHaveURL("/");
-      await expect(page.locator("body")).toContainText("hello!");
+      await page.locator("#link-back-home, text=← Back to Home").first().click();
+      await expect(page).toHaveURL("/", { timeout: 15000 });
+      await expect(page.locator("body")).toContainText("hello!", { timeout: 15000 });
     });
 
     test("Soft Navigation Crash and recovery to parent error lab", async ({ page }) => {
