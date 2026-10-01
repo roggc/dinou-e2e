@@ -342,7 +342,7 @@ async function getErrorJSX(reqPath, query, error, isDevelopment = false, options
   }
 
   const hasHtml = jsx?.type === "html" || (Array.isArray(jsx) && jsx.some((c) => c?.type === "html"));
-  if (!hasHtml) {
+  if (!layoutApplied && !hasHtml) {
     jsx = React.createElement(
       "html",
       { lang: "en" },

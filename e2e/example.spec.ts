@@ -1923,7 +1923,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // 1. Preparamos la escucha de la petición
       const rscRequest = page.waitForRequest((req) =>
-        req.url().includes("____rsc_payload"),
+        req.url().includes("____rsc_"),
       );
 
       // 2. Hacemos HOVER, no click

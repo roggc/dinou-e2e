@@ -122,17 +122,18 @@ const getPagePayload = (route, isPrefetch = false) => {
   return promise;
 };
 
-const getLayoutPayload = (layoutKey) => {
+const getLayoutPayload = (layoutKey, searchPart = "") => {
   if (!layoutKey) return null;
-  if (layoutCache.has(layoutKey)) {
-    return layoutCache.get(layoutKey);
+  const cacheKey = `${layoutKey}${searchPart}`;
+  if (layoutCache.has(cacheKey)) {
+    return layoutCache.get(cacheKey);
   }
 
   const cleanKey = layoutKey === "/" ? "" : layoutKey;
   let layoutUrl =
     (window.__DINOU_USE_STATIC__
       ? "/____rsc_layout_static____"
-      : "/____rsc_layout____") + cleanKey;
+      : "/____rsc_layout____") + cleanKey + searchPart;
 
   const promise = createFromFetch(
     fetch(layoutUrl).then((res) => {
@@ -152,7 +153,7 @@ const getLayoutPayload = (layoutKey) => {
   );
 
   promise.catch(() => {});
-  layoutCache.set(layoutKey, promise);
+  layoutCache.set(cacheKey, promise);
   return promise;
 };
 
@@ -201,6 +202,10 @@ const getErrorRSCPayload = (route, error) => {
   return promise;
 };
 
+if (typeof globalThis !== "undefined") {
+  globalThis.__DINOU_GET_ERROR_RSC_PAYLOAD__ = getErrorRSCPayload;
+}
+
 class ErrorBoundary extends Component {
   constructor(props) {
     super(props);
@@ -235,7 +240,7 @@ class ErrorBoundary extends Component {
           <head>
             <meta charSet="UTF-8" />
             <meta name="viewport" content="width=device-width, initial-scale=1" />
-            <title>{isDev ? "Dinou Dev Error" : "Application Error"}</title>
+            <title>"Dinou Dev Error from client.jsx ErrorBoundary"</title>
           </head>
           <body
             style={{
@@ -319,6 +324,7 @@ function Router() {
   const [isPending, startTransition] = useTransition();
   const [version, setVersion] = useState(0);
   const [navError, setNavError] = useState(null);
+  const [navCount, setNavCount] = useState(0);
 
   // If the initial SSR render had a page-level error wrapped inside a working layout,
   // we hydrate the layout normally so the navbar/sidebar are fully interactive,
@@ -331,11 +337,7 @@ function Router() {
           const err = new Error(window.__DINOU_ERROR_MESSAGE__);
           err.name = window.__DINOU_ERROR_NAME__ || "Error";
           if (window.__DINOU_ERROR_STACK__) err.stack = window.__DINOU_ERROR_STACK__;
-          const p = Promise.reject(err);
-          p.status = "rejected";
-          p.reason = err;
-          p.catch(() => {});
-          return p;
+          return getErrorRSCPayload(getCurrentRoute(), err);
         })()
       : null
   );
@@ -385,6 +387,7 @@ function Router() {
       setIsPopState(false);
       setRoute(finalPath);
       setNavError(null);
+      setNavCount((c) => c + 1);
     });
   };
 
@@ -396,6 +399,7 @@ function Router() {
     startTransition(() => {
       setVersion((v) => v + 1);
       setNavError(null);
+      setNavCount((c) => c + 1);
     });
   }, [startTransition]);
 
@@ -474,6 +478,7 @@ function Router() {
         setIsPopState(true);
         setRoute(target);
         setNavError(null);
+        setNavCount((c) => c + 1);
       });
     };
 
@@ -508,17 +513,32 @@ function Router() {
     const hash = window.location.hash;
     if (!hash) return;
 
-    requestAnimationFrame(() => {
-      const id = hash.replace("#", "");
+    const id = hash.replace("#", "");
+    const scrollToHash = () => {
       const element = document.getElementById(id);
       if (element) {
         element.scrollIntoView({ behavior: "auto" });
+        return true;
       }
-    });
+      return false;
+    };
+
+    if (scrollToHash()) return;
+
+    let frames = 0;
+    const interval = setInterval(() => {
+      frames++;
+      if (scrollToHash() || frames > 20) {
+        clearInterval(interval);
+      }
+    }, 50);
+
+    return () => clearInterval(interval);
   }, [route]);
 
   // RSC Segmented Navigation Logic
   const cleanRoutePath = route.split("?")[0].split("#")[0];
+  const searchPart = route.includes("?") ? "?" + route.split("?")[1].split("#")[0] : "";
   const layoutKey = useMemo(() => {
     if (
       typeof window !== "undefined" &&
@@ -539,8 +559,8 @@ function Router() {
   }, [route, version, navError]);
 
   const layoutPromise = useMemo(() => {
-    return layoutKey !== null ? getLayoutPayload(layoutKey) : null;
-  }, [layoutKey]);
+    return layoutKey !== null ? getLayoutPayload(layoutKey, searchPart) : null;
+  }, [layoutKey, searchPart]);
 
   const contextValue = useMemo(
     () => ({
@@ -554,13 +574,21 @@ function Router() {
     [route, isPending],
   );
 
+  const slotContextValue = useMemo(
+    () => ({
+      pagePromise,
+      resetKey: `${route}::${navCount}`,
+    }),
+    [pagePromise, route, navCount]
+  );
+
   return (
     <RouterContext.Provider value={contextValue}>
       <ErrorBoundary
-        resetKey={route}
+        resetKey={`${route}::${navCount}`}
         onError={setNavError}
       >
-        <DinouPageContext.Provider value={pagePromise}>
+        <DinouPageContext.Provider value={slotContextValue}>
           {navError
             ? use(pagePromise)
             : layoutPromise
