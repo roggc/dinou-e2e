@@ -2,11 +2,53 @@
 // Primitive for Vertical Segmentation (Micro-ISR) in React Server Components.
 // Caches and invalidates component sub-trees inside pages using revalidate & revalidateTag.
 
+const path = require("path");
+const { pathToFileURL } = require("url");
 const React = require("react");
 const { getStorageAdapter } = require("./storage-adapter.js");
 const { asyncRenderJSXToClientJSX } = require("./render-jsx-to-client-jsx.js");
 
 const inflightSlotRenders = new Map();
+const slotRegistry = new Map();
+
+let _DinouCacheSlotBoundary = null;
+function getCacheSlotBoundary() {
+  if (!_DinouCacheSlotBoundary) {
+    let { DinouCacheSlotBoundary } = require("./slot.js");
+    if (
+      typeof DinouCacheSlotBoundary === "function" &&
+      DinouCacheSlotBoundary.$$typeof !== Symbol.for("react.client.reference")
+    ) {
+      const slotPath = path.resolve(__dirname, "slot.js");
+      const fileUrl = pathToFileURL(slotPath).href;
+      let regFn = null;
+      try {
+        const pkg = require("react-server-dom-webpack/server");
+        regFn = pkg.registerClientReference;
+      } catch (e) {}
+      if (!regFn) {
+        try {
+          const pkg = require("@roggc/react-server-dom-esm/server.node.js");
+          regFn = pkg.registerClientReference;
+        } catch (e) {}
+      }
+      if (regFn) {
+        DinouCacheSlotBoundary = regFn(
+          DinouCacheSlotBoundary,
+          fileUrl,
+          "DinouCacheSlotBoundary"
+        );
+      } else {
+        Object.defineProperties(DinouCacheSlotBoundary, {
+          $$typeof: { value: Symbol.for("react.client.reference") },
+          $$id: { value: fileUrl + "#DinouCacheSlotBoundary" },
+        });
+      }
+    }
+    _DinouCacheSlotBoundary = DinouCacheSlotBoundary;
+  }
+  return _DinouCacheSlotBoundary;
+}
 
 /**
  * Serializes a resolved JSX element tree into a JSON-safe string,
@@ -32,7 +74,8 @@ function serializeJSX(jsx) {
     if (
       value &&
       typeof value === "object" &&
-      value.$$typeof === Symbol.for("react.transitional.element")
+      (value.$$typeof === Symbol.for("react.transitional.element") ||
+        value.$$typeof === Symbol.for("react.element"))
     ) {
       return {
         __dinou_element__: true,
@@ -107,7 +150,6 @@ async function DinouCacheSlot(props) {
 
   const slotId = id || tag || (Array.isArray(tags) ? tags[0] : null);
   if (!slotId) {
-    // If no slot identifier, render directly without caching
     return typeof children === "function" ? await children() : children;
   }
 
@@ -120,17 +162,32 @@ async function DinouCacheSlot(props) {
   const storageKey = `slots/${slotId}/slot.json`;
   const storage = getStorageAdapter();
 
+  function wrapWithBoundary(content) {
+    const Boundary = getCacheSlotBoundary();
+    if (!Boundary) return content;
+    return React.createElement(Boundary, { id: slotId }, content);
+  }
+
+  // Register in slotRegistry for on-demand endpoint re-rendering
+  slotRegistry.set(slotId, {
+    render: async () => {
+      const childElement = typeof children === "function" ? await children() : children;
+      return await asyncRenderJSXToClientJSX(childElement);
+    },
+    tags: allTags,
+    revalidate: typeof revalidate === "number" ? revalidate : undefined,
+  });
+
   if (!storage) {
-    return typeof children === "function" ? await children() : children;
+    const directContent = typeof children === "function" ? await children() : children;
+    return wrapWithBoundary(directContent);
   }
 
   // 1. Check if cached in storage
   let cached = null;
   try {
     cached = await storage.get(storageKey);
-  } catch (err) {
-    // Storage read error; proceed to fresh render
-  }
+  } catch (err) {}
 
   const now = Date.now();
   if (cached && cached.content) {
@@ -150,17 +207,14 @@ async function DinouCacheSlot(props) {
 
     if (!isExpired) {
       try {
-        return deserializeJSX(cached.content);
-      } catch (err) {
-        // Deserialization error; fallback to re-rendering
-      }
+        const restored = deserializeJSX(cached.content);
+        return wrapWithBoundary(restored);
+      } catch (err) {}
     } else {
-      // Stale-While-Revalidate: Return stale content immediately,
-      // and trigger background regeneration
+      // Stale-While-Revalidate
       try {
         const staleJSX = deserializeJSX(cached.content);
 
-        // Deduplicate in-flight background render
         if (!inflightSlotRenders.has(storageKey)) {
           const bgPromise = (async () => {
             try {
@@ -182,7 +236,7 @@ async function DinouCacheSlot(props) {
           inflightSlotRenders.set(storageKey, bgPromise);
         }
 
-        return staleJSX;
+        return wrapWithBoundary(staleJSX);
       } catch (err) {}
     }
   }
@@ -190,7 +244,8 @@ async function DinouCacheSlot(props) {
   // 2. Cache MISS or expired without usable stale content: Deduplicate synchronous render
   if (inflightSlotRenders.has(storageKey)) {
     try {
-      return await inflightSlotRenders.get(storageKey);
+      const deduped = await inflightSlotRenders.get(storageKey);
+      return wrapWithBoundary(deduped);
     } catch (e) {}
   }
 
@@ -215,14 +270,90 @@ async function DinouCacheSlot(props) {
 
   inflightSlotRenders.set(storageKey, renderPromise);
   try {
-    return await renderPromise;
+    const fresh = await renderPromise;
+    return wrapWithBoundary(fresh);
   } finally {
     inflightSlotRenders.delete(storageKey);
   }
 }
 
+/**
+ * Resolves a slot's JSX tree for the granular /____rsc_slot____/:id endpoint.
+ */
+async function getSlotJSX(slotId, options = {}) {
+  const storage = getStorageAdapter();
+  const storageKey = `slots/${slotId}/slot.json`;
+
+  // 1. Check storage cache
+  let cached = null;
+  if (storage) {
+    try {
+      cached = await storage.get(storageKey);
+    } catch (e) {}
+  }
+
+  const now = Date.now();
+  if (cached && cached.content) {
+    const meta = cached.metadata || {};
+    const generatedAt = meta.generatedAt || 0;
+    const revalidateSeconds =
+      typeof meta.revalidate === "number" ? meta.revalidate : undefined;
+
+    const isExpired =
+      typeof revalidateSeconds === "number" &&
+      revalidateSeconds > 0 &&
+      now > generatedAt + revalidateSeconds * 1000;
+
+    if (!isExpired && !options.fresh) {
+      try {
+        return deserializeJSX(cached.content);
+      } catch (e) {}
+    }
+  }
+
+  // 2. If missing from storage (e.g. was invalidated) or expired or forced fresh:
+  if (!slotRegistry.has(slotId) && options.currentPath) {
+    try {
+      const { getJSX } = require("./get-jsx.js");
+      const isNotFound = { value: false };
+      await getJSX(options.currentPath, {}, isNotFound, false, false, { segment: "page" });
+    } catch (e) {
+      console.warn(`[getSlotJSX] Could not pre-evaluate route "${options.currentPath}" to register slot "${slotId}":`, e);
+    }
+  }
+
+  if (slotRegistry.has(slotId)) {
+    const entry = slotRegistry.get(slotId);
+    try {
+      const resolved = await entry.render();
+      const serialized = serializeJSX(resolved);
+      if (storage) {
+        await storage.set(storageKey, serialized, {
+          tags: entry.tags,
+          revalidate: entry.revalidate,
+          generatedAt: Date.now(),
+          slotId,
+        });
+      }
+      return resolved;
+    } catch (e) {
+      console.error(`[getSlotJSX] Failed to regenerate slot "${slotId}":`, e);
+    }
+  }
+
+  // Fallback to cached content if regeneration failed
+  if (cached && cached.content) {
+    try {
+      return deserializeJSX(cached.content);
+    } catch (e) {}
+  }
+
+  return null;
+}
+
 module.exports = {
   DinouCacheSlot,
+  getSlotJSX,
   serializeJSX,
   deserializeJSX,
 };

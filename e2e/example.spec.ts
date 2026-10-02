@@ -2629,12 +2629,14 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
   });
 
-  test.describe("DinouCacheSlot: Vertical Segmentation & Micro-ISR", () => {
+  test.describe.serial("DinouCacheSlot: Vertical Segmentation & Micro-ISR", () => {
     test("caches slots independently and supports granular revalidateTag invalidation", async ({
       page,
     }) => {
       await page.goto("/t-cache-slot");
       await expect(page.locator("h1")).toContainText("Vertical Segmentation Lab");
+      await expect(page.locator("body")).toHaveAttribute("data-hydrated", "true");
+      await page.waitForTimeout(200);
 
       const pageTime1 = await page.locator("#page-time").innerText();
       const alphaTime1 = await page.locator("#slot-alpha-time").innerText();
@@ -2681,6 +2683,54 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.reload();
       const fastTime3 = await page.locator("#slot-fast-time").innerText();
       expect(fastTime3).not.toBe(fastTime1);
+    });
+
+    test("supports live client-side slot refresh without page reload (Level 2)", async ({
+      page,
+    }) => {
+      await page.goto("/t-cache-slot");
+      await expect(page.locator("h1")).toContainText("Vertical Segmentation Lab");
+      await expect(page.locator("body")).toHaveAttribute("data-hydrated", "true");
+      await page.waitForTimeout(200);
+
+      const pageTime1 = await page.locator("#page-time").innerText();
+      const alphaTime1 = await page.locator("#slot-alpha-time").innerText();
+      const betaTime1 = await page.locator("#slot-beta-time").innerText();
+
+      expect(alphaTime1).toBeTruthy();
+      expect(betaTime1).toBeTruthy();
+
+      // 1. Invalidate alpha on server, then trigger live client slot refresh
+      await page.click("#btn-revalidate-alpha");
+      await page.waitForTimeout(300);
+
+      await page.click("#btn-refresh-slot-alpha");
+
+      // Verify slot alpha updates in DOM
+      await expect(page.locator("#slot-alpha-time")).not.toHaveText(alphaTime1, { timeout: 10000 });
+
+      // Verify page time and beta slot time DID NOT CHANGE (0 page reload, 0 sibling re-render)
+      const pageTimeAfterAlpha = await page.locator("#page-time").innerText();
+      const betaTimeAfterAlpha = await page.locator("#slot-beta-time").innerText();
+
+      expect(pageTimeAfterAlpha).toBe(pageTime1);
+      expect(betaTimeAfterAlpha).toBe(betaTime1);
+
+      // 2. Invalidate beta on server, then trigger live client slot refresh via useRouter().refreshSlot
+      await page.click("#btn-revalidate-beta");
+      await page.waitForTimeout(300);
+
+      await page.click("#btn-refresh-slot-beta");
+
+      // Verify slot beta updates in DOM
+      await expect(page.locator("#slot-beta-time")).not.toHaveText(betaTime1, { timeout: 10000 });
+
+      // Verify page time and alpha slot time DID NOT CHANGE
+      const pageTimeAfterBeta = await page.locator("#page-time").innerText();
+      const alphaTimeAfterBeta = await page.locator("#slot-alpha-time").innerText();
+
+      expect(pageTimeAfterBeta).toBe(pageTime1);
+      expect(alphaTimeAfterBeta).not.toBe(alphaTime1);
     });
   });
   test.describe("Dinou Slots (Parallel Routes)", () => {
