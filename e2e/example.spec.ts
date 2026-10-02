@@ -3861,6 +3861,32 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
   });
 
+  test.describe("Dinou Core: layout_functions validateParams() Cascading Restriction", () => {
+    test("valid layout param - renders layout and page successfully", async ({ page }) => {
+      const response = await page.goto("/t-layout-functions/dyn/1");
+      expect(response?.status()).toBe(200);
+      await expect(page.locator("#dyn-layout-heading")).toHaveText("Layout Param: 1");
+      await expect(page.locator("#dyn-page-heading")).toHaveText("Page Param: 1");
+    });
+
+    test("valid layout param - renders nested subpage successfully", async ({ page }) => {
+      const response = await page.goto("/t-layout-functions/dyn/1/sub");
+      expect(response?.status()).toBe(200);
+      await expect(page.locator("#dyn-layout-heading")).toHaveText("Layout Param: 1");
+      await expect(page.locator("#dyn-sub-heading")).toHaveText("Subpage Param: 1");
+    });
+
+    test("invalid layout param - rejects and returns 404 for direct page", async ({ page }) => {
+      const response = await page.goto("/t-layout-functions/dyn/invalid");
+      expect(response?.status()).toBe(404);
+    });
+
+    test("invalid layout param - blocks in cascade and returns 404 for nested subpage", async ({ page }) => {
+      const response = await page.goto("/t-layout-functions/dyn/invalid/sub");
+      expect(response?.status()).toBe(404);
+    });
+  });
+
   test.describe("Dinou Core: useSearchParams() on Static Pages (SSG)", () => {
     test("should successfully hydrate with URL search params on client-side without mismatches", async ({ page }) => {
       const consoleErrors: Error[] = [];
