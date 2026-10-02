@@ -4933,84 +4933,88 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
   });
 
   test.describe("Partial Prerendering (PPR): dinou.config.js & Multi-Level Cascading Opt-Out", () => {
-    test("Subpage inside opted-out nested layout re-enables PPR via page_functions.ts ppr = true", async () => {
-      const metaPath = path.resolve(".dinou/dist2/t-ppr-levels/nested-optout/page-optin/metadata.json");
-      const shellPath = path.resolve(".dinou/dist2/t-ppr-levels/nested-optout/page-optin/shell.html");
+    test("Subpage inside opted-out nested layout re-enables PPR via page_functions.ts ppr = true", async ({ page }) => {
+      if (isProd) {
+        const metaPath = path.resolve(".dinou/dist2/t-ppr-levels/nested-optout/page-optin/metadata.json");
+        const shellPath = path.resolve(".dinou/dist2/t-ppr-levels/nested-optout/page-optin/shell.html");
 
-      expect(fs.existsSync(metaPath)).toBe(true);
-      const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
-      expect(meta.ppr).toBe(true);
+        expect(fs.existsSync(metaPath)).toBe(true);
+        const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+        expect(meta.ppr).toBe(true);
 
-      // PPR routes generate shell.html for instant static delivery
-      expect(fs.existsSync(shellPath)).toBe(true);
-    });
+        // PPR routes generate shell.html for instant static delivery
+        expect(fs.existsSync(shellPath)).toBe(true);
+      }
 
-    test("Nested layout opt-out (layout_functions.ts ppr = false) disables PPR for subpages without explicit opt-in", async () => {
-      const metaPath = path.resolve(".dinou/dist2/t-ppr-levels/nested-optout/metadata.json");
-      const shellPath = path.resolve(".dinou/dist2/t-ppr-levels/nested-optout/shell.html");
-
-      expect(fs.existsSync(metaPath)).toBe(true);
-      const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
-      expect(meta.ppr).toBe(false);
-
-      // Non-PPR routes do not generate shell.html
-      expect(fs.existsSync(shellPath)).toBe(false);
-    });
-
-    test("Page-level opt-out (ppr = false in page_functions.ts) disables PPR at page level", async () => {
-      const metaPath = path.resolve(".dinou/dist2/t-ppr-levels/page-optout/metadata.json");
-      const shellPath = path.resolve(".dinou/dist2/t-ppr-levels/page-optout/shell.html");
-
-      expect(fs.existsSync(metaPath)).toBe(true);
-      const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
-      expect(meta.ppr).toBe(false);
-
-      expect(fs.existsSync(shellPath)).toBe(false);
-    });
-
-    test("Unconfigured route defaults to non-PPR when not enabled in dinou.config.mjs", async () => {
-      const metaPath = path.resolve(".dinou/dist2/t-ppr-levels/metadata.json");
-      const shellPath = path.resolve(".dinou/dist2/t-ppr-levels/shell.html");
-
-      expect(fs.existsSync(metaPath)).toBe(true);
-      const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
-      expect(meta.ppr).toBe(false);
-      expect(fs.existsSync(shellPath)).toBe(false);
-    });
-
-    test("Multi-level PPR routes render layout and page content accurately in browser", async ({ page }) => {
-      // 1. Base unconfigured route
-      await page.goto("/t-ppr-levels");
-      await expect(page.locator("#ppr-levels-title")).toHaveText("PPR Levels Default");
-
-      // 2. Page opt-out route
-      await page.goto("/t-ppr-levels/page-optout");
-      await expect(page.locator("#ppr-page-optout-title")).toHaveText("PPR Page Opt-Out");
-
-      // 3. Nested layout opt-out route
-      await page.goto("/t-ppr-levels/nested-optout");
-      await expect(page.locator("#ppr-nested-optout-layout-header")).toHaveText("Nested Opt-Out Layout");
-      await expect(page.locator("#ppr-nested-optout-page-title")).toHaveText("PPR Subpage in Opted-Out Layout");
-
-      // 4. Nested layout with page opt-in route
       await page.goto("/t-ppr-levels/nested-optout/page-optin");
       await expect(page.locator("#ppr-nested-optout-layout-header")).toHaveText("Nested Opt-Out Layout");
       await expect(page.locator("#ppr-nested-optin-page-title")).toHaveText("PPR Opt-In Subpage");
     });
 
-    test("Anti-Test: Exporting const ppr = true inside page.tsx or layout.tsx has NO effect on Dinou PPR", async ({ page }) => {
-      const metaPath = path.resolve(".dinou/dist2/t-ppr-anti/metadata.json");
-      const shellPath = path.resolve(".dinou/dist2/t-ppr-anti/shell.html");
+    test("Nested layout opt-out (layout_functions.ts ppr = false) disables PPR for subpages without explicit opt-in", async ({ page }) => {
+      if (isProd) {
+        const metaPath = path.resolve(".dinou/dist2/t-ppr-levels/nested-optout/metadata.json");
+        const shellPath = path.resolve(".dinou/dist2/t-ppr-levels/nested-optout/shell.html");
 
-      // 1. Dinou strictly ignores route configurations exported from component files (page.tsx / layout.tsx).
-      // They MUST be declared in page_functions.ts or layout_functions.ts.
-      if (fs.existsSync(metaPath)) {
+        expect(fs.existsSync(metaPath)).toBe(true);
         const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
         expect(meta.ppr).toBe(false);
+
+        // Non-PPR routes do not generate shell.html
+        expect(fs.existsSync(shellPath)).toBe(false);
       }
 
-      // 2. No PPR static shell is generated because PPR is NOT activated by component exports
-      expect(fs.existsSync(shellPath)).toBe(false);
+      await page.goto("/t-ppr-levels/nested-optout");
+      await expect(page.locator("#ppr-nested-optout-layout-header")).toHaveText("Nested Opt-Out Layout");
+      await expect(page.locator("#ppr-nested-optout-page-title")).toHaveText("PPR Subpage in Opted-Out Layout");
+    });
+
+    test("Page-level opt-out (ppr = false in page_functions.ts) disables PPR at page level", async ({ page }) => {
+      if (isProd) {
+        const metaPath = path.resolve(".dinou/dist2/t-ppr-levels/page-optout/metadata.json");
+        const shellPath = path.resolve(".dinou/dist2/t-ppr-levels/page-optout/shell.html");
+
+        expect(fs.existsSync(metaPath)).toBe(true);
+        const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+        expect(meta.ppr).toBe(false);
+
+        expect(fs.existsSync(shellPath)).toBe(false);
+      }
+
+      await page.goto("/t-ppr-levels/page-optout");
+      await expect(page.locator("#ppr-page-optout-title")).toHaveText("PPR Page Opt-Out");
+    });
+
+    test("Unconfigured route defaults to non-PPR when not enabled in dinou.config.mjs", async ({ page }) => {
+      if (isProd) {
+        const metaPath = path.resolve(".dinou/dist2/t-ppr-levels/metadata.json");
+        const shellPath = path.resolve(".dinou/dist2/t-ppr-levels/shell.html");
+
+        expect(fs.existsSync(metaPath)).toBe(true);
+        const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+        expect(meta.ppr).toBe(false);
+        expect(fs.existsSync(shellPath)).toBe(false);
+      }
+
+      await page.goto("/t-ppr-levels");
+      await expect(page.locator("#ppr-levels-title")).toHaveText("PPR Levels Default");
+    });
+
+    test("Anti-Test: Exporting const ppr = true inside page.tsx or layout.tsx has NO effect on Dinou PPR", async ({ page }) => {
+      if (isProd) {
+        const metaPath = path.resolve(".dinou/dist2/t-ppr-anti/metadata.json");
+        const shellPath = path.resolve(".dinou/dist2/t-ppr-anti/shell.html");
+
+        // 1. Dinou strictly ignores route configurations exported from component files (page.tsx / layout.tsx).
+        // They MUST be declared in page_functions.ts or layout_functions.ts.
+        if (fs.existsSync(metaPath)) {
+          const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+          expect(meta.ppr).toBe(false);
+        }
+
+        // 2. No PPR static shell is generated because PPR is NOT activated by component exports
+        expect(fs.existsSync(shellPath)).toBe(false);
+      }
 
       // 3. The page and layout mount and render normally as standard non-PPR components without errors
       await page.goto("/t-ppr-anti");
