@@ -3,7 +3,7 @@
 > **Documento Técnico de Arquitectura y Visión de Futuro**  
 > *Autor:* Dinou Core Team & Antigravity  
 > *Fecha:* Octubre 2026  
-> *Estado:* Segmentación Horizontal Implementada (100% Tests Verificados) · Segmentación Vertical & PPR en Roadmap  
+> *Estado:* Segmentación Horizontal + `layout_functions` (100% Verificado) · Segmentación Vertical (`DinouCacheSlot` Nivel 1 y Nivel 2 Implementado y Verificado) · PPR en Roadmap Activo ([ppr.md](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/ppr.md))  
 
 ---
 
@@ -16,11 +16,15 @@ En sus primeras versiones, la navegación entre rutas funcionaba bajo un modelo 
 2. **Transferencia innecesaria de bytes:** Rutas con layouts pesados (navbars con menús complejos, sidebars ricos, pies de página) volvían a transmitir el mismo payload una y otra vez.
 3. **Acoplamiento de caché e ISR:** El ciclo de vida de los datos (`page_functions`, `revalidate`) estaba atado a la página, impidiendo que los layouts tuvieran su propia estrategia de refresco independiente.
 
-A lo largo de este ciclo de trabajo, hemos transformado Dinou en una arquitectura **Segmentada por Capas**, resolviendo todos los desafíos de estabilidad en tiempo de ejecución, compatibilidad con React 19 y gestión de errores. Este documento recopila todos los hallazgos técnicos, soluciones aplicadas y el diseño para las próximas dos fases: **`layout_functions`** y **Segmentación Vertical (PPR & `DinouCacheSlot`)**.
+A lo largo de este ciclo de trabajo, hemos transformado Dinou en una arquitectura **Segmentada por Capas**, implementando y verificando con éxito:
+- **Segmentación Horizontal:** Desacoplamiento de Layouts (`____rsc_layout____`) y Páginas (`____rsc_page____`).
+- **`layout_functions`:** ISR desacoplado, tags e ISG independiente para layouts.
+- **Segmentación Vertical (`DinouCacheSlot`):** Micro-ISR a nivel de componente con SWR (Nivel 1) y refresco en vivo desde cliente sin recarga (Nivel 2).
+- **Próximo Hito:** Partial Prerendering (PPR), documentado y especificado en [ppr.md](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/ppr.md).
 
 ---
 
-## 2. Segmentación Horizontal (Rutas y Layouts) — *Implementada*
+## 2. Segmentación Horizontal (Rutas y Layouts) — *Implementada y Verificada*
 
 ### 2.1. Arquitectura de Endpoints Desacoplados
 
@@ -98,7 +102,7 @@ Durante las pruebas exhaustivas de la suite e2e en Windows (`npm run dev:esbuild
   Permitiendo que React 19 complete la fase de espera y renderice la página de error personalizada sin parpadeos.
 
 ### 3.3. Reseteo de Error Boundaries sin Destruir el Árbol Sano
-- **El reto:** Cuando ocurre un error en el cliente (por ejemplo, un componente interactivo lanza una excepción en render), el `SlotErrorBoundary` debe atraparlo. Si el usuario pulsa un botón de reintento o un enlace a la misma ruta (`<a href="/error">Reset Demo Page</a>`), el boundary debe resetearse. Sin embargo, no se debe utilizar una prop `key` mutante (`key={route}`) en el boundary sano, porque cambiar la clave obligaría a React a **desmontar todos los componentes de la página**, borrando inputs de formularios y contadores de estado local en navegaciones normales o recargas suaves (`router.refresh()`).
+- **El reto:** Cuando ocurre un error en el cliente, el `SlotErrorBoundary` debe atraparlo. Al reiniciar la navegación, el boundary debe resetearse sin usar una prop `key` mutante que desmonte los componentes sanos de la página.
 - **Arquitectura de dos niveles:**
   1. En condiciones normales (`hasError === false`): `SlotErrorBoundary` permanece montado y retiene la instancia de sus hijos.
   2. En condiciones de error (`hasError === true`): Se detecta cualquier navegación (incluyendo visitas a la misma URL para reiniciar) a través de un contador de navegación (`navCount` y `resetKey: ${route}::${navCount}`). En `componentDidUpdate`:
@@ -113,31 +117,33 @@ Durante las pruebas exhaustivas de la suite e2e en Windows (`npm run dev:esbuild
 
 ---
 
-## 4. El Próximo Hito: `layout_functions` para ISR Desacoplado
+## 4. `layout_functions` para ISR Desacoplado — *Implementado y Verificado*
 
-### 4.1. Necesidad Arquitectónica
-Hasta ahora, la orquestación de caché e ISR en Dinou ha estado centralizada en `page_functions` (definidas en `page.functions.js` o exportadas desde `page.tsx`).  
-Con la segmentación horizontal en marcha, esto produce una asimetría:
-- Si una ruta `/tienda/calzado` tiene una página estática o dinámica, pero su layout `/tienda/layout.tsx` contiene un catálogo de categorías compartido por 50 subpáginas, el layout debería poder definir su propia política de revalidación.
+### 4.1. Necesidad Arquitectónica Resuelta
+Anteriormente, la orquestación de caché e ISR en Dinou estaba centralizada en `page_functions`.  
+Con la segmentación horizontal, un layout `/tienda/layout.tsx` que contiene un menú de categorías compartido por 50 subpáginas necesitaba poder definir su propio TTL de revalidación y tags de invalidación independientes.
 
-### 4.2. Especificación de Diseño de `layout_functions`
-Se habilitará la declaración de funciones de control a nivel de layout:
-- Archivo complementario: `layout.functions.js` / `layout.functions.ts`, o exportaciones con nombre en `layout.tsx`:
-  ```typescript
-  // src/dashboard/layout.functions.ts
-  export const revalidate = 3600; // Cachear el layout durante 1 hora
-  export const tags = ["dashboard-shell", "user-nav"];
-  export const allowISG = true;
-  ```
+### 4.2. Especificación y Sintaxis Implementada
+Se habilitó la declaración de funciones de control a nivel de layout mediante `layout.functions.js` / `layout.functions.ts` o exportaciones con nombre en `layout.tsx`:
+
+```typescript
+// src/dashboard/layout.functions.ts
+export const revalidate = 3600; // Cachear el layout durante 1 hora
+export const tags = ["dashboard-shell", "user-nav"];
+export const allowISG = true;
+```
 
 ### 4.3. Flujo en Servidor y Edge
 1. **Resolución:** El manejador ejecuta `resolveLayoutFunctionsConfig(layoutPath, ...)` en paralelo con `resolvePageFunctionsConfig`.
-2. **Caché en KV / Storage:** El payload del layout (`layout.rsc`) se almacena bajo su propia etiqueta y TTL en el almacenamiento Edge.
-3. **Invalidación selectiva:** Al llamar a `revalidateTag("dashboard-shell")`, el endpoint de layout se invalida **sin obligar a regenerar las 50 páginas hijas**, y viceversa.
+2. **Caché en Storage:** El payload del layout (`layout.rsc`) y sus metadatos (`layout.metadata.json`) se almacenan bajo sus propias etiquetas y TTL en el Storage (`FileSystemStorage`, `CloudflareKVStorage`, `DenoKVStorage`, etc.).
+3. **Invalidación selectiva:** Al llamar a `revalidateTag("dashboard-shell")` o `revalidateLayout("/dashboard")`:
+   - El endpoint de layout se invalida.
+   - **No se obliga a regenerar las 50 páginas hijas**, y viceversa.
+   - Verificado con tests específicos de layout-level `allowISG(false)` e invalidación por tag.
 
 ---
 
-## 5. Segmentación Vertical y PPR (Partial Pre-Rendering)
+## 5. Segmentación Vertical: `DinouCacheSlot` — *Implementado y Verificado (Nivel 1 & Nivel 2)*
 
 ### 5.1. Definición: Segmentación Horizontal vs. Vertical
 
@@ -150,133 +156,76 @@ Se habilitará la declaración de funciones de control a nivel de layout:
 ┌────────────────────────────────────────────────────────┐
 │  Layout (Segmentación Horizontal - Caché fija)        │
 │  ┌──────────────────────────────────────────────────┐  │
-│  │  Página: Shell Estático (PPR - Build Time)       │  │
-│  │  "Bienvenido a la tienda"                        │  │
+│  │  Página: Shell Estático / Dinámico               │  │
+│  │  "Panel de Control"                              │  │
 │  │  ┌────────────────────┐  ┌────────────────────┐  │  │
 │  │  │ DinouCacheSlot     │  │ DinouCacheSlot     │  │  │
-│  │  │ (Estático / ISR)   │  │ (Dinámico / Edge)  │  │  │
-│  │  │ Productos Populares│  │ Saldo Usuario      │  │  │
-│  │  │ revalidate: 600s   │  │ revalidate: 0s     │  │  │
+│  │  │ (Micro-ISR / SWR)  │  │ (Live Refreshable) │  │  │
+│  │  │ slot-alpha         │  │ slot-beta          │  │  │
+│  │  │ revalidate: 60s    │  │ tag: tag-beta      │  │  │
 │  │  └────────────────────┘  └────────────────────┘  │  │
 │  └──────────────────────────────────────────────────┘  │
 └────────────────────────────────────────────────────────┘
 ```
 
-### 5.2. ¿Cómo funciona PPR (Partial Pre-Rendering) en Dinou?
+### 5.2. Los Dos Niveles de DinouCacheSlot
 
-El concepto de PPR busca lo mejor de dos mundos:
-1. **La velocidad del SSG (Static Site Generation):** Servir inmediatamente desde la CDN más cercana un archivo HTML pre-renderizado con TTFB cercano a 0ms.
-2. **La frescura del SSR (Server-Side Rendering):** Cargar la información personalizada del usuario (carrito, perfil, recomendaciones en vivo) sin bloquear la primera pintura.
+`DinouCacheSlot` opera en dos niveles complementarios:
 
-#### El Mecanismo Técnico:
-- **Paso 1 (En tiempo de Build):** Dinou renderiza la página simulando que los datos dinámicos están pendientes. Todo lo que esté fuera de `<Suspense>` se consolida en el archivo estático HTML y en el RSC inicial (`page.rsc`). Dentro de los huecos suspendidos, se inyectan los fallbacks estáticos (esqueletos de carga / skeletons).
-- **Paso 2 (Primer Byte en Edge/Runtime):** La CDN devuelve inmediatamente el HTML estático. El usuario ve la página al instante.
-- **Paso 3 (Reanudación del Stream RSC en Edge):** Simultáneamente, el runtime de Dinou en el Edge ejecuta las promesas de los Server Components que quedaron suspendidos, y empieza a emitir los chunks RSC por la conexión abierta de streaming.
-- **Paso 4 (Inserción sin recarga):** El cliente de Dinou recibe los trozos del stream y React rellena los esqueletos con los datos dinámicos reales sin parpadeos ni navegación adicional.
+#### Nivel 1: Micro-ISR de Server Components & SWR
+* Los Server Components envueltos en `<DinouCacheSlot id="slot-alpha" tag="tag-alpha" revalidate={60}>` se evalúan y se almacenan como fragmentos serializados JSX en `slots/:id/slot.json`.
+* **Stale-While-Revalidate (SWR):** Cuando el TTL expira, la siguiente petición recibe inmediatamente el contenido previo mientras una promesa en segundo plano (`waitUntil`) regenera y actualiza el slot en Storage.
+* **Invalidación por Etiqueta:** Al ejecutar `revalidateTag("tag-alpha")`, únicamente el slot afectado es purgado de la caché. Los slots hermanos y la página mantienen sus datos intactos.
 
----
+#### Nivel 2: Refresco en Vivo sin Recarga de Página
+* Los slots se envuelven en un componente cliente (`DinouCacheSlotBoundary`).
+* Mediante las funciones públicas de cliente:
+  ```tsx
+  import { refreshSlot, useRouter } from "dinou";
 
-## 6. `DinouCacheSlot`: La Primitiva de Caché Vertical por Componente
+  // Función directa
+  await refreshSlot("slot-alpha");
 
-### 6.1. ¿Por qué `DinouCacheSlot` supera al PPR tradicional?
+  // O a través del hook useRouter()
+  const router = useRouter();
+  await router.refreshSlot("slot-beta");
+  ```
+* El cliente solicita el fragmento actualizado al endpoint dedicado `/____rsc_slot____/:id`.
+* **Cero recarga de página y cero re-render de hermanos:** React actualiza exclusivamente el DOM correspondiente al slot refrescado. El timestamp de la página y de los slots hermanos se mantiene inmutable.
 
-El PPR convencional está acoplado al momento del despliegue (build time): decide qué es estático y qué es dinámico antes de subir a producción.  
-Sin embargo, en aplicaciones reales existen necesidades que van más allá del build time:
-- ¿Qué pasa si una página es **100% dinámica en SSR** (por ejemplo, `/feed`), pero dentro de ella hay un widget del tiempo o una lista de tendencias que solo cambia cada 10 minutos?
-- En el PPR clásico, tendrías que re-evaluar ese widget en cada petición al Edge o usar un `fetch` cacheado a nivel de función de datos.
-
-`DinouCacheSlot` es una primitiva a **nivel de componente** que gestiona su propio ciclo de vida e invalidación independientemente de si la página contenedora es estática o dinámica.
-
-### 6.2. Ejemplo de API Propuesta
-
-```tsx
-import { DinouCacheSlot } from "dinou/server";
-import { Suspense } from "react";
-import TrendingTopics from "@/components/trending";
-import UserBalance from "@/components/user-balance";
-import ProductCatalog from "@/components/catalog";
-
-export default async function DashboardPage() {
-  return (
-    <div className="space-y-6">
-      {/* 1. Shell Estático Inmediato */}
-      <h1>Panel de Control</h1>
-
-      {/* 2. Micro-ISR dentro de página: Caché de 5 minutos con tags */}
-      <Suspense fallback={<TrendingSkeleton />}>
-        <DinouCacheSlot 
-          tag="trending-topics" 
-          revalidate={300}
-        >
-          <TrendingTopics />
-        </DinouCacheSlot>
-      </Suspense>
-
-      {/* 3. Slot de consulta pesada cacheada por 1 hora */}
-      <Suspense fallback={<CatalogSkeleton />}>
-        <DinouCacheSlot 
-          tag="featured-products" 
-          revalidate={3600}
-        >
-          <ProductCatalog category="tech" />
-        </DinouCacheSlot>
-      </Suspense>
-
-      {/* 4. Slot completamente dinámico en tiempo real (revalidate: 0) */}
-      <Suspense fallback={<BalanceSkeleton />}>
-        <UserBalance />
-      </Suspense>
-    </div>
-  );
-}
-```
-
-### 6.3. Diferencias entre Escenarios de Uso
-
-1. **Uso en Páginas Pre-renderizadas en Build (SSG/PPR):**
-   - El compilador resuelve el slot estático en el build.
-   - En runtime, si el slot expira (`revalidate`), Dinou aplica **Micro-ISR**: regenera únicamente el sub-árbol RSC del slot en segundo plano en el Edge Storage (KV), sin reconstruir la página completa ni re-renderizar los layouts.
-2. **Uso en Páginas Dinámicas (SSR en Runtime):**
-   - La página se ejecuta dinámicamente en cada petición para atender datos sensibles (sesiones, cookies).
-   - Sin embargo, los componentes envueltos en `DinouCacheSlot` no tocan la base de datos ni consumen cómputo: se leen directamente del almacenamiento de caché del Edge como fragmentos RSC precalculados.
-3. **Invalidación Quirúrgica por Etiquetas:**
-   ```typescript
-   // En una Server Function o Webhook de CMS:
-   import { revalidateTag } from "dinou/server";
-
-   export async function updateCatalog() {
-     await db.products.update(...);
-     // Solo invalida el slot del catálogo en los bordes de la red
-     await revalidateTag("featured-products");
-   }
-   ```
+### 5.3. Serialización JSX Nativa de React 19
+En [dinou/core/cache-slot.js](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/core/cache-slot.js) se implementó un motor especializado de serialización y deserialización que soporta:
+- Símbolos de React 19 (`Symbol.for("react.transitional.element")`).
+- Referencias de componentes cliente (`Symbol.for("react.client.reference")`).
+- Reconstrucción fiel de árboles JSX y props anidadas.
 
 ---
 
-## 7. Tabla Comparativa de Estrategias en Dinou
+## 6. Tabla Comparativa de Estrategias en Dinou
 
-| Capacidad | Dinou v6 (Anterior) | Dinou v7 (Actual) | Dinou v7.1 (PPR + CacheSlot) |
+| Capacidad | Dinou v6 (Anterior) | Dinou v7 (Actual) | Dinou v7.2 (PPR Próximo Hito) |
 |---|---|---|---|
-| **Granularidad de Navegación** | Monolítica (Página entera) | Segmentada Horizontal (Layouts vs Páginas) | Segmentada Horizontal + Vertical (Slots por Componente) |
+| **Granularidad de Navegación** | Monolítica (Página entera) | Segmentada Horizontal (Layouts vs Páginas) | Segmentada Horizontal + Vertical (PPR + Slots) |
 | **Persistencia de Layouts en SPA** | Parcial / Re-evaluada | 100% Preservada (0 re-evaluaciones) | 100% Preservada |
+| **Caché en Layouts** | No disponible | Completa (`layout_functions`, revalidate, tags) | Completa |
+| **Micro-ISR por Componente** | No disponible | Implementado (`DinouCacheSlot` Nivel 1 & 2) | Integrado con PPR |
+| **Refresco en Vivo de Slots** | No disponible | Implementado (`refreshSlot`, `useRouter`) | Implementado |
 | **TTFB en Rutas Dinámicas** | Depende del SSR más lento | Rápido (Layouts cacheados) | Ultrarrápido (Shell estático 0ms + Stream) |
-| **Invocación de Errores** | Pantalla global / Full reload | Localizada en Slot o Layout con rescate SPA | Localizada a nivel de Componente/Slot |
-| **Revalidación (ISR)** | Solo por página completa | Por página completa (`page_functions`) | Por Layout (`layout_functions`) y por Slot (`DinouCacheSlot`) |
+| **Aislamiento de Errores** | Pantalla global / Full reload | Localizada en Slot o Layout con rescate SPA | Localizada a nivel de Componente/Slot/Boundary |
 | **Compatibilidad React 19** | Básica | Completa (use, Server Actions, Transitions) | Nativa con Streaming Reanudable |
 
 ---
 
-## 8. Hoja de Ruta Inmediata (Próximos Pasos)
-
-Una vez garantizado que la suite de tests en GitHub Actions reporte **100% verde**:
+## 7. Hoja de Ruta Actualizada (Roadmap)
 
 ```mermaid
 timeline
-    title Hoja de Ruta Dinou v7.x
-    Fase 1 : Implementación de layout_functions : Soporte de revalidate, tags y allowISG para layouts desacoplados
-    Fase 2 : Motor PPR : Renderizado de Shell estático en build + Resume stream dinámico en runtime
-    Fase 3 : Primitiva DinouCacheSlot : Micro-ISR de Server Components con invalidación granular por revalidateTag
-    Fase 4 : Documentación Interactiva : Publicación en dinou-docs con ejemplos en vivo de PPR y Error Isolation
+    title Estado de Evolución Dinou v7.x
+    Fase 1 (Completada) : Segmentación Horizontal : Endpoints desacoplados de Layout y Página con DinouPageSlot
+    Fase 2 (Completada) : layout_functions : Soporte de revalidate, tags y allowISG independiente para Layouts
+    Fase 3 (Completada) : DinouCacheSlot : Micro-ISR de Server Components (Nivel 1 SWR + Nivel 2 Live Refresh)
+    Fase 4 (Próximo Hito) : Motor PPR (Partial Prerendering) : Shell estático en build + Reanudación por Streaming dinámico en runtime (Ver ppr.md)
+    Fase 5 : Documentación Interactiva : Publicación en dinou-docs con ejemplos en vivo y demos de showcase
 ```
 
-Con las correcciones de segmentación horizontal y resiliencia de errores consolidadas en este ciclo, la arquitectura base de Dinou ha alcanzado la madurez y estabilidad necesarias para albergar estas características de última generación.
+> La especificación detallada de la arquitectura, build y streaming del **Motor PPR (Fase 4)** se encuentra documentada en [ppr.md](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/ppr.md).
