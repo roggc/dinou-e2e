@@ -25,7 +25,7 @@ async function FastExpiringComponent() {
   await new Promise((r) => setTimeout(r, 20));
   return (
     <div id="slot-fast-wrapper">
-      <h3>Slot Fast (2s TTL)</h3>
+      <h3>Slot Fast (5s TTL)</h3>
       <span id="slot-fast-time">{Date.now()}</span>
     </div>
   );
@@ -49,7 +49,7 @@ export default async function Page() {
         <SlowComponentBeta />
       </DinouCacheSlot>
 
-      <DinouCacheSlot id="slot-fast" tag="tag-fast" revalidate={2}>
+      <DinouCacheSlot id="slot-fast" tag="tag-fast" revalidate={5}>
         <FastExpiringComponent />
       </DinouCacheSlot>
 

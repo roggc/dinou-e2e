@@ -2680,8 +2680,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const betaTime3 = await page.locator("#slot-beta-time").innerText();
       expect(betaTime3).toBe(betaTime2);
 
-      // Exceed TTL (wait 2500ms): triggers SWR / fresh regeneration
-      await page.waitForTimeout(2500);
+      // Exceed TTL (wait 5500ms): triggers SWR / fresh regeneration
+      await page.waitForTimeout(5500);
       await page.reload();
 
       await expect.poll(async () => {
