@@ -1334,7 +1334,7 @@ async function handleRequest(request, platformContext = {}) {
             let isExpired = false;
             if (isLayoutReq && cached.metadata) {
               const { revalidate, generatedAt } = cached.metadata;
-              if (typeof revalidate === "number" && revalidate > 0 && Date.now() > (generatedAt || 0) + revalidate) {
+              if (typeof revalidate === "number" && revalidate > 0 && Date.now() > (generatedAt || 0) + revalidate * 1000) {
                 isExpired = true;
               }
             }
@@ -1636,7 +1636,7 @@ async function handleRequest(request, platformContext = {}) {
       const isExpired =
         typeof revalidate === "number" &&
         revalidate > 0 &&
-        Date.now() > (generatedAt || 0) + revalidate;
+        Date.now() > (generatedAt || 0) + revalidate * 1000;
 
       if (isExpired) {
         // Trigger background revalidation on Edge!
@@ -1679,7 +1679,7 @@ async function handleRequest(request, platformContext = {}) {
                 await storage.set(rscKey, rscText);
                 const updatedMeta = {
                   status: 200,
-                  revalidate: metadata.revalidate || 3000,
+                  revalidate: metadata.revalidate || 3,
                   generatedAt: Date.now(),
                 };
                 await storage.set(htmlKey, htmlText, updatedMeta);
@@ -1716,7 +1716,7 @@ async function handleRequest(request, platformContext = {}) {
 
                 const updatedMeta = {
                   status: 200,
-                  revalidate: metadata.revalidate || 3000,
+                  revalidate: metadata.revalidate || 3,
                   generatedAt: Date.now(),
                 };
                 await storage.set(htmlKey, html, updatedMeta);

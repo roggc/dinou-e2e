@@ -204,7 +204,7 @@ export interface RouteSegmentConfig<TParams = any, TProps = any> {
   ppr?: PPRConfig;
 
   /**
-   * Incremental Static Regeneration revalidation time in milliseconds (ms).
+   * Incremental Static Regeneration revalidation time in seconds (s).
    * A positive number (> 0) triggers background revalidation after that period.
    * If 0 or omitted, the page is cached statically forever (until on-demand revalidation).
    * Can be declared as a number or as a sync/async function returning a number.

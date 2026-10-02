@@ -196,7 +196,7 @@ Dinou main features are:
 
   ```typescript
   export function revalidate() {
-    return 60000; // ms
+    return 60; // seconds
   }
   ```
 
@@ -514,7 +514,7 @@ The framework supports a `page_functions.ts` (or `.tsx`, `.jsx`, `.js`) file in 
 
   - **`dynamic`**: Controls whether a route is dynamically rendered (bypassing SSG).
 
-  - **`revalidate`**: Specifies a time in ms for when we want to revalidate data fetched during SSG.
+  - **`revalidate`**: Specifies a time in seconds for when we want to revalidate data fetched during SSG.
 
 - Example:
 
@@ -543,7 +543,7 @@ The framework supports a `page_functions.ts` (or `.tsx`, `.jsx`, `.js`) file in 
   }
 
   export function revalidate() {
-    return 60000;
+    return 60; // seconds
   }
   ```
 

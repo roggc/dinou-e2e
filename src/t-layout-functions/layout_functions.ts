@@ -6,7 +6,7 @@ export async function getProps() {
 }
 
 export function revalidate() {
-  return 3600000;
+  return 3600;
 }
 
 export function getCacheTags() {

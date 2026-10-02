@@ -1,5 +1,5 @@
 export function revalidate() {
-  return 3000;
+  return 3;
 }
 
 export function validateParams(params: { id: string }) {
