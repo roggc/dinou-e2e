@@ -205,8 +205,8 @@ export interface RouteSegmentConfig<TParams = any, TProps = any> {
 
   /**
    * Route caching and revalidation strategy in seconds (s). Single source of truth for page rendering mode.
-   * - `0`: Dynamically rendered on every request (dynamic SSR, bypassing static cache).
-   * - `> 0`: Pre-rendered/cached with Incremental Static Regeneration (ISR) expiring after the specified seconds.
+   * - `0` (or `< 1`): Dynamically rendered on every request (dynamic SSR, bypassing static cache).
+   * - `>= 1`: Pre-rendered/cached with Incremental Static Regeneration (ISR) expiring after the specified seconds.
    * - `false` (or omitted): Statically pre-rendered and cached forever until on-demand revalidation via `revalidatePath` or `revalidateTag`.
    *
    * Can be declared as a number, false, or as a sync/async function in `page_functions.ts` or `layout_functions.ts`.

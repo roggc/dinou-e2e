@@ -71,7 +71,7 @@ function safeDecode(val) {
 async function isDynamicRoute(revalidate) {
   if (revalidate === undefined || revalidate === false) return false;
   const val = typeof revalidate === "function" ? await revalidate() : revalidate;
-  return typeof val === "number" && val < 0.001;
+  return typeof val === "number" && val < 1;
 }
 
 const { createBailoutProxy } = require("./bailout-proxy.js");
