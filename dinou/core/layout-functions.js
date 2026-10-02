@@ -130,17 +130,14 @@ async function resolveLayoutFunctionsConfig(layoutPath, dParams = {}) {
       }
     }
 
-    const dynamicFnOrVal = mod.dynamic ?? mod.default?.dynamic;
-    const isDynamic = Boolean(
-      typeof dynamicFnOrVal === "function" ? await dynamicFnOrVal() : dynamicFnOrVal
-    );
-
     const revalidateVal =
       typeof mod.revalidate === "function"
         ? await mod.revalidate()
         : typeof mod.default?.revalidate === "function"
         ? await mod.default.revalidate()
         : (mod.revalidate ?? mod.default?.revalidate);
+
+    const isDynamic = revalidateVal === 0;
 
     const rawTags = mod.getCacheTags ?? mod.default?.getCacheTags;
     let tagsVal = [];

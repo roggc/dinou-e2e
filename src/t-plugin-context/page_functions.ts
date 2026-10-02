@@ -1,3 +1,3 @@
-export function dynamic() {
-  return true;
+export function revalidate() {
+  return 0;
 }

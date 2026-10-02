@@ -68,8 +68,10 @@ function safeDecode(val) {
   }
 }
 
-function resolveDynamic(d) {
-  return typeof d === "function" ? Boolean(d()) : Boolean(d);
+async function isDynamicRoute(revalidate) {
+  if (revalidate === undefined || revalidate === false) return false;
+  const val = typeof revalidate === "function" ? await revalidate() : revalidate;
+  return val === 0;
 }
 
 const { createBailoutProxy } = require("./bailout-proxy.js");
@@ -161,15 +163,15 @@ async function buildStaticPages(onProgress = null) {
             segments.length,
           );
 
-          let dynamic, getStaticPaths;
+          let revalidate, getStaticPaths;
           if (pageFunctionsPath) {
             const module = await importModule(pageFunctionsPath);
             getStaticPaths = module.getStaticPaths;
-            dynamic = module.dynamic;
+            revalidate = module.revalidate;
           }
           const isLocalPage =
             pagePath && path.dirname(pagePath) === dynamicPath;
-          if (isLocalPage && !resolveDynamic(dynamic)) {
+          if (isLocalPage && !(await isDynamicRoute(revalidate))) {
             if (process.env.DINOU_DEBUG) {
               console.log(
                 `Found optional catch-all route: ${segments.join("/") ?? ""
@@ -306,15 +308,15 @@ async function buildStaticPages(onProgress = null) {
             segments.length,
           );
 
-          let dynamic, getStaticPaths;
+          let revalidate, getStaticPaths;
           if (pageFunctionsPath) {
             const module = await importModule(pageFunctionsPath);
             getStaticPaths = module.getStaticPaths;
-            dynamic = module.dynamic;
+            revalidate = module.revalidate;
           }
           const isLocalPage =
             pagePath && path.dirname(pagePath) === dynamicPath;
-          if (isLocalPage && !resolveDynamic(dynamic)) {
+          if (isLocalPage && !(await isDynamicRoute(revalidate))) {
             if (process.env.DINOU_DEBUG) {
               console.log(
                 `Found catch-all route: ${segments.join("/") ?? ""
@@ -414,15 +416,15 @@ async function buildStaticPages(onProgress = null) {
             segments.length,
           );
 
-          let dynamic, getStaticPaths;
+          let revalidate, getStaticPaths;
           if (pageFunctionsPath) {
             const module = await importModule(pageFunctionsPath);
             getStaticPaths = module.getStaticPaths;
-            dynamic = module.dynamic;
+            revalidate = module.revalidate;
           }
           const isLocalPage =
             pagePath && path.dirname(pagePath) === dynamicPath;
-          if (isLocalPage && !resolveDynamic(dynamic)) {
+          if (isLocalPage && !(await isDynamicRoute(revalidate))) {
             if (process.env.DINOU_DEBUG) {
               console.log(
                 `Found optional dynamic route: ${segments.join("/") ?? ""
@@ -541,22 +543,23 @@ async function buildStaticPages(onProgress = null) {
           );
           let dynamic;
           let getStaticPaths;
+          let revalidate;
           if (pageFunctionsPath) {
             const module = await importModule(pageFunctionsPath);
             getStaticPaths = module.getStaticPaths;
-            dynamic = module.dynamic;
+            revalidate = module.revalidate;
           }
           const { getLayoutFunctionsPath } = require("./layout-functions");
           const lfPath = getLayoutFunctionsPath(dynamicPath);
           if (lfPath) {
             const lmod = await importModule(lfPath);
             const lmodGetStaticPaths = lmod.getStaticPaths || lmod.default?.getStaticPaths;
-            const lmodDynamic = lmod.dynamic || lmod.default?.dynamic;
+            const lmodRevalidate = lmod.revalidate || lmod.default?.revalidate;
             if (!getStaticPaths && lmodGetStaticPaths) {
               getStaticPaths = lmodGetStaticPaths;
             }
-            if (!dynamic && lmodDynamic) {
-              dynamic = lmodDynamic;
+            if (revalidate === undefined && lmodRevalidate !== undefined) {
+              revalidate = lmodRevalidate;
             }
           }
           const isLocalPage =
@@ -573,7 +576,7 @@ async function buildStaticPages(onProgress = null) {
           );
           const hasLocalLayout =
             layoutPath && path.dirname(layoutPath) === dynamicPath;
-          if ((isLocalPage || hasLocalLayout) && !resolveDynamic(dynamic)) {
+          if ((isLocalPage || hasLocalLayout) && !(await isDynamicRoute(revalidate))) {
             if (process.env.DINOU_DEBUG) {
               console.log(
                 `Found dynamic route: ${segments.join("/") ?? ""}/[${paramName}]`,
@@ -666,16 +669,16 @@ async function buildStaticPages(onProgress = null) {
               undefined,
               segments.length,
             );
-            let dynamic;
+            let revalidate;
             let getStaticPaths;
             if (pageFunctionsPath) {
               const module = await importModule(pageFunctionsPath);
               getStaticPaths = module.getStaticPaths;
-              dynamic = module.dynamic;
+              revalidate = module.revalidate;
             }
             const isLocalPage =
               pagePath && path.dirname(pagePath) === dynamicPath;
-            if (isLocalPage && !resolveDynamic(dynamic)) {
+            if (isLocalPage && !(await isDynamicRoute(revalidate))) {
               try {
                 if (getStaticPaths) {
                   const paths = await (typeof getStaticPaths === "function"
@@ -777,17 +780,17 @@ async function buildStaticPages(onProgress = null) {
       undefined,
       segments.length,
     );
-    let dynamic;
+    let revalidate;
     if (pageFunctionsPath) {
       try {
         const module = await importModule(pageFunctionsPath);
-        dynamic = module.dynamic;
+        revalidate = module.revalidate;
       } catch (e) {}
     }
 
     const isPpr = await resolveBuildPprForRoute(segments, pagePath, pageFunctionsPath, srcFolder);
 
-    if (pagePath && (!resolveDynamic(dynamic) || isPpr) && !doNotPushAtEnd) {
+    if (pagePath && (!(await isDynamicRoute(revalidate)) || isPpr) && !doNotPushAtEnd) {
       pages.push({
         path: currentPath,
         segments,
@@ -1307,9 +1310,9 @@ async function buildStaticPage(reqPath, isDynamic = null) {
       if (pageFunctionsPath) {
         const pageFunctionsModule = await importModule(pageFunctionsPath);
         const getProps = pageFunctionsModule.getProps;
-        if (isDynamic && (isDynamic.value = resolveDynamic(pageFunctionsModule.dynamic)))
-          return;
         revalidate = pageFunctionsModule.revalidate;
+        if (isDynamic && (isDynamic.value = await isDynamicRoute(revalidate)))
+          return;
         const rawTags = pageFunctionsModule.getCacheTags ?? pageFunctionsModule.default?.getCacheTags;
         if (typeof rawTags === "function") {
           try {

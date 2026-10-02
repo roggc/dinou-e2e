@@ -284,13 +284,11 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
           }
         }
 
-        const isDynamic = Boolean(
-          typeof pageFunctionsModule.dynamic === "function" ? pageFunctionsModule.dynamic() : pageFunctionsModule.dynamic
-        );
-
         let revalidateVal = typeof pageFunctionsModule.revalidate === "function"
           ? await pageFunctionsModule.revalidate()
           : pageFunctionsModule.revalidate;
+
+        const isDynamic = revalidateVal === 0;
         const rawTags = pageFunctionsModule.getCacheTags ?? pageFunctionsModule.default?.getCacheTags;
         let tagsVal = [];
         if (typeof rawTags === "function") {

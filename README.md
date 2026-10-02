@@ -184,20 +184,21 @@ Dinou main features are:
   }
   ```
 
-- `dynamic`: this function is for when we want the page to be rendered dynamically, bypassing a possible statically generated file. It must return `true` to render a page dynamically. Otherwise the rendering system will use the statically generated file if exists.
+- `revalidate`: Single source of truth for route caching and rendering strategy (in seconds):
+  - `0`: Renders dynamically on every request (dynamic SSR, bypassing static cache).
+  - `> 0`: Statically pre-rendered with Incremental Static Regeneration (ISR) expiring after the specified seconds.
+  - `false` (or omitted): Statically pre-rendered and cached forever until on-demand revalidation (`revalidatePath` / `revalidateTag`).
 
   ```typescript
-  export function dynamic() {
-    return true;
-  }
-  ```
-
-- `revalidate`: this function is for when we want to revalidate data fetched in SSG.
-
-  ```typescript
+  // Dynamically rendered on each request:
   export function revalidate() {
-    return 60; // seconds
+    return 0;
   }
+
+  // Or with ISR (e.g. 60 seconds):
+  // export function revalidate() {
+  //   return 60;
+  // }
   ```
 
 ## Fetching data with `Suspense`
@@ -512,9 +513,7 @@ The framework supports a `page_functions.ts` (or `.tsx`, `.jsx`, `.js`) file in 
 
   - **`getProps`**: This is where you can fetch your data. Fetches or computes additional props for a page or root layout.
 
-  - **`dynamic`**: Controls whether a route is dynamically rendered (bypassing SSG).
-
-  - **`revalidate`**: Specifies a time in seconds for when we want to revalidate data fetched during SSG.
+  - **`revalidate`**: Single source of truth for route rendering mode and caching (in seconds). Return `0` for dynamic SSR, `> 0` for ISR, or `false` for static forever.
 
 - Example:
 
@@ -537,13 +536,8 @@ The framework supports a `page_functions.ts` (or `.tsx`, `.jsx`, `.js`) file in 
     return { page: { post }, layout: { title: post.title } };
   }
 
-  export function dynamic() {
-    // Force dynamic rendering (skip SSG) if needed
-    return false; // Set to true to bypass SSG
-  }
-
   export function revalidate() {
-    return 60; // seconds
+    return 60; // seconds (use 0 for dynamic rendering on every request)
   }
   ```
 

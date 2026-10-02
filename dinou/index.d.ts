@@ -204,18 +204,14 @@ export interface RouteSegmentConfig<TParams = any, TProps = any> {
   ppr?: PPRConfig;
 
   /**
-   * Incremental Static Regeneration revalidation time in seconds (s).
-   * A positive number (> 0) triggers background revalidation after that period.
-   * If 0 or omitted, the page is cached statically forever (until on-demand revalidation).
-   * Can be declared as a number or as a sync/async function returning a number.
+   * Route caching and revalidation strategy in seconds (s). Single source of truth for page rendering mode.
+   * - `0`: Dynamically rendered on every request (dynamic SSR, bypassing static cache).
+   * - `> 0`: Pre-rendered/cached with Incremental Static Regeneration (ISR) expiring after the specified seconds.
+   * - `false` (or omitted): Statically pre-rendered and cached forever until on-demand revalidation via `revalidatePath` or `revalidateTag`.
+   *
+   * Can be declared as a number, false, or as a sync/async function in `page_functions.ts` or `layout_functions.ts`.
    */
-  revalidate?: number | (() => number | Promise<number>);
-
-  /**
-   * Dynamic rendering strategy.
-   * Can be a value or a sync/async function.
-   */
-  dynamic?: boolean | "auto" | "force-dynamic" | "force-static" | (() => boolean | "auto" | "force-dynamic" | "force-static" | Promise<boolean | "auto" | "force-dynamic" | "force-static">);
+  revalidate?: number | false | (() => number | false | Promise<number | false>);
 
   /**
    * Cache tags associated with this route segment for on-demand invalidation via `revalidateTag(tag)`.
