@@ -74,8 +74,7 @@ function serializeJSX(jsx) {
     if (
       value &&
       typeof value === "object" &&
-      (value.$$typeof === Symbol.for("react.transitional.element") ||
-        value.$$typeof === Symbol.for("react.element"))
+      value.$$typeof === Symbol.for("react.transitional.element")
     ) {
       return {
         __dinou_element__: true,
