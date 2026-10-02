@@ -2636,7 +2636,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.goto("/t-cache-slot");
       await expect(page.locator("h1")).toContainText("Vertical Segmentation Lab");
       await expect(page.locator("body")).toHaveAttribute("data-hydrated", "true");
-      await page.waitForTimeout(200);
+      await expect(page.locator("#slot-buttons-container")).toHaveAttribute("data-hydrated", "true");
+      await page.waitForTimeout(100);
 
       const pageTime1 = await page.locator("#page-time").innerText();
       const alphaTime1 = await page.locator("#slot-alpha-time").innerText();
@@ -2650,6 +2651,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.waitForTimeout(100);
 
       await page.reload();
+      await expect(page.locator("body")).toHaveAttribute("data-hydrated", "true");
+      await expect(page.locator("#slot-buttons-container")).toHaveAttribute("data-hydrated", "true");
+      await page.waitForTimeout(100);
+
       const pageTime2 = await page.locator("#page-time").innerText();
       const alphaTime2 = await page.locator("#slot-alpha-time").innerText();
       const betaTime2 = await page.locator("#slot-beta-time").innerText();
@@ -2691,7 +2696,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.goto("/t-cache-slot");
       await expect(page.locator("h1")).toContainText("Vertical Segmentation Lab");
       await expect(page.locator("body")).toHaveAttribute("data-hydrated", "true");
-      await page.waitForTimeout(200);
+      await expect(page.locator("#slot-buttons-container")).toHaveAttribute("data-hydrated", "true");
+      await page.waitForTimeout(100);
 
       const pageTime1 = await page.locator("#page-time").innerText();
       const alphaTime1 = await page.locator("#slot-alpha-time").innerText();
