@@ -21,10 +21,10 @@ function renderJSXToClientJSX(jsx, key = null) {
   ) {
     return jsx;
   } else if (Array.isArray(jsx)) {
-    return jsx.map((child, i) =>
+    return jsx.map((child) =>
       renderJSXToClientJSX(
         child,
-        i + (typeof child?.type === "string" ? "_" + child?.type : "")
+        child?.key ?? null
       )
     );
   } else if (typeof jsx === "symbol") {
@@ -135,10 +135,10 @@ async function asyncRenderJSXToClientJSX(jsx, key = null) {
     return jsx;
   } else if (Array.isArray(jsx)) {
     return await Promise.all(
-      jsx.map((child, i) =>
+      jsx.map((child) =>
         asyncRenderJSXToClientJSX(
           child,
-          i + (typeof child?.type === "string" ? "_" + child?.type : "")
+          child?.key ?? null
         )
       )
     );

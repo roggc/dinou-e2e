@@ -722,6 +722,7 @@ function createRequestContext(simReq, resBridge, platformContext = {}, dynamicSt
     },
     env: platformContext.env || {},
     ctx: platformContext.ctx || null,
+    platformContext,
   };
 
   if (dinouConfig.plugins && Array.isArray(dinouConfig.plugins)) {

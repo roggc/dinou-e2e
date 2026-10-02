@@ -2641,9 +2641,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const pageTime1 = await page.locator("#page-time").innerText();
       const alphaTime1 = await page.locator("#slot-alpha-time").innerText();
       const betaTime1 = await page.locator("#slot-beta-time").innerText();
+      const fastTime1 = await page.locator("#slot-fast-time").innerText();
 
       expect(alphaTime1).toBeTruthy();
       expect(betaTime1).toBeTruthy();
+      expect(fastTime1).toBeTruthy();
 
       await page.waitForTimeout(100);
 
@@ -2651,10 +2653,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const pageTime2 = await page.locator("#page-time").innerText();
       const alphaTime2 = await page.locator("#slot-alpha-time").innerText();
       const betaTime2 = await page.locator("#slot-beta-time").innerText();
+      const fastTime2 = await page.locator("#slot-fast-time").innerText();
 
       expect(pageTime2).not.toBe(pageTime1);
       expect(alphaTime2).toBe(alphaTime1);
       expect(betaTime2).toBe(betaTime1);
+      // Within TTL (100ms): should still be cached
+      expect(fastTime2).toBe(fastTime1);
 
       await page.click("#btn-revalidate-alpha");
       await page.waitForTimeout(300);
@@ -2665,16 +2670,6 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       expect(alphaTime3).not.toBe(alphaTime2);
       expect(betaTime3).toBe(betaTime2);
-
-      // 5. Test time-based TTL expiration on Slot Fast (revalidate: 2s)
-      const fastTime1 = await page.locator("#slot-fast-time").innerText();
-      expect(fastTime1).toBeTruthy();
-
-      // Within TTL (100ms): should still be cached
-      await page.waitForTimeout(100);
-      await page.reload();
-      const fastTime2 = await page.locator("#slot-fast-time").innerText();
-      expect(fastTime2).toBe(fastTime1);
 
       // Exceed TTL (wait 2500ms): triggers SWR / fresh regeneration
       await page.waitForTimeout(2500);

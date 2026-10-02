@@ -127,6 +127,11 @@ function deserializeJSX(json) {
       if (node.key != null) {
         props.key = node.key;
       }
+      const children = props.children;
+      if (Array.isArray(children)) {
+        delete props.children;
+        return React.createElement(type, props, ...children);
+      }
       return React.createElement(type, props);
     }
     return node;
@@ -238,7 +243,7 @@ async function DinouCacheSlot(props) {
           try {
             const DINOU_CONTEXT_KEY = Symbol.for("dinou.request.context.storage");
             const reqContext = globalThis[DINOU_CONTEXT_KEY]?.getStore();
-            const ctx = reqContext?.platformContext?.ctx;
+            const ctx = reqContext?.ctx || reqContext?.platformContext?.ctx || reqContext?.req?.ctx;
             if (ctx && typeof ctx.waitUntil === "function") {
               ctx.waitUntil(bgPromise);
             }
@@ -274,7 +279,7 @@ async function DinouCacheSlot(props) {
       console.error(`[DinouCacheSlot] Failed to write cache for slot "${slotId}":`, err);
     }
 
-    return resolved;
+    return deserializeJSX(serialized);
   })();
 
   inflightSlotRenders.set(storageKey, renderPromise);
@@ -344,7 +349,7 @@ async function getSlotJSX(slotId, options = {}) {
           slotId,
         });
       }
-      return resolved;
+      return deserializeJSX(serialized);
     } catch (e) {
       console.error(`[getSlotJSX] Failed to regenerate slot "${slotId}":`, e);
     }
