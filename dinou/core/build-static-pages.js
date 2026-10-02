@@ -1104,7 +1104,7 @@ async function buildStaticPages(onProgress = null) {
       const holes = pageIsPpr ? getRegisteredHoles() : [];
       staticRoutes.add(reqPath);
       staticMetadata.set(reqPath, {
-        revalidate: typeof revalidate === "function" ? revalidate() : revalidate,
+        revalidate: typeof revalidate === "function" ? await revalidate() : revalidate,
         effects: sideEffects,
         tags: cacheTags,
         ppr: Boolean(pageIsPpr),
@@ -1470,7 +1470,7 @@ async function buildStaticPage(reqPath, isDynamic = null) {
     const holes = pageIsPpr ? getRegisteredHoles() : [];
     staticRoutes.add(reqPath);
     staticMetadata.set(reqPath, {
-      revalidate: revalidate?.(),
+      revalidate: typeof revalidate === "function" ? await revalidate() : revalidate,
       effects: sideEffects,
       tags: cacheTags,
       ppr: pageIsPpr,
