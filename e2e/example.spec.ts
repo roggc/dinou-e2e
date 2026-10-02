@@ -4808,6 +4808,51 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
   });
 
+  test.describe("Partial Prerendering (PPR)", () => {
+    test("Initial load renders static shell immediately and resolves dynamic hole with default value", async ({ page }) => {
+      await page.goto("/t-ppr");
+
+      // 1. Static shell elements are rendered immediately
+      await expect(page.locator("#ppr-static-title")).toHaveText("Dinou Partial Prerendering (PPR)");
+      await expect(page.locator("#ppr-static-desc")).toContainText("pre-rendered at build time");
+      await expect(page.locator("#ppr-static-timestamp")).toHaveText("Static Build Shell Loaded");
+
+      // 2. Dynamic hole resolves and renders dynamic component
+      await expect(page.locator("#ppr-dynamic")).toBeVisible();
+      await expect(page.locator("#ppr-user-name")).toHaveText("Alice");
+    });
+
+    test("Request with cookie personalizes dynamic hole while preserving static shell", async ({ page, context }) => {
+      await context.addCookies([
+        {
+          name: "username",
+          value: "Charlie",
+          path: "/",
+          domain: "localhost",
+        },
+      ]);
+
+      await page.goto("/t-ppr");
+
+      // 1. Static shell elements are preserved
+      await expect(page.locator("#ppr-static-title")).toHaveText("Dinou Partial Prerendering (PPR)");
+      await expect(page.locator("#ppr-static-desc")).toContainText("pre-rendered at build time");
+
+      // 2. Dynamic content reflects personalized cookie
+      await expect(page.locator("#ppr-dynamic")).toBeVisible();
+      await expect(page.locator("#ppr-user-name")).toHaveText("Charlie");
+    });
+
+    test("Request with query parameter personalizes dynamic hole", async ({ page }) => {
+      await page.goto("/t-ppr?user=David");
+
+      await expect(page.locator("#ppr-static-title")).toHaveText("Dinou Partial Prerendering (PPR)");
+      await expect(page.locator("#ppr-dynamic")).toBeVisible();
+      await expect(page.locator("#ppr-user-name")).toHaveText("David");
+    });
+  });
+
 });
+
 
 
