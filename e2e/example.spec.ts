@@ -253,13 +253,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     ]);
 
     // 4. Verificar que no se cruzaron los cables
-    // await expect(pageA.getByText("Hello ALICE")).toBeVisible();
+    await pageA.bringToFront();
     await expect(
       pageA.getByText("Hello ALICE", { exact: true }).locator("visible=true"),
     ).toBeVisible({ timeout: 30000 });
     await expect(pageA.getByText("Hello BOB")).not.toBeVisible(); // 🛑 Si esto falla, tienes un leak grave
 
-    // await expect(pageB.getByText("Hello BOB")).toBeVisible();
+    await pageB.bringToFront();
     await expect(
       pageB.getByText("Hello BOB", { exact: true }).locator("visible=true"),
     ).toBeVisible({ timeout: 30000 });
