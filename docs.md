@@ -305,18 +305,26 @@ Usar PPR en Dinou es completamente intuitivo y no requiere APIs complejas ni wra
 
 En Dinou v7.2 existen dos modalidades para activar Partial Prerendering:
 
-1. **Declaración explícita a nivel de Página:**
-   En cualquier archivo `page.tsx` (o `page.jsx`), exporta la constante `ppr = true`:
+1. **Declaración a nivel de Página (`page.tsx` o `page_functions.ts`):**
+   Puedes definirlo como constante o como función (síncrona o asíncrona):
    ```tsx
-   // src/dashboard/page.tsx
+   // src/dashboard/page.tsx (forma constante)
    export const ppr = true; // También compatible: export const experimental_ppr = true;
    ```
+   O en su archivo complementario `page_functions.ts` mediante una función:
+   ```ts
+   // src/dashboard/page_functions.ts (forma función síncrona o asíncrona)
+   export async function ppr() {
+     // Útil para feature flags, A/B testing o consultas a CMS/base de datos
+     return true;
+   }
+   ```
 
-2. **Herencia en Cascada a nivel de Layout:**
-   Puedes habilitar PPR para toda una sección o sub-árbol de la aplicación declarando `ppr = true` directamente en un `layout.tsx` (o en su archivo complementario `layout_functions.ts`):
+2. **Herencia en Cascada a nivel de Layout (`layout.tsx` o `layout_functions.ts`):**
+   Puedes habilitar PPR para toda una sección o sub-árbol de la aplicación declarando `ppr` directamente en un `layout.tsx` o en `layout_functions.ts`:
    ```tsx
    // src/dashboard/layout.tsx
-   export const ppr = true;
+   export const ppr = true; // O: export function ppr() { return true; }
 
    export default function DashboardLayout({ children }: { children: React.ReactNode }) {
      return (
@@ -327,14 +335,20 @@ En Dinou v7.2 existen dos modalidades para activar Partial Prerendering:
      );
    }
    ```
-   *Efecto de cascada:* Todas las páginas hijas y layouts anidados bajo `/dashboard/*` heredarán automáticamente el modo PPR sin necesidad de declarar `export const ppr = true;` en cada una de ellas.
+   *Efecto de cascada:* Todas las páginas hijas y layouts anidados bajo `/dashboard/*` heredarán automáticamente el modo PPR sin necesidad de declarar `ppr` en cada una de ellas.
 
-3. **Opt-Out Granular (`ppr = false`):**
-   Si una página específica dentro de un sub-árbol PPR necesita renderizarse bajo el modelo SSR dinámico tradicional o SSG completo sin streaming de huecos, puede desactivar la herencia explícitamente:
+3. **Opt-Out Granular en Layouts Anidados o Páginas:**
+   Si una página o sub-sección específica dentro de un sub-árbol PPR necesita renderizarse bajo el modelo SSR dinámico tradicional o SSG completo sin streaming de huecos, puede desactivar la herencia explícitamente tanto con constante como con función:
    ```tsx
-   // src/dashboard/reports/page.tsx
-   // Desactiva PPR para esta página concreta dentro de un layout con PPR activo
+   // src/dashboard/reports/page.tsx (opt-out en página)
    export const ppr = false;
+   ```
+   O a nivel de un sub-layout anidado para desactivar toda una rama:
+   ```tsx
+   // src/dashboard/admin/layout.tsx (opt-out en layout anidado)
+   export function ppr() {
+     return false;
+   }
    ```
 
 #### Paso 2: Aislar los componentes dinámicos con `<Suspense>`
@@ -447,20 +461,28 @@ La implementación se diseñó meticulosamente para integrarse con la arquitectu
 
 ### 6.4. Batería de Pruebas E2E y Validación Multi-Navegador
 
-La suite en [e2e/example.spec.ts](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/e2e/example.spec.ts) valida de forma exhaustiva tanto PPR directo como herencia y opt-out:
+La suite en [e2e/example.spec.ts](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/e2e/example.spec.ts) valida de forma exhaustiva tanto PPR directo, herencia multinivel en layouts, opt-out granular, y definición mediante funciones síncronas y asíncronas:
 
-- **Rutas de prueba:**
+- **Rutas y fixtures de prueba:**
   - [src/t-ppr/page.tsx](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/src/t-ppr/page.tsx): Declaración directa `export const ppr = true;` en página.
-  - [src/t-ppr-layout/layout.tsx](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/src/t-ppr-layout/layout.tsx): Declaración `export const ppr = true;` a nivel de Layout.
+  - [src/t-ppr-layout/layout.tsx](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/src/t-ppr-layout/layout.tsx): Declaración `export const ppr = true;` a nivel de Layout raíz.
   - [src/t-ppr-layout/page.tsx](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/src/t-ppr-layout/page.tsx): Página sin declaración de PPR que hereda el comportamiento del Layout.
   - [src/t-ppr-layout/opt-out/page.tsx](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/src/t-ppr-layout/opt-out/page.tsx): Página hija con `export const ppr = false;` que desactiva PPR puntualmente.
+  - [src/t-ppr-layout/nested/layout.tsx](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/src/t-ppr-layout/nested/layout.tsx) y [nested/page.tsx](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/src/t-ppr-layout/nested/page.tsx): Herencia en cascada a través de dos niveles de layouts anidados (`layout.tsx` -> `nested/layout.tsx` -> `nested/page.tsx`).
+  - [src/t-ppr-layout/nested-optout/layout.tsx](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/src/t-ppr-layout/nested-optout/layout.tsx) y [nested-optout/page.tsx](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/src/t-ppr-layout/nested-optout/page.tsx): Opt-out a nivel de layout anidado mediante `export function ppr() { return false; }`.
+  - [src/t-ppr-fn/page_functions.ts](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/src/t-ppr-fn/page_functions.ts) y [src/t-ppr-fn/page.tsx](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/src/t-ppr-fn/page.tsx): Activación de PPR en `page_functions.ts` usando la forma `export async function ppr() { return true; }`.
+
 - **Casos de prueba verificados al 100%:**
   1. *Carga inicial directa:* El shell estático (`#ppr-static-title`, `#ppr-static-desc`) se visualiza de forma inmediata y el hueco dinámico resuelve con el valor por defecto (`Alice`).
   2. *Personalización por Cookies:* Petición con cookie `username=Charlie`. El shell estático se mantiene intacto y el hueco dinámico refleja `"Charlie"`.
   3. *Personalización por Parámetros de Búsqueda:* Petición con query string `?user=David`. El hueco dinámico refleja `"David"`.
   4. *Herencia en Cascada desde Layout:* Ruta `/t-ppr-layout?user=InheritedChild` renderiza el shell estático de layout y página, y resuelve el hueco dinámico vía streaming con `"InheritedChild"`.
-  5. *Opt-Out Explícito:* Ruta `/t-ppr-layout/opt-out` renderiza como SSR tradicional respetando `ppr = false` sin aplazar componentes en build time.
-- **Ejecución concurrente:** **15 tests** ejecutados en paralelo sobre **Chromium**, **Firefox** y **WebKit**, aprobados al 100%.
+  5. *Opt-Out Explícito en Página:* Ruta `/t-ppr-layout/opt-out` renderiza como SSR tradicional respetando `ppr = false` sin aplazar componentes en build time.
+  6. *Herencia en Layouts Anidados (2 niveles):* Ruta `/t-ppr-layout/nested?user=NestedInherited` renderiza el shell estático de ambos layouts y la página anidada, resolviendo el hueco dinámico por streaming con `"NestedInherited"`.
+  7. *Opt-Out en Layout Anidado vía Función:* Ruta `/t-ppr-layout/nested-optout?user=OptOut` respeta la desactivación declarada en el sub-layout mediante `export function ppr() { return false; }`, desactivando PPR para toda la sub-rama.
+  8. *Activación vía `export async function ppr()` en `page_functions.ts`:* Ruta `/t-ppr-fn?user=FnAsyncUser` comprueba que la función asíncrona de `page_functions.ts` activa el modo PPR, entregando el shell estático inmediato y resolviendo el hueco dinámico con `"FnAsyncUser"`.
+
+- **Ejecución concurrente:** **24 tests** (8 escenarios × 3 motores) ejecutados en paralelo sobre **Chromium**, **Firefox** y **WebKit**, aprobados al 100%.
 
 ---
 

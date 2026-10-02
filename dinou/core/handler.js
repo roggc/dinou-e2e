@@ -38,6 +38,7 @@ const { getStorageAdapter, setStorageAdapter } = require("./storage-adapter.js")
 const { createBailoutProxy } = require("./bailout-proxy.js");
 const getAssetFromManifest = require("./get-asset-from-manifest.js");
 const { handlePprResume } = require("./ppr-runtime.js");
+const { resolveModulePpr } = require("./resolve-module-ppr.js");
 
 // Load Dinou configuration and plugins
 let dinouConfig = { plugins: [] };
@@ -200,15 +201,11 @@ async function resolvePprForRoute(pagePath, pageFunctionsModule, reqSegments, qu
   if (pagePath) {
     try {
       const pageModule = await importModule(pagePath);
-      if (pageModule && (pageModule.ppr !== undefined || pageModule.experimental_ppr !== undefined)) {
-        explicitPagePpr = Boolean(pageModule.ppr ?? pageModule.experimental_ppr);
-      }
+      explicitPagePpr = await resolveModulePpr(pageModule);
     } catch (e) {}
   }
   if (explicitPagePpr === null && pageFunctionsModule) {
-    if (pageFunctionsModule.ppr !== undefined || pageFunctionsModule.experimental_ppr !== undefined) {
-      explicitPagePpr = Boolean(pageFunctionsModule.ppr ?? pageFunctionsModule.experimental_ppr);
-    }
+    explicitPagePpr = await resolveModulePpr(pageFunctionsModule);
   }
   if (explicitPagePpr === null && typeof globalThis !== "undefined" && globalThis.__DINOU_ROUTE_METADATA__) {
     const normKey = pagePath ? pagePath.replace(/\\/g, "/") : "";

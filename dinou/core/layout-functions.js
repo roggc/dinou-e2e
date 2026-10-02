@@ -1,6 +1,7 @@
 const path = require("path");
 const { existsSync } = require("./vfs");
 const importModule = require("./import-module");
+const { resolveModulePpr } = require("./resolve-module-ppr");
 
 const LAYOUT_FUNCTIONS_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js"];
 const LAYOUT_FUNCTIONS_NAMES = ["layout_functions", "layout.functions"];
@@ -88,9 +89,7 @@ async function resolveLayoutFunctionsConfig(layoutPath, dParams = {}) {
   if (layoutPath) {
     try {
       const layoutModule = await importModule(layoutPath);
-      if (layoutModule && (layoutModule.ppr !== undefined || layoutModule.experimental_ppr !== undefined)) {
-        layoutPpr = Boolean(layoutModule.ppr ?? layoutModule.experimental_ppr);
-      }
+      layoutPpr = await resolveModulePpr(layoutModule);
     } catch (e) {}
   }
   if (layoutPpr === null && typeof globalThis !== "undefined" && globalThis.__DINOU_ROUTE_METADATA__) {
@@ -111,8 +110,8 @@ async function resolveLayoutFunctionsConfig(layoutPath, dParams = {}) {
 
   try {
     const mod = await importModule(layoutFunctionsPath);
-    if (layoutPpr === null && mod && (mod.ppr !== undefined || mod.default?.ppr !== undefined || mod.experimental_ppr !== undefined || mod.default?.experimental_ppr !== undefined)) {
-      layoutPpr = Boolean(mod.ppr ?? mod.default?.ppr ?? mod.experimental_ppr ?? mod.default?.experimental_ppr);
+    if (layoutPpr === null && mod) {
+      layoutPpr = await resolveModulePpr(mod);
     }
     const resolvedAllowISG =
       typeof mod.allowISG === "function"

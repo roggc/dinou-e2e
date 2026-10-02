@@ -9,6 +9,7 @@ const importModule = require("./import-module");
 const { requestStorage } = require("./request-context.js");
 const { getLayoutProps, resolveLayoutFunctionsConfig } = require("./layout-functions");
 const { runWithPprContext, getRegisteredHoles } = require("./ppr-context.js");
+const { resolveModulePpr } = require("./resolve-module-ppr");
 
 async function resolveBuildPprForRoute(segments, pagePath, pageFunctionsPath, srcFolder) {
   let inheritedPpr = false;
@@ -39,17 +40,13 @@ async function resolveBuildPprForRoute(segments, pagePath, pageFunctionsPath, sr
   if (pagePath) {
     try {
       const pageModule = await importModule(pagePath);
-      if (pageModule && (pageModule.ppr !== undefined || pageModule.experimental_ppr !== undefined)) {
-        explicitPagePpr = Boolean(pageModule.ppr ?? pageModule.experimental_ppr);
-      }
+      explicitPagePpr = await resolveModulePpr(pageModule);
     } catch (e) {}
   }
   if (explicitPagePpr === null && pageFunctionsPath) {
     try {
       const module = await importModule(pageFunctionsPath);
-      if (module && (module.ppr !== undefined || module.experimental_ppr !== undefined)) {
-        explicitPagePpr = Boolean(module.ppr ?? module.experimental_ppr);
-      }
+      explicitPagePpr = await resolveModulePpr(module);
     } catch (e) {}
   }
   if (explicitPagePpr === null && typeof globalThis !== "undefined" && globalThis.__DINOU_ROUTE_METADATA__) {

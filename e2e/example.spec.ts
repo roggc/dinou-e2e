@@ -4871,6 +4871,39 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("#ppr-optout-title")).toHaveText("PPR Opted Out Page");
       await expect(page.locator("#ppr-optout-desc")).toHaveText("This page opted out of PPR.");
     });
+
+    test("Deep nested child route inherits PPR across 2 levels of layouts", async ({ page }) => {
+      await page.goto("/t-ppr-layout/nested?user=DeepNestedChild");
+
+      // 1. Both parent and nested layout headers are rendered
+      await expect(page.locator("#ppr-layout-header")).toHaveText("PPR Inherited Layout Header");
+      await expect(page.locator("#ppr-nested-layout-header")).toHaveText("PPR 2nd-Level Nested Layout Header");
+      await expect(page.locator("#ppr-nested-page-title")).toHaveText("PPR Deep Nested Child Page");
+
+      // 2. Dynamic hole resolved via streaming
+      await expect(page.locator("#ppr-nested-dynamic")).toBeVisible();
+      await expect(page.locator("#ppr-nested-name")).toHaveText("DeepNestedChild");
+    });
+
+    test("Nested layout with export function ppr() { return false; } opts out its entire subtree", async ({ page }) => {
+      await page.goto("/t-ppr-layout/nested-optout");
+
+      await expect(page.locator("#ppr-layout-header")).toHaveText("PPR Inherited Layout Header");
+      await expect(page.locator("#ppr-nested-optout-header")).toHaveText("PPR Nested Opt-Out Layout Header");
+      await expect(page.locator("#ppr-nested-optout-title")).toHaveText("PPR Nested Opt-Out Child Page");
+    });
+
+    test("Route activates PPR via export async function ppr() in page_functions.ts", async ({ page }) => {
+      await page.goto("/t-ppr-fn?user=AsyncFuncTester");
+
+      // 1. Static shell elements from page
+      await expect(page.locator("#ppr-fn-static-title")).toHaveText("PPR via page_functions.ts");
+      await expect(page.locator("#ppr-fn-static-desc")).toContainText("PPR activated dynamically");
+
+      // 2. Dynamic hole resolved via streaming
+      await expect(page.locator("#ppr-fn-dynamic")).toBeVisible();
+      await expect(page.locator("#ppr-fn-name")).toHaveText("AsyncFuncTester");
+    });
   });
 
 });
