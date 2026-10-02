@@ -9,3 +9,7 @@ export async function revalidateTagAlpha() {
 export async function revalidateTagBeta() {
   await revalidateTag("tag-beta");
 }
+
+export async function revalidateTagFast() {
+  await revalidateTag("tag-fast");
+}

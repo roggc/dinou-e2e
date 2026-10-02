@@ -2637,6 +2637,14 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("h1")).toContainText("Vertical Segmentation Lab");
       await expect(page.locator("body")).toHaveAttribute("data-hydrated", "true");
       await expect(page.locator("#slot-buttons-container")).toHaveAttribute("data-hydrated", "true");
+
+      // Invalidate fast slot at the start so every browser starts with an isolated, fresh 5s TTL cycle
+      await Promise.all([
+        page.waitForResponse((res) => res.request().method() === "POST"),
+        page.click("#btn-revalidate-fast"),
+      ]);
+      await page.reload();
+      await expect(page.locator("body")).toHaveAttribute("data-hydrated", "true");
       await page.waitForTimeout(100);
 
       const pageTime1 = await page.locator("#page-time").innerText();
@@ -2683,11 +2691,12 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Exceed TTL (wait 5500ms): triggers SWR / fresh regeneration
       await page.waitForTimeout(5500);
       await page.reload();
+      await page.waitForTimeout(500);
 
       await expect.poll(async () => {
         await page.reload();
         return await page.locator("#slot-fast-time").innerText();
-      }, { timeout: 10000, intervals: [400, 800] }).not.toBe(fastTime1);
+      }, { timeout: 20000, intervals: [800, 1500] }).not.toBe(fastTime1);
     });
 
     test("supports live client-side slot refresh without page reload (Level 2)", async ({

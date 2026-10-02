@@ -2,11 +2,12 @@
 
 import { useTransition, useState, useEffect } from "react";
 import { refreshSlot, useRouter } from "dinou";
-import { revalidateTagAlpha, revalidateTagBeta } from "./actions";
+import { revalidateTagAlpha, revalidateTagBeta, revalidateTagFast } from "./actions";
 
 export default function SlotButtons() {
   const [isPendingAlpha, startTransitionAlpha] = useTransition();
   const [isPendingBeta, startTransitionBeta] = useTransition();
+  const [isPendingFast, startTransitionFast] = useTransition();
   const [hydrated, setHydrated] = useState(false);
   const router = useRouter();
 
@@ -37,6 +38,15 @@ export default function SlotButtons() {
           onClick={() => startTransitionBeta(() => revalidateTagBeta())}
         >
           {isPendingBeta ? "Revalidating Beta..." : "Revalidate Tag Beta"}
+        </button>
+
+        <button
+          id="btn-revalidate-fast"
+          data-hydrated={hydrated ? "true" : "false"}
+          disabled={isPendingFast}
+          onClick={() => startTransitionFast(() => revalidateTagFast())}
+        >
+          {isPendingFast ? "Revalidating Fast..." : "Revalidate Tag Fast"}
         </button>
       </div>
 
