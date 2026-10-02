@@ -34,7 +34,7 @@ function revalidating(reqPath, isDynamicFromServer) {
 
       const isExpired =
         typeof revalidate === "number" &&
-        revalidate > 0 &&
+        revalidate >= 0.001 &&
         Date.now() > generatedAt + revalidate * 1000;
 
       if (isExpired && !regenerating.has(reqPath)) {

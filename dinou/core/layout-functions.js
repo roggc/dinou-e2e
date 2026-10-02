@@ -137,7 +137,7 @@ async function resolveLayoutFunctionsConfig(layoutPath, dParams = {}) {
         ? await mod.default.revalidate()
         : (mod.revalidate ?? mod.default?.revalidate);
 
-    const isDynamic = revalidateVal === 0;
+    const isDynamic = typeof revalidateVal === "number" && revalidateVal < 0.001;
 
     const rawTags = mod.getCacheTags ?? mod.default?.getCacheTags;
     let tagsVal = [];

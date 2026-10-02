@@ -288,7 +288,7 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
           ? await pageFunctionsModule.revalidate()
           : pageFunctionsModule.revalidate;
 
-        const isDynamic = revalidateVal === 0;
+        const isDynamic = typeof revalidateVal === "number" && revalidateVal < 0.001;
         const rawTags = pageFunctionsModule.getCacheTags ?? pageFunctionsModule.default?.getCacheTags;
         let tagsVal = [];
         if (typeof rawTags === "function") {
@@ -1332,7 +1332,7 @@ async function handleRequest(request, platformContext = {}) {
             let isExpired = false;
             if (isLayoutReq && cached.metadata) {
               const { revalidate, generatedAt } = cached.metadata;
-              if (typeof revalidate === "number" && revalidate > 0 && Date.now() > (generatedAt || 0) + revalidate * 1000) {
+              if (typeof revalidate === "number" && revalidate >= 0.001 && Date.now() > (generatedAt || 0) + revalidate * 1000) {
                 isExpired = true;
               }
             }
@@ -1633,7 +1633,7 @@ async function handleRequest(request, platformContext = {}) {
       const { revalidate, generatedAt } = metadata;
       const isExpired =
         typeof revalidate === "number" &&
-        revalidate > 0 &&
+        revalidate >= 0.001 &&
         Date.now() > (generatedAt || 0) + revalidate * 1000;
 
       if (isExpired) {
