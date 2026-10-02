@@ -3,7 +3,7 @@
 > **Documento Técnico de Arquitectura y Visión de Futuro**  
 > *Autor:* Dinou Core Team & Antigravity  
 > *Fecha:* Octubre 2026  
-> *Estado:* Segmentación Horizontal + `layout_functions` (100% Verificado) · Segmentación Vertical (`DinouCacheSlot` Nivel 1 y Nivel 2 Implementado y Verificado) · PPR en Roadmap Activo ([ppr.md](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/ppr.md))  
+> *Estado:* Segmentación Horizontal + `layout_functions` (100% Verificado) · Segmentación Vertical (`DinouCacheSlot` Nivel 1 y Nivel 2 Implementado y Verificado) · Partial Prerendering (PPR 100% Implementado y Verificado en Chromium, Firefox y WebKit)  
 
 ---
 
@@ -16,11 +16,11 @@ En sus primeras versiones, la navegación entre rutas funcionaba bajo un modelo 
 2. **Transferencia innecesaria de bytes:** Rutas con layouts pesados (navbars con menús complejos, sidebars ricos, pies de página) volvían a transmitir el mismo payload una y otra vez.
 3. **Acoplamiento de caché e ISR:** El ciclo de vida de los datos (`page_functions`, `revalidate`) estaba atado a la página, impidiendo que los layouts tuvieran su propia estrategia de refresco independiente.
 
-A lo largo de este ciclo de trabajo, hemos transformado Dinou en una arquitectura **Segmentada por Capas**, implementando y verificando con éxito:
+A lo largo de este ciclo de trabajo, hemos transformado Dinou en una arquitectura **Segmentada por Capas y Prerenderizada Parcialmente**, implementando y verificando con éxito:
 - **Segmentación Horizontal:** Desacoplamiento de Layouts (`____rsc_layout____`) y Páginas (`____rsc_page____`).
 - **`layout_functions`:** ISR desacoplado, tags e ISG independiente para layouts.
 - **Segmentación Vertical (`DinouCacheSlot`):** Micro-ISR a nivel de componente con SWR (Nivel 1) y refresco en vivo desde cliente sin recarga (Nivel 2).
-- **Próximo Hito:** Partial Prerendering (PPR), documentado y especificado en [ppr.md](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/ppr.md).
+- **Partial Prerendering (PPR):** Shell estático pre-renderizado a 0ms TTFB con streaming reanudable de huecos dinámicos en runtime ([ppr.md](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/ppr.md)).
 
 ---
 
@@ -263,9 +263,165 @@ En [dinou/core/cache-slot.js](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e
 
 ---
 
-## 6. Tabla Comparativa de Estrategias en Dinou
+## 6. Partial Prerendering (PPR) — *Implementado y Verificado*
 
-| Capacidad | Dinou v6 (Anterior) | Dinou v7 (Actual) | Dinou v7.2 (PPR Próximo Hito) |
+### 6.1. ¿Qué es PPR y por qué revoluciona Dinou?
+
+Históricamente, los frameworks de renderizado web forzaban una decisión binaria por ruta:
+- **SSG (Static Site Generation):** Entrega inmediata (0ms TTFB) desde CDN/almacenamiento, pero completamente rígido. Incapaz de leer cookies de sesión, cabeceras de autenticación o datos vivos de bases de datos en el servidor.
+- **SSR (Server-Side Rendering):** Capaz de procesar datos dinámicos por petición, pero su Time to First Byte (TTFB) se degrada irremediablemente: el servidor no envía el primer byte hasta que la consulta a la base de datos o API externa más lenta concluye.
+
+**Partial Prerendering (PPR) en Dinou v7.2 unifica ambos paradigmas en una sola ruta:**
+1. **En tiempo de compilación (Build Time / SSG):** Dinou genera una cáscara estática (`shell.html` y `shell.rsc`) que contiene todos los elementos estáticos (layouts, cabeceras, títulos, sidebars) y los esqueletos de carga de los límites `<Suspense>`.
+2. **En tiempo de ejecución (Runtime / 0ms TTFB):** El servidor entrega **inmediatamente** la cáscara estática a la CDN o al cliente.
+3. **Reanudación Streaming en paralelo:** La conexión HTTP se mantiene abierta. En el servidor, los componentes dinámicos dentro de `<Suspense>` se evalúan en paralelo con la información real de la petición (`cookies`, `query`, `headers`). En cuanto cada componente resuelve sus datos, el servidor empuja un chunk HTML por streaming con un script atómico que sustituye el esqueleto por el contenido final en el DOM.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Usuario / Navegador
+    participant Server as Dinou Server (AOT Dual-Bundle)
+    participant DB as DB / API Externa
+    
+    User->>Server: GET /dashboard (Cookie: session=xyz)
+    Server-->>User: [0ms TTFB] Envía Shell Estático Prelude (HTML + Skeletons)
+    Note over User: El usuario ve el layout y los skeletons instantáneamente
+    par Evaluación Asíncrona en Runtime
+        Server->>DB: Consulta datos de usuario y feed en paralelo
+        DB-->>Server: Retorna datos vivos
+    end
+    Server-->>User: [Stream Chunk 1] <div id="ppr-dynamic">...</div> + micro-script reemplazo
+    Note over User: El DOM reemplaza el skeleton por el feed del usuario sin parpadeos
+    Server-->>User: [Postlude] </body></html> (Cierre de conexión)
+```
+
+---
+
+### 6.2. Guía de Uso para Desarrolladores (DX)
+
+Usar PPR en Dinou es completamente intuitivo y no requiere APIs complejas ni wrappers propietarios:
+
+#### Paso 1: Declarar la ruta como PPR
+En cualquier archivo `page.tsx` (o `page.jsx`), exporta la constante `ppr = true`:
+
+```tsx
+// src/dashboard/page.tsx
+export const ppr = true; // También compatible: export const experimental_ppr = true;
+```
+
+#### Paso 2: Aislar los componentes dinámicos con `<Suspense>`
+Dinou analizará el árbol de componentes. Todo lo que esté fuera de `<Suspense>` formará parte del shell estático. Cualquier componente asíncrono que acceda al contexto de petición (`cookies`, `query`, `headers`, `getContext()`) debe envolverse en un `<Suspense>` con un `fallback`:
+
+```tsx
+// src/dashboard/page.tsx
+import React, { Suspense } from "react";
+import { getContext } from "dinou";
+
+export const ppr = true;
+
+// Componente Dinámico: Se ejecuta en el servidor por petición (Runtime)
+async function UserGreeting() {
+  const ctx = getContext();
+  const userName = ctx?.req?.cookies?.username || ctx?.req?.query?.user || "Invitado";
+
+  // Llamada asíncrona a base de datos o servicio externo
+  await new Promise((resolve) => setTimeout(resolve, 80));
+
+  return (
+    <div className="card-user">
+      <h2>¡Hola de nuevo, <span className="highlight">{userName}</span>!</h2>
+      <p>Tu resumen de actividad está actualizado.</p>
+    </div>
+  );
+}
+
+// Esqueleto de Carga: Se compila dentro del shell estático (Build Time)
+function GreetingSkeleton() {
+  return (
+    <div className="skeleton card-user">
+      <div className="skeleton-title">Cargando perfil...</div>
+    </div>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <div className="dashboard-container">
+      {/* 🚀 Shell Estático: Servido a 0ms TTFB desde CDN/Memoria */}
+      <header>
+        <h1>Panel de Métricas</h1>
+        <p>Este encabezado y la estructura general son 100% estáticos.</p>
+      </header>
+
+      {/* ⚡ Hueco Dinámico: Se reemplaza en streaming progresivo */}
+      <Suspense fallback={<GreetingSkeleton />}>
+        <UserGreeting />
+      </Suspense>
+    </div>
+  );
+}
+```
+
+#### Paso 3: Experiencia en Navegación y Conciliación SPA (React 19)
+- **Carga Inicial Directa (Full Page Load):**  
+  El navegador recibe el shell preliminar al instante (0ms). En cuanto el servidor termina de evaluar `UserGreeting`, el fragmento final se inserta en el DOM en su ranura exacta mediante un micro-script inyectado en streaming:
+  ```javascript
+  (function(){
+    var c = document.getElementById("ppr-content-ppr-hole-1");
+    var t = document.querySelector('[data-ppr-hole="ppr-hole-1"]');
+    if (c && t) { t.replaceWith(...c.childNodes); c.remove(); }
+  })();
+  ```
+- **Hidratación y Navegación Suave (SPA):**  
+  Durante la hidratación cliente de React 19, Dinou inyecta `window.__DINOU_PPR__ = true` y desactiva el fetching de RSC estático (`window.__DINOU_USE_STATIC__ = false`). Cuando el router cliente reconcilia la página o cuando el usuario navega a través de enlaces `<Link href="/dashboard">`, el endpoint `/____rsc_page____/dashboard` evalúa dinámicamente el componente con las cookies y parámetros actuales, garantizando que **nunca se sobrescriban los datos del usuario con los valores de compilación**.
+
+---
+
+### 6.3. Arquitectura Interna del Motor PPR (Dinou Core)
+
+La implementación se diseñó meticulosamente para integrarse con la arquitectura Dual-Bundle AOT in-memory de Dinou:
+
+1. **Detección AST y Enrutador (`parse-exports.js`, `route-generator.js`):**
+   El analizador estático inspecciona las exportaciones de cada archivo de página. Si encuentra `ppr = true` o `experimental_ppr = true`, adjunta `{ ppr: true }` a los metadatos de la ruta tanto en memoria como en `dist2/metadata.json`.
+
+2. **Detección de Aplazamiento en Build Time (`ppr-context.js`, `bailout-proxy.js`):**
+   Durante la fase de compilación estática (`buildStaticPages`):
+   - Se activa un contexto especial `runWithPprContext({ isPpr: true })`.
+   - Si un componente dentro de un límite Suspense intenta leer `req.cookies`, `req.headers` o `req.query`, los proxies espía de `createBailoutProxy` detectan el acceso dinámico y lanzan `Symbol.for("dinou.ppr.postpone")`.
+   - `renderJSXToClientJSX` captura este símbolo, registra el hueco dinámico (`ppr-hole-1`) y emite en su lugar el fallback envuelto con `<div data-ppr-hole="ppr-hole-1" style="display:contents">`.
+   - Se guardan los artefactos base: `shell.html`, `shell.rsc` y `metadata.json` con la lista de huecos registrados.
+
+3. **Motor de Reanudación Streaming en Runtime (`ppr-runtime.js`):**
+   Cuando un usuario solicita una ruta PPR (`handleRequest` en `handler.js`):
+   - `handlePprResume` divide el `shell.html` en preludio (hasta antes de `</body>`) y postludio.
+   - Envía inmediatamente el preludio al stream HTTP mediante `writer.write(encoder.encode(shellPrelude))` logrando 0ms TTFB.
+   - En paralelo, `streamDynamicHoles` recorre el árbol JSX de la página ejecutando los Server Components reales con el `requestContext` de la petición viva.
+   - Para generar el HTML de los huecos dinámicos respetando las restricciones de React Server Components (donde `react-dom/server` no puede importarse dentro de `react-server`), el motor pasa el stream RSC por `platformContext.renderHtmlStream` (Pass B SSR Engine).
+   - Escribe el chunk de contenido dinámico y el script de reemplazo atómico en la conexión abierta, cerrando el stream con el postludio `</body></html>`.
+
+4. **Endpoint Dinámico de RSC (`handler.js`):**
+   En el endpoint de páginas RSC `/____rsc_page____`:
+   - El servidor comprueba si la ruta tiene activa la bandera PPR (`isRoutePpr`).
+   - Si es PPR, **bloquea la entrega del payload estático precompilado** `page.rsc`, canalizando la solicitud directamente hacia la generación en vivo con el contexto del usuario.
+
+---
+
+### 6.4. Batería de Pruebas E2E y Validación Multi-Navegador
+
+La implementación cuenta con una suite completa de pruebas Playwright en [e2e/example.spec.ts](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/e2e/example.spec.ts):
+
+- **Ruta de prueba:** [src/t-ppr/page.tsx](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/src/t-ppr/page.tsx) con `export const ppr = true;`, shell estático y componente asíncrono `DynamicUser`.
+- **Casos de prueba verificados al 100%:**
+  1. *Carga inicial:* El shell estático (`#ppr-static-title`, `#ppr-static-desc`) se visualiza de forma inmediata y el hueco dinámico resuelve con el valor por defecto (`Alice`).
+  2. *Personalización por Cookies:* Petición con cookie `username=Charlie`. El shell estático se mantiene intacto y el hueco dinámico refleja `"Charlie"`.
+  3. *Personalización por Parámetros de Búsqueda:* Petición con query string `?user=David`. El hueco dinámico refleja `"David"`.
+- **Ejecución concurrente:** 9 tests ejecutados en paralelo sobre **Chromium**, **Firefox** y **WebKit**, aprobados limpiamente en 9.7 segundos.
+
+---
+
+## 7. Tabla Comparativa de Estrategias en Dinou
+
+| Capacidad | Dinou v6 (Anterior) | Dinou v7 (Actual) | Dinou v7.2 (PPR Implementado) |
 |---|---|---|---|
 | **Granularidad de Navegación** | Monolítica (Página entera) | Segmentada Horizontal (Layouts vs Páginas) | Segmentada Horizontal + Vertical (PPR + Slots) |
 | **Persistencia de Layouts en SPA** | Parcial / Re-evaluada | 100% Preservada (0 re-evaluaciones) | 100% Preservada |
@@ -278,7 +434,7 @@ En [dinou/core/cache-slot.js](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e
 
 ---
 
-## 7. Hoja de Ruta Actualizada (Roadmap)
+## 8. Hoja de Ruta Actualizada (Roadmap)
 
 ```mermaid
 timeline
@@ -286,8 +442,8 @@ timeline
     Fase 1 (Completada) : Segmentación Horizontal : Endpoints desacoplados de Layout y Página con DinouPageSlot
     Fase 2 (Completada) : layout_functions : Soporte de revalidate, tags y allowISG independiente para Layouts
     Fase 3 (Completada) : DinouCacheSlot : Micro-ISR de Server Components (Nivel 1 SWR + Nivel 2 Live Refresh)
-    Fase 4 (Próximo Hito) : Motor PPR (Partial Prerendering) : Shell estático en build + Reanudación por Streaming dinámico en runtime (Ver ppr.md)
-    Fase 5 : Documentación Interactiva : Publicación en dinou-docs con ejemplos en vivo y demos de showcase
+    Fase 4 (Completada) : Motor PPR (Partial Prerendering) : Shell estático en build + Reanudación por Streaming dinámico en runtime (100% Verificado en Chromium, Firefox y WebKit)
+    Fase 5 (Próximo Hito) : Documentación Interactiva : Publicación en dinou-docs con ejemplos en vivo y demos de showcase
 ```
 
-> La especificación detallada de la arquitectura, build y streaming del **Motor PPR (Fase 4)** se encuentra documentada en [ppr.md](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/ppr.md).
+> La especificación técnica inicial y análisis preliminar del **Motor PPR** se preserva como referencia en [ppr.md](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/ppr.md).
