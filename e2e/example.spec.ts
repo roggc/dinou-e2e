@@ -2628,6 +2628,61 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("#layout-params-text")).toContainText('"id":"a"');
     });
   });
+
+  test.describe("DinouCacheSlot: Vertical Segmentation & Micro-ISR", () => {
+    test("caches slots independently and supports granular revalidateTag invalidation", async ({
+      page,
+    }) => {
+      await page.goto("/t-cache-slot");
+      await expect(page.locator("h1")).toContainText("Vertical Segmentation Lab");
+
+      const pageTime1 = await page.locator("#page-time").innerText();
+      const alphaTime1 = await page.locator("#slot-alpha-time").innerText();
+      const betaTime1 = await page.locator("#slot-beta-time").innerText();
+
+      expect(alphaTime1).toBeTruthy();
+      expect(betaTime1).toBeTruthy();
+
+      await page.waitForTimeout(100);
+
+      await page.reload();
+      const pageTime2 = await page.locator("#page-time").innerText();
+      const alphaTime2 = await page.locator("#slot-alpha-time").innerText();
+      const betaTime2 = await page.locator("#slot-beta-time").innerText();
+
+      expect(pageTime2).not.toBe(pageTime1);
+      expect(alphaTime2).toBe(alphaTime1);
+      expect(betaTime2).toBe(betaTime1);
+
+      await page.click("#btn-revalidate-alpha");
+      await page.waitForTimeout(300);
+
+      await page.reload();
+      const alphaTime3 = await page.locator("#slot-alpha-time").innerText();
+      const betaTime3 = await page.locator("#slot-beta-time").innerText();
+
+      expect(alphaTime3).not.toBe(alphaTime2);
+      expect(betaTime3).toBe(betaTime2);
+
+      // 5. Test time-based TTL expiration on Slot Fast (revalidate: 2s)
+      const fastTime1 = await page.locator("#slot-fast-time").innerText();
+      expect(fastTime1).toBeTruthy();
+
+      // Within TTL (100ms): should still be cached
+      await page.waitForTimeout(100);
+      await page.reload();
+      const fastTime2 = await page.locator("#slot-fast-time").innerText();
+      expect(fastTime2).toBe(fastTime1);
+
+      // Exceed TTL (wait 2500ms): triggers SWR / fresh regeneration
+      await page.waitForTimeout(2500);
+      await page.reload();
+      await page.waitForTimeout(300);
+      await page.reload();
+      const fastTime3 = await page.locator("#slot-fast-time").innerText();
+      expect(fastTime3).not.toBe(fastTime1);
+    });
+  });
   test.describe("Dinou Slots (Parallel Routes)", () => {
     test("Should render @sidebar slot and children into the Layout correctly", async ({
       page,

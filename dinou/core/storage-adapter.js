@@ -56,7 +56,12 @@ class FileSystemStorage extends StorageAdapter {
     // Check companion metadata if available
     let metadata = null;
     const isLayoutKey = String(key || "").includes("layout.rsc");
-    const metaFileName = isLayoutKey ? "layout.metadata.json" : "metadata.json";
+    const isSlotKey = String(key || "").includes("slot");
+    const metaFileName = isLayoutKey
+      ? "layout.metadata.json"
+      : isSlotKey
+      ? "slot.metadata.json"
+      : "metadata.json";
     const metaPath = path.join(path.dirname(targetPath), metaFileName);
     if (fs.existsSync(metaPath)) {
       try {
@@ -79,7 +84,12 @@ class FileSystemStorage extends StorageAdapter {
 
     if (metadata) {
       const isLayoutKey = String(key || "").includes("layout.rsc");
-      const metaFileName = isLayoutKey ? "layout.metadata.json" : "metadata.json";
+      const isSlotKey = String(key || "").includes("slot");
+      const metaFileName = isLayoutKey
+        ? "layout.metadata.json"
+        : isSlotKey
+        ? "slot.metadata.json"
+        : "metadata.json";
       const metaPath = path.join(dir, metaFileName);
       fs.writeFileSync(metaPath, JSON.stringify(metadata, null, 2), "utf8");
     }
@@ -97,6 +107,15 @@ class FileSystemStorage extends StorageAdapter {
     let targetPath = this._resolve(key);
     if (fs.existsSync(targetPath)) {
       fs.rmSync(targetPath, { force: true, recursive: true });
+    }
+    const isSlotKey = String(key || "").includes("slot");
+    if (isSlotKey) {
+      const dir = path.dirname(targetPath);
+      if (fs.existsSync(dir)) {
+        try {
+          fs.rmSync(dir, { force: true, recursive: true });
+        } catch (e) {}
+      }
     }
   }
 
