@@ -2257,7 +2257,6 @@ async function handleRequest(request, platformContext = {}) {
 module.exports = {
   handleRequest,
   WebResponseBridge,
-  resolvePprForRoute,
 };
 module.exports.default = handleRequest;
 

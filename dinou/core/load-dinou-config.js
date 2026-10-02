@@ -6,12 +6,11 @@ let dinouConfig = { plugins: [] };
 let dinouConfigPromise = null;
 
 async function getDinouConfig() {
+  if (typeof globalThis !== "undefined" && globalThis.__DINOU_CONFIG__) {
+    return globalThis.__DINOU_CONFIG__;
+  }
   if (dinouConfigPromise) return dinouConfigPromise;
   dinouConfigPromise = (async () => {
-    if (typeof globalThis !== "undefined" && globalThis.__DINOU_CONFIG__) {
-      dinouConfig = globalThis.__DINOU_CONFIG__;
-      return dinouConfig;
-    }
     const cwd = typeof process !== "undefined" && typeof process.cwd === "function" ? process.cwd() : ".";
     for (const filename of ["dinou.config.js", "dinou.config.mjs", "dinou.config.cjs", "dinou.config.ts"]) {
       const p = path.resolve(cwd, filename);
