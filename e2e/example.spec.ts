@@ -2410,7 +2410,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       if (fs.existsSync(gammaResidualDir)) {
         try {
           fs.rmSync(gammaResidualDir, { recursive: true, force: true });
-        } catch (e) {}
+        } catch (e) { }
       }
       // --- PARTE 1: RUTAS PRE-GENERADAS (Alpha) ---
       // Verificamos que 'alpha' fue generada por getStaticPaths
@@ -3461,7 +3461,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         console.log("✅ [TEST] Staggered test completed successfully.");
       } finally {
         testsRunning = false;
-        await Promise.all(users.map((u) => u.context.close().catch(() => {})));
+        await Promise.all(users.map((u) => u.context.close().catch(() => { })));
       }
     });
   });
@@ -3730,7 +3730,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         console.log("✅ [TEST] Staggered test completed successfully.");
       } finally {
         testsRunning = false;
-        await Promise.all(users.map((u) => u.context.close().catch(() => {})));
+        await Promise.all(users.map((u) => u.context.close().catch(() => { })));
       }
     });
   });
@@ -4996,6 +4996,27 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.goto("/t-ppr-levels/nested-optout/page-optin");
       await expect(page.locator("#ppr-nested-optout-layout-header")).toHaveText("Nested Opt-Out Layout");
       await expect(page.locator("#ppr-nested-optin-page-title")).toHaveText("PPR Opt-In Subpage");
+    });
+
+    test("Anti-Test: Exporting const ppr = true inside page.tsx or layout.tsx has NO effect on Dinou PPR", async ({ page }) => {
+      const metaPath = path.resolve(".dinou/dist2/t-ppr-anti/metadata.json");
+      const shellPath = path.resolve(".dinou/dist2/t-ppr-anti/shell.html");
+
+      // 1. Dinou strictly ignores route configurations exported from component files (page.tsx / layout.tsx).
+      // They MUST be declared in page_functions.ts or layout_functions.ts.
+      if (fs.existsSync(metaPath)) {
+        const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+        expect(meta.ppr).toBe(false);
+      }
+
+      // 2. No PPR static shell is generated because PPR is NOT activated by component exports
+      expect(fs.existsSync(shellPath)).toBe(false);
+
+      // 3. The page and layout mount and render normally as standard non-PPR components without errors
+      await page.goto("/t-ppr-anti");
+      await expect(page.locator("#anti-ppr-layout-header")).toHaveText("Anti-PPR Layout Component");
+      await expect(page.locator("#anti-ppr-title")).toHaveText("Anti-Test: No PPR from Component");
+      await expect(page.locator("#anti-ppr-desc")).toContainText("Exporting const ppr = true in page.tsx or layout.tsx has no effect in Dinou.");
     });
   });
 
