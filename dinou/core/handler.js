@@ -226,9 +226,12 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
       const isPpr = await resolvePprForRoute(pagePath, pageFunctionsModule, reqSegments, queryObj);
 
       if (pageFunctionsModule) {
-        const resolvedAllowISG = pageFunctionsModule.allowISG
-          ? await pageFunctionsModule.allowISG()
-          : true;
+        const resolvedAllowISG =
+          typeof pageFunctionsModule.allowISG === "function"
+            ? await pageFunctionsModule.allowISG()
+            : typeof pageFunctionsModule.default?.allowISG === "function"
+            ? await pageFunctionsModule.default.allowISG()
+            : (pageFunctionsModule.allowISG ?? pageFunctionsModule.default?.allowISG ?? true);
 
         let staticPathsSet = null;
         if (pageFunctionsModule.getStaticPaths) {
