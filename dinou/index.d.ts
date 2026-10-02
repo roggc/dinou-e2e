@@ -174,7 +174,7 @@ export interface DinouConfig {
  */
 export type PPRConfig = boolean | (() => boolean | Promise<boolean>);
 
-export interface RouteSegmentConfig {
+export interface RouteSegmentConfig<TParams = any, TProps = any> {
   /**
    * Partial Prerendering (PPR) flag.
    * Can be declared as a constant or a function (sync or async) in page_functions or layout_functions.
@@ -198,8 +198,39 @@ export interface RouteSegmentConfig {
    * Cache tags associated with this route segment for on-demand invalidation via `revalidateTag(tag)`.
    * Can be declared as a sync/async function `getCacheTags(params)` or as a constant array `getCacheTags = [...]`.
    */
-  getCacheTags?: string[] | ((params?: any) => string[] | Promise<string[]>);
+  getCacheTags?: string[] | ((params?: TParams) => string[] | Promise<string[]>);
+
+  /**
+   * Generates static path parameter objects for dynamic route segments during build time (SSG).
+   */
+  getStaticPaths?: () => Array<Record<string, string>> | Promise<Array<Record<string, string>>>;
+
+  /**
+   * Server-side loader that fetches or calculates props passed directly to the Page or Layout component.
+   */
+  getProps?: (params?: TParams) => TProps | Promise<TProps>;
+
+  /**
+   * Parameter validator hook. If it returns false, Dinou halts rendering and returns 404 Not Found.
+   */
+  validateParams?: (params?: TParams) => boolean | Promise<boolean>;
+
+  /**
+   * Controls whether on-demand Incremental Static Generation (ISG) is allowed for ungenerated paths.
+   * @default true
+   */
+  allowISG?: boolean | (() => boolean | Promise<boolean>);
 }
+
+/**
+ * Type-safe interface representing the available exports in `page_functions.ts`.
+ */
+export type PageFunctions<TParams = any, TProps = any> = RouteSegmentConfig<TParams, TProps>;
+
+/**
+ * Type-safe interface representing the available exports in `layout_functions.ts`.
+ */
+export type LayoutFunctions<TParams = any, TProps = any> = RouteSegmentConfig<TParams, TProps>;
 
 /**
  * Type-safe configuration helper for dinou.config.js / dinou.config.mjs.

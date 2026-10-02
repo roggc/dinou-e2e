@@ -1,5 +1,5 @@
 // dinou/core/resolve-module-ppr.js
-// Resolves the PPR configuration from an imported module (page, layout, page_functions, layout_functions).
+// Resolves the PPR configuration from an imported module (page_functions, layout_functions).
 // Supports constants (export const ppr = true/false), sync functions (export function ppr()),
 // and async functions (export async function ppr()).
 
