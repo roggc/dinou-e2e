@@ -2661,14 +2661,18 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Within TTL (100ms): should still be cached
       expect(fastTime2).toBe(fastTime1);
 
-      await page.click("#btn-revalidate-alpha");
-      await page.waitForTimeout(300);
+      // 3. Revalidate ONLY alpha via tag (wait for server action completion)
+      await Promise.all([
+        page.waitForResponse((res) => res.request().method() === "POST"),
+        page.click("#btn-revalidate-alpha"),
+      ]);
 
-      await page.reload();
-      const alphaTime3 = await page.locator("#slot-alpha-time").innerText();
+      await expect.poll(async () => {
+        await page.reload();
+        return await page.locator("#slot-alpha-time").innerText();
+      }, { timeout: 10000, intervals: [200, 500] }).not.toBe(alphaTime2);
+
       const betaTime3 = await page.locator("#slot-beta-time").innerText();
-
-      expect(alphaTime3).not.toBe(alphaTime2);
       expect(betaTime3).toBe(betaTime2);
 
       // Exceed TTL (wait 2500ms): triggers SWR / fresh regeneration
@@ -2697,8 +2701,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(betaTime1).toBeTruthy();
 
       // 1. Invalidate alpha on server, then trigger live client slot refresh
-      await page.click("#btn-revalidate-alpha");
-      await page.waitForTimeout(300);
+      await Promise.all([
+        page.waitForResponse((res) => res.request().method() === "POST"),
+        page.click("#btn-revalidate-alpha"),
+      ]);
 
       await page.click("#btn-refresh-slot-alpha");
 
@@ -2713,8 +2719,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(betaTimeAfterAlpha).toBe(betaTime1);
 
       // 2. Invalidate beta on server, then trigger live client slot refresh via useRouter().refreshSlot
-      await page.click("#btn-revalidate-beta");
-      await page.waitForTimeout(300);
+      await Promise.all([
+        page.waitForResponse((res) => res.request().method() === "POST"),
+        page.click("#btn-revalidate-beta"),
+      ]);
 
       await page.click("#btn-refresh-slot-beta");
 

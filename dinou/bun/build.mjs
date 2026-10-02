@@ -752,6 +752,18 @@ export default {
   fetch,
   idleTimeout: IDLE_TIMEOUT,
 };
+
+if (typeof process !== "undefined") {
+  process.on("SIGTERM", () => process.exit(0));
+  process.on("SIGINT", () => process.exit(0));
+  if (process.stdin && typeof process.stdin.on === "function") {
+    process.stdin.on("end", () => process.exit(0));
+    process.stdin.on("close", () => process.exit(0));
+    if (typeof process.stdin.unref === "function") {
+      process.stdin.unref();
+    }
+  }
+}
 `;
 const bunEntryPath = path.join(bunDir, "bun-entry.js");
 fs.writeFileSync(bunEntryPath, bunEntryContent, "utf8");
