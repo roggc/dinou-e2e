@@ -1,7 +1,6 @@
 import React from "react";
 
-// Explicit opt-out from parent layout's PPR!
-export const ppr = false;
+// Explicit opt-out is configured in page_functions.ts
 
 export default function PprOptOutPage() {
   return (

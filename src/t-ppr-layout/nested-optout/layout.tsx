@@ -1,9 +1,6 @@
 import React from "react";
 
-// Explicit opt-out using function declaration syntax at layout level!
-export function ppr() {
-  return false;
-}
+// Explicit opt-out using function declaration syntax is configured in layout_functions.ts
 
 export default function PprNestedOptOutLayout({ children }: { children: React.ReactNode }) {
   return (

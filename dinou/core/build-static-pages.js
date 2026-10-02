@@ -37,20 +37,14 @@ async function resolveBuildPprForRoute(segments, pagePath, pageFunctionsPath, sr
   } catch (e) {}
 
   let explicitPagePpr = null;
-  if (pagePath) {
-    try {
-      const pageModule = await importModule(pagePath);
-      explicitPagePpr = await resolveModulePpr(pageModule);
-    } catch (e) {}
-  }
-  if (explicitPagePpr === null && pageFunctionsPath) {
+  if (pageFunctionsPath) {
     try {
       const module = await importModule(pageFunctionsPath);
       explicitPagePpr = await resolveModulePpr(module);
     } catch (e) {}
   }
   if (explicitPagePpr === null && typeof globalThis !== "undefined" && globalThis.__DINOU_ROUTE_METADATA__) {
-    const normKey = pagePath ? pagePath.replace(/\\/g, "/") : "";
+    const normKey = pageFunctionsPath ? pageFunctionsPath.replace(/\\/g, "/") : "";
     for (const [k, meta] of Object.entries(globalThis.__DINOU_ROUTE_METADATA__)) {
       if (meta.ppr !== undefined && (normKey === k || normKey.endsWith("/" + k) || normKey.endsWith(k))) {
         explicitPagePpr = Boolean(meta.ppr);

@@ -169,23 +169,18 @@ export interface DinouConfig {
 
 /**
  * Route Segment Configuration for Partial Prerendering (PPR).
- * In Dinou, export `const ppr = true;` (or `export const experimental_ppr = true;` for Next.js parity)
- * in your page.tsx or layout.tsx to enable instant static shell delivery with dynamic Suspense streaming holes.
+ * In Dinou, export `const ppr = true;` or `export function ppr(): boolean`
+ * in your page_functions.ts or layout_functions.ts to enable instant static shell delivery with dynamic Suspense streaming holes.
  */
-export type PPRConfig = boolean;
+export type PPRConfig = boolean | (() => boolean | Promise<boolean>);
 
 export interface RouteSegmentConfig {
   /**
    * Partial Prerendering (PPR) flag.
+   * Can be declared as a constant or a function (sync or async) in page_functions or layout_functions.
    * @default false
    */
-  ppr?: boolean;
-
-  /**
-   * Next.js compatibility alias for PPR.
-   * @default false
-   */
-  experimental_ppr?: boolean;
+  ppr?: PPRConfig;
 
   /**
    * Incremental Static Regeneration revalidation time in seconds, or false to cache indefinitely.

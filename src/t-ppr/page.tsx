@@ -1,8 +1,6 @@
 import React, { Suspense } from "react";
 import { getContext } from "dinou";
 
-export const ppr = true;
-
 async function DynamicUser() {
   const ctx = getContext();
   const userName = ctx?.req?.cookies?.username || ctx?.req?.query?.user || "Alice";

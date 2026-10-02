@@ -108,7 +108,7 @@ function parsePprConfigWithBabel(code) {
         if (!decl) return;
 
         if (decl.type === "FunctionDeclaration") {
-          if (decl.id && (decl.id.name === "ppr" || decl.id.name === "experimental_ppr")) {
+          if (decl.id && decl.id.name === "ppr") {
             for (const s of decl.body?.body || []) {
               if (s.type === "ReturnStatement" && s.argument) {
                 if (s.argument.type === "BooleanLiteral") pprValue = s.argument.value;
@@ -121,7 +121,7 @@ function parsePprConfigWithBabel(code) {
         } else if (decl.type === "VariableDeclaration") {
           for (const d of decl.declarations) {
             if (d.id && d.id.type === "Identifier") {
-              if (d.id.name === "ppr" || d.id.name === "experimental_ppr") {
+              if (d.id.name === "ppr") {
                 if (d.init) {
                   if (d.init.type === "BooleanLiteral") {
                     pprValue = d.init.value;
@@ -158,16 +158,16 @@ function parsePprConfigWithBabel(code) {
     return pprValue;
   } catch (e) {
     // Regex fallback
-    const matchConst = code.match(/(?:export\s+const|export\s+let|export\s+var)\s+(?:experimental_)?ppr\s*=\s*(true|false|"[^"]*"|'[^']*')/);
+    const matchConst = code.match(/(?:export\s+const|export\s+let|export\s+var)\s+ppr\s*=\s*(true|false|"[^"]*"|'[^']*')/);
     if (matchConst) {
       const val = matchConst[1].trim();
       return val !== "false" && val !== '"false"' && val !== "'false'";
     }
-    const matchFunc = code.match(/(?:export\s+(?:async\s+)?function\s+(?:experimental_)?ppr\s*\([^)]*\)\s*\{[\s\S]*?return\s+(true|false))/);
+    const matchFunc = code.match(/(?:export\s+(?:async\s+)?function\s+ppr\s*\([^)]*\)\s*\{[\s\S]*?return\s+(true|false))/);
     if (matchFunc) {
       return matchFunc[1] === "true";
     }
-    const matchArrow = code.match(/(?:export\s+const|export\s+let|export\s+var)\s+(?:experimental_)?ppr\s*=\s*(?:async\s*)?(?:\([^)]*\)|[a-zA-Z_$][a-zA-Z0-9_$]*)\s*=>\s*(?:\{[\s\S]*?return\s+(true|false)|(true|false))/);
+    const matchArrow = code.match(/(?:export\s+const|export\s+let|export\s+var)\s+ppr\s*=\s*(?:async\s*)?(?:\([^)]*\)|[a-zA-Z_$][a-zA-Z0-9_$]*)\s*=>\s*(?:\{[\s\S]*?return\s+(true|false)|(true|false))/);
     if (matchArrow) {
       const val = matchArrow[1] || matchArrow[2];
       return val === "true";
@@ -190,7 +190,7 @@ function parsePprConfig(code) {
 
           if (d.type === "FunctionDeclaration") {
             const name = d.identifier?.value || d.identifier?.name;
-            if (name === "ppr" || name === "experimental_ppr") {
+            if (name === "ppr") {
               for (const stmt of d.body?.stmts || []) {
                 if (stmt.type === "ReturnStatement" && stmt.argument) {
                   if (stmt.argument.type === "BooleanLiteral") return Boolean(stmt.argument.value);
@@ -203,7 +203,7 @@ function parsePprConfig(code) {
           } else if (d.type === "VariableDeclaration") {
             for (const v of d.declarations) {
               const name = v.id?.value || v.id?.name;
-              if (name === "ppr" || name === "experimental_ppr") {
+              if (name === "ppr") {
                 if (v.init) {
                   if (v.init.type === "BooleanLiteral") return Boolean(v.init.value);
                   if (v.init.type === "StringLiteral") return v.init.value !== "false";

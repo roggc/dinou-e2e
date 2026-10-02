@@ -198,23 +198,28 @@ async function resolvePprForRoute(pagePath, pageFunctionsModule, reqSegments, qu
   } catch (e) {}
 
   let explicitPagePpr = null;
-  if (pagePath) {
+  let pfMod = pageFunctionsModule;
+  if (!pfMod && pagePath) {
     try {
-      const pageModule = await importModule(pagePath);
-      explicitPagePpr = await resolveModulePpr(pageModule);
+      const pageFolder = path.dirname(pagePath);
+      const [pageFunctionsPath] = getFilePathAndDynamicParams(
+        reqSegments || [],
+        queryObj || {},
+        pageFolder,
+        "page_functions",
+        true,
+        true,
+        undefined,
+        (reqSegments || []).length
+      );
+      if (pageFunctionsPath) {
+        pfMod = await importModule(pageFunctionsPath);
+      }
     } catch (e) {}
   }
-  if (explicitPagePpr === null && pageFunctionsModule) {
-    explicitPagePpr = await resolveModulePpr(pageFunctionsModule);
-  }
-  if (explicitPagePpr === null && typeof globalThis !== "undefined" && globalThis.__DINOU_ROUTE_METADATA__) {
-    const normKey = pagePath ? pagePath.replace(/\\/g, "/") : "";
-    for (const [k, meta] of Object.entries(globalThis.__DINOU_ROUTE_METADATA__)) {
-      if (meta.ppr !== undefined && (normKey === k || normKey.endsWith("/" + k) || normKey.endsWith(k))) {
-        explicitPagePpr = Boolean(meta.ppr);
-        break;
-      }
-    }
+
+  if (pfMod) {
+    explicitPagePpr = await resolveModulePpr(pfMod);
   }
 
   return explicitPagePpr !== null ? explicitPagePpr : inheritedPpr;

@@ -85,33 +85,26 @@ async function resolveLayoutFunctionsConfig(layoutPath, dParams = {}) {
 
   if (!layoutPath) return defaultConfig;
 
-  let layoutPpr = null;
-  if (layoutPath) {
-    try {
-      const layoutModule = await importModule(layoutPath);
-      layoutPpr = await resolveModulePpr(layoutModule);
-    } catch (e) {}
-  }
-  if (layoutPpr === null && typeof globalThis !== "undefined" && globalThis.__DINOU_ROUTE_METADATA__) {
-    const normKey = layoutPath ? layoutPath.replace(/\\/g, "/") : "";
-    for (const [k, meta] of Object.entries(globalThis.__DINOU_ROUTE_METADATA__)) {
-      if (meta.ppr !== undefined && (normKey === k || normKey.endsWith("/" + k) || normKey.endsWith(k))) {
-        layoutPpr = Boolean(meta.ppr);
-        break;
-      }
-    }
-  }
-
   const layoutFolder = /\.[a-zA-Z0-9]+$/.test(layoutPath)
     ? path.dirname(layoutPath)
     : layoutPath;
   const layoutFunctionsPath = getLayoutFunctionsPath(layoutFolder);
-  if (!layoutFunctionsPath) return { ...defaultConfig, ppr: layoutPpr };
+  if (!layoutFunctionsPath) return defaultConfig;
 
+  let layoutPpr = null;
   try {
     const mod = await importModule(layoutFunctionsPath);
-    if (layoutPpr === null && mod) {
+    if (mod) {
       layoutPpr = await resolveModulePpr(mod);
+    }
+    if (layoutPpr === null && typeof globalThis !== "undefined" && globalThis.__DINOU_ROUTE_METADATA__) {
+      const normKey = layoutFunctionsPath ? layoutFunctionsPath.replace(/\\/g, "/") : "";
+      for (const [k, meta] of Object.entries(globalThis.__DINOU_ROUTE_METADATA__)) {
+        if (meta.ppr !== undefined && (normKey === k || normKey.endsWith("/" + k) || normKey.endsWith(k))) {
+          layoutPpr = Boolean(meta.ppr);
+          break;
+        }
+      }
     }
     const resolvedAllowISG =
       typeof mod.allowISG === "function"
