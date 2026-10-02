@@ -9,6 +9,7 @@ const { getStorageAdapter } = require("./storage-adapter.js");
 const { asyncRenderJSXToClientJSX } = require("./render-jsx-to-client-jsx.js");
 
 const inflightSlotRenders = new Map();
+const backgroundRevalidations = new Set();
 const slotRegistry = new Map();
 
 let _DinouCacheSlotBoundary = null;
@@ -214,7 +215,8 @@ async function DinouCacheSlot(props) {
       try {
         const staleJSX = deserializeJSX(cached.content);
 
-        if (!inflightSlotRenders.has(storageKey)) {
+        if (!backgroundRevalidations.has(storageKey)) {
+          backgroundRevalidations.add(storageKey);
           const bgPromise = (async () => {
             try {
               const childElement = typeof children === "function" ? await children() : children;
@@ -229,10 +231,18 @@ async function DinouCacheSlot(props) {
             } catch (e) {
               console.error(`[DinouCacheSlot] Background revalidation failed for slot "${slotId}":`, e);
             } finally {
-              inflightSlotRenders.delete(storageKey);
+              backgroundRevalidations.delete(storageKey);
             }
           })();
-          inflightSlotRenders.set(storageKey, bgPromise);
+
+          try {
+            const DINOU_CONTEXT_KEY = Symbol.for("dinou.request.context.storage");
+            const reqContext = globalThis[DINOU_CONTEXT_KEY]?.getStore();
+            const ctx = reqContext?.platformContext?.ctx;
+            if (ctx && typeof ctx.waitUntil === "function") {
+              ctx.waitUntil(bgPromise);
+            }
+          } catch (e) {}
         }
 
         return wrapWithBoundary(staleJSX);

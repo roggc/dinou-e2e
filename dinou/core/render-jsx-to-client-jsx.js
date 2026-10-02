@@ -148,7 +148,8 @@ async function asyncRenderJSXToClientJSX(jsx, key = null) {
       return {
         $$typeof: Symbol.for("react.transitional.element"),
         type: Symbol.for("react.fragment"),
-        props: { key },
+        props: {},
+        key,
       };
     }
     console.error("Unsupported symbol:", String(jsx));
@@ -163,10 +164,8 @@ async function asyncRenderJSXToClientJSX(jsx, key = null) {
       ) {
         return {
           ...jsx,
-          props: {
-            ...(await asyncRenderJSXToClientJSX(jsx.props, key ?? jsx.key)),
-            key: key ?? jsx.key,
-          },
+          props: await asyncRenderJSXToClientJSX(jsx.props),
+          key: key ?? jsx.key,
         };
       } else if (typeof jsx.type === "function") {
         const Component = jsx.type;
@@ -176,10 +175,8 @@ async function asyncRenderJSXToClientJSX(jsx, key = null) {
             ...jsx,
             $$typeof: Symbol.for("react.transitional.element"),
             type: Component,
-            props: {
-              ...(await asyncRenderJSXToClientJSX(props, key ?? jsx.key)),
-              key: key ?? jsx.key,
-            },
+            props: await asyncRenderJSXToClientJSX(props),
+            key: key ?? jsx.key,
           };
         } else {
           // Server component: execute and process
@@ -196,10 +193,8 @@ async function asyncRenderJSXToClientJSX(jsx, key = null) {
             ...jsx,
             $$typeof: Symbol.for("react.transitional.element"),
             type: jsx.type,
-            props: {
-              ...(await asyncRenderJSXToClientJSX(jsx.props, key ?? jsx.key)),
-              key: key ?? jsx.key,
-            },
+            props: await asyncRenderJSXToClientJSX(jsx.props),
+            key: key ?? jsx.key,
           };
         } else {
           const returnedJsx = await jsx.type.render(jsx.props, jsx.ref);
@@ -215,10 +210,8 @@ async function asyncRenderJSXToClientJSX(jsx, key = null) {
             ...jsx,
             $$typeof: Symbol.for("react.transitional.element"),
             type: jsx.type,
-            props: {
-              ...(await asyncRenderJSXToClientJSX(jsx.props, key ?? jsx.key)),
-              key: key ?? jsx.key,
-            },
+            props: await asyncRenderJSXToClientJSX(jsx.props),
+            key: key ?? jsx.key,
           };
         } else {
           const innerComp = jsx.type.type;
