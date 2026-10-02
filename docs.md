@@ -396,8 +396,13 @@ export default function DashboardPage() {
   ```javascript
   (function(){
     var c = document.getElementById("ppr-content-ppr-hole-1");
+    if (!c) return;
     var t = document.querySelector('[data-ppr-hole="ppr-hole-1"]');
-    if (c && t) { t.replaceWith(...c.childNodes); c.remove(); }
+    try {
+      if (t) { t.replaceWith(c.content ? c.content : ...c.childNodes); }
+    } finally {
+      c.remove();
+    }
   })();
   ```
 - **Hidratación y Navegación Suave (SPA):**  

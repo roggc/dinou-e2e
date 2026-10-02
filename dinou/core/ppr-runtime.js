@@ -109,14 +109,14 @@ function isClientComponent(type) {
               html = await new Response(htmlStream).text();
             }
 
-            const chunk = `\n<div hidden id="ppr-content-${currentHoleId}">${html}</div>\n<script>(function(){var c=document.getElementById("ppr-content-${currentHoleId}");var b=document.getElementById("B:${holeIndex - 1}");var t=document.querySelector('[data-ppr-hole="${currentHoleId}"]')||(b?b.nextElementSibling:null);if(c&&t){t.replaceWith(...c.childNodes);c.remove();}})();</script>\n`;
+            const chunk = `\n<template id="ppr-content-${currentHoleId}">${html}</template>\n<script>(function(){var c=document.getElementById("ppr-content-${currentHoleId}");if(!c)return;var b=document.getElementById("B:${holeIndex - 1}");var t=document.querySelector('[data-ppr-hole="${currentHoleId}"]')||(b?b.nextElementSibling:null);try{if(t){t.replaceWith(c.content?c.content:...c.childNodes);}}finally{c.remove();}})();</script>\n`;
             await writer.write(encoder.encode(chunk));
           } catch (holeErr) {
             console.error(`[Dinou PPR] Error resolving dynamic hole ${currentHoleId}:`, holeErr);
             const errMsg = isDevelopment
               ? (holeErr?.message || "Unknown dynamic error")
               : "Error loading dynamic content";
-            const errChunk = `\n<div hidden id="ppr-content-${currentHoleId}"><div style="color:#e11d48;padding:8px 12px;background:#fff1f2;border:1px solid #fecdd3;border-radius:6px;font-size:0.875rem;font-family:system-ui,sans-serif;">[PPR Error: ${errMsg}]</div></div>\n<script>(function(){var c=document.getElementById("ppr-content-${currentHoleId}");var b=document.getElementById("B:${holeIndex - 1}");var t=document.querySelector('[data-ppr-hole="${currentHoleId}"]')||(b?b.nextElementSibling:null);if(c&&t){t.replaceWith(...c.childNodes);c.remove();}})();</script>\n`;
+            const errChunk = `\n<template id="ppr-content-${currentHoleId}"><div style="color:#e11d48;padding:8px 12px;background:#fff1f2;border:1px solid #fecdd3;border-radius:6px;font-size:0.875rem;font-family:system-ui,sans-serif;">[PPR Error: ${errMsg}]</div></template>\n<script>(function(){var c=document.getElementById("ppr-content-${currentHoleId}");if(!c)return;var b=document.getElementById("B:${holeIndex - 1}");var t=document.querySelector('[data-ppr-hole="${currentHoleId}"]')||(b?b.nextElementSibling:null);try{if(t){t.replaceWith(c.content?c.content:...c.childNodes);}}finally{c.remove();}})();</script>\n`;
             await writer.write(encoder.encode(errChunk));
           }
         })();
