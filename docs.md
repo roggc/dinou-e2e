@@ -174,11 +174,11 @@ export const allowISG = true;
 
 #### Nivel 1: Micro-ISR de Server Components & SWR
 * Los Server Components envueltos en `<DinouCacheSlot id="slot-alpha" tag="tag-alpha" revalidate={60}>` se evalúan y se almacenan como fragmentos serializados JSX en `slots/:id/slot.json`.
-* **Stale-While-Revalidate (SWR):** Cuando el TTL expira, la siguiente petición recibe inmediatamente el contenido previo mientras una promesa en segundo plano (`waitUntil`) regenera y actualiza el slot en Storage.
-* **Invalidación por Etiqueta:** Al ejecutar `revalidateTag("tag-alpha")`, únicamente el slot afectado es purgado de la caché. Los slots hermanos y la página mantienen sus datos intactos.
+* **Stale-While-Revalidate (SWR):** Cuando el TTL expira, la siguiente petición recibe inmediatamente el contenido previo mientras una promesa en segundo plano (`waitUntil`) regenera y actualiza el slot en Storage (`FileSystemStorage`, `CloudflareKVStorage`, `DenoKVStorage` o `MemoryStorage`).
+* **Invalidación Granular por Tag:** Al ejecutar `revalidateTag("tag-alpha")` en una Server Action, únicamente el slot afectado es purgado de la caché. Los slots hermanos y la página mantienen sus datos intactos.
 
 #### Nivel 2: Refresco en Vivo sin Recarga de Página
-* Los slots se envuelven en un componente cliente (`DinouCacheSlotBoundary`).
+* Los slots se envuelven automáticamente en un componente cliente boundary (`DinouCacheSlotBoundary`).
 * Mediante las funciones públicas de cliente:
   ```tsx
   import { refreshSlot, useRouter } from "dinou";
@@ -191,7 +191,69 @@ export const allowISG = true;
   await router.refreshSlot("slot-beta");
   ```
 * El cliente solicita el fragmento actualizado al endpoint dedicado `/____rsc_slot____/:id`.
-* **Cero recarga de página y cero re-render de hermanos:** React actualiza exclusivamente el DOM correspondiente al slot refrescado. El timestamp de la página y de los slots hermanos se mantiene inmutable.
+* **Cero recarga de página y cero re-render de hermanos:** React actualiza exclusivamente el subárbol DOM correspondiente al slot refrescado. El timestamp de la página y de los slots hermanos se mantiene inmutable.
+
+#### Ejemplo de Implementación Integral
+
+```tsx
+// src/dashboard/page.tsx (Server Component)
+import { DinouCacheSlot } from "dinou/server";
+import { MetricWidget, LiveActivityWidget } from "./widgets";
+import DashboardControls from "./DashboardControls";
+
+export default async function DashboardPage() {
+  const pageTime = Date.now();
+
+  return (
+    <main>
+      <h1>Panel de Control</h1>
+      <p>Render de Página: {pageTime}</p>
+
+      {/* Nivel 1: Micro-ISR con TTL de 60s e invalidación por tag */}
+      <DinouCacheSlot id="slot-metricas" tag="tag-metricas" revalidate={60}>
+        <MetricWidget />
+      </DinouCacheSlot>
+
+      {/* Nivel 2: Slot listo para refresco en vivo sin reload */}
+      <DinouCacheSlot id="slot-actividad" tag="tag-actividad">
+        <LiveActivityWidget />
+      </DinouCacheSlot>
+
+      <DashboardControls />
+    </main>
+  );
+}
+```
+
+```tsx
+// src/dashboard/DashboardControls.tsx (Client Component)
+"use client";
+import { refreshSlot, useRouter } from "dinou";
+import { invalidarMetricasAction } from "./actions";
+
+export default function DashboardControls() {
+  const router = useRouter();
+
+  return (
+    <div>
+      {/* Nivel 1: Invalidación en servidor vía Server Action */}
+      <button onClick={() => invalidarMetricasAction()}>
+        Invalidar Métricas (Server Tag)
+      </button>
+
+      {/* Nivel 2: Refresco en cliente sin tocar la página */}
+      <button onClick={() => refreshSlot("slot-actividad")}>
+        Actualizar Actividad (Live Slot)
+      </button>
+      
+      {/* O vía router */}
+      <button onClick={() => router.refreshSlot("slot-actividad")}>
+        Actualizar con useRouter
+      </button>
+    </div>
+  );
+}
+```
 
 ### 5.3. Serialización JSX Nativa de React 19
 En [dinou/core/cache-slot.js](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/core/cache-slot.js) se implementó un motor especializado de serialización y deserialización que soporta:
