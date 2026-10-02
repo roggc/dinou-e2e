@@ -63,9 +63,9 @@ function generateRouteModulesCode(projectRoot = process.cwd(), relativeImportBas
     if (/(?:^|\/)(?:page|page_functions|layout|layout_functions)\.[jt]sx?$/.test(file.relPath)) {
       try {
         const content = fs.readFileSync(file.fullPath, "utf8");
-        const isPpr = parseExports.parsePprConfig ? parseExports.parsePprConfig(content) : false;
-        if (isPpr) {
-          routeMetadata[file.relPath] = { ppr: true };
+        const isPpr = parseExports.parsePprConfig ? parseExports.parsePprConfig(content) : null;
+        if (isPpr !== null) {
+          routeMetadata[file.relPath] = { ppr: Boolean(isPpr) };
         }
       } catch (e) {}
     }

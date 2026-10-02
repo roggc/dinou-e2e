@@ -301,13 +301,41 @@ sequenceDiagram
 
 Usar PPR en Dinou es completamente intuitivo y no requiere APIs complejas ni wrappers propietarios:
 
-#### Paso 1: Declarar la ruta como PPR
-En cualquier archivo `page.tsx` (o `page.jsx`), exporta la constante `ppr = true`:
+#### Paso 1: Declarar PPR en Rutas o Heredar desde Layouts
 
-```tsx
-// src/dashboard/page.tsx
-export const ppr = true; // También compatible: export const experimental_ppr = true;
-```
+En Dinou v7.2 existen dos modalidades para activar Partial Prerendering:
+
+1. **Declaración explícita a nivel de Página:**
+   En cualquier archivo `page.tsx` (o `page.jsx`), exporta la constante `ppr = true`:
+   ```tsx
+   // src/dashboard/page.tsx
+   export const ppr = true; // También compatible: export const experimental_ppr = true;
+   ```
+
+2. **Herencia en Cascada a nivel de Layout:**
+   Puedes habilitar PPR para toda una sección o sub-árbol de la aplicación declarando `ppr = true` directamente en un `layout.tsx` (o en su archivo complementario `layout_functions.ts`):
+   ```tsx
+   // src/dashboard/layout.tsx
+   export const ppr = true;
+
+   export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+     return (
+       <div className="dashboard-shell">
+         <aside className="static-sidebar">Menú Dashboard</aside>
+         <main>{children}</main>
+       </div>
+     );
+   }
+   ```
+   *Efecto de cascada:* Todas las páginas hijas y layouts anidados bajo `/dashboard/*` heredarán automáticamente el modo PPR sin necesidad de declarar `export const ppr = true;` en cada una de ellas.
+
+3. **Opt-Out Granular (`ppr = false`):**
+   Si una página específica dentro de un sub-árbol PPR necesita renderizarse bajo el modelo SSR dinámico tradicional o SSG completo sin streaming de huecos, puede desactivar la herencia explícitamente:
+   ```tsx
+   // src/dashboard/reports/page.tsx
+   // Desactiva PPR para esta página concreta dentro de un layout con PPR activo
+   export const ppr = false;
+   ```
 
 #### Paso 2: Aislar los componentes dinámicos con `<Suspense>`
 Dinou analizará el árbol de componentes. Todo lo que esté fuera de `<Suspense>` formará parte del shell estático. Cualquier componente asíncrono que acceda al contexto de petición (`cookies`, `query`, `headers`, `getContext()`) debe envolverse en un `<Suspense>` con un `fallback`:
@@ -381,17 +409,23 @@ export default function DashboardPage() {
 
 La implementación se diseñó meticulosamente para integrarse con la arquitectura Dual-Bundle AOT in-memory de Dinou:
 
-1. **Detección AST y Enrutador (`parse-exports.js`, `route-generator.js`):**
-   El analizador estático inspecciona las exportaciones de cada archivo de página. Si encuentra `ppr = true` o `experimental_ppr = true`, adjunta `{ ppr: true }` a los metadatos de la ruta tanto en memoria como en `dist2/metadata.json`.
+1. **Detección AST Tri-Estado y Enrutador (`parse-exports.js`, `route-generator.js`):**
+   El analizador estático inspecciona las exportaciones de páginas y layouts distinguiendo tres estados: `true` (activación), `false` (opt-out explícito) y `null` (herencia / no declarado). Registra `{ ppr: Boolean(isPpr) }` en los metadatos de rutas (`__DINOU_ROUTE_METADATA__` y `dist2/metadata.json`).
 
-2. **Detección de Aplazamiento en Build Time (`ppr-context.js`, `bailout-proxy.js`):**
+2. **Resolución Jerárquica en Cascada con Opt-Out (`handler.js`, `build-static-pages.js`, `layout-functions.js`):**
+   Tanto en la fase de construcción SSG (`resolveBuildPprForRoute`) como en runtime HTTP (`resolvePprForRoute`):
+   - Se recorre la cadena de layouts ancestros de la ruta activa desde el Layout Raíz hasta el Layout más profundo.
+   - Si algún layout define `ppr: true`, el flag se hereda hacia los descendientes. Si un layout anidado define `ppr: false`, desactiva el flag para su rama.
+   - Finalmente, si la página hoja define explícitamente `ppr: true` o `ppr: false`, su valor tiene prioridad absoluta, permitiendo un opt-out o opt-in granular.
+
+3. **Detección de Aplazamiento en Build Time (`ppr-context.js`, `bailout-proxy.js`):**
    Durante la fase de compilación estática (`buildStaticPages`):
    - Se activa un contexto especial `runWithPprContext({ isPpr: true })`.
    - Si un componente dentro de un límite Suspense intenta leer `req.cookies`, `req.headers` o `req.query`, los proxies espía de `createBailoutProxy` detectan el acceso dinámico y lanzan `Symbol.for("dinou.ppr.postpone")`.
    - `renderJSXToClientJSX` captura este símbolo, registra el hueco dinámico (`ppr-hole-1`) y emite en su lugar el fallback envuelto con `<div data-ppr-hole="ppr-hole-1" style="display:contents">`.
    - Se guardan los artefactos base: `shell.html`, `shell.rsc` y `metadata.json` con la lista de huecos registrados.
 
-3. **Motor de Reanudación Streaming en Runtime (`ppr-runtime.js`):**
+4. **Motor de Reanudación Streaming en Runtime (`ppr-runtime.js`):**
    Cuando un usuario solicita una ruta PPR (`handleRequest` en `handler.js`):
    - `handlePprResume` divide el `shell.html` en preludio (hasta antes de `</body>`) y postludio.
    - Envía inmediatamente el preludio al stream HTTP mediante `writer.write(encoder.encode(shellPrelude))` logrando 0ms TTFB.
@@ -399,23 +433,29 @@ La implementación se diseñó meticulosamente para integrarse con la arquitectu
    - Para generar el HTML de los huecos dinámicos respetando las restricciones de React Server Components (donde `react-dom/server` no puede importarse dentro de `react-server`), el motor pasa el stream RSC por `platformContext.renderHtmlStream` (Pass B SSR Engine).
    - Escribe el chunk de contenido dinámico y el script de reemplazo atómico en la conexión abierta, cerrando el stream con el postludio `</body></html>`.
 
-4. **Endpoint Dinámico de RSC (`handler.js`):**
+5. **Endpoint Dinámico de RSC (`handler.js`):**
    En el endpoint de páginas RSC `/____rsc_page____`:
-   - El servidor comprueba si la ruta tiene activa la bandera PPR (`isRoutePpr`).
+   - El servidor comprueba si la ruta tiene activa la bandera PPR resuelta (`isRoutePpr`).
    - Si es PPR, **bloquea la entrega del payload estático precompilado** `page.rsc`, canalizando la solicitud directamente hacia la generación en vivo con el contexto del usuario.
 
 ---
 
 ### 6.4. Batería de Pruebas E2E y Validación Multi-Navegador
 
-La implementación cuenta con una suite completa de pruebas Playwright en [e2e/example.spec.ts](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/e2e/example.spec.ts):
+La suite en [e2e/example.spec.ts](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/e2e/example.spec.ts) valida de forma exhaustiva tanto PPR directo como herencia y opt-out:
 
-- **Ruta de prueba:** [src/t-ppr/page.tsx](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/src/t-ppr/page.tsx) con `export const ppr = true;`, shell estático y componente asíncrono `DynamicUser`.
+- **Rutas de prueba:**
+  - [src/t-ppr/page.tsx](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/src/t-ppr/page.tsx): Declaración directa `export const ppr = true;` en página.
+  - [src/t-ppr-layout/layout.tsx](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/src/t-ppr-layout/layout.tsx): Declaración `export const ppr = true;` a nivel de Layout.
+  - [src/t-ppr-layout/page.tsx](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/src/t-ppr-layout/page.tsx): Página sin declaración de PPR que hereda el comportamiento del Layout.
+  - [src/t-ppr-layout/opt-out/page.tsx](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/src/t-ppr-layout/opt-out/page.tsx): Página hija con `export const ppr = false;` que desactiva PPR puntualmente.
 - **Casos de prueba verificados al 100%:**
-  1. *Carga inicial:* El shell estático (`#ppr-static-title`, `#ppr-static-desc`) se visualiza de forma inmediata y el hueco dinámico resuelve con el valor por defecto (`Alice`).
+  1. *Carga inicial directa:* El shell estático (`#ppr-static-title`, `#ppr-static-desc`) se visualiza de forma inmediata y el hueco dinámico resuelve con el valor por defecto (`Alice`).
   2. *Personalización por Cookies:* Petición con cookie `username=Charlie`. El shell estático se mantiene intacto y el hueco dinámico refleja `"Charlie"`.
   3. *Personalización por Parámetros de Búsqueda:* Petición con query string `?user=David`. El hueco dinámico refleja `"David"`.
-- **Ejecución concurrente:** 9 tests ejecutados en paralelo sobre **Chromium**, **Firefox** y **WebKit**, aprobados limpiamente en 9.7 segundos.
+  4. *Herencia en Cascada desde Layout:* Ruta `/t-ppr-layout?user=InheritedChild` renderiza el shell estático de layout y página, y resuelve el hueco dinámico vía streaming con `"InheritedChild"`.
+  5. *Opt-Out Explícito:* Ruta `/t-ppr-layout/opt-out` renderiza como SSR tradicional respetando `ppr = false` sin aplazar componentes en build time.
+- **Ejecución concurrente:** **15 tests** ejecutados en paralelo sobre **Chromium**, **Firefox** y **WebKit**, aprobados al 100%.
 
 ---
 

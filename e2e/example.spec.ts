@@ -4850,6 +4850,27 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("#ppr-dynamic")).toBeVisible();
       await expect(page.locator("#ppr-user-name")).toHaveText("David");
     });
+
+    test("Child route inherits PPR from parent layout.tsx without explicit declaration", async ({ page }) => {
+      await page.goto("/t-ppr-layout?user=InheritedChild");
+
+      // 1. Static shell elements from layout and page
+      await expect(page.locator("#ppr-layout-header")).toHaveText("PPR Inherited Layout Header");
+      await expect(page.locator("#ppr-inherited-title")).toHaveText("PPR Inherited Page Title");
+      await expect(page.locator("#ppr-inherited-desc")).toContainText("inherited PPR from its layout");
+
+      // 2. Dynamic hole resolved via streaming
+      await expect(page.locator("#ppr-inherited-dynamic")).toBeVisible();
+      await expect(page.locator("#ppr-inherited-name")).toHaveText("InheritedChild");
+    });
+
+    test("Child route with ppr = false opts out from parent layout's PPR", async ({ page }) => {
+      await page.goto("/t-ppr-layout/opt-out");
+
+      await expect(page.locator("#ppr-layout-header")).toHaveText("PPR Inherited Layout Header");
+      await expect(page.locator("#ppr-optout-title")).toHaveText("PPR Opted Out Page");
+      await expect(page.locator("#ppr-optout-desc")).toHaveText("This page opted out of PPR.");
+    });
   });
 
 });

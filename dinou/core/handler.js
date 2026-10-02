@@ -170,6 +170,59 @@ const botGarbagePatterns = [
 const isDynamic = new Map();
 const pageFunctionsConfigCache = new Map();
 
+async function resolvePprForRoute(pagePath, pageFunctionsModule, reqSegments, queryObj) {
+  let inheritedPpr = false;
+  try {
+    const srcFolder = path.resolve(process.cwd(), "src");
+    const layouts = getFilePathAndDynamicParams(
+      reqSegments || [],
+      queryObj || {},
+      srcFolder,
+      "layout",
+      true,
+      false,
+      undefined,
+      0,
+      {},
+      true
+    );
+    if (layouts && Array.isArray(layouts)) {
+      for (const [lPath, lParams] of layouts) {
+        const lConfig = await resolveLayoutFunctionsConfig(lPath, lParams);
+        if (lConfig && lConfig.ppr !== null && lConfig.ppr !== undefined) {
+          inheritedPpr = Boolean(lConfig.ppr);
+        }
+      }
+    }
+  } catch (e) {}
+
+  let explicitPagePpr = null;
+  if (pagePath) {
+    try {
+      const pageModule = await importModule(pagePath);
+      if (pageModule && (pageModule.ppr !== undefined || pageModule.experimental_ppr !== undefined)) {
+        explicitPagePpr = Boolean(pageModule.ppr ?? pageModule.experimental_ppr);
+      }
+    } catch (e) {}
+  }
+  if (explicitPagePpr === null && pageFunctionsModule) {
+    if (pageFunctionsModule.ppr !== undefined || pageFunctionsModule.experimental_ppr !== undefined) {
+      explicitPagePpr = Boolean(pageFunctionsModule.ppr ?? pageFunctionsModule.experimental_ppr);
+    }
+  }
+  if (explicitPagePpr === null && typeof globalThis !== "undefined" && globalThis.__DINOU_ROUTE_METADATA__) {
+    const normKey = pagePath ? pagePath.replace(/\\/g, "/") : "";
+    for (const [k, meta] of Object.entries(globalThis.__DINOU_ROUTE_METADATA__)) {
+      if (meta.ppr !== undefined && (normKey === k || normKey.endsWith("/" + k) || normKey.endsWith(k))) {
+        explicitPagePpr = Boolean(meta.ppr);
+        break;
+      }
+    }
+  }
+
+  return explicitPagePpr !== null ? explicitPagePpr : inheritedPpr;
+}
+
 /**
  * Resolves page_functions configuration (allowISG, validateParams, getStaticPaths)
  * and determines whether the current request path is blocked or allowed for ISG.
@@ -195,8 +248,16 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
         reqSegments.length,
       );
 
+      let pageFunctionsModule = null;
       if (pageFunctionsPath) {
-        const pageFunctionsModule = await importModule(pageFunctionsPath);
+        try {
+          pageFunctionsModule = await importModule(pageFunctionsPath);
+        } catch (e) {}
+      }
+
+      const isPpr = await resolvePprForRoute(pagePath, pageFunctionsModule, reqSegments, queryObj);
+
+      if (pageFunctionsModule) {
         const resolvedAllowISG = pageFunctionsModule.allowISG
           ? await pageFunctionsModule.allowISG()
           : true;
@@ -227,28 +288,6 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
           ? await getTagsFn()
           : (pageFunctionsModule.tags || pageFunctionsModule.cacheTags || pageFunctionsModule.getCacheTags || []);
 
-        let isPpr = false;
-        if (pagePath) {
-          try {
-            const pageModule = await importModule(pagePath);
-            if (pageModule) {
-              isPpr = Boolean(pageModule.ppr ?? pageModule.experimental_ppr);
-            }
-          } catch (e) {}
-        }
-        if (!isPpr && pageFunctionsModule) {
-          isPpr = Boolean(pageFunctionsModule.ppr ?? pageFunctionsModule.experimental_ppr);
-        }
-        if (!isPpr && typeof globalThis !== "undefined" && globalThis.__DINOU_ROUTE_METADATA__) {
-          const normKey = pagePath ? pagePath.replace(/\\/g, "/") : "";
-          for (const [k, meta] of Object.entries(globalThis.__DINOU_ROUTE_METADATA__)) {
-            if (meta.ppr && (normKey === k || normKey.endsWith("/" + k) || normKey.endsWith(k))) {
-              isPpr = true;
-              break;
-            }
-          }
-        }
-
         cachedConfig = {
           allowISG: resolvedAllowISG,
           staticPathsSet,
@@ -259,25 +298,6 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
           ppr: isPpr,
         };
       } else {
-        let isPpr = false;
-        if (pagePath) {
-          try {
-            const pageModule = await importModule(pagePath);
-            if (pageModule) {
-              isPpr = Boolean(pageModule.ppr ?? pageModule.experimental_ppr);
-            }
-          } catch (e) {}
-        }
-        if (!isPpr && typeof globalThis !== "undefined" && globalThis.__DINOU_ROUTE_METADATA__) {
-          const normKey = pagePath ? pagePath.replace(/\\/g, "/") : "";
-          for (const [k, meta] of Object.entries(globalThis.__DINOU_ROUTE_METADATA__)) {
-            if (meta.ppr && (normKey === k || normKey.endsWith("/" + k) || normKey.endsWith(k))) {
-              isPpr = true;
-              break;
-            }
-          }
-        }
-
         cachedConfig = {
           allowISG: true,
           staticPathsSet: null,
@@ -1243,22 +1263,8 @@ async function handleRequest(request, platformContext = {}) {
       }
     } catch (e) {}
 
-    if (!isRoutePpr && pagePath) {
-      try {
-        const pageModule = await importModule(pagePath);
-        if (pageModule) {
-          isRoutePpr = Boolean(pageModule.ppr ?? pageModule.experimental_ppr);
-        }
-      } catch (e) {}
-    }
-    if (!isRoutePpr && typeof globalThis !== "undefined" && globalThis.__DINOU_ROUTE_METADATA__) {
-      const normKey = pagePath ? pagePath.replace(/\\/g, "/") : "";
-      for (const [k, meta] of Object.entries(globalThis.__DINOU_ROUTE_METADATA__)) {
-        if (meta.ppr && (normKey === k || normKey.endsWith("/" + k) || normKey.endsWith(k))) {
-          isRoutePpr = true;
-          break;
-        }
-      }
+    if (!isRoutePpr) {
+      isRoutePpr = await resolvePprForRoute(pagePath, null, reqSegments, queryObj);
     }
 
     if (!isDevelopment && !dynamicState.value && (!hasQueryParams || isStatic) && !isRoutePpr) {

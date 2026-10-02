@@ -7,8 +7,63 @@ const {
 } = require("./get-file-path-and-dynamic-params");
 const importModule = require("./import-module");
 const { requestStorage } = require("./request-context.js");
-const { getLayoutProps } = require("./layout-functions");
+const { getLayoutProps, resolveLayoutFunctionsConfig } = require("./layout-functions");
 const { runWithPprContext, getRegisteredHoles } = require("./ppr-context.js");
+
+async function resolveBuildPprForRoute(segments, pagePath, pageFunctionsPath, srcFolder) {
+  let inheritedPpr = false;
+  try {
+    const parentLayouts = getFilePathAndDynamicParams(
+      segments || [],
+      {},
+      srcFolder,
+      "layout",
+      true,
+      false,
+      undefined,
+      0,
+      {},
+      true
+    );
+    if (parentLayouts && Array.isArray(parentLayouts)) {
+      for (const [lPath, lParams] of parentLayouts) {
+        const lConfig = await resolveLayoutFunctionsConfig(lPath, lParams);
+        if (lConfig && lConfig.ppr !== null && lConfig.ppr !== undefined) {
+          inheritedPpr = Boolean(lConfig.ppr);
+        }
+      }
+    }
+  } catch (e) {}
+
+  let explicitPagePpr = null;
+  if (pagePath) {
+    try {
+      const pageModule = await importModule(pagePath);
+      if (pageModule && (pageModule.ppr !== undefined || pageModule.experimental_ppr !== undefined)) {
+        explicitPagePpr = Boolean(pageModule.ppr ?? pageModule.experimental_ppr);
+      }
+    } catch (e) {}
+  }
+  if (explicitPagePpr === null && pageFunctionsPath) {
+    try {
+      const module = await importModule(pageFunctionsPath);
+      if (module && (module.ppr !== undefined || module.experimental_ppr !== undefined)) {
+        explicitPagePpr = Boolean(module.ppr ?? module.experimental_ppr);
+      }
+    } catch (e) {}
+  }
+  if (explicitPagePpr === null && typeof globalThis !== "undefined" && globalThis.__DINOU_ROUTE_METADATA__) {
+    const normKey = pagePath ? pagePath.replace(/\\/g, "/") : "";
+    for (const [k, meta] of Object.entries(globalThis.__DINOU_ROUTE_METADATA__)) {
+      if (meta.ppr !== undefined && (normKey === k || normKey.endsWith("/" + k) || normKey.endsWith(k))) {
+        explicitPagePpr = Boolean(meta.ppr);
+        break;
+      }
+    }
+  }
+
+  return explicitPagePpr !== null ? explicitPagePpr : inheritedPpr;
+}
 
 const staticRoutes = new Set();
 const staticMetadata = new Map();
@@ -722,33 +777,14 @@ async function buildStaticPages(onProgress = null) {
       segments.length,
     );
     let dynamic;
-    let isPpr = false;
-    if (pagePath) {
-      try {
-        const pageModule = await importModule(pagePath);
-        if (pageModule) {
-          isPpr = Boolean(pageModule.ppr ?? pageModule.experimental_ppr);
-        }
-      } catch (e) {}
-    }
     if (pageFunctionsPath) {
       try {
         const module = await importModule(pageFunctionsPath);
         dynamic = module.dynamic;
-        if (!isPpr && module) {
-          isPpr = Boolean(module.ppr ?? module.experimental_ppr);
-        }
       } catch (e) {}
     }
-    if (!isPpr && typeof globalThis !== "undefined" && globalThis.__DINOU_ROUTE_METADATA__) {
-      const normKey = pagePath ? pagePath.replace(/\\/g, "/") : "";
-      for (const [k, meta] of Object.entries(globalThis.__DINOU_ROUTE_METADATA__)) {
-        if (meta.ppr && (normKey === k || normKey.endsWith("/" + k) || normKey.endsWith(k))) {
-          isPpr = true;
-          break;
-        }
-      }
-    }
+
+    const isPpr = await resolveBuildPprForRoute(segments, pagePath, pageFunctionsPath, srcFolder);
 
     if (pagePath && (!resolveDynamic(dynamic) || isPpr) && !doNotPushAtEnd) {
       pages.push({
@@ -1247,20 +1283,21 @@ async function buildStaticPage(reqPath, isDynamic = null) {
 
       const pageModule = await importModule(pagePath);
       const Page = pageModule.default ?? pageModule;
-      pageIsPpr = Boolean(pageModule.ppr ?? pageModule.experimental_ppr);
-
-      return await runWithPprContext({ isPpr: pageIsPpr }, async () => {
-        let props = { params: dParams };
-        const [pageFunctionsPath] = getFilePathAndDynamicParams(
-          segments,
-          {},
-          folderPath,
-          "page_functions",
+      const [pageFunctionsPath] = getFilePathAndDynamicParams(
+        segments,
+        {},
+        folderPath,
+        "page_functions",
         true,
         true,
         undefined,
         segments.length,
       );
+
+      pageIsPpr = await resolveBuildPprForRoute(segments, pagePath, pageFunctionsPath, srcFolder);
+
+      return await runWithPprContext({ isPpr: pageIsPpr }, async () => {
+        let props = { params: dParams };
 
       let pageFunctionsProps;
       if (pageFunctionsPath) {

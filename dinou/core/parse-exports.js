@@ -128,7 +128,7 @@ function parsePprConfigWithBabel(code) {
       },
     });
 
-    return pprValue !== null ? pprValue : false;
+    return pprValue;
   } catch (e) {
     // Regex fallback
     const match = code.match(/(?:export\s+const|export\s+let|export\s+var)\s+(?:experimental_)?ppr\s*=\s*(true|false|"[^"]*"|'[^']*')/);
@@ -136,13 +136,13 @@ function parsePprConfigWithBabel(code) {
       const val = match[1].trim();
       return val !== "false" && val !== '"false"' && val !== "'false'";
     }
-    return false;
+    return null;
   }
 }
 
 function parsePprConfig(code) {
-  if (!code || typeof code !== "string") return false;
-  if (!code.includes("ppr")) return false;
+  if (!code || typeof code !== "string") return null;
+  if (!code.includes("ppr")) return null;
 
   if (swc && typeof swc.parseSync === "function") {
     try {
@@ -166,7 +166,7 @@ function parsePprConfig(code) {
           }
         }
       }
-      return false;
+      return null;
     } catch (e) {
       // Fallback to Babel
     }
@@ -176,7 +176,7 @@ function parsePprConfig(code) {
 }
 
 parseExports.parsePprConfig = parsePprConfig;
-parseExports.hasPpr = (code) => Boolean(parsePprConfig(code));
+parseExports.hasPpr = (code) => parsePprConfig(code) === true;
 
 module.exports = parseExports;
 
