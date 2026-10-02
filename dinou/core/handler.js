@@ -285,10 +285,17 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
         let revalidateVal = typeof pageFunctionsModule.revalidate === "function"
           ? await pageFunctionsModule.revalidate()
           : pageFunctionsModule.revalidate;
-        const getTagsFn = pageFunctionsModule.getCacheTags || pageFunctionsModule.cacheTags;
-        let tagsVal = typeof getTagsFn === "function"
-          ? await getTagsFn()
-          : (pageFunctionsModule.tags || pageFunctionsModule.cacheTags || pageFunctionsModule.getCacheTags || []);
+        const rawTags = pageFunctionsModule.getCacheTags ?? pageFunctionsModule.default?.getCacheTags;
+        let tagsVal = [];
+        if (typeof rawTags === "function") {
+          try {
+            tagsVal = await rawTags(dynamicParams);
+          } catch (e) {
+            console.error("Error running getCacheTags in handler:", e);
+          }
+        } else if (Array.isArray(rawTags)) {
+          tagsVal = rawTags;
+        }
 
         cachedConfig = {
           allowISG: resolvedAllowISG,

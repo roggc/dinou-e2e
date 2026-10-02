@@ -937,12 +937,15 @@ async function buildStaticPages(onProgress = null) {
           const pageFunctionsModule = await importModule(pageFunctionsPath);
           const getProps = pageFunctionsModule.getProps;
           revalidate = pageFunctionsModule.revalidate;
-          if (pageFunctionsModule.getCacheTags) {
+          const rawTags = pageFunctionsModule.getCacheTags ?? pageFunctionsModule.default?.getCacheTags;
+          if (typeof rawTags === "function") {
             try {
-              cacheTags = await pageFunctionsModule.getCacheTags(params);
+              cacheTags = await rawTags(params);
             } catch (e) {
               console.error("Error running getCacheTags in buildStaticPages:", e);
             }
+          } else if (Array.isArray(rawTags)) {
+            cacheTags = rawTags;
           }
           pageFunctionsProps = await getProps?.(params);
           props = { ...props, ...(pageFunctionsProps ?? {}) };
@@ -1297,12 +1300,15 @@ async function buildStaticPage(reqPath, isDynamic = null) {
         if (isDynamic && (isDynamic.value = resolveDynamic(pageFunctionsModule.dynamic)))
           return;
         revalidate = pageFunctionsModule.revalidate;
-        if (pageFunctionsModule.getCacheTags) {
+        const rawTags = pageFunctionsModule.getCacheTags ?? pageFunctionsModule.default?.getCacheTags;
+        if (typeof rawTags === "function") {
           try {
-            cacheTags = await pageFunctionsModule.getCacheTags(dParams);
+            cacheTags = await rawTags(dParams);
           } catch (e) {
             console.error("Error running getCacheTags:", e);
           }
+        } else if (Array.isArray(rawTags)) {
+          cacheTags = rawTags;
         }
         pageFunctionsProps = await getProps?.(dParams);
         props = { ...props, ...(pageFunctionsProps ?? {}) };

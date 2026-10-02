@@ -144,15 +144,17 @@ async function resolveLayoutFunctionsConfig(layoutPath, dParams = {}) {
         ? await mod.default.revalidate()
         : (mod.revalidate ?? mod.default?.revalidate);
 
-    const getTagsFn =
-      mod.getCacheTags ||
-      mod.cacheTags ||
-      mod.default?.getCacheTags ||
-      mod.default?.cacheTags;
-    let tagsVal =
-      typeof getTagsFn === "function"
-        ? await getTagsFn(dParams)
-        : (mod.tags || mod.cacheTags || mod.getCacheTags || mod.default?.tags || mod.default?.cacheTags || mod.default?.getCacheTags || []);
+    const rawTags = mod.getCacheTags ?? mod.default?.getCacheTags;
+    let tagsVal = [];
+    if (typeof rawTags === "function") {
+      try {
+        tagsVal = await rawTags(dParams);
+      } catch (e) {
+        console.error("Error running getCacheTags in layout-functions:", e);
+      }
+    } else if (Array.isArray(rawTags)) {
+      tagsVal = rawTags;
+    }
 
     const validateParamsFn = mod.validateParams || mod.default?.validateParams;
     const getPropsFn =

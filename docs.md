@@ -484,7 +484,7 @@ La suite en [e2e/example.spec.ts](file:///c:/Users/roggc/dev/my-dinou-apps/dinou
 |---|---|---|---|
 | **Granularidad de Navegación** | Monolítica (Página entera) | Segmentada Horizontal (Layouts vs Páginas) | Segmentada Horizontal + Vertical (PPR + Slots) |
 | **Persistencia de Layouts en SPA** | Parcial / Re-evaluada | 100% Preservada (0 re-evaluaciones) | 100% Preservada |
-| **Caché en Layouts** | No disponible | Completa (`layout_functions`, revalidate, tags) | Completa |
+| **Caché en Layouts** | No disponible | Completa (`layout_functions`, revalidate, getCacheTags) | Completa |
 | **Micro-ISR por Componente** | No disponible | Implementado (`DinouCacheSlot` Nivel 1 & 2) | Integrado con PPR |
 | **Refresco en Vivo de Slots** | No disponible | Implementado (`refreshSlot`, `useRouter`) | Implementado |
 | **TTFB en Rutas Dinámicas** | Depende del SSR más lento | Rápido (Layouts cacheados) | Ultrarrápido (Shell estático 0ms + Stream) |
@@ -499,7 +499,7 @@ La suite en [e2e/example.spec.ts](file:///c:/Users/roggc/dev/my-dinou-apps/dinou
 timeline
     title Estado de Evolución Dinou v7.x
     Fase 1 (Completada) : Segmentación Horizontal : Endpoints desacoplados de Layout y Página con DinouPageSlot
-    Fase 2 (Completada) : layout_functions : Soporte de revalidate, tags y allowISG independiente para Layouts
+    Fase 2 (Completada) : layout_functions : Soporte de revalidate, getCacheTags y allowISG independiente para Layouts
     Fase 3 (Completada) : DinouCacheSlot : Micro-ISR de Server Components (Nivel 1 SWR + Nivel 2 Live Refresh)
     Fase 4 (Completada) : Motor PPR (Partial Prerendering) : Shell estático en build + Reanudación por Streaming dinámico en runtime (100% Verificado en Chromium, Firefox y WebKit)
     Fase 5 (Próximo Hito) : Documentación Interactiva : Publicación en dinou-docs con ejemplos en vivo y demos de showcase

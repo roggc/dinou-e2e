@@ -151,7 +151,7 @@ export interface DinouConfig {
   /**
    * Global Partial Prerendering (PPR) configuration.
    * When enabled globally, all static-eligible routes generate static shells with Suspense streaming holes.
-   * Can also be enabled per route by declaring `export const ppr = true;` in page.tsx.
+   * Can also be enabled or disabled per route or layout in page_functions.ts or layout_functions.ts.
    * @default false
    */
   ppr?: boolean;
@@ -184,18 +184,21 @@ export interface RouteSegmentConfig {
 
   /**
    * Incremental Static Regeneration revalidation time in seconds, or false to cache indefinitely.
+   * Can be a number or a sync/async function returning a number or false.
    */
-  revalidate?: number | false;
+  revalidate?: number | false | (() => number | false | Promise<number | false>);
 
   /**
    * Dynamic rendering strategy.
+   * Can be a value or a sync/async function.
    */
-  dynamic?: boolean | "auto" | "force-dynamic" | "force-static";
+  dynamic?: boolean | "auto" | "force-dynamic" | "force-static" | (() => boolean | "auto" | "force-dynamic" | "force-static" | Promise<boolean | "auto" | "force-dynamic" | "force-static">);
 
   /**
-   * Cache tags associated with this route for on-demand invalidation.
+   * Cache tags associated with this route segment for on-demand invalidation via `revalidateTag(tag)`.
+   * Can be declared as a sync/async function `getCacheTags(params)` or as a constant array `getCacheTags = [...]`.
    */
-  tags?: string[];
+  getCacheTags?: string[] | ((params?: any) => string[] | Promise<string[]>);
 }
 
 /**
