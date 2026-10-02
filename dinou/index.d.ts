@@ -204,10 +204,12 @@ export interface RouteSegmentConfig<TParams = any, TProps = any> {
   ppr?: PPRConfig;
 
   /**
-   * Incremental Static Regeneration revalidation time in milliseconds (ms), or false to cache indefinitely.
-   * Can be a number or a sync/async function returning a number or false.
+   * Incremental Static Regeneration revalidation time in milliseconds (ms).
+   * A positive number (> 0) triggers background revalidation after that period.
+   * If 0 or omitted, the page is cached statically forever (until on-demand revalidation).
+   * Can be declared as a number or as a sync/async function returning a number.
    */
-  revalidate?: number | false | (() => number | false | Promise<number | false>);
+  revalidate?: number | (() => number | Promise<number>);
 
   /**
    * Dynamic rendering strategy.

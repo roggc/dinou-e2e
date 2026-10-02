@@ -132,9 +132,7 @@ async function resolveLayoutFunctionsConfig(layoutPath, dParams = {}) {
 
     const dynamicFnOrVal = mod.dynamic ?? mod.default?.dynamic;
     const isDynamic = Boolean(
-      (typeof dynamicFnOrVal === "function" ? await dynamicFnOrVal() : dynamicFnOrVal) ||
-      mod.revalidate === 0 ||
-      mod.default?.revalidate === 0
+      typeof dynamicFnOrVal === "function" ? await dynamicFnOrVal() : dynamicFnOrVal
     );
 
     const revalidateVal =

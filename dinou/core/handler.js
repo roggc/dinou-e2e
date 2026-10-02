@@ -285,8 +285,7 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
         }
 
         const isDynamic = Boolean(
-          (typeof pageFunctionsModule.dynamic === "function" ? pageFunctionsModule.dynamic() : pageFunctionsModule.dynamic) ||
-          pageFunctionsModule.revalidate === 0
+          typeof pageFunctionsModule.dynamic === "function" ? pageFunctionsModule.dynamic() : pageFunctionsModule.dynamic
         );
 
         let revalidateVal = typeof pageFunctionsModule.revalidate === "function"
