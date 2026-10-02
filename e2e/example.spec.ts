@@ -2620,6 +2620,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const resBad = await page.goto("/t-groups/(marketing)/landing");
       expect(resBad?.status()).toBe(404);
     });
+
+    test("Should render layout inside t-groups-params/[id]/(foo)/[slug]", async ({ page }) => {
+      const response = await page.goto("/t-groups-params/a/a");
+      expect(response?.status()).toBe(200);
+      await expect(page.locator("#groups-params-layout")).toBeVisible();
+      await expect(page.locator("#layout-params-text")).toContainText('"id":"a"');
+    });
   });
   test.describe("Dinou Slots (Parallel Routes)", () => {
     test("Should render @sidebar slot and children into the Layout correctly", async ({
