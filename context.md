@@ -295,25 +295,32 @@ sequenceDiagram
     Server-->>Browser: [Postlude] </body></html> (Connection closes)
 ```
 
-#### Declaring PPR in `page_functions.ts` or `layout_functions.ts`
-PPR is declared exclusively in functions files (constants or sync/async functions):
+#### Declaring PPR in `dinou.config.mjs`, `layout_functions.ts`, or `page_functions.ts`
+PPR can be configured globally or scoped per route/layout:
 
-```typescript
-// src/dashboard/page_functions.ts
-export const ppr = true;
+1. **Global Configuration in `dinou.config.mjs`**:
+   Activates PPR across all eligible static routes in the project:
+   ```javascript
+   import { defineConfig } from "dinou/config";
 
-// Or as an async function:
-export async function ppr() {
-  return true;
-}
-```
+   export default defineConfig({
+     ppr: true, // Enables Partial Prerendering globally as the base default
+   });
+   ```
 
-* **Cascading Layout Inheritance**: Declaring `export const ppr = true;` in `src/dashboard/layout_functions.ts` automatically enables PPR for all nested pages and child layouts under `/dashboard/*`.
-* **Granular Opt-Out**: Child routes can opt out explicitly:
-  ```typescript
-  // src/dashboard/admin/page_functions.ts
-  export const ppr = false;
-  ```
+2. **Scoped Layout Inheritance in `layout_functions.ts`**:
+   Declaring `export const ppr = true;` (or `false` for opt-out) applies to all nested sub-layouts and child pages under that directory:
+   ```typescript
+   // src/dashboard/layout_functions.ts
+   export const ppr = true;
+   ```
+
+3. **Granular Page Override in `page_functions.ts` (Maximum Priority)**:
+   Individual pages can opt in or opt out explicitly:
+   ```typescript
+   // src/dashboard/admin/page_functions.ts
+   export const ppr = false; // Opt out from global or layout PPR
+   ```
 
 #### Component Implementation with `<Suspense>`
 ```tsx
@@ -541,6 +548,7 @@ Dinou v7 decouples cache storage and runtime operations via `StorageAdapter`:
 import { defineConfig } from "dinou/config";
 
 export default defineConfig({
+  ppr: true, // Optional: Enable Partial Prerendering globally (default: false)
   reactStrictMode: true,
   plugins: [
     {
