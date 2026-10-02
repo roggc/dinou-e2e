@@ -459,36 +459,39 @@ class DenoKVStorage extends StorageAdapter {
   }
 }
 
-let activeStorageAdapter = null;
+const DINOU_STORAGE_KEY = Symbol.for("dinou.storage.adapter");
 
 function getStorageAdapter() {
-  if (!activeStorageAdapter) {
-    const runtime =
-      (typeof globalThis !== "undefined" && globalThis.__DINOU_RUNTIME__) ||
-      (typeof process !== "undefined" && process.env && process.env.DINOU_RUNTIME) ||
-      "";
-
-    const isEdge =
-      runtime === "edge" ||
-      runtime === "deno-edge" ||
-      (typeof runtime === "string" && runtime.includes("edge")) ||
-      (typeof Deno !== "undefined" && !runtime.includes("node"));
-
-    if (isEdge) {
-      if (typeof Deno !== "undefined" && typeof Deno.openKv === "function") {
-        activeStorageAdapter = new DenoKVStorage();
-      } else {
-        activeStorageAdapter = new MemoryStorage();
-      }
-    } else {
-      activeStorageAdapter = new FileSystemStorage();
-    }
+  if (globalThis[DINOU_STORAGE_KEY]) {
+    return globalThis[DINOU_STORAGE_KEY];
   }
-  return activeStorageAdapter;
+  let adapter = null;
+  const runtime =
+    (typeof globalThis !== "undefined" && globalThis.__DINOU_RUNTIME__) ||
+    (typeof process !== "undefined" && process.env && process.env.DINOU_RUNTIME) ||
+    "";
+
+  const isEdge =
+    runtime === "edge" ||
+    runtime === "deno-edge" ||
+    (typeof runtime === "string" && runtime.includes("edge")) ||
+    (typeof Deno !== "undefined" && !runtime.includes("node"));
+
+  if (isEdge) {
+    if (typeof Deno !== "undefined" && typeof Deno.openKv === "function") {
+      adapter = new DenoKVStorage();
+    } else {
+      adapter = new MemoryStorage();
+    }
+  } else {
+    adapter = new FileSystemStorage();
+  }
+  globalThis[DINOU_STORAGE_KEY] = adapter;
+  return adapter;
 }
 
 function setStorageAdapter(adapter) {
-  activeStorageAdapter = adapter;
+  globalThis[DINOU_STORAGE_KEY] = adapter;
 }
 
 module.exports = {

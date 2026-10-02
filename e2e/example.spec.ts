@@ -2674,10 +2674,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Exceed TTL (wait 2500ms): triggers SWR / fresh regeneration
       await page.waitForTimeout(2500);
       await page.reload();
-      await page.waitForTimeout(300);
-      await page.reload();
-      const fastTime3 = await page.locator("#slot-fast-time").innerText();
-      expect(fastTime3).not.toBe(fastTime1);
+
+      await expect.poll(async () => {
+        await page.reload();
+        return await page.locator("#slot-fast-time").innerText();
+      }, { timeout: 10000, intervals: [400, 800] }).not.toBe(fastTime1);
     });
 
     test("supports live client-side slot refresh without page reload (Level 2)", async ({

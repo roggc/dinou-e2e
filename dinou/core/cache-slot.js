@@ -8,9 +8,23 @@ const React = require("react");
 const { getStorageAdapter } = require("./storage-adapter.js");
 const { asyncRenderJSXToClientJSX } = require("./render-jsx-to-client-jsx.js");
 
-const inflightSlotRenders = new Map();
-const backgroundRevalidations = new Set();
-const slotRegistry = new Map();
+const INFLIGHT_KEY = Symbol.for("dinou.slot.inflight.renders");
+if (!globalThis[INFLIGHT_KEY]) {
+  globalThis[INFLIGHT_KEY] = new Map();
+}
+const inflightSlotRenders = globalThis[INFLIGHT_KEY];
+
+const BG_REVAL_KEY = Symbol.for("dinou.slot.background.revalidations");
+if (!globalThis[BG_REVAL_KEY]) {
+  globalThis[BG_REVAL_KEY] = new Set();
+}
+const backgroundRevalidations = globalThis[BG_REVAL_KEY];
+
+const SLOT_REGISTRY_KEY = Symbol.for("dinou.slot.registry");
+if (!globalThis[SLOT_REGISTRY_KEY]) {
+  globalThis[SLOT_REGISTRY_KEY] = new Map();
+}
+const slotRegistry = globalThis[SLOT_REGISTRY_KEY];
 
 let _DinouCacheSlotBoundary = null;
 function getCacheSlotBoundary() {
@@ -241,8 +255,8 @@ async function DinouCacheSlot(props) {
           })();
 
           try {
-            const DINOU_CONTEXT_KEY = Symbol.for("dinou.request.context.storage");
-            const reqContext = globalThis[DINOU_CONTEXT_KEY]?.getStore();
+            const { getContext } = require("./request-context.js");
+            const reqContext = getContext();
             const ctx = reqContext?.ctx || reqContext?.platformContext?.ctx || reqContext?.req?.ctx;
             if (ctx && typeof ctx.waitUntil === "function") {
               ctx.waitUntil(bgPromise);
