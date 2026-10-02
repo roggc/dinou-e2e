@@ -266,15 +266,22 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
 
         let staticPathsSet = null;
         if (pageFunctionsModule.getStaticPaths) {
-          const paths = await pageFunctionsModule.getStaticPaths();
-          staticPathsSet = new Set(
-            (paths || []).map((pathObj) => {
-              const sortedEntries = Object.entries(pathObj).sort((a, b) =>
-                a[0].localeCompare(b[0])
-              );
-              return JSON.stringify(sortedEntries);
-            })
-          );
+          const paths = await (typeof pageFunctionsModule.getStaticPaths === "function"
+            ? pageFunctionsModule.getStaticPaths()
+            : pageFunctionsModule.getStaticPaths);
+          if (Array.isArray(paths)) {
+            staticPathsSet = new Set(
+              paths.map((pathObj) => {
+                if (pathObj && typeof pathObj === "object" && !Array.isArray(pathObj)) {
+                  const sortedEntries = Object.entries(pathObj).sort((a, b) =>
+                    a[0].localeCompare(b[0])
+                  );
+                  return JSON.stringify(sortedEntries);
+                }
+                return String(pathObj);
+              })
+            );
+          }
         }
 
         const isDynamic = Boolean(
@@ -345,7 +352,9 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
               return [k, String(v)];
             });
           const serializedQuery = JSON.stringify(sortedQueryEntries);
-          isPathAllowed = staticPathsSet.has(serializedQuery);
+          const singleVal = Object.values(dynamicParams)[0];
+          const singleValStr = Array.isArray(singleVal) ? singleVal.join(",") : String(singleVal);
+          isPathAllowed = staticPathsSet.has(serializedQuery) || staticPathsSet.has(singleValStr);
         }
         if (!isPathAllowed) {
           if (isDevelopment) {
@@ -1530,7 +1539,9 @@ async function handleRequest(request, platformContext = {}) {
               return [k, String(v)];
             });
           const serializedQuery = JSON.stringify(sortedEntries);
-          isPathAllowed = layoutConfig.staticPathsSet.has(serializedQuery);
+          const singleVal = Object.values(layoutParams || {})[0];
+          const singleValStr = Array.isArray(singleVal) ? singleVal.join(",") : String(singleVal);
+          isPathAllowed = layoutConfig.staticPathsSet.has(serializedQuery) || layoutConfig.staticPathsSet.has(singleValStr);
         }
         if (!isPathAllowed) {
           if (isDevelopment) {

@@ -115,12 +115,12 @@ async function resolveLayoutFunctionsConfig(layoutPath, dParams = {}) {
 
     const getStaticPathsFn = mod.getStaticPaths || mod.default?.getStaticPaths;
     let staticPathsSet = null;
-    if (typeof getStaticPathsFn === "function") {
-      const paths = await getStaticPathsFn();
+    if (getStaticPathsFn) {
+      const paths = await (typeof getStaticPathsFn === "function" ? getStaticPathsFn() : getStaticPathsFn);
       if (Array.isArray(paths)) {
         staticPathsSet = new Set(
           paths.map((p) => {
-            if (typeof p === "object" && p !== null) {
+            if (typeof p === "object" && p !== null && !Array.isArray(p)) {
               const sorted = Object.entries(p).sort((a, b) => a[0].localeCompare(b[0]));
               return JSON.stringify(sorted);
             }

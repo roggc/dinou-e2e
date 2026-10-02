@@ -174,6 +174,27 @@ export interface DinouConfig {
  */
 export type PPRConfig = boolean | (() => boolean | Promise<boolean>);
 
+/**
+ * A single static path item returned or defined by `getStaticPaths`.
+ * Can be:
+ * - A string: e.g. `"alpha"` for dynamic segment `[slug]`
+ * - A number: e.g. `1` for dynamic segment `[id]`
+ * - A string array: e.g. `["docs", "getting-started"]` for catch-all segment `[...slug]`
+ * - A parameter object: e.g. `{ slug: "alpha", id: "1" }`
+ */
+export type StaticPathItem<TParams = Record<string, string | number | string[] | undefined>> =
+  | string
+  | number
+  | string[]
+  | TParams;
+
+/**
+ * Result array or promise of array for `getStaticPaths`.
+ */
+export type StaticPathsResult<TParams = Record<string, string | number | string[] | undefined>> =
+  | StaticPathItem<TParams>[]
+  | Promise<StaticPathItem<TParams>[]>;
+
 export interface RouteSegmentConfig<TParams = any, TProps = any> {
   /**
    * Partial Prerendering (PPR) flag.
@@ -201,9 +222,18 @@ export interface RouteSegmentConfig<TParams = any, TProps = any> {
   getCacheTags?: string[] | ((params?: TParams) => string[] | Promise<string[]>);
 
   /**
-   * Generates static path parameter objects for dynamic route segments during build time (SSG).
+   * Generates static path parameter objects or values for dynamic route segments during build time (SSG).
+   * Supports returning:
+   * - Array of strings (e.g. `["alpha", "beta"]`)
+   * - Array of numbers (e.g. `[1, 2, 3]`)
+   * - Array of string arrays for catch-all routes (e.g. `[["docs", "intro"], ["docs", "setup"]]`)
+   * - Array of parameter objects (e.g. `[{ slug: "alpha" }, { slug: "beta" }]`)
+   *
+   * Can be declared as a sync or async function, or as a constant array in `page_functions.ts` or `layout_functions.ts`.
    */
-  getStaticPaths?: () => Array<Record<string, string>> | Promise<Array<Record<string, string>>>;
+  getStaticPaths?:
+    | StaticPathItem<TParams>[]
+    | (() => StaticPathsResult<TParams>);
 
   /**
    * Server-side loader that fetches or calculates props passed directly to the Page or Layout component.

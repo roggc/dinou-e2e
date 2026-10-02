@@ -178,7 +178,9 @@ async function buildStaticPages(onProgress = null) {
             }
             try {
               if (getStaticPaths) {
-                const paths = await getStaticPaths();
+                const paths = await (typeof getStaticPaths === "function"
+                  ? getStaticPaths()
+                  : getStaticPaths);
                 for (const pathItem of paths) {
                   // 1. Preparation of Structure and Extraction
                   const currentStructure = [...dynamicStructure, paramName];
@@ -321,7 +323,9 @@ async function buildStaticPages(onProgress = null) {
             }
             try {
               if (getStaticPaths) {
-                const paths = await getStaticPaths();
+                const paths = await (typeof getStaticPaths === "function"
+                  ? getStaticPaths()
+                  : getStaticPaths);
                 for (const pathItem of paths) {
                   const currentStructure = [...dynamicStructure, paramName];
                   const isObject =
@@ -427,7 +431,9 @@ async function buildStaticPages(onProgress = null) {
             }
             try {
               if (getStaticPaths) {
-                const paths = await getStaticPaths();
+                const paths = await (typeof getStaticPaths === "function"
+                  ? getStaticPaths()
+                  : getStaticPaths);
                 for (const pathItem of paths) {
                   // 1. Preparation of Structure and Extraction
                   const currentStructure = [...dynamicStructure, paramName];
@@ -546,7 +552,7 @@ async function buildStaticPages(onProgress = null) {
             const lmod = await importModule(lfPath);
             const lmodGetStaticPaths = lmod.getStaticPaths || lmod.default?.getStaticPaths;
             const lmodDynamic = lmod.dynamic || lmod.default?.dynamic;
-            if (!getStaticPaths && typeof lmodGetStaticPaths === "function") {
+            if (!getStaticPaths && lmodGetStaticPaths) {
               getStaticPaths = lmodGetStaticPaths;
             }
             if (!dynamic && lmodDynamic) {
@@ -575,7 +581,9 @@ async function buildStaticPages(onProgress = null) {
             }
             try {
               if (getStaticPaths) {
-                const paths = await getStaticPaths();
+                const paths = await (typeof getStaticPaths === "function"
+                  ? getStaticPaths()
+                  : getStaticPaths);
                 for (const pathItem of paths) {
                   const currentStructure = [...dynamicStructure, paramName];
                   const isObject =
@@ -670,7 +678,9 @@ async function buildStaticPages(onProgress = null) {
             if (isLocalPage && !resolveDynamic(dynamic)) {
               try {
                 if (getStaticPaths) {
-                  const paths = await getStaticPaths();
+                  const paths = await (typeof getStaticPaths === "function"
+                    ? getStaticPaths()
+                    : getStaticPaths);
                   for (const pathItem of paths) {
                     const currentStructure = dynamicStructure;
                     const isObject =
