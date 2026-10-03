@@ -14,6 +14,8 @@ if (typeof window === "undefined") {
     try {
       if (typeof globalThis.__dinou_require__ === "function") {
         AsyncLocalStorageClass = globalThis.__dinou_require__("node:async_hooks")?.AsyncLocalStorage;
+      } else if (typeof require === "function") {
+        AsyncLocalStorageClass = require("node:async_hooks")?.AsyncLocalStorage;
       } else if (typeof process !== "undefined" && process.versions && process.versions.node) {
         const nodeRequire = (0, eval)("require");
         AsyncLocalStorageClass = nodeRequire("node:async_hooks")?.AsyncLocalStorage;
@@ -22,6 +24,9 @@ if (typeof window === "undefined") {
   }
 
   if (AsyncLocalStorageClass) {
+    if (typeof globalThis.AsyncLocalStorage === "undefined") {
+      globalThis.AsyncLocalStorage = AsyncLocalStorageClass;
+    }
     if (!globalThis[DINOU_CONTEXT_KEY]) {
       globalThis[DINOU_CONTEXT_KEY] = new AsyncLocalStorageClass();
     }
