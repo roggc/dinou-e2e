@@ -280,6 +280,13 @@ function setManifestEntry(fileUrl, expName, entry) {
 
       try {
         const importCode = readFileSync(absImportPathWithExt, "utf8");
+        // Optimization: stop recursing at Client Component boundaries.
+        // Everything inside a "use client" module is bundled by Rollup's client pipeline,
+        // and dinou-asset-plugin already emits all assets referenced by client modules.
+        if (useClientRegex.test(importCode.trim())) {
+          continue;
+        }
+
         const nested = await getImportsAndAssetsAndCsss(
           importCode,
           absImportPathWithExt,
