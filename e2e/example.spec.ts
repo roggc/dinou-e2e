@@ -2348,11 +2348,17 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     // [[...opt]] tiene una particularidad: DEBE matchear también la ruta base sin params.
     // Es decir, /t-router/optional debe renderizar el componente, no un 404.
 
-    test("Level 4: The Optional Catch-All Paradox", async ({ page }) => {
+    test("Level 4: The Optional Catch-All Paradox (With params)", async ({
+      page,
+    }) => {
       // Caso A: Con parámetros (Fácil)
       await page.goto("/t-router/optional/a/b");
       await expect(page.locator("#res")).toHaveText('OPTIONAL:["a","b"]');
+    });
 
+    test("Level 4: The Optional Catch-All Paradox (Root / No params)", async ({
+      page,
+    }) => {
       // Caso B: LA TRAMPA (Sin parámetros)
       // Muchos routers explotan aquí porque buscan params[0] y es undefined
       // o devuelven 404 porque esperan al menos un segmento.
