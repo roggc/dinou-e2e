@@ -234,6 +234,10 @@ export async function startEsbuildDev(options = {}) {
     },
     ensureActiveRoute: async (routeOrChunk) => {
       if (!currentCtx || !routeOrChunk) return false;
+      // Ignore route paths (e.g. "/test-dev"). Esbuild compiles entrypoints eagerly.
+      if (typeof routeOrChunk === "string" && (routeOrChunk.startsWith("/") || routeOrChunk.startsWith("\\"))) {
+        return true;
+      }
       const clean = routeOrChunk.replace(/^\//, "").replace(/\.js$/, "");
       const mem = globalThis.__DINOU_MEM_FILES__;
       if (
