@@ -188,6 +188,56 @@ export async function getProps(params: any) {
 }
 ```
 
+### Flujo de Desarrollo: Elegir la Ruta en las Páginas
+Al tipar un componente de página:
+1. Importa `PageProps` desde `"dinou"`.
+2. Escribe `PageProps<"">` en la declaración de tu componente.
+3. Abre el autocompletado (`Ctrl + Espacio` o `Cmd + Espacio`). Tu IDE mostrará todas las rutas registradas en el proyecto (ej: `"/blog/[slug]"`, `"/search"`).
+4. Elige tu ruta. A partir de ese momento, `params` queda fuertemente tipado con sus parámetros correctos:
+
+```tsx
+import type { PageProps } from "dinou";
+
+// Pulsa Ctrl + Espacio dentro de "" para elegir tu ruta
+export default function BlogPost({ params }: PageProps<"/blog/[slug]">) {
+  return <h1>{params.slug}</h1>;
+}
+```
+
+### Tipar Páginas de Error (`error.tsx`) sin `any`
+En Dinou, los componentes de error (`error.tsx`, incluidos los slots paralelos `@slot/error.tsx`) reciben exactamente 2 props:
+- `error`: El error capturado, que cumple estructuralmente la interfaz nativa `Error` de TypeScript (`{ message: string; name: string; stack?: string }`).
+- `params`: Los parámetros dinámicos de la ruta.
+
+Puedes tipar tus páginas de error extendiendo `PageProps`:
+
+```tsx
+"use client";
+
+import { useRouter, type PageProps } from "dinou";
+
+interface ErrorPageProps extends PageProps<"/blog/[slug]"> {
+  error: Error;
+}
+
+export default function BlogPostError({ params, error }: ErrorPageProps) {
+  const router = useRouter();
+
+  return (
+    <div className="error-container">
+      <h2>Error al cargar el post: {params.slug}</h2>
+      <p>{error.message}</p>
+      {/* Recarga suave vía router de cliente */}
+      <button onClick={() => router.refresh()}>Reintentar</button>
+    </div>
+  );
+}
+```
+
+> **Diferencias Clave con Otros Frameworks:**
+> * En Next.js, `error.tsx` está forzado a ser Client Component y recibe `{ error, reset }`.
+> * En Dinou, `error.tsx` puede ser un **Server Component o un Client Component**. Dinou pasa `{ error, params }`. Para reintentar, se usa `useRouter().refresh()` o la navegación estándar del navegador.
+
 ### Navegación Dinámica con Parámetros Tipados
 ```tsx
 import { Link, useRouter } from "dinou";

@@ -188,6 +188,56 @@ export async function getProps(params: any) {
 }
 ```
 
+### Developer Workflow: Selecting Route Patterns in Pages
+When typing a page component:
+1. Import `PageProps` from `"dinou"`.
+2. Type `PageProps<"">` in your component definition.
+3. Trigger autocomplete (`Ctrl + Space` or `Cmd + Space`). Your IDE will display all routes registered in the project (e.g., `"/blog/[slug]"`, `"/search"`).
+4. Select your route. `params` is instantly typed with the correct parameters:
+
+```tsx
+import type { PageProps } from "dinou";
+
+// Trigger Ctrl + Space inside "" to pick your route
+export default function BlogPost({ params }: PageProps<"/blog/[slug]">) {
+  return <h1>{params.slug}</h1>;
+}
+```
+
+### Typing Error Boundaries (`error.tsx`) without `any`
+In Dinou, error boundary components (`error.tsx`, including parallel slot errors `@slot/error.tsx`) receive exactly two props:
+- `error`: The caught error object, which structurally satisfies the standard TypeScript `Error` interface (`{ message: string; name: string; stack?: string }`).
+- `params`: The route segment's dynamic parameters.
+
+You can type error pages cleanly by extending `PageProps`:
+
+```tsx
+"use client";
+
+import { useRouter, type PageProps } from "dinou";
+
+interface ErrorPageProps extends PageProps<"/blog/[slug]"> {
+  error: Error;
+}
+
+export default function BlogPostError({ params, error }: ErrorPageProps) {
+  const router = useRouter();
+
+  return (
+    <div className="error-container">
+      <h2>Failed to load post: {params.slug}</h2>
+      <p>{error.message}</p>
+      {/* Soft reload via Dinou client router */}
+      <button onClick={() => router.refresh()}>Try Again</button>
+    </div>
+  );
+}
+```
+
+> **Key Differences from Other Frameworks:**
+> * In Next.js, `error.tsx` must be a Client Component and receives `{ error, reset }`.
+> * In Dinou, `error.tsx` can be a **Server Component or a Client Component**. Dinou passes `{ error, params }`. To retry or re-render, use `useRouter().refresh()` or standard browser navigation.
+
 ### Dynamic Navigation with Typed Interpolation
 ```tsx
 import { Link, useRouter } from "dinou";
