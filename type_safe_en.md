@@ -41,9 +41,9 @@ export default function Navigation() {
 }
 ```
 
-### Typed Pages and Layouts (Level 2)
+### Typed Pages, Layouts & Server Functions (Level 2)
 ```tsx
-import type { PageProps, LayoutProps } from "dinou";
+import type { PageProps, LayoutProps, RouteParams } from "dinou";
 
 // src/blog/[slug]/page.tsx
 export default function BlogPost({ params }: PageProps<"/blog/[slug]">) {
@@ -64,6 +64,14 @@ export function BlogLayout({ children, params }: LayoutProps<"/blog/[slug]">) {
       <main>{children}</main>
     </section>
   );
+}
+
+// src/blog/[slug]/page_functions.ts
+export async function getProps(params: RouteParams<"/blog/[slug]">) {
+  // ✅ Directly types the raw params object without `params: any`
+  return {
+    title: `Post: ${params.slug}`,
+  };
 }
 ```
 
@@ -131,10 +139,19 @@ flowchart TD
   ```
 
 ### 3. Framework Master Types (`dinou/index.d.ts`)
-* Declares the extensible `DinouRouter.Register` interface.
-* Derives `DinouRoute` dynamically from `DinouRouter.Register` (gracefully falling back to `string` if no types have been generated yet).
-* Types `LinkProps.href`, `LinkProps.to`, `router.push()`, and `router.replace()`.
-* Provides the recursive conditional type `ExtractRouteParams<T>`, which infers route parameters from template strings without needing runtime code.
+
+#### 🌟 The 4 Core Types for Developers:
+| Exported Type | Primary Purpose | Real-World Example |
+| :--- | :--- | :--- |
+| **`PageProps<T>`** | For React Page components (`page.tsx`) | `BlogPost({ params }: PageProps<"/blog/[slug]">)` |
+| **`LayoutProps<T>`** | For React Layout components (`layout.tsx`) | `BlogLayout({ children, params }: LayoutProps<"/blog/[slug]">)` |
+| **`RouteParams<T>`** | For pure functions and services (`getProps`, `error.tsx`, helpers) | `getProps(params: RouteParams<"/blog/[slug]">)` |
+| **`DinouRoute`** | For URL props, `<Link>`, `useRouter()`, and custom components | `interface NavProps { href: DinouRoute }` |
+
+#### 🔧 Internal Types Exported for TypeScript Compiler Plumbing:
+* **`DinouRouter.Register`**: Extensible interface required for TypeScript *Module Augmentation*. TypeScript strictly forbids augmenting unexported interfaces from external declaration files.
+* **`DinouRoutePattern`**: The union of all route folder patterns (e.g. `"/blog/[slug]"`). Exported because `PageProps<T extends DinouRoutePattern>` requires its generic constraint to be exported to prevent TypeScript *private name* errors (TS4058).
+* **`ExtractRouteParams<T>`**: The recursive conditional type (`${infer Start}/${infer Rest}`) that acts as fallback parser when types are not yet generated.
 
 ### 4. Automatic Project Integration (`dinou-env.d.ts`)
 * The generator ensures that [dinou-env.d.ts](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou-env.d.ts) includes:
@@ -174,15 +191,16 @@ export default function SearchPage({ params }: PageProps<"/search">) {
 }
 ```
 
-In server-side `page_functions.ts` files, you can access the request's query parameters via `getContext()`:
+In server-side `page_functions.ts` files, you can access the request's query parameters via `getContext()` and strictly type route parameters using `RouteParams`:
 
 ```typescript
-import { getContext } from "dinou";
+import { getContext, type RouteParams } from "dinou";
 
-export async function getProps(params: any) {
+export async function getProps(params: RouteParams<"/blog/[slug]">) {
   const ctx = getContext();
   const query = ctx.req?.query; // { q: "..." }
   return {
+    postSlug: params.slug, // ✅ Strongly typed without `any`
     initialQuery: query?.q ?? "",
   };
 }
@@ -207,20 +225,21 @@ export default function BlogPost({ params }: PageProps<"/blog/[slug]">) {
 ### Typing Error Boundaries (`error.tsx`) without `any`
 In Dinou, error boundary components (`error.tsx`, including parallel slot errors `@slot/error.tsx`) receive exactly two props:
 - `error`: The caught error object, which structurally satisfies the standard TypeScript `Error` interface (`{ message: string; name: string; stack?: string }`).
-- `params`: The route segment's dynamic parameters.
+- `params`: The route segment's dynamic parameters, typed using `RouteParams<T>`.
 
-You can type error pages cleanly by extending `PageProps`:
+You can type error pages cleanly with `RouteParams`:
 
 ```tsx
 "use client";
 
-import { useRouter, type PageProps } from "dinou";
+import { useRouter, type RouteParams } from "dinou";
 
-interface ErrorPageProps extends PageProps<"/blog/[slug]"> {
+interface BlogPostErrorProps {
   error: Error;
+  params: RouteParams<"/blog/[slug]">;
 }
 
-export default function BlogPostError({ params, error }: ErrorPageProps) {
+export default function BlogPostError({ params, error }: BlogPostErrorProps) {
   const router = useRouter();
 
   return (
@@ -237,6 +256,34 @@ export default function BlogPostError({ params, error }: ErrorPageProps) {
 > **Key Differences from Other Frameworks:**
 > * In Next.js, `error.tsx` must be a Client Component and receives `{ error, reset }`.
 > * In Dinou, `error.tsx` can be a **Server Component or a Client Component**. Dinou passes `{ error, params }`. To retry or re-render, use `useRouter().refresh()` or standard browser navigation.
+
+### Creating Custom Navigation Components with `DinouRoute`
+When building reusable navigation components (like styled navigation buttons, sidebar menus, or breadcrumbs), type the `href` or `to` prop with `DinouRoute`. Your custom component will automatically inherit instant autocompletion and compile-time dead-link validation:
+
+```tsx
+import type { DinouRoute } from "dinou";
+import { Link } from "dinou";
+
+interface NavButtonProps {
+  href: DinouRoute; // 👈 Inherits full autocompletion and route validation!
+  label: string;
+}
+
+export function NavButton({ href, label }: NavButtonProps) {
+  return (
+    <Link href={href} className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white">
+      {label}
+    </Link>
+  );
+}
+
+// Usage in an application:
+const menu: { label: string; href: DinouRoute }[] = [
+  { label: "Dashboard", href: "/demo" },          // ✅ Autocompleted
+  { label: "Cookies", href: "/demo/cookies" },    // ✅ Autocompleted
+  // { label: "Broken", href: "/invalid-path" }, // ❌ TypeScript compile error!
+];
+```
 
 ### Dynamic Navigation with Typed Interpolation
 ```tsx
