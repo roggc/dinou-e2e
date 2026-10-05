@@ -454,7 +454,6 @@ export type RouteParams<T extends string = string> =
  */
 export interface PageProps<T extends DinouRoutePattern = DinouRoutePattern> {
   params: RouteParams<T>;
-  searchParams?: Record<string, string | string[] | undefined>;
 }
 
 /**

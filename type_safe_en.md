@@ -160,17 +160,31 @@ flowchart TD
 
 ## 💡 5. Advanced Usage Examples
 
-### Working with Query Parameters (`searchParams`)
-`PageProps` includes typed access to search parameters:
-```tsx
-import type { PageProps } from "dinou";
+### Working with Query Parameters (`useSearchParams`)
+In Dinou, pages do not receive `searchParams` via props. Instead, you access query parameters using the official `useSearchParams()` hook (fully compatible in both **Server Components** and **Client Components**):
 
-export default function SearchPage({ 
-  params, 
-  searchParams 
-}: PageProps<"/search">) {
-  const query = searchParams?.q; // string | string[] | undefined
+```tsx
+import { useSearchParams, type PageProps } from "dinou";
+
+export default function SearchPage({ params }: PageProps<"/search">) {
+  const searchParams = useSearchParams();
+  const query = searchParams.get("q"); // string | null
+
   return <div>Searching for: {query}</div>;
+}
+```
+
+In server-side `page_functions.ts` files, you can access the request's query parameters via `getContext()`:
+
+```typescript
+import { getContext } from "dinou";
+
+export async function getProps(params: any) {
+  const ctx = getContext();
+  const query = ctx.req?.query; // { q: "..." }
+  return {
+    initialQuery: query?.q ?? "",
+  };
 }
 ```
 
