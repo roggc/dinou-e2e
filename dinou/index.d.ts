@@ -67,8 +67,8 @@ export interface ResponseProxy {
   /**
    * Sends commands to the main process to set the status and redirect.
    */
-  redirect(status: number, url: string): void;
-  redirect(url: string): void;
+  redirect(status: number, url: DinouRoute): void;
+  redirect(url: DinouRoute): void;
   status(code: number): void;
 }
 
@@ -109,6 +109,11 @@ export interface RequestContextStore {
    * Platform execution context (Cloudflare ctx, waitUntil, etc.).
    */
   ctx?: any;
+
+  /**
+   * Raw platform execution context wrapper.
+   */
+  platformContext?: any;
 
   /**
    * Any custom properties attached to context by plugins (e.g., context.user, context.auth).
@@ -251,14 +256,19 @@ export interface RouteSegmentConfig<TParams = any, TProps = any> {
 }
 
 /**
+ * Helper to resolve params type from a route pattern string or an explicit params object.
+ */
+export type ResolveParams<T> = T extends string ? RouteParams<T> : T;
+
+/**
  * Type-safe interface representing the available exports in `page_functions.ts`.
  */
-export type PageFunctions<TParams = any, TProps = any> = RouteSegmentConfig<TParams, TProps>;
+export type PageFunctions<T = any, TProps = any> = RouteSegmentConfig<ResolveParams<T>, TProps>;
 
 /**
  * Type-safe interface representing the available exports in `layout_functions.ts`.
  */
-export type LayoutFunctions<TParams = any, TProps = any> = RouteSegmentConfig<TParams, TProps>;
+export type LayoutFunctions<T = any, TProps = any> = RouteSegmentConfig<ResolveParams<T>, TProps>;
 
 /**
  * Type-safe configuration helper for dinou.config.js / dinou.config.mjs.
@@ -279,6 +289,13 @@ export declare function defineConfig(config: DinouConfig): DinouConfig;
  */
 export declare function getContext(): RequestContextStore | undefined;
 
+/**
+ * Sets the current request context for the active execution scope.
+ * Used primarily by server adapters, custom servers, and testing environments.
+ * @param ctx - The request context store to activate.
+ */
+export declare function setCurrentContext(ctx: RequestContextStore | any): void;
+
 import type { ReactNode } from "react";
 
 // ====================================================================
@@ -290,7 +307,7 @@ import type { ReactNode } from "react";
  */
 export interface ClientRedirectProps {
   /** The destination URL to navigate to. */
-  to: string;
+  to: DinouRoute;
 }
 
 /**
@@ -317,11 +334,11 @@ export declare function ClientRedirect(props: ClientRedirectProps): ReactNode;
  * return <div>Welcome {user.name}</div>;
  * }
  */
-export declare function redirect(destination: string): ReactNode;
+export declare function redirect(destination: DinouRoute): ReactNode;
 
 /**
- * A Client Component hook that lets you read the current URL's pathname.
- * This hook triggers a re-render when the route changes.
+ * Universal hook (works in both Server Components and Client Components) that lets you read the current URL's pathname.
+ * On the client, this hook triggers a re-render when the route changes.
  *
  * @returns {string} The current pathname (e.g., "/dashboard") without search parameters.
  * @example
@@ -331,8 +348,8 @@ export declare function redirect(destination: string): ReactNode;
 export declare function usePathname(): string;
 
 /**
- * A Client Component hook that lets you read the current URL's search parameters.
- * This hook triggers a re-render when the route changes.
+ * Universal hook (works in both Server Components and Client Components) that lets you read the current URL's search parameters.
+ * On the client, this hook triggers a re-render when the route changes.
  *
  * @returns {URLSearchParams} A read-only version of the standard URLSearchParams interface.
  * @example
@@ -452,9 +469,12 @@ export type RouteParams<T extends string = string> =
  *   return <h1>Post {params.id}</h1>;
  * }
  */
-export interface PageProps<T extends DinouRoutePattern = DinouRoutePattern> {
+export type PageProps<
+  T extends DinouRoutePattern = DinouRoutePattern,
+  TProps = {}
+> = {
   params: RouteParams<T>;
-}
+} & TProps;
 
 /**
  * Props for Dinou Layout components.
@@ -464,9 +484,29 @@ export interface PageProps<T extends DinouRoutePattern = DinouRoutePattern> {
  *   return <div>{children}</div>;
  * }
  */
-export interface LayoutProps<T extends DinouRoutePattern = DinouRoutePattern> {
+export type LayoutProps<
+  T extends DinouRoutePattern = DinouRoutePattern,
+  TProps = {}
+> = {
   children: React.ReactNode;
   params: RouteParams<T>;
+} & TProps;
+
+/**
+ * Props for Dinou Error boundary components (`error.tsx`).
+ * 
+ * @example
+ * export default function ErrorPage({ params, error }: ErrorProps<"/blog/[id]">) {
+ *   return <div>Error: {error.message}</div>;
+ * }
+ */
+export interface ErrorProps<T extends DinouRoutePattern = DinouRoutePattern> {
+  params: RouteParams<T>;
+  error: {
+    message: string;
+    name?: string;
+    stack?: string;
+  };
 }
 
 export declare function useRouter(): {
