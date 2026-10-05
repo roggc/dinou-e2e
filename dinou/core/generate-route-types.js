@@ -103,14 +103,24 @@ function generateRouteDefinitions(routes) {
 
       dynamicTemplateRoutes.add("`/" + transformedSegments.join("/") + "`");
 
-      // For optional segments, also include the parent path without the optional segment
-      const lastSeg = segments[segments.length - 1];
-      if (lastSeg.startsWith("[[") && lastSeg.endsWith("]]")) {
-        const parentSegments = segments.slice(0, -1);
-        if (parentSegments.length === 0) {
+      // For optional segments ([[foo]] or [[...foo]]), progressively peel off trailing optional
+      // segments to register all valid intermediate route variants (including the base static route).
+      let cur = [...segments];
+      while (cur.length > 0 && cur[cur.length - 1].startsWith("[[") && cur[cur.length - 1].endsWith("]]")) {
+        cur.pop();
+        if (cur.length === 0) {
           staticRoutes.add("/");
-        } else if (!parentSegments.some((s) => s.startsWith("[") && s.endsWith("]"))) {
-          staticRoutes.add("/" + parentSegments.join("/"));
+        } else if (!cur.some((s) => s.startsWith("[") && s.endsWith("]"))) {
+          staticRoutes.add("/" + cur.join("/"));
+        } else {
+          const transformed = cur.map((seg) => {
+            if (seg.startsWith("[[...") && seg.endsWith("]]")) return "${string}";
+            if (seg.startsWith("[[") && seg.endsWith("]]")) return "${string | number}";
+            if (seg.startsWith("[...") && seg.endsWith("]")) return "${string}";
+            if (seg.startsWith("[") && seg.endsWith("]")) return "${string | number}";
+            return seg;
+          });
+          dynamicTemplateRoutes.add("`/" + transformed.join("/") + "`");
         }
       }
     }
