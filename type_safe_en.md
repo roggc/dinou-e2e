@@ -263,6 +263,43 @@ export function ProductCard({ product }: { product: Product }) {
 }
 ```
 
+### ⚠️ Trailing Slashes & TypeScript Template Literal Caveat
+
+> [!WARNING]
+> **Be cautious with trailing slashes in dynamic links!**
+>
+> In TypeScript, template literal types evaluate `${string}` as matching *any* string, including the empty string `""` (since `"" extends string` is `true`).
+>
+> **The scenario:**
+> Consider a nested route such as `src/t-groups-params/[id]/(foo)/[slug]/page.tsx`, whose generated template literal type is:
+> ```typescript
+> `/t-groups-params/${string | number}/${string | number}`
+> ```
+> If a developer mistakenly leaves off the second parameter but adds a trailing slash:
+> ```tsx
+> // ⚠️ TypeScript compiles without errors!
+> <Link href={`/t-groups-params/${id}/`}>View</Link>
+> ```
+> TypeScript matches:
+> 1. The first `${string | number}` with `id`.
+> 2. The literal `/` with the trailing slash.
+> 3. The second `${string | number}` (`slug`) with the empty string `""`!
+>
+> **Runtime impact (404 Not Found):**
+> Dinou normalizes trailing slashes at runtime, meaning `/t-groups-params/123/` is resolved as `/t-groups-params/123`. Because no `page.tsx` exists at the parent segment `/t-groups-params/[id]`, this will result in a **404 Not Found** response in the browser.
+>
+> **Why doesn't Dinou enforce this in the type system?**
+> Preventing this in TypeScript would require making `<Link>` and router methods generic and applying complex recursive conditional types to forbid trailing slashes. This would severely degrade IDE IntelliSense performance (autocomplete lag) and increase `tsc` build times in medium-to-large codebases. Major frameworks like Next.js (`typedRoutes`) make the exact same engineering trade-off.
+>
+> **Best practice:**
+> * Avoid adding trailing slashes when constructing dynamic URLs.
+> * Notice that when written **without** the trailing slash:
+>   ```tsx
+>   // ❌ TypeScript correctly flags this with a compile-time error!
+>   <Link href={`/t-groups-params/${id}`}>View</Link>
+>   ```
+>   TypeScript accurately detects the missing second parameter and prevents compilation.
+
 ---
 
 ## 🛡️ 6. Backward Compatibility & Zero-Runtime Guarantee

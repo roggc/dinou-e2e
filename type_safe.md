@@ -263,6 +263,43 @@ export function ItemCard({ item }: { item: Item }) {
 }
 ```
 
+### ⚠️ Barras Finales (Trailing Slashes) y Limitación de Template Literals en TypeScript
+
+> [!WARNING]
+> **¡Cuidado con las barras finales (`/`) en rutas dinámicas!**
+>
+> En TypeScript, los *template literal types* consideran que `${string}` encaja con *cualquier* cadena, incluida la cadena vacía `""` (ya que `"" extends string` es `true`).
+>
+> **El escenario:**
+> Imagina una ruta anidada con múltiples parámetros como `src/t-groups-params/[id]/(foo)/[slug]/page.tsx`, cuya plantilla generada es:
+> ```typescript
+> `/t-groups-params/${string | number}/${string | number}`
+> ```
+> Si se omite por error el segundo parámetro (`slug`) pero se añade una barra al final:
+> ```tsx
+> // ⚠️ ¡TypeScript compila sin emitir ningún error!
+> <Link href={`/t-groups-params/${id}/`}>Ver</Link>
+> ```
+> TypeScript interpreta:
+> 1. El primer `${string | number}` coincide con `id`.
+> 2. El delimitador literal `/` coincide con la barra final.
+> 3. El segundo `${string | number}` (`slug`) coincide con la cadena vacía `""`.
+>
+> **Impacto en tiempo de ejecución (404 Not Found):**
+> Dinou normaliza las barras finales en tiempo de ejecución, por lo que `/t-groups-params/123/` se resuelve como `/t-groups-params/123`. Dado que no existe ningún `page.tsx` en el segmento intermedio `/t-groups-params/[id]`, la petición devolverá un **404 Not Found** en el navegador.
+>
+> **¿Por qué Dinou no bloquea esto en el sistema de tipos?**
+> Para prohibir esto en TypeScript sería necesario hacer genéricos `<Link>` y los métodos del router, aplicando tipos condicionales recursivos complejos para validar la ausencia de barras finales. Esto degradaría notablemente la velocidad de autocompletado en el IDE (IntelliSense) y ralentizaría la comprobación con `tsc` en proyectos grandes. Frameworks líderes de la industria como Next.js (`typedRoutes`) adoptan exactamente este mismo compromiso de diseño por rendimiento.
+>
+> **Buenas prácticas:**
+> * Evitar añadir barras finales al construir URLs dinámicas.
+> * Observa que cuando se escribe **sin** la barra final:
+>   ```tsx
+>   // ❌ ¡TypeScript detecta el parámetro ausente y emite error de compilación!
+>   <Link href={`/t-groups-params/${id}`}>Ver</Link>
+>   ```
+>   TypeScript comprueba correctamente la ausencia del segundo segmento e impide la compilación.
+
 ---
 
 ## 🛡️ 6. Compatibilidad y Cero Riesgo
