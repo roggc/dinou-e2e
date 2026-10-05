@@ -289,12 +289,6 @@ export declare function defineConfig(config: DinouConfig): DinouConfig;
  */
 export declare function getContext(): RequestContextStore | undefined;
 
-/**
- * Sets the current request context for the active execution scope.
- * Used primarily by server adapters, custom servers, and testing environments.
- * @param ctx - The request context store to activate.
- */
-export declare function setCurrentContext(ctx: RequestContextStore | any): void;
 
 import type { ReactNode } from "react";
 
