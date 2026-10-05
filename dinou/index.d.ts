@@ -423,13 +423,25 @@ export type ExtractRouteParams<Path extends string> =
     : ExtractSegmentParam<Path>;
 
 /**
+ * All known route patterns in the application (e.g. "/blog/[slug]", "/t-params/[[slug]]").
+ * Autocompletes all project routes when typing PageProps<"..." or LayoutProps<"...".
+ */
+export type DinouRoutePattern = DinouRouter.Register extends { params: infer P }
+  ? (keyof P extends string ? keyof P | (keyof P extends `/${infer Rest}` ? Rest : never) : string)
+  : string;
+
+export type CleanRoutePath<T extends string> = T extends `/${string}` ? T : `/${T}`;
+
+/**
  * Resolved route parameter types for a route.
  * Prioritizes the generated route parameters map from .dinou/types/routes.d.ts,
  * and falls back to template literal extraction.
  */
 export type RouteParams<T extends string = string> =
   DinouRouter.Register extends { params: infer P }
-    ? (T extends keyof P ? P[T] : ExtractRouteParams<T>)
+    ? (CleanRoutePath<T> extends keyof P
+        ? P[CleanRoutePath<T>]
+        : (T extends keyof P ? P[T] : ExtractRouteParams<T>))
     : ExtractRouteParams<T>;
 
 /**
@@ -440,7 +452,7 @@ export type RouteParams<T extends string = string> =
  *   return <h1>Post {params.id}</h1>;
  * }
  */
-export interface PageProps<T extends string = string> {
+export interface PageProps<T extends DinouRoutePattern = DinouRoutePattern> {
   params: RouteParams<T>;
   searchParams?: Record<string, string | string[] | undefined>;
 }
@@ -453,7 +465,7 @@ export interface PageProps<T extends string = string> {
  *   return <div>{children}</div>;
  * }
  */
-export interface LayoutProps<T extends string = string> {
+export interface LayoutProps<T extends DinouRoutePattern = DinouRoutePattern> {
   children: React.ReactNode;
   params: RouteParams<T>;
 }

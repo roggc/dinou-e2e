@@ -1,9 +1,7 @@
 "use client";
 
-export default function Page({
-  params: { slug },
-}: {
-  params: { slug: string };
-}) {
-  return <h1>{`Ver Post: ${slug}`}</h1>;
+import type { PageProps } from "dinou";
+
+export default function Page({ params }: PageProps<"/blog/[slug]">) {
+  return <h1>{`Ver Post: ${params.slug}`}</h1>;
 }

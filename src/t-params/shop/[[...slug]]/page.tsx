@@ -1,7 +1,10 @@
 "use client";
 import { useSearchParams } from "dinou";
-export default function Page({ params }: any) {
+import type { PageProps } from "dinou";
+
+export default function Page({ params }: PageProps<"/t-params/shop/[[...slug]]">) {
   const searchParams = useSearchParams();
+  params.slug;
   return (
     <>
       <div>page params: {JSON.stringify(params, null, 2)}</div>
