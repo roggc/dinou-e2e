@@ -111,11 +111,6 @@ export interface RequestContextStore {
   ctx?: any;
 
   /**
-   * Raw platform execution context wrapper.
-   */
-  platformContext?: any;
-
-  /**
    * Any custom properties attached to context by plugins (e.g., context.user, context.auth).
    */
   [key: string]: any;
