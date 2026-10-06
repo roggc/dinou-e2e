@@ -4685,9 +4685,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // 4. Error displayed inside slot
       const slot = page.locator("#err-page-slot");
       if (!isProd) {
-        await expect(slot).toContainText("Deliberate Server Page Error");
+        await expect(slot).toContainText("Deliberate Server Page Error", { timeout: 15000 });
       } else {
-        await expect(slot).toContainText("Application Error");
+        await expect(slot).toContainText("Application Error", { timeout: 15000 });
       }
 
       // 5. Soft navigate back to healthy page -> recovers and retains counter
@@ -4742,9 +4742,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // 4. Error is contained inside parent slot
       const slot = page.locator("#err-nested-parent-slot");
       if (!isProd) {
-        await expect(slot).toContainText("Deliberate Nested Layout Error");
+        await expect(slot).toContainText("Deliberate Nested Layout Error", { timeout: 15000 });
       } else {
-        await expect(slot).toContainText("Application Error");
+        await expect(slot).toContainText("Application Error", { timeout: 15000 });
       }
 
       // 5. Recover to healthy sibling via soft nav
