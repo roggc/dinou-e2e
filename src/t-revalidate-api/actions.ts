@@ -1,9 +1,13 @@
 "use server";
 
-import { revalidatePath, revalidateTag } from "dinou/server";
+import { revalidatePath, revalidatePage, revalidateTag } from "dinou/server";
 
 export async function triggerRevalidatePath() {
   await revalidatePath("/t-revalidate-api");
+}
+
+export async function triggerRevalidatePage() {
+  await revalidatePage("/t-revalidate-api");
 }
 
 export async function triggerRevalidateTag() {

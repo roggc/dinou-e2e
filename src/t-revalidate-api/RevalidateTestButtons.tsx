@@ -3,6 +3,7 @@
 import { useTransition } from "react";
 import {
   triggerRevalidatePath,
+  triggerRevalidatePage,
   triggerRevalidateTag,
   triggerRevalidatePathRelative,
   triggerRevalidatePathNonExistent,
@@ -11,6 +12,7 @@ import {
 
 export default function RevalidateTestButtons() {
   const [isPendingPath, startTransitionPath] = useTransition();
+  const [isPendingPage, startTransitionPage] = useTransition();
   const [isPendingTag, startTransitionTag] = useTransition();
   const [isPendingRel, startTransitionRel] = useTransition();
   const [isPendingNonExistentPath, startTransitionNonExistentPath] = useTransition();
@@ -18,6 +20,7 @@ export default function RevalidateTestButtons() {
 
   const isAnyPending =
     isPendingPath ||
+    isPendingPage ||
     isPendingTag ||
     isPendingRel ||
     isPendingNonExistentPath ||
@@ -32,6 +35,13 @@ export default function RevalidateTestButtons() {
           onClick={() => startTransitionPath(() => triggerRevalidatePath())}
         >
           {isPendingPath ? "Revalidating Path..." : "Revalidate Path"}
+        </button>
+        <button
+          data-testid="reval-page-btn"
+          disabled={isAnyPending}
+          onClick={() => startTransitionPage(() => triggerRevalidatePage())}
+        >
+          {isPendingPage ? "Revalidating Page..." : "Revalidate Page"}
         </button>
         <button
           data-testid="reval-tag-btn"

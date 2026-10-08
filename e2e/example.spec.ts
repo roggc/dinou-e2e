@@ -1353,6 +1353,97 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // 5. Verify no client errors occurred
       expect(consoleErrors).toEqual([]);
     });
+
+    test("revalidatePage refreshes page static cache without touching layout", async ({
+      page,
+    }) => {
+      if (!isProd) test.skip();
+
+      // 1. Go to page and read initial timestamp
+      await page.goto("/t-revalidate-api");
+      await page.waitForSelector('body[data-hydrated="true"]');
+      const time1 = await page.getByTestId("timestamp").innerText();
+      const targetUrl = page.url().split("?")[0];
+
+      // 2. Click revalidate page button
+      const btn = page.getByTestId("reval-page-btn");
+      await btn.click();
+      await expect(btn).toBeEnabled({ timeout: 15000 });
+
+      // 3. Verify it has updated (poll using cache busting)
+      await expect
+        .poll(
+          async () => {
+            const bypassUrl = `${targetUrl}?t=${Date.now()}_${Math.random()}`;
+            await page.goto(bypassUrl);
+            const currentTime = await page.getByTestId("timestamp").innerText();
+            return new Date(currentTime).getTime();
+          },
+          {
+            message: "revalidatePage did not refresh the page cache",
+            timeout: 15000,
+            intervals: [500],
+          }
+        )
+        .toBeGreaterThan(new Date(time1).getTime());
+    });
+
+    test("revalidatePath with { cascade: true } revalidates layout and cascades to child pages", async ({
+      page,
+    }) => {
+      if (!isProd) test.skip();
+
+      // 1. Go to child page and read initial timestamp
+      await page.goto("/t-revalidate-cascade/child");
+      await page.waitForSelector('body[data-hydrated="true"]');
+      const childTime1 = await page.getByTestId("cascade-child-timestamp").innerText();
+      const childUrl = page.url().split("?")[0];
+
+      // 2. Go to parent page and read initial timestamp
+      await page.goto("/t-revalidate-cascade");
+      await page.waitForSelector('body[data-hydrated="true"]');
+      const parentTime1 = await page.getByTestId("cascade-parent-timestamp").innerText();
+      const parentUrl = page.url().split("?")[0];
+
+      // 3. Click cascade revalidate button
+      const btn = page.getByTestId("reval-cascade-btn");
+      await btn.click();
+      await expect(btn).toBeEnabled({ timeout: 15000 });
+
+      // 4. Verify parent page updated
+      await expect
+        .poll(
+          async () => {
+            const bypassUrl = `${parentUrl}?t=${Date.now()}_${Math.random()}`;
+            await page.goto(bypassUrl);
+            const currentTime = await page.getByTestId("cascade-parent-timestamp").innerText();
+            return new Date(currentTime).getTime();
+          },
+          {
+            message: "Cascade revalidation did not refresh parent page cache",
+            timeout: 15000,
+            intervals: [500],
+          }
+        )
+        .toBeGreaterThan(new Date(parentTime1).getTime());
+
+      // 5. Verify child page ALSO updated via cascade
+      await expect
+        .poll(
+          async () => {
+            const bypassUrl = `${childUrl}?t=${Date.now()}_${Math.random()}`;
+            await page.goto(bypassUrl);
+            const currentTime = await page.getByTestId("cascade-child-timestamp").innerText();
+            return new Date(currentTime).getTime();
+          },
+          {
+            message: "Cascade revalidation did not refresh child page cache",
+            timeout: 15000,
+            intervals: [500],
+          }
+        )
+        .toBeGreaterThan(new Date(childTime1).getTime());
+    });
   });
 
   test.describe("Dinou Core: Soft navigation (SPA)", () => {
@@ -3233,6 +3324,49 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // B. El input del cliente DEBE mantener su valor (No hubo Full Reload)
       await expect(page.locator("#client-input")).toHaveValue(clientText);
+    });
+
+    test("Should refresh only page with router.refresh() but refresh layout too with router.refresh({ layout: true })", async ({
+      page,
+    }) => {
+      test.setTimeout(200000);
+      await page.goto("/t-spa-router/refresh-layout");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 100000 });
+
+      // 1. Initial IDs
+      const initialPageId = await page.innerText("#page-random-id");
+      const initialLayoutId = await page.innerText("#layout-random-id");
+
+      // 2. Client state input
+      const testInputText = "Persisted Text Test";
+      await page.fill("#client-refresh-input", testInputText);
+
+      // 3. Test router.refresh() (Page only)
+      await page.click("#btn-refresh-page-only");
+
+      // Page ID must change (in dynamic revalidate = 0, always returns fresh server data)
+      await expect(page.locator("#page-random-id")).not.toHaveText(initialPageId, {
+        timeout: 20000,
+      });
+      // Layout ID must NOT change (stays identical)
+      await expect(page.locator("#layout-random-id")).toHaveText(initialLayoutId);
+      // Input must maintain value
+      await expect(page.locator("#client-refresh-input")).toHaveValue(testInputText);
+
+      // 4. Test router.refresh({ layout: true }) (Page AND Layout)
+      const secondPageId = await page.innerText("#page-random-id");
+      await page.click("#btn-refresh-with-layout");
+
+      // Page ID must change again
+      await expect(page.locator("#page-random-id")).not.toHaveText(secondPageId, {
+        timeout: 20000,
+      });
+      // Layout ID MUST NOW CHANGE TOO!
+      await expect(page.locator("#layout-random-id")).not.toHaveText(initialLayoutId, {
+        timeout: 20000,
+      });
+      // Input must still maintain value
+      await expect(page.locator("#client-refresh-input")).toHaveValue(testInputText);
     });
   });
 
