@@ -89,13 +89,127 @@ export async function updateProduct(id: string, data: any) {
 }
 ```
 
-#### Mecánica Interna:
+#### Mecánica Interna y Artefactos Afectados:
 1. En **Node / Bun (Filesystem):**
    * Copia los artefactos actuales a `page._old.rsc`, `layout._old.rsc` e `index._old.html`.
    * Re-ejecuta `getBuildStaticPage()` y `getGenerateStaticRSC()`.
    * Realiza un renombrado seguro atómico (`safeRename`) sobre `.dinou/dist2/`.
 2. En **Edge Runtime (Cloudflare Workers / Deno KV):**
    * Actualiza el valor en el almacenamiento KV con nuevo `generatedAt = Date.now()`.
+
+#### ¿Revalida `page.tsx`, `layout.tsx` o ambos?
+`revalidatePath(path)` revalida **ambos elementos cuando coexisten en el mismo segmento de ruta**:
+
+* **Página (`page.rsc`):** Se regenera siempre para el segmento especificado.
+* **Layout del segmento (`layout.rsc`):** Si en el mismo directorio de la ruta existe un `layout.tsx`, Dinou comprueba la existencia de `layout.rsc` o `layout._old.rsc` y regenera también su payload RSC de forma atómica.
+* **HTML Completo (`index.html`):** Se re-evalúa el render estático completo (`getGenerateStaticPage()`), el cual envuelve la página dentro de todos sus layouts ancestros hasta el Layout Raíz. El archivo HTML final refleja los cambios de la página y de todos sus layouts.
+
+#### Comportamiento con Layouts Ancestros (Padres) y Navegación SPA
+Considera la siguiente jerarquía de archivos:
+```
+src/
+  layout.tsx              ──► /layout.rsc (Root Layout compartido)
+  dashboard/
+    layout.tsx            ──► /dashboard/layout.rsc (Dashboard Layout compartido)
+    configuracion/
+      page.tsx            ──► /dashboard/configuracion/page.rsc
+```
+
+Si ejecutas:
+```typescript
+await revalidatePath("/dashboard/configuracion");
+```
+
+1. **Se revalida:**
+   * `/dashboard/configuracion/page.rsc` (payload RSC de la página hoja).
+   * `/dashboard/configuracion/index.html` (HTML con todos los layouts embebidos).
+2. **NO se regenera innecesariamente:**
+   * `/dashboard/layout.rsc` ni `/layout.rsc`.
+
+> **¿Por qué este diseño es el correcto?**  
+> En una SPA con React Server Components, los layouts padres son estables y compartidos entre múltiples subrutas. Si cada actualización de una página hoja invalidara el `layout.rsc` padre, el router cliente se vería forzado a re-descargar y re-montar el layout en cada navegación, destruyendo el estado cliente de la barra lateral, reproductores de audio, menús o formularios persistentes.
+
+#### ¿Cómo revalidar un Layout Padre Compartido?
+Cuando los datos propios de un layout compartido cambian (por ejemplo, el menú de navegación o el perfil de usuario en el header):
+
+1. **Revalidando la ruta del layout directamente:**
+   ```typescript
+   await revalidatePath("/dashboard"); // Regenera /dashboard/layout.rsc
+   await revalidatePath("/");          // Regenera /layout.rsc (Root Layout)
+   ```
+2. **Mediante `revalidateTag` (estrategia recomendada):**
+   Declara un tag en `layout_functions.ts`:
+   ```typescript
+   // src/dashboard/layout_functions.ts
+   export const getCacheTags = ["dashboard-shell"];
+   ```
+   E invalídalo cuando proceda:
+   ```typescript
+   await revalidateTag("dashboard-shell");
+   ```
+   Dinou detectará que el tag está asociado a `layout.metadata.json` y ejecutará internamente `revalidateLayout("/dashboard")`.
+
+#### Caso Especial: Revalidar una ruta con `layout.tsx` y `page.tsx` que tiene rutas hijas
+Si tienes la siguiente estructura de carpetas:
+```
+src/
+  dashboard/
+    layout.tsx            ──► /dashboard/layout.rsc (Layout Padre Compartido)
+    page.tsx              ──► /dashboard/page.rsc (Página Home del Dashboard)
+    analytics/
+      page.tsx            ──► /dashboard/analytics/page.rsc (Página Hija)
+    settings/
+      page.tsx            ──► /dashboard/settings/page.rsc (Página Hija)
+```
+
+Y ejecutas:
+```typescript
+await revalidatePath("/dashboard");
+```
+
+**¿Qué ocurre exactamente con las rutas hijas?**
+1. **El Layout Padre (`/dashboard/layout.rsc`) SÍ se regenera:**  
+   Como `/dashboard` contiene un `layout.tsx`, Dinou detecta la existencia de `dist2/dashboard/layout.rsc` y compila una nueva versión del payload RSC del layout de inmediato.
+2. **Impacto Inmediato en Navegación SPA:**  
+   En la navegación SPA, el router cliente identifica que las rutas hijas (`/dashboard/analytics`, `/dashboard/settings`) pertenecen al segmento de layout `/dashboard`. Al navegar hacia ellas, el cliente recibe y renderiza el **nuevo layout padre actualizado**, aplicándose a todos los hijos en tiempo real.
+3. **HTML Estático de Carga Inicial (`index.html`) de los Hijos y el Riesgo de *Hydration Mismatch*:**  
+   * El archivo `dist2/dashboard/index.html` se regenera al instante.
+   * Sin embargo, los archivos `index.html` pre-generados de las páginas hijas (`analytics`, `settings`) conservarán el HTML anterior en disco si solo se llamó a `revalidatePath("/dashboard")`.
+
+#### ⚠️ El Peligro del *Hydration Mismatch* en Cargas Directas (F5)
+Si el layout cambia (por ejemplo, de `"Versión 1"` a `"Versión 2"`) y solo revalidas `/dashboard`:
+1. **En disco:** `dashboard/layout.rsc` tiene `"Versión 2"`, pero `dashboard/analytics/index.html` todavía tiene `"Versión 1"`.
+2. **Si el usuario pulsa F5 o entra directo por URL a `/dashboard/analytics`:**
+   * El navegador descarga el `index.html` viejo y pinta `"Versión 1"`.
+   * El router cliente descarga `dashboard/layout.rsc` con `"Versión 2"` para hidratar la vista.
+   * **💥 Hydration Mismatch:** React 19 detecta que el DOM del servidor (`"Versión 1"`) no coincide con el stream RSC del cliente (`"Versión 2"`). Aunque React 19 recupera el error repintando el nodo, se produce un molesto **parpadeo visual (*flicker*)** y advertencias en consola.
+
+#### 🛡️ La Solución Arquitectónica Definitiva: `revalidateTag` Compartido
+Para evitar completamente este desfase entre el HTML estático de las hijas y el nuevo layout RSC, la convención recomendada en Dinou es compartir una misma etiqueta entre el layout y todas sus páginas hijas:
+
+```typescript
+// src/dashboard/layout_functions.ts
+export const getCacheTags = ["dashboard"];
+
+// src/dashboard/analytics/page_functions.ts
+export const getCacheTags = ["dashboard"];
+
+// src/dashboard/settings/page_functions.ts
+export const getCacheTags = ["dashboard"];
+```
+
+Al actualizar el layout, ejecutas:
+```typescript
+await revalidateTag("dashboard");
+```
+
+Dinou ejecutará la regeneración completa y en paralelo:
+* `dashboard/layout.rsc` ➔ Nuevo Layout RSC.
+* `dashboard/page.rsc` e `index.html` ➔ Página principal y su HTML con el nuevo layout.
+* `dashboard/analytics/page.rsc` e `index.html` ➔ Página de Analytics y su HTML con el nuevo layout.
+* `dashboard/settings/page.rsc` e `index.html` ➔ Página de Settings y su HTML con el nuevo layout.
+
+👉 **Garantía Total:** Tanto las navegaciones suaves en SPA como las cargas duras (F5 o entrada directa por URL) recibirán exactamente el mismo contenido: **0 Hydration Mismatch y 0 parpadeos.**
 
 ---
 
@@ -117,7 +231,45 @@ export async function syncInventory() {
 }
 ```
 
-Dinou examina recursivamente los archivos `metadata.json`, `layout.metadata.json` y `slot.metadata.json` en disco o las claves de metadatos en KV Storage, disparando la revalidación de todas las coincidencias.
+#### ¿Cómo opera internamente `revalidateTag(tag)`?
+Dinou busca de forma recursiva todos los archivos de metadatos asociados a la etiqueta solicitada y ejecuta una acción específica según el tipo de componente:
+
+1. **Si el tag se declaró en `layout_functions.ts`:**
+   * El tag se almacena en `layout.metadata.json`.
+   * Dinou ejecuta internamente **`revalidateLayout(path)`**.
+   * **Alcance:** Regenera **exclusivamente `layout.rsc`**.  
+   * **Ventaja:** No toca `page.rsc` ni `index.html`, ofreciendo una revalidación ultra-rápida y de mínimo coste de CPU para actualizar únicamente el cascarón (shell).
+2. **Si el tag se declaró en `page_functions.ts`:**
+   * El tag se almacena en `metadata.json`.
+   * Dinou ejecuta internamente **`revalidatePath(path)`**.
+   * **Alcance:** Regenera **`page.rsc`** e **`index.html`**.  
+   * Si la página se encuentra en una subcarpeta propia (ej. `/dashboard/analytics`), el layout padre queda totalmente intacto.
+3. **Si el tag se declaró en un `<DinouCacheSlot>`:**
+   * El tag se almacena en `slot.metadata.json`.
+   * Dinou purga únicamente el directorio o clave del slot en cuestión.
+
+---
+
+#### Diferencia Arquitectónica: Node/Bun (Filesystem) vs Cloudflare Workers / Edge (KV Storage)
+
+Existe una sutil diferencia de almacenamiento que conviene tener presente:
+
+* **En Node.js / Bun (Sistema de Archivos):**  
+  Cuando un tag de página ejecuta `revalidatePath("/dashboard")`, como en Node `revalidatePath` inspecciona la carpeta física en disco, si en esa misma carpeta coexiste un `layout.tsx`, regenerará tanto `page.rsc`, `index.html` como `layout.rsc`.
+* **En Cloudflare Workers / Deno KV (Almacenamiento Clave-Valor):**  
+  En KV no hay sistema de archivos jerárquico; cada recurso es un par clave-valor independiente (`dashboard/page.rsc` vs `dashboard/layout.rsc`). Dinou itera las claves y:
+  * Si la clave coincide con `layout.metadata.json` ➔ dispara `revalidateLayout`.
+  * Si la clave coincide con `metadata.json` ➔ dispara `revalidatePath`.
+
+#### Regla de Oro y Buena Práctica Isomórfica:
+Para garantizar que tu aplicación se comporte de manera 100% idéntica y predecible tanto en local con Node como desplegada en Cloudflare Workers o Deno:
+
+1. **Invalidación Quirúrgica del Shell:**  
+   Declara el tag **únicamente en `layout_functions.ts`** (ej: `["dashboard-shell"]`). Solo se recompilará el `layout.rsc`.
+2. **Invalidación Quirúrgica de una Página:**  
+   Declara el tag **únicamente en `page_functions.ts`** de esa página (ej: `["analytics-view"]`). Solo se recompilará esa página concreta y su HTML.
+3. **Invalidación de un Módulo Completo (Layout + Hijas):**  
+   Declara el tag compartido **tanto en `layout_functions.ts` como en `page_functions.ts`** (ej: `["dashboard"]`). De este modo, en cualquier runtime (Node, Bun o Edge KV) Dinou actualizará de forma atómica el layout padre y todas las páginas e HTMLs del módulo.
 
 ---
 
