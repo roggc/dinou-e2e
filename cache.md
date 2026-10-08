@@ -245,23 +245,33 @@ El router cliente de Dinou mantiene dos estructuras en memoria para lograr naveg
 ```tsx
 const router = useRouter();
 
+// 1. Refresco estándar de página (por defecto)
 <button onClick={() => router.refresh()}>
-  Refrescar
+  Refrescar página
+</button>
+
+// 2. Refresco con Layout (página + shell del layout)
+<button onClick={() => router.refresh({ layout: true })}>
+  Refrescar todo (incluye layout)
 </button>
 ```
 
-* **Qué hace:**
-  1. Borra la ruta actual del caché cliente: `pageCache.delete(currentPath)`.
-  2. Borra el layout activo de `layoutCache`: `layoutCache.delete(currentLayoutKey)` para permitir reflejar cambios recientes del shell.
+* **Qué hace por defecto (`router.refresh()`):**
+  1. Borra la página actual del caché cliente: `pageCache.delete(currentPath)`.
+  2. **Preserva intacto `layoutCache`**: No realiza peticiones innecesarias de layout al servidor (1 sola petición RSC en vez de 2), asegurando máxima velocidad y cero perturbación en el shell del layout (menús desplegados, reproductores, etc.).
   3. Dispara `startTransition(() => setVersion(v => v + 1))`.
-  4. Solicita de nuevo el payload de la página (y layout) actual al servidor.
+  4. Solicita de nuevo el payload fresco de la página actual al servidor.
   5. Reconcilia el árbol de componentes React **preservando el estado cliente intacto** (texto escrito en inputs, foco, estados de `useState`, scroll).
+* **Con `{ layout: true }` (`router.refresh({ layout: true })`):**
+  1. Borra `pageCache` de la página actual y además purga el layout activo de `layoutCache`.
+  2. Dispara `startTransition` incrementando tanto la versión de la página como del layout (`layoutVersion`).
+  3. Solicita tanto la página como el layout actualizados al servidor (ideal tras mutaciones globales como cambiar el avatar o la organización activa en el navbar).
 * **Qué NO hace:** **NO** fuerza a que una página estática se convierta en dinámica en el servidor.
 * **Comportamiento según el entorno:**
   * **En Desarrollo:** Todas las rutas son dinámicas; `refresh()` siempre refleja cambios del código o datos.
   * **En Producción:**
     * Si la ruta es **dinámica** (`revalidate = 0`): Refresca con los datos más recientes del servidor.
-    * Si la ruta es **estática** (SSG): El servidor devuelve el mismo payload estático ya generado (o el revalidado si expiró el tiempo de ISR o se usó `revalidatePath`). El estado de los inputs y componentes cliente se preserva sin recarga de página.
+    * Si la ruta es **estática** (SSG): El servidor devuelve el mismo payload estático ya generado (o el revalidado si expiró el tiempo de ISR o se usó `revalidatePath` / `revalidatePage`). El estado de los inputs y componentes cliente se preserva sin recarga de página.
 
 ---
 
@@ -304,5 +314,5 @@ if (shouldCacheISG && !isPprConfig) {
 | **`revalidateTag(tag)`** | Servidor | Server Action / Endpoint | **Sí** (selectivo) | No directo | N/A |
 | **`<Link href="...">`** | Cliente | JSX | No | No (usa `pageCache`) | Sí (Soft Nav) |
 | **`<Link href="..." fresh>`** | Cliente | JSX | No | **Sí** (`pageCache.delete`) | No (nueva página) |
-| **`router.refresh()`** | Cliente | Hook `useRouter()` | No | **Sí** (página y layout) | **Sí** (mantiene inputs/foco) |
+| **`router.refresh()`** | Cliente | Hook `useRouter()` | No | **Sí** (solo página por defecto; layout con `{layout:true}`) | **Sí** (mantiene inputs/foco) |
 | **`router.refreshSlot(id)`** | Cliente | Hook `useRouter()` | No | **Sí** (solo el slot) | **Sí** (el resto de la página no cambia) |
