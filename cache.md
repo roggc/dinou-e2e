@@ -292,13 +292,23 @@ import { DinouCacheSlot } from "dinou";
 
 El router de Dinou (`dinou/core/client.jsx`) gestiona una navegación SPA suave y ultrarrápida.
 
-### 3.1. `pageCache` (La Memoria de la Pestaña)
-```javascript
-const pageCache = new Map(); // url -> Promise<RSCPayload>
-```
-Cuando un usuario hace clic en `<Link href="/dashboard">`:
-* Si `/dashboard` ya se visitó en esa misma sesión, se recupera directamente de `pageCache`.
-* No se realiza ninguna llamada de red (latencia 0ms).
+### 3.1. Las Cachés en Memoria del Router (`pageCache` y `layoutCache`)
+
+El router cliente de Dinou mantiene dos estructuras en memoria para lograr navegaciones instantáneas y sin parpadeos:
+
+1. **`pageCache` (Caché de Páginas):**
+   ```javascript
+   const pageCache = new Map(); // url -> Promise<RSCPayload>
+   ```
+   * Cuando un usuario navega a una ruta ya visitada (ej. `<Link href="/dashboard">`), se recupera directamente de `pageCache`.
+   * **Latencia 0ms:** No se realiza ninguna petición de red al servidor.
+
+2. **`layoutCache` (Preservación de Layouts):**
+   ```javascript
+   const layoutCache = new Map(); // layoutKey -> Promise<RSCPayload>
+   ```
+   * Al navegar entre páginas que comparten el mismo layout (por ejemplo, de `/dashboard/analytics` a `/dashboard/settings`), Dinou comprueba si el `layoutKey` (`/dashboard`) ya existe en `layoutCache`.
+   * **Beneficio fundamental:** El layout **ni se vuelve a descargar por red ni se re-monta en React**. El estado del sidebar, focus, audio en reproducción o inputs dentro del layout se preservan de forma continua e ininterrumpida.
 
 ---
 
