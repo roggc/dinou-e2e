@@ -3114,6 +3114,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // 2. Volver a Home
       await page.click("#go-back");
+      await expect(page).toHaveURL("/t-spa-fresh");
+      await expect(page.locator("#link-cached")).toBeVisible();
 
       // 3. Navegación CACHEADA (Link normal)
       // Al volver a random, debería mostrar el MISMO valor (cache hit)
@@ -3122,6 +3124,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // 4. Volver a Home
       await page.click("#go-back");
+      await expect(page).toHaveURL("/t-spa-fresh");
+      await expect(page.locator("#link-fresh")).toBeVisible();
 
       // 5. Navegación FRESH (Link fresh)
       // Al volver a random, debería mostrar un valor DIFERENTE (cache miss -> new fetch)
