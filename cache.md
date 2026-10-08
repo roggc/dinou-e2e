@@ -74,146 +74,58 @@ export const revalidate = 60; // 60 segundos (ISR)
 
 ---
 
-### 2.2. On-Demand Path Revalidation (`revalidatePath`)
+### 2.2. Revalidación Quirúrgica de Página (`revalidatePage`)
 
-Exportada desde `"dinou/server"`, se utiliza típicamente dentro de **Server Actions** o **Route Handlers** tras mutaciones de datos:
+Exportada desde `"dinou/server"`, se utiliza cuando únicamente ha cambiado el contenido propio de una página y se desea revalidarla sin incurrir en costes de recompilación de layouts:
+
+```typescript
+import { revalidatePage } from "dinou/server";
+
+export async function updateArticle(slug: string) {
+  // Regenera únicamente page.rsc y su index.html
+  await revalidatePage(`/blog/${slug}`);
+}
+```
+
+* **Qué hace:**
+  1. Regenera **`page.rsc`**.
+  2. Regenera **`index.html`** para esa página.
+  3. **No toca ningún `layout.rsc`**, ahorrando CPU en layouts pesados o compartidos.
+  4. En Edge Runtime (Cloudflare KV / Deno KV): actualiza de forma inmediata las claves `page.rsc` e `index.html`.
+
+---
+
+### 2.3. Revalidación de Segmento y Cascada (`revalidatePath`)
+
+Exportada desde `"dinou/server"`, es el método integral de ruta. Revalida todos los elementos presentes en esa carpeta específica:
 
 ```typescript
 import { revalidatePath } from "dinou/server";
 
-export async function updateProduct(id: string, data: any) {
-  await db.product.update({ where: { id }, data });
-  
-  // Fuerza la regeneración estática inmediata de la ruta
-  await revalidatePath(`/productos/${id}`);
-}
-```
-
-#### Mecánica Interna y Artefactos Afectados:
-1. En **Node / Bun (Filesystem):**
-   * Copia los artefactos actuales a `page._old.rsc`, `layout._old.rsc` e `index._old.html`.
-   * Re-ejecuta `getBuildStaticPage()` y `getGenerateStaticRSC()`.
-   * Realiza un renombrado seguro atómico (`safeRename`) sobre `.dinou/dist2/`.
-2. En **Edge Runtime (Cloudflare Workers / Deno KV):**
-   * Actualiza el valor en el almacenamiento KV con nuevo `generatedAt = Date.now()`.
-
-#### ¿Revalida `page.tsx`, `layout.tsx` o ambos?
-`revalidatePath(path)` revalida **ambos elementos cuando coexisten en el mismo segmento de ruta**:
-
-* **Página (`page.rsc`):** Se regenera siempre para el segmento especificado.
-* **Layout del segmento (`layout.rsc`):** Si en el mismo directorio de la ruta existe un `layout.tsx`, Dinou comprueba la existencia de `layout.rsc` o `layout._old.rsc` y regenera también su payload RSC de forma atómica.
-* **HTML Completo (`index.html`):** Se re-evalúa el render estático completo (`getGenerateStaticPage()`), el cual envuelve la página dentro de todos sus layouts ancestros hasta el Layout Raíz. El archivo HTML final refleja los cambios de la página y de todos sus layouts.
-
-#### Comportamiento con Layouts Ancestros (Padres) y Navegación SPA
-Considera la siguiente jerarquía de archivos:
-```
-src/
-  layout.tsx              ──► /layout.rsc (Root Layout compartido)
-  dashboard/
-    layout.tsx            ──► /dashboard/layout.rsc (Dashboard Layout compartido)
-    configuracion/
-      page.tsx            ──► /dashboard/configuracion/page.rsc
-```
-
-Si ejecutas:
-```typescript
-await revalidatePath("/dashboard/configuracion");
-```
-
-1. **Se revalida:**
-   * `/dashboard/configuracion/page.rsc` (payload RSC de la página hoja).
-   * `/dashboard/configuracion/index.html` (HTML con todos los layouts embebidos).
-2. **NO se regenera innecesariamente:**
-   * `/dashboard/layout.rsc` ni `/layout.rsc`.
-
-> **¿Por qué este diseño es el correcto?**  
-> En una SPA con React Server Components, los layouts padres son estables y compartidos entre múltiples subrutas. Si cada actualización de una página hoja invalidara el `layout.rsc` padre, el router cliente se vería forzado a re-descargar y re-montar el layout en cada navegación, destruyendo el estado cliente de la barra lateral, reproductores de audio, menús o formularios persistentes.
-
-#### ¿Cómo revalidar un Layout Padre Compartido?
-Cuando los datos propios de un layout compartido cambian (por ejemplo, el menú de navegación o el perfil de usuario en el header):
-
-1. **Revalidando la ruta del layout directamente:**
-   ```typescript
-   await revalidatePath("/dashboard"); // Regenera /dashboard/layout.rsc
-   await revalidatePath("/");          // Regenera /layout.rsc (Root Layout)
-   ```
-2. **Mediante `revalidateTag` (estrategia recomendada):**
-   Declara un tag en `layout_functions.ts`:
-   ```typescript
-   // src/dashboard/layout_functions.ts
-   export const getCacheTags = ["dashboard-shell"];
-   ```
-   E invalídalo cuando proceda:
-   ```typescript
-   await revalidateTag("dashboard-shell");
-   ```
-   Dinou detectará que el tag está asociado a `layout.metadata.json` y ejecutará internamente `revalidateLayout("/dashboard")`.
-
-#### Caso Especial: Revalidar una ruta con `layout.tsx` y `page.tsx` que tiene rutas hijas
-Si tienes la siguiente estructura de carpetas:
-```
-src/
-  dashboard/
-    layout.tsx            ──► /dashboard/layout.rsc (Layout Padre Compartido)
-    page.tsx              ──► /dashboard/page.rsc (Página Home del Dashboard)
-    analytics/
-      page.tsx            ──► /dashboard/analytics/page.rsc (Página Hija)
-    settings/
-      page.tsx            ──► /dashboard/settings/page.rsc (Página Hija)
-```
-
-Y ejecutas:
-```typescript
+// 1. Revalidación estándar del segmento
 await revalidatePath("/dashboard");
+
+// 2. Revalidación con Cascada (propaga a todas las páginas hijas)
+await revalidatePath("/dashboard", { cascade: true });
 ```
 
-**¿Qué ocurre exactamente con las rutas hijas?**
-1. **El Layout Padre (`/dashboard/layout.rsc`) SÍ se regenera:**  
-   Como `/dashboard` contiene un `layout.tsx`, Dinou detecta la existencia de `dist2/dashboard/layout.rsc` y compila una nueva versión del payload RSC del layout de inmediato.
-2. **Impacto Inmediato en Navegación SPA:**  
-   En la navegación SPA, el router cliente identifica que las rutas hijas (`/dashboard/analytics`, `/dashboard/settings`) pertenecen al segmento de layout `/dashboard`. Al navegar hacia ellas, el cliente recibe y renderiza el **nuevo layout padre actualizado**, aplicándose a todos los hijos en tiempo real.
-3. **HTML Estático de Carga Inicial (`index.html`) de los Hijos y el Riesgo de *Hydration Mismatch*:**  
-   * El archivo `dist2/dashboard/index.html` se regenera al instante.
-   * Sin embargo, los archivos `index.html` pre-generados de las páginas hijas (`analytics`, `settings`) conservarán el HTML anterior en disco si solo se llamó a `revalidatePath("/dashboard")`.
+#### Artefactos Afectados en `revalidatePath(path)`:
+* **Página (`page.rsc`):** Se regenera si existe en esa carpeta.
+* **Layout del segmento (`layout.rsc`):** Si en esa misma carpeta existe un `layout.tsx`, se regenera de forma atómica tanto en Node como en Cloudflare KV (paridad 100%).
+* **HTML Completo (`index.html`):** Se re-evalúa el render estático completo (`getGenerateStaticPage()`).
 
-#### ⚠️ El Peligro del *Hydration Mismatch* en Cargas Directas (F5)
-Si el layout cambia (por ejemplo, de `"Versión 1"` a `"Versión 2"`) y solo revalidas `/dashboard`:
-1. **En disco:** `dashboard/layout.rsc` tiene `"Versión 2"`, pero `dashboard/analytics/index.html` todavía tiene `"Versión 1"`.
-2. **Si el usuario pulsa F5 o entra directo por URL a `/dashboard/analytics`:**
-   * El navegador descarga el `index.html` viejo y pinta `"Versión 1"`.
-   * El router cliente descarga `dashboard/layout.rsc` con `"Versión 2"` para hidratar la vista.
-   * **💥 Hydration Mismatch:** React 19 detecta que el DOM del servidor (`"Versión 1"`) no coincide con el stream RSC del cliente (`"Versión 2"`). Aunque React 19 recupera el error repintando el nodo, se produce un molesto **parpadeo visual (*flicker*)** y advertencias en consola.
+#### Revalidación en Cascada: `{ cascade: true }`
+Cuando se pasa `{ cascade: true }`:
+1. Dinou revalida la ruta actual `/dashboard` (`layout.rsc`, `page.rsc` e `index.html`).
+2. **Condición de seguridad:** La cascada **solo se activa si en esa ruta existe un layout que haya sido revalidado**. Si en la ruta no hay layout, no hay nada compartido que propagar y no se ejecuta ninguna cascada innecesaria.
+3. **Propagación:** Si se revalidó un layout, Dinou recorre recursivamente todas las subcarpetas hijas (`/dashboard/analytics`, `/dashboard/settings`, etc.) y ejecuta internamente **`revalidatePage(childPath)`** en cada una.
 
-#### 🛡️ La Solución Arquitectónica Definitiva: `revalidateTag` Compartido
-Para evitar completamente este desfase entre el HTML estático de las hijas y el nuevo layout RSC, la convención recomendada en Dinou es compartir una misma etiqueta entre el layout y todas sus páginas hijas:
-
-```typescript
-// src/dashboard/layout_functions.ts
-export const getCacheTags = ["dashboard"];
-
-// src/dashboard/analytics/page_functions.ts
-export const getCacheTags = ["dashboard"];
-
-// src/dashboard/settings/page_functions.ts
-export const getCacheTags = ["dashboard"];
-```
-
-Al actualizar el layout, ejecutas:
-```typescript
-await revalidateTag("dashboard");
-```
-
-Dinou ejecutará la regeneración completa y en paralelo:
-* `dashboard/layout.rsc` ➔ Nuevo Layout RSC.
-* `dashboard/page.rsc` e `index.html` ➔ Página principal y su HTML con el nuevo layout.
-* `dashboard/analytics/page.rsc` e `index.html` ➔ Página de Analytics y su HTML con el nuevo layout.
-* `dashboard/settings/page.rsc` e `index.html` ➔ Página de Settings y su HTML con el nuevo layout.
-
-👉 **Garantía Total:** Tanto las navegaciones suaves en SPA como las cargas duras (F5 o entrada directa por URL) recibirán exactamente el mismo contenido: **0 Hydration Mismatch y 0 parpadeos.**
+> **¿Qué problema resuelve `{ cascade: true }`?**  
+> Elimina de raíz el peligro del **Hydration Mismatch** en recargas duras (F5 o acceso directo por URL). Al actualizar un layout padre y propagar la cascada a todas las páginas hijas, sus archivos estáticos `index.html` quedan horneados con el nuevo layout, garantizando coincidencia total con el stream RSC y 0 parpadeos visuales.
 
 ---
 
-### 2.3. On-Demand Tag Revalidation (`revalidateTag`)
+### 2.4. On-Demand Tag Revalidation (`revalidateTag`)
 
 Permite asociar etiquetas a páginas, layouts o fragmentos y purgarlas de forma transversal:
 
@@ -250,30 +162,29 @@ Dinou busca de forma recursiva todos los archivos de metadatos asociados a la et
 
 ---
 
-#### Diferencia Arquitectónica: Node/Bun (Filesystem) vs Cloudflare Workers / Edge (KV Storage)
+#### Paridad Total entre Runtimes: Node/Bun (Filesystem) vs Cloudflare Workers / Edge (KV Storage)
 
-Existe una sutil diferencia de almacenamiento que conviene tener presente:
+Dinou garantiza un comportamiento 100% isomórfico entre entornos con sistema de archivos (Node.js / Bun) y entornos Edge serverless con almacenamiento clave-valor (Cloudflare KV / Deno KV):
 
-* **En Node.js / Bun (Sistema de Archivos):**  
-  Cuando un tag de página ejecuta `revalidatePath("/dashboard")`, como en Node `revalidatePath` inspecciona la carpeta física en disco, si en esa misma carpeta coexiste un `layout.tsx`, regenerará tanto `page.rsc`, `index.html` como `layout.rsc`.
-* **En Cloudflare Workers / Deno KV (Almacenamiento Clave-Valor):**  
-  En KV no hay sistema de archivos jerárquico; cada recurso es un par clave-valor independiente (`dashboard/page.rsc` vs `dashboard/layout.rsc`). Dinou itera las claves y:
-  * Si la clave coincide con `layout.metadata.json` ➔ dispara `revalidateLayout`.
-  * Si la clave coincide con `metadata.json` ➔ dispara `revalidatePath`.
+* **`revalidatePage(path)`:** En ambos entornos regenera únicamente `page.rsc` e `index.html`.
+* **`revalidatePath(path)`:** En ambos entornos regenera `page.rsc`, `index.html` y **`layout.rsc`** (si en esa carpeta existe layout). En Edge KV, Dinou comprueba la existencia de la clave `layout.rsc` / `layout.metadata.json` para dicho segmento y dispara `revalidateLayout` de forma coordinada.
+* **`revalidatePath(path, { cascade: true })`:** En ambos entornos propaga en cascada `revalidatePage` a todas las rutas hijas si se revalidó un layout.
+* **`revalidateTag(tag)`:** 
+  * Si el tag está en un layout (`layout_functions.ts`), regenera únicamente `layout.rsc`.
+  * Si el tag está en una página (`page_functions.ts`), regenera `page.rsc` e `index.html`.
+  * Si el tag está en un slot (`<DinouCacheSlot>`), purga únicamente dicho fragmento.
 
-#### Regla de Oro y Buena Práctica Isomórfica:
-Para garantizar que tu aplicación se comporte de manera 100% idéntica y predecible tanto en local con Node como desplegada en Cloudflare Workers o Deno:
-
+#### Regla de Oro y Buenas Prácticas de Invalidación:
 1. **Invalidación Quirúrgica del Shell:**  
    Declara el tag **únicamente en `layout_functions.ts`** (ej: `["dashboard-shell"]`). Solo se recompilará el `layout.rsc`.
 2. **Invalidación Quirúrgica de una Página:**  
-   Declara el tag **únicamente en `page_functions.ts`** de esa página (ej: `["analytics-view"]`). Solo se recompilará esa página concreta y su HTML.
+   Usa `revalidatePage("/ruta")` o declara el tag **únicamente en `page_functions.ts`** de esa página (ej: `["analytics-view"]`). Solo se recompilará esa página concreta y su HTML.
 3. **Invalidación de un Módulo Completo (Layout + Hijas):**  
-   Declara el tag compartido **tanto en `layout_functions.ts` como en `page_functions.ts`** (ej: `["dashboard"]`). De este modo, en cualquier runtime (Node, Bun o Edge KV) Dinou actualizará de forma atómica el layout padre y todas las páginas e HTMLs del módulo.
+   Usa `revalidatePath("/dashboard", { cascade: true })` o declara un tag compartido **tanto en `layout_functions.ts` como en las `page_functions.ts` de las hijas** (ej: `["dashboard"]`). De este modo, en cualquier runtime Dinou actualizará de forma atómica el layout padre y todas las páginas e HTMLs del módulo, garantizando 0 Hydration Mismatch.
 
 ---
 
-### 2.4. Segmentación Vertical: Micro-ISR con `<DinouCacheSlot>`
+### 2.5. Segmentación Vertical: Micro-ISR con `<DinouCacheSlot>`
 
 Dinou permite granularidad por componente dentro de una página:
 ```tsx
@@ -341,9 +252,10 @@ const router = useRouter();
 
 * **Qué hace:**
   1. Borra la ruta actual del caché cliente: `pageCache.delete(currentPath)`.
-  2. Dispara `startTransition(() => setVersion(v => v + 1))`.
-  3. Solicita de nuevo el payload de la página actual al servidor.
-  4. Reconcilia el árbol de componentes React **preservando el estado cliente intacto** (texto escrito en inputs, foco, estados de `useState`, scroll).
+  2. Borra el layout activo de `layoutCache`: `layoutCache.delete(currentLayoutKey)` para permitir reflejar cambios recientes del shell.
+  3. Dispara `startTransition(() => setVersion(v => v + 1))`.
+  4. Solicita de nuevo el payload de la página (y layout) actual al servidor.
+  5. Reconcilia el árbol de componentes React **preservando el estado cliente intacto** (texto escrito en inputs, foco, estados de `useState`, scroll).
 * **Qué NO hace:** **NO** fuerza a que una página estática se convierta en dinámica en el servidor.
 * **Comportamiento según el entorno:**
   * **En Desarrollo:** Todas las rutas son dinámicas; `refresh()` siempre refleja cambios del código o datos.
@@ -386,9 +298,11 @@ if (shouldCacheISG && !isPprConfig) {
 | Mecanismo | Nivel | ¿Dónde se ejecuta? | ¿Invalida Servidor? | ¿Invalida Cliente? | Preserva Estado Cliente |
 | :--- | :--- | :--- | :---: | :---: | :---: |
 | **`revalidate = N` (ISR)** | Servidor | Declarativo (`page_functions.ts`) | **Sí** (por tiempo SWR) | No directo | N/A |
-| **`revalidatePath(path)`** | Servidor | Server Action / Endpoint | **Sí** (inmediato) | No directo | N/A |
+| **`revalidatePage(path)`** | Servidor | Server Action / Endpoint | **Sí** (solo página/HTML) | No directo | N/A |
+| **`revalidatePath(path)`** | Servidor | Server Action / Endpoint | **Sí** (segmento actual) | No directo | N/A |
+| **`revalidatePath(path, { cascade: true })`** | Servidor | Server Action / Endpoint | **Sí** (layout + hijas) | No directo | N/A |
 | **`revalidateTag(tag)`** | Servidor | Server Action / Endpoint | **Sí** (selectivo) | No directo | N/A |
 | **`<Link href="...">`** | Cliente | JSX | No | No (usa `pageCache`) | Sí (Soft Nav) |
 | **`<Link href="..." fresh>`** | Cliente | JSX | No | **Sí** (`pageCache.delete`) | No (nueva página) |
-| **`router.refresh()`** | Cliente | Hook `useRouter()` | No | **Sí** (`pageCache.delete`) | **Sí** (mantiene inputs/foco) |
+| **`router.refresh()`** | Cliente | Hook `useRouter()` | No | **Sí** (página y layout) | **Sí** (mantiene inputs/foco) |
 | **`router.refreshSlot(id)`** | Cliente | Hook `useRouter()` | No | **Sí** (solo el slot) | **Sí** (el resto de la página no cambia) |

@@ -451,6 +451,14 @@ function Router() {
   const refresh = useCallback(() => {
     const currentPath = window.location.pathname + window.location.search;
     pageCache.delete(currentPath);
+    const currentLayoutKey = getLayoutKey(window.location.pathname);
+    if (currentLayoutKey) {
+      for (const k of layoutCache.keys()) {
+        if (k === currentLayoutKey || k.startsWith(currentLayoutKey + "?")) {
+          layoutCache.delete(k);
+        }
+      }
+    }
     startTransition(() => {
       setVersion((v) => v + 1);
       setNavError(null);
