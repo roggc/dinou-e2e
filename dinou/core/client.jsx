@@ -457,7 +457,7 @@ function Router() {
     const currentPath = window.location.pathname + window.location.search;
     pageCache.delete(currentPath);
 
-    const shouldRefreshLayout = Boolean(options && (options.layout || options.all));
+    const shouldRefreshLayout = Boolean(options && options.layout);
     if (shouldRefreshLayout) {
       const currentLayoutKey = getLayoutKey(window.location.pathname);
       if (currentLayoutKey) {
