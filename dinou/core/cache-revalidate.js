@@ -312,7 +312,7 @@ async function revalidateLayout(cleanPath) {
     const newGenTime = now <= prevGenTime ? prevGenTime + 100 : now;
     currentMeta.generatedAt = newGenTime;
 
-    await storage.set(layoutMetaKey, JSON.stringify(currentMeta), currentMeta);
+    await storage.set(layoutMetaKey, JSON.stringify(currentMeta));
     if (cached && cached.content) {
       await storage.set(layoutRscKey, cached.content, currentMeta);
     }
@@ -356,7 +356,8 @@ async function revalidateTag(tag, options = {}) {
       const targetPaths = new Set();
       const targetLayoutPaths = new Set();
       const targetSlotKeys = new Set();
-      for (const key of allKeys) {
+      for (const rawKey of allKeys) {
+        const key = String(rawKey || "").replace(/\\/g, "/");
         if (key.includes("slot")) {
           try {
             const item = await storage.get(key);
@@ -376,8 +377,11 @@ async function revalidateTag(tag, options = {}) {
               try { meta = JSON.parse(item.content); } catch (e) {}
             }
             if (meta && Array.isArray(meta.tags) && meta.tags.includes(tag)) {
-              const cleanKey = key.replace(/\/(?:layout\.metadata\.json|layout\.rsc)$/, "").replace(/^(?:layout\.metadata\.json|layout\.rsc)$/, "");
-              targetLayoutPaths.add("/" + cleanKey);
+              const cleanKey = key
+                .replace(/\/(?:layout\.metadata\.json|layout\.rsc)$/, "")
+                .replace(/^(?:layout\.metadata\.json|layout\.rsc)$/, "");
+              const normPath = cleanKey ? (cleanKey.startsWith("/") ? cleanKey : "/" + cleanKey) : "/";
+              targetLayoutPaths.add(normPath);
             }
           } catch (e) {}
         } else if (key.endsWith("metadata.json")) {
@@ -388,8 +392,11 @@ async function revalidateTag(tag, options = {}) {
               try { meta = JSON.parse(item.content); } catch (e) {}
             }
             if (meta && Array.isArray(meta.tags) && meta.tags.includes(tag)) {
-              const cleanKey = key.replace(/\/metadata\.json$/, "").replace(/^metadata\.json$/, "");
-              targetPaths.add("/" + cleanKey);
+              const cleanKey = key
+                .replace(/\/metadata\.json$/, "")
+                .replace(/^metadata\.json$/, "");
+              const normPath = cleanKey ? (cleanKey.startsWith("/") ? cleanKey : "/" + cleanKey) : "/";
+              targetPaths.add(normPath);
             }
           } catch (e) {}
         } else if (key.endsWith("index.html")) {
@@ -397,8 +404,11 @@ async function revalidateTag(tag, options = {}) {
             const item = await storage.get(key);
             const meta = item?.metadata;
             if (meta && Array.isArray(meta.tags) && meta.tags.includes(tag)) {
-              const cleanKey = key.replace(/\/index\.html$/, "").replace(/^index\.html$/, "");
-              targetPaths.add("/" + cleanKey);
+              const cleanKey = key
+                .replace(/\/index\.html$/, "")
+                .replace(/^index\.html$/, "");
+              const normPath = cleanKey ? (cleanKey.startsWith("/") ? cleanKey : "/" + cleanKey) : "/";
+              targetPaths.add(normPath);
             }
           } catch (e) {}
         }
