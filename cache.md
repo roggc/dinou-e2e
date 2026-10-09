@@ -151,9 +151,10 @@ Dinou busca de forma recursiva todos los archivos de metadatos asociados a la et
    * **Por defecto (`revalidateTag(tag)`):** Dinou ejecuta internamente **`revalidateLayout(path)`**.
      * **Alcance:** Regenera **exclusivamente `layout.rsc`**.  
      * **Ventaja:** No toca `page.rsc` ni `index.html`, ofreciendo una revalidación ultra-rápida (50ms) y de mínimo coste de CPU para actualizar únicamente el cascarón (shell) en navegaciones SPA, protegiendo al servidor de avalanchas de CPU en catálogos masivos.
+     * **Riesgo conocido de Hydration Mismatch:** Al no tocar `index.html`, una recarga dura (F5 o entrada directa por URL) servirá el HTML estático previo con el layout anterior, produciendo un potencial *Hydration Mismatch* contra el nuevo `layout.rsc`.
    * **Con cascada (`revalidateTag(tag, { cascade: true })`):** Dinou ejecuta internamente **`revalidatePath(path, { cascade: true })`**.
      * **Alcance:** Regenera `layout.rsc` y propaga `revalidatePage` a todas las páginas hijas para hornear el nuevo layout dentro de sus `index.html`.
-     * **Ventaja:** Garantiza **0 Hydration Mismatch** en recargas duras (F5) en módulos acotados (ej. `/dashboard`).
+     * **Ventaja:** Elimina el riesgo y garantiza **0 Hydration Mismatch** en recargas duras (F5) en módulos acotados (ej. `/dashboard`).
 2. **Si el tag se declaró en `page_functions.ts`:**
    * El tag se almacena en `metadata.json`.
    * Dinou ejecuta internamente **`revalidatePage(path)`**.

@@ -1444,6 +1444,135 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         )
         .toBeGreaterThan(new Date(childTime1).getTime());
     });
+
+    test("revalidateTag on page_functions tag invokes revalidatePage (regenerates page without cascading to child)", async ({
+      page,
+    }) => {
+      if (!isProd) test.skip();
+
+      // 1. Read initial child timestamp
+      await page.goto("/t-revalidate-cascade/child");
+      await page.waitForSelector('body[data-hydrated="true"]');
+      const childTime1 = await page.getByTestId("cascade-child-timestamp").innerText();
+      const childUrl = page.url().split("?")[0];
+
+      // 2. Read initial parent timestamp
+      await page.goto("/t-revalidate-cascade");
+      await page.waitForSelector('body[data-hydrated="true"]');
+      const parentTime1 = await page.getByTestId("cascade-parent-timestamp").innerText();
+      const parentUrl = page.url().split("?")[0];
+
+      // 3. Click revalidate tag on page button
+      const btn = page.getByTestId("reval-tag-page-btn");
+      await btn.click();
+      await expect(btn).toBeEnabled({ timeout: 15000 });
+
+      // 4. Verify parent page timestamp updated (revalidatePage was called)
+      await expect
+        .poll(
+          async () => {
+            const bypassUrl = `${parentUrl}?t=${Date.now()}_${Math.random()}`;
+            await page.goto(bypassUrl);
+            const currentTime = await page.getByTestId("cascade-parent-timestamp").innerText();
+            return new Date(currentTime).getTime();
+          },
+          {
+            message: "Page tag revalidation did not refresh parent page cache",
+            timeout: 15000,
+            intervals: [500],
+          }
+        )
+        .toBeGreaterThan(new Date(parentTime1).getTime());
+
+      // 5. Verify child page timestamp was NOT updated (surgical, no cascade)
+      const childBypassUrl = `${childUrl}?t=${Date.now()}_${Math.random()}`;
+      await page.goto(childBypassUrl);
+      const childTime2 = await page.getByTestId("cascade-child-timestamp").innerText();
+      expect(childTime2).toBe(childTime1);
+    });
+
+    test("revalidateTag on layout_functions tag without cascade invokes revalidateLayout (leaves child index.html untouched)", async ({
+      page,
+    }) => {
+      if (!isProd) test.skip();
+
+      // 1. Read initial child index.html timestamp
+      await page.goto("/t-revalidate-cascade/child");
+      await page.waitForSelector('body[data-hydrated="true"]');
+      const childTime1 = await page.getByTestId("cascade-child-timestamp").innerText();
+      const childUrl = page.url().split("?")[0];
+
+      // 2. Click revalidate tag on layout (default / no cascade)
+      await page.goto("/t-revalidate-cascade");
+      await page.waitForSelector('body[data-hydrated="true"]');
+      const btn = page.getByTestId("reval-tag-layout-default-btn");
+      await btn.click();
+      await expect(btn).toBeEnabled({ timeout: 15000 });
+
+      // 3. Verify child index.html was NOT updated (proving revalidateLayout was called and not revalidatePath)
+      await page.waitForTimeout(1000);
+      const bypassChildUrl = `${childUrl}?t=${Date.now()}_${Math.random()}`;
+      await page.goto(bypassChildUrl);
+      const childTimeAfter = await page.getByTestId("cascade-child-timestamp").innerText();
+      expect(childTimeAfter).toBe(childTime1);
+    });
+
+    test("revalidateTag on layout_functions tag with { cascade: true } invokes revalidatePath with cascade (regenerates all child pages)", async ({
+      page,
+    }) => {
+      if (!isProd) test.skip();
+
+      // 1. Read initial child timestamp
+      await page.goto("/t-revalidate-cascade/child");
+      await page.waitForSelector('body[data-hydrated="true"]');
+      const childTime1 = await page.getByTestId("cascade-child-timestamp").innerText();
+      const childUrl = page.url().split("?")[0];
+
+      // 2. Read initial parent timestamp
+      await page.goto("/t-revalidate-cascade");
+      await page.waitForSelector('body[data-hydrated="true"]');
+      const parentTime1 = await page.getByTestId("cascade-parent-timestamp").innerText();
+      const parentUrl = page.url().split("?")[0];
+
+      // 3. Click revalidate tag on layout WITH cascade
+      const btn = page.getByTestId("reval-tag-layout-cascade-btn");
+      await btn.click();
+      await expect(btn).toBeEnabled({ timeout: 15000 });
+
+      // 4. Verify parent page updated
+      await expect
+        .poll(
+          async () => {
+            const bypassUrl = `${parentUrl}?t=${Date.now()}_${Math.random()}`;
+            await page.goto(bypassUrl);
+            const currentTime = await page.getByTestId("cascade-parent-timestamp").innerText();
+            return new Date(currentTime).getTime();
+          },
+          {
+            message: "Layout tag cascade revalidation did not refresh parent page cache",
+            timeout: 15000,
+            intervals: [500],
+          }
+        )
+        .toBeGreaterThan(new Date(parentTime1).getTime());
+
+      // 5. Verify child page ALSO updated via cascade
+      await expect
+        .poll(
+          async () => {
+            const bypassUrl = `${childUrl}?t=${Date.now()}_${Math.random()}`;
+            await page.goto(bypassUrl);
+            const currentTime = await page.getByTestId("cascade-child-timestamp").innerText();
+            return new Date(currentTime).getTime();
+          },
+          {
+            message: "Layout tag cascade revalidation did not refresh child page cache",
+            timeout: 15000,
+            intervals: [500],
+          }
+        )
+        .toBeGreaterThan(new Date(childTime1).getTime());
+    });
   });
 
   test.describe("Dinou Core: Soft navigation (SPA)", () => {
