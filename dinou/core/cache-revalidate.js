@@ -226,8 +226,7 @@ async function revalidatePath(reqPath, options = {}) {
     const cachedLayout = await storage.get(layoutRscKey);
     const cachedLayoutMeta = await storage.get(layoutMetaKey);
     if (cachedLayout || cachedLayoutMeta) {
-      await revalidateLayout(cleanPath);
-      layoutRevalidated = true;
+      layoutRevalidated = await revalidateLayout(cleanPath);
     }
 
     // 3. Cascada en Edge: solo si se solicitó cascade y se revalidó un layout
@@ -253,36 +252,20 @@ async function revalidatePath(reqPath, options = {}) {
 
   const dist2Folder = path.resolve(process.cwd(), ".dinou/dist2");
   const reqPathWithSlash = cleanPath.endsWith("/") ? cleanPath : cleanPath + "/";
-
-  // Check if layout exists to copy to _old
-  const layoutFinalPath = path.join(dist2Folder, reqPathWithSlash, "layout.rsc");
-  const layoutOldPath = path.join(dist2Folder, reqPathWithSlash, "layout._old.rsc");
-  if (existsSync(layoutFinalPath)) {
-    try {
-      copyFileSync(layoutFinalPath, layoutOldPath);
-    } catch (e) {}
-  }
+  const targetDir = path.join(dist2Folder, reqPathWithSlash);
 
   // 1. Revalidar la página
   await revalidatePage(cleanPath);
 
   // 2. Revalidar el layout si existe en este segmento
+  const layoutFinalPath = path.join(targetDir, "layout.rsc");
+  const layoutOldPath = path.join(targetDir, "layout._old.rsc");
   if (existsSync(layoutFinalPath) || existsSync(layoutOldPath)) {
-    try {
-      const layoutRscResult = await getGenerateStaticRSC()(cleanPath, { segment: "layout" });
-      if (layoutRscResult && layoutRscResult.success) {
-        await getSafeRename()(layoutRscResult.tempPath, layoutRscResult.finalPath);
-        layoutRevalidated = true;
-        console.log(`✅ [Revalidate] Successfully revalidated layout for ${cleanPath}`);
-      }
-    } catch (e) {
-      // Ignore layout revalidation error
-    }
+    layoutRevalidated = await revalidateLayout(cleanPath);
   }
 
   // 3. Cascada en Node: solo si se solicitó cascade y se revalidó un layout
   if (isCascade && layoutRevalidated) {
-    const targetDir = path.join(dist2Folder, reqPathWithSlash);
     if (existsSync(targetDir)) {
       const childFiles = await walkMetadataFiles(targetDir);
       const childPaths = new Set();
@@ -334,7 +317,7 @@ async function revalidateLayout(cleanPath) {
       await storage.set(layoutRscKey, cached.content, currentMeta);
     }
     console.log(`✅ [Edge Revalidate] Successfully revalidated layout ${targetPath} (generatedAt: ${newGenTime})`);
-    return;
+    return true;
   }
 
   const dist2Folder = path.resolve(process.cwd(), ".dinou/dist2");
@@ -354,10 +337,12 @@ async function revalidateLayout(cleanPath) {
     if (layoutRscResult && layoutRscResult.success) {
       await getSafeRename()(layoutRscResult.tempPath, layoutRscResult.finalPath);
       console.log(`✅ [Revalidate] Successfully revalidated layout ${targetPath}`);
+      return true;
     }
   } catch (err) {
     console.warn(`⚠️ [Revalidate] Failed to revalidate layout ${targetPath}:`, err.message || err);
   }
+  return false;
 }
 
 async function revalidateTag(tag) {
