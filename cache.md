@@ -148,9 +148,12 @@ Dinou busca de forma recursiva todos los archivos de metadatos asociados a la et
 
 1. **Si el tag se declaró en `layout_functions.ts`:**
    * El tag se almacena en `layout.metadata.json`.
-   * Dinou ejecuta internamente **`revalidateLayout(path)`**.
-   * **Alcance:** Regenera **exclusivamente `layout.rsc`**.  
-   * **Ventaja:** No toca `page.rsc` ni `index.html`, ofreciendo una revalidación ultra-rápida y de mínimo coste de CPU para actualizar únicamente el cascarón (shell).
+   * **Por defecto (`revalidateTag(tag)`):** Dinou ejecuta internamente **`revalidateLayout(path)`**.
+     * **Alcance:** Regenera **exclusivamente `layout.rsc`**.  
+     * **Ventaja:** No toca `page.rsc` ni `index.html`, ofreciendo una revalidación ultra-rápida (50ms) y de mínimo coste de CPU para actualizar únicamente el cascarón (shell) en navegaciones SPA, protegiendo al servidor de avalanchas de CPU en catálogos masivos.
+   * **Con cascada (`revalidateTag(tag, { cascade: true })`):** Dinou ejecuta internamente **`revalidatePath(path, { cascade: true })`**.
+     * **Alcance:** Regenera `layout.rsc` y propaga `revalidatePage` a todas las páginas hijas para hornear el nuevo layout dentro de sus `index.html`.
+     * **Ventaja:** Garantiza **0 Hydration Mismatch** en recargas duras (F5) en módulos acotados (ej. `/dashboard`).
 2. **Si el tag se declaró en `page_functions.ts`:**
    * El tag se almacena en `metadata.json`.
    * Dinou ejecuta internamente **`revalidatePage(path)`**.
@@ -169,18 +172,20 @@ Dinou garantiza un comportamiento 100% isomórfico entre entornos con sistema de
 * **`revalidatePage(path)`:** En ambos entornos regenera únicamente `page.rsc` e `index.html`.
 * **`revalidatePath(path)`:** En ambos entornos regenera `page.rsc`, `index.html` y **`layout.rsc`** (si en esa carpeta existe layout). En Edge KV, Dinou comprueba la existencia de la clave `layout.rsc` / `layout.metadata.json` para dicho segmento y dispara `revalidateLayout` de forma coordinada.
 * **`revalidatePath(path, { cascade: true })`:** En ambos entornos propaga en cascada `revalidatePage` a todas las rutas hijas si se revalidó un layout.
-* **`revalidateTag(tag)`:** 
-  * Si el tag está en un layout (`layout_functions.ts`), regenera únicamente `layout.rsc`.
+* **`revalidateTag(tag, options)`:** 
+  * Si el tag está en un layout (`layout_functions.ts`):
+    * Por defecto regenera únicamente `layout.rsc`.
+    * Con `{ cascade: true }`, regenera `layout.rsc` y propaga en cascada `revalidatePage` a todas las páginas hijas vía `revalidatePath(path, { cascade: true })`.
   * Si el tag está en una página (`page_functions.ts`), regenera exclusivamente `page.rsc` e `index.html` (mediante `revalidatePage`).
   * Si el tag está en un slot (`<DinouCacheSlot>`), purga únicamente dicho fragmento.
 
 #### Regla de Oro y Buenas Prácticas de Invalidación:
 1. **Invalidación Quirúrgica del Shell:**  
-   Declara el tag **únicamente en `layout_functions.ts`** (ej: `["dashboard-shell"]`). Solo se recompilará el `layout.rsc`.
+   Declara el tag **únicamente en `layout_functions.ts`** (ej: `["dashboard-shell"]`) y llama a `revalidateTag("dashboard-shell")`. Solo se recompilará el `layout.rsc` para SPA.
 2. **Invalidación Quirúrgica de una Página:**  
    Usa `revalidatePage("/ruta")` o declara el tag **únicamente en `page_functions.ts`** de esa página (ej: `["analytics-view"]`). Solo se recompilará esa página concreta y su HTML.
 3. **Invalidación de un Módulo Completo (Layout + Hijas):**  
-   Usa `revalidatePath("/dashboard", { cascade: true })` o declara un tag compartido **tanto en `layout_functions.ts` como en las `page_functions.ts` de las hijas** (ej: `["dashboard"]`). De este modo, en cualquier runtime Dinou actualizará de forma atómica el layout padre y todas las páginas e HTMLs del módulo, garantizando 0 Hydration Mismatch.
+   Usa `revalidatePath("/dashboard", { cascade: true })`, o llama a **`revalidateTag("dashboard", { cascade: true })`**, o declara un tag compartido **tanto en `layout_functions.ts` como en las `page_functions.ts` de las hijas**. De este modo, en cualquier runtime Dinou actualizará de forma atómica el layout padre y todas las páginas e HTMLs del módulo, garantizando 0 Hydration Mismatch.
 
 ---
 
@@ -311,7 +316,7 @@ if (shouldCacheISG && !isPprConfig) {
 | **`revalidatePage(path)`** | Servidor | Server Action / Endpoint | **Sí** (solo página/HTML) | No directo | N/A |
 | **`revalidatePath(path)`** | Servidor | Server Action / Endpoint | **Sí** (segmento actual) | No directo | N/A |
 | **`revalidatePath(path, { cascade: true })`** | Servidor | Server Action / Endpoint | **Sí** (layout + hijas) | No directo | N/A |
-| **`revalidateTag(tag)`** | Servidor | Server Action / Endpoint | **Sí** (selectivo) | No directo | N/A |
+| **`revalidateTag(tag, { cascade? })`** | Servidor | Server Action / Endpoint | **Sí** (selectivo o cascada) | No directo | N/A |
 | **`<Link href="...">`** | Cliente | JSX | No | No (usa `pageCache`) | Sí (Soft Nav) |
 | **`<Link href="..." fresh>`** | Cliente | JSX | No | **Sí** (`pageCache.delete`) | No (nueva página) |
 | **`router.refresh()`** | Cliente | Hook `useRouter()` | No | **Sí** (solo página por defecto; layout con `{layout:true}`) | **Sí** (mantiene inputs/foco) |

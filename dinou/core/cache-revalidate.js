@@ -345,8 +345,9 @@ async function revalidateLayout(cleanPath) {
   return false;
 }
 
-async function revalidateTag(tag) {
-  console.log(`[Revalidate] Starting on-demand revalidation for tag: "${tag}"...`);
+async function revalidateTag(tag, options = {}) {
+  const isCascade = options === "layout" || (typeof options === "object" && options?.cascade === true);
+  console.log(`[Revalidate] Starting on-demand revalidation for tag: "${tag}" (cascade: ${isCascade})...`);
 
   if (isEdgeRuntime()) {
     const storage = getStorageAdapter();
@@ -404,7 +405,9 @@ async function revalidateTag(tag) {
       }
       await Promise.all([
         ...Array.from(targetPaths).map((p) => revalidatePage(p)),
-        ...Array.from(targetLayoutPaths).map((p) => revalidateLayout(p)),
+        ...Array.from(targetLayoutPaths).map((p) =>
+          isCascade ? revalidatePath(p, { cascade: true }) : revalidateLayout(p)
+        ),
         ...Array.from(targetSlotKeys).map((k) => storage.delete(k)),
       ]);
     }
@@ -431,7 +434,11 @@ async function revalidateTag(tag) {
         } else if (path.basename(fileOfMeta) === "layout.metadata.json") {
           const relative = path.relative(dist2Folder, path.dirname(fileOfMeta));
           const reqPath = "/" + relative.replace(/\\/g, "/");
-          revalidatePromises.push(revalidateLayout(reqPath));
+          if (isCascade) {
+            revalidatePromises.push(revalidatePath(reqPath, { cascade: true }));
+          } else {
+            revalidatePromises.push(revalidateLayout(reqPath));
+          }
         } else {
           const relative = path.relative(dist2Folder, path.dirname(fileOfMeta));
           const reqPath = "/" + relative.replace(/\\/g, "/");
