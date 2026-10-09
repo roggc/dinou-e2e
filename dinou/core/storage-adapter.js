@@ -53,8 +53,11 @@ class FileSystemStorage extends StorageAdapter {
     if (!fs.existsSync(targetPath)) return null;
     const content = fs.readFileSync(targetPath, "utf8");
 
+    const cleanKey = String(key || "").replace(/\\/g, "/");
+    const isMetaJson = cleanKey.endsWith("metadata.json") || path.basename(targetPath).endsWith("metadata.json");
+
     // If key itself is a metadata json file, its metadata IS its own parsed content
-    if (targetPath.endsWith(".json")) {
+    if (isMetaJson) {
       let metadata = null;
       try {
         metadata = JSON.parse(content);
@@ -64,7 +67,6 @@ class FileSystemStorage extends StorageAdapter {
 
     // Check companion metadata if available
     let metadata = null;
-    const cleanKey = String(key || "").replace(/\\/g, "/");
     const isLayoutKey = cleanKey.includes("layout.rsc") || cleanKey.includes("layout.metadata.json");
     const isSlotKey = cleanKey.includes("slot");
     const metaFileName = isLayoutKey
@@ -92,9 +94,10 @@ class FileSystemStorage extends StorageAdapter {
     }
     fs.writeFileSync(targetPath, content, "utf8");
 
-    // Only write a companion metadata file if targetPath is NOT itself a metadata/JSON file
-    if (metadata && !targetPath.endsWith(".json")) {
-      const cleanKey = String(key || "").replace(/\\/g, "/");
+    // Only write a companion metadata file if targetPath is NOT itself a metadata file
+    const cleanKey = String(key || "").replace(/\\/g, "/");
+    const isMetaJson = cleanKey.endsWith("metadata.json") || path.basename(targetPath).endsWith("metadata.json");
+    if (metadata && !isMetaJson) {
       const isLayoutKey = cleanKey.includes("layout.rsc") || cleanKey.includes("layout.metadata.json");
       const isSlotKey = cleanKey.includes("slot");
       const metaFileName = isLayoutKey
