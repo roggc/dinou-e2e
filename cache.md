@@ -153,9 +153,9 @@ Dinou busca de forma recursiva todos los archivos de metadatos asociados a la et
    * **Ventaja:** No toca `page.rsc` ni `index.html`, ofreciendo una revalidación ultra-rápida y de mínimo coste de CPU para actualizar únicamente el cascarón (shell).
 2. **Si el tag se declaró en `page_functions.ts`:**
    * El tag se almacena en `metadata.json`.
-   * Dinou ejecuta internamente **`revalidatePath(path)`**.
-   * **Alcance:** Regenera **`page.rsc`** e **`index.html`**.  
-   * Si la página se encuentra en una subcarpeta propia (ej. `/dashboard/analytics`), el layout padre queda totalmente intacto.
+   * Dinou ejecuta internamente **`revalidatePage(path)`**.
+   * **Alcance:** Regenera **exclusivamente `page.rsc`** e **`index.html`**.  
+   * **Ventaja:** No toca `layout.rsc` (incluso si la página comparte directorio con un `layout.tsx`), garantizando una revalidación quirúrgica simétrica a la de los layouts y evitando desperdicio de CPU.
 3. **Si el tag se declaró en un `<DinouCacheSlot>`:**
    * El tag se almacena en `slot.metadata.json`.
    * Dinou purga únicamente el directorio o clave del slot en cuestión.
@@ -171,7 +171,7 @@ Dinou garantiza un comportamiento 100% isomórfico entre entornos con sistema de
 * **`revalidatePath(path, { cascade: true })`:** En ambos entornos propaga en cascada `revalidatePage` a todas las rutas hijas si se revalidó un layout.
 * **`revalidateTag(tag)`:** 
   * Si el tag está en un layout (`layout_functions.ts`), regenera únicamente `layout.rsc`.
-  * Si el tag está en una página (`page_functions.ts`), regenera `page.rsc` e `index.html`.
+  * Si el tag está en una página (`page_functions.ts`), regenera exclusivamente `page.rsc` e `index.html` (mediante `revalidatePage`).
   * Si el tag está en un slot (`<DinouCacheSlot>`), purga únicamente dicho fragmento.
 
 #### Regla de Oro y Buenas Prácticas de Invalidación:

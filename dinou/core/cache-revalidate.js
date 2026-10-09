@@ -418,7 +418,7 @@ async function revalidateTag(tag) {
         }
       }
       await Promise.all([
-        ...Array.from(targetPaths).map((p) => revalidatePath(p)),
+        ...Array.from(targetPaths).map((p) => revalidatePage(p)),
         ...Array.from(targetLayoutPaths).map((p) => revalidateLayout(p)),
         ...Array.from(targetSlotKeys).map((k) => storage.delete(k)),
       ]);
@@ -450,7 +450,7 @@ async function revalidateTag(tag) {
         } else {
           const relative = path.relative(dist2Folder, path.dirname(fileOfMeta));
           const reqPath = "/" + relative.replace(/\\/g, "/");
-          revalidatePromises.push(revalidatePath(reqPath));
+          revalidatePromises.push(revalidatePage(reqPath));
         }
       }
     } catch (err) {
