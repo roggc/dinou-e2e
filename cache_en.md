@@ -323,3 +323,54 @@ if (shouldCacheISG && !isPprConfig) {
 | **`<Link href="..." fresh>`** | Client | JSX | No | **Yes** (`pageCache.delete`) | No (fresh page) |
 | **`router.refresh()`** | Client | `useRouter()` hook | No | **Yes** (page only by default; layout with `{layout:true}`) | **Yes** (maintains inputs/focus) |
 | **`router.refreshSlot(id)`** | Client | `useRouter()` hook | No | **Yes** (slot only) | **Yes** (rest of page unchanged) |
+
+---
+
+## 6. Storage Internal Architecture & Critical Cache Fixes (Developer & AI Assistant Reference)
+
+This section documents the internal architecture of Dinou's cache storage subsystem ([`dinou/core/storage-adapter.js`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/core/storage-adapter.js) and [`dinou/core/cache-revalidate.js`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/core/cache-revalidate.js)), along with subtle fixes discovered and resolved to prevent future regressions.
+
+### 6.1. Key-Value Storage vs. Physical File Systems
+
+Dinou supports multiple runtimes with fundamentally different storage characteristics:
+
+1. **Key-Value / In-Memory Runtimes (`MemoryStorage`, `DenoKVStorage`, `CloudflareKVStorage`):**
+   * Atomically store content and structured metadata together under a single entry: `{ content, metadata }`.
+   * Do not require or utilize auxiliary files on disk.
+2. **Physical File System Runtimes (`FileSystemStorage` for Node.js, Bun, and Node DEV):**
+   * Operating system file systems do not allow attaching arbitrary JavaScript objects directly to raw binary or text files.
+   * `FileSystemStorage` implements the **companion file** pattern:
+     * For pages (`index.html`, `page.rsc`): companion is `metadata.json` (stores page `tags`, `revalidate`, `generatedAt`, etc.).
+     * For layouts (`layout.rsc`): companion is `layout.metadata.json` (stores layout `tags`, `revalidate`, `generatedAt`, etc.).
+     * For slots (`slots/${slotId}/slot.json`): companion is `slot.metadata.json` (stores slot `tags`, `revalidate`, `generatedAt`, `slotId`).
+
+### 6.2. Critical Metadata Isolation Rules
+
+To prevent distinct cache entities from stomping on each other on disk:
+
+#### 1. Strict Detection of Metadata Files (`*metadata.json`)
+Any file whose filename ends with `metadata.json` (`metadata.json`, `layout.metadata.json`, `slot.metadata.json`) is a pure metadata file.
+* **In `storage.get(key)`:** If the key ends with `metadata.json`, its metadata is its **own parsed JSON content**. It must never look for an additional companion file.
+* **In `storage.set(key, content, metadata)`:** If the key ends with `metadata.json`, it writes the JSON content directly to disk and **never generates an auxiliary companion file**.
+
+#### 2. Accurate Layout & Slot Detection
+* `isLayoutKey`: Must check whether the normalized key includes `layout.rsc` or `layout.metadata.json`.
+* `isSlotKey`: Must check whether the normalized key includes `slot`.
+* This ensures that when revalidating a layout (`revalidateLayout`), `storage.set(".../layout.metadata.json", ...)` **never** accidentally overwrites the page's `metadata.json`.
+
+#### 3. Support for Content Slots (`slot.json`)
+* `DinouCacheSlot` stores serialized JSX in `slots/${slotId}/slot.json` and its metadata in `slot.metadata.json`.
+* The metadata file check **must not** use `targetPath.endsWith(".json")` broadly, as this would mistakenly match `slot.json` and block the creation/reading of `slot.metadata.json`, causing the slot to be considered expired on every reload in DEV (`generatedAt: 0`). It must strictly check `cleanKey.endsWith("metadata.json") || path.basename(targetPath).endsWith("metadata.json")`.
+
+### 6.3. Cross-Platform Key Normalization
+
+On Windows systems or adapters where directory scans yield backslashes (`\`), `revalidateTag` must normalize all keys to standard forward slashes (`/`) before regex processing:
+```javascript
+const key = String(rawKey || "").replace(/\\/g, "/");
+```
+This ensures trailing suffix replacements (`/\/(?:layout\.metadata\.json|layout\.rsc)$/`, etc.) and leading slash prefixing behave identically across Linux, macOS, and Windows.
+
+### 6.4. Pre-seeding in Deno KV & Cloudflare Assets
+* **Deno KV (`dinou/deno/seed-kv.js`):** Pre-seeds all `metadata.json` files (including `layout.metadata.json` and `slot.metadata.json`) using `entry.name.endsWith("metadata.json")`.
+* **Cloudflare Workers (`dinou/core/handler.js`):** When serving a static route on-demand from `env.ASSETS`, both `metaKey` (`metadata.json`) and `layoutMetaKey` (`layout.metadata.json`) are cached into storage so `revalidateTag` has access to the full tag mapping in memory.
+

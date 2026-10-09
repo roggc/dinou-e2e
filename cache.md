@@ -322,3 +322,54 @@ if (shouldCacheISG && !isPprConfig) {
 | **`<Link href="..." fresh>`** | Cliente | JSX | No | **Sí** (`pageCache.delete`) | No (nueva página) |
 | **`router.refresh()`** | Cliente | Hook `useRouter()` | No | **Sí** (solo página por defecto; layout con `{layout:true}`) | **Sí** (mantiene inputs/foco) |
 | **`router.refreshSlot(id)`** | Cliente | Hook `useRouter()` | No | **Sí** (solo el slot) | **Sí** (el resto de la página no cambia) |
+
+---
+
+## 6. Arquitectura Interna del Storage y Resoluciones de Caché (Referencia para Desarrolladores y Asistentes AI)
+
+Esta sección documenta la arquitectura interna del sistema de almacenamiento de caché de Dinou ([`dinou/core/storage-adapter.js`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/core/storage-adapter.js) y [`dinou/core/cache-revalidate.js`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-e2e/dinou/core/cache-revalidate.js)), así como los detalles sutiles resueltos para prevenir regresiones futuras.
+
+### 6.1. Almacenamiento Clave-Valor vs. Sistema de Archivos Físico
+
+Dinou soporta múltiples runtimes con características de almacenamiento distintas:
+
+1. **Runtimes Clave-Valor / Memoria (`MemoryStorage`, `DenoKVStorage`, `CloudflareKVStorage`):**
+   * Guardan atómicamente el contenido y el objeto de metadatos juntos bajo la misma clave: `{ content, metadata }`.
+   * No requieren ni utilizan archivos auxiliares en disco.
+2. **Runtimes con Sistema de Archivos Físico (`FileSystemStorage` para Node.js, Bun y Node DEV):**
+   * El sistema operativo no permite asociar metadatos JS directamente a un archivo binario o de texto.
+   * `FileSystemStorage` implementa el patrón de **archivos *companion***:
+     * Para páginas (`index.html`, `page.rsc`): el companion es `metadata.json` (guarda `tags` de página, `revalidate`, `generatedAt`, etc.).
+     * Para layouts (`layout.rsc`): el companion es `layout.metadata.json` (guarda `tags` de layout, `revalidate`, `generatedAt`, etc.).
+     * Para slots (`slots/${slotId}/slot.json`): el companion es `slot.metadata.json` (guarda `tags`, `revalidate`, `generatedAt`, `slotId`).
+
+### 6.2. Reglas Críticas de Aislamiento de Metadatos
+
+Para evitar que distintas entidades de caché se sobrescriban o interfieran entre sí en el disco:
+
+#### 1. Detección estricta de archivos de metadatos (`*metadata.json`)
+Cualquier archivo cuyo nombre termine en `metadata.json` (`metadata.json`, `layout.metadata.json`, `slot.metadata.json`) es un archivo de metadatos puro.
+* **En `storage.get(key)`:** Si la clave termina en `metadata.json`, sus metadatos son su **propio contenido JSON parseado**. No debe buscar un archivo companion adicional.
+* **En `storage.set(key, content, metadata)`:** Si la clave termina en `metadata.json`, escribe directamente el JSON en disco y **nunca genera un archivo companion auxiliar**.
+
+#### 2. Detección precisa de Layout y Slot
+* `isLayoutKey`: Debe verificar si la clave normalizada incluye `layout.rsc` o `layout.metadata.json`.
+* `isSlotKey`: Debe verificar si la clave normalizada incluye `slot`.
+* Con esto, al revalidar un layout (`revalidateLayout`), `storage.set(".../layout.metadata.json", ...)` **nunca** sobrescribe accidentalmente el `metadata.json` de la página.
+
+#### 3. Soporte para Slots de Contenido (`slot.json`)
+* `DinouCacheSlot` guarda el JSX serializado en `slots/${slotId}/slot.json` y sus metadatos en `slot.metadata.json`.
+* La comprobación de archivos de metadatos **no debe** usar `targetPath.endsWith(".json")` de manera genérica, ya que esto interceptaría por error a `slot.json` e impediría la creación y lectura de `slot.metadata.json`, provocando que el slot se considere expirado en cada recarga en DEV (`generatedAt: 0`). Debe comprobarse estrictamente `cleanKey.endsWith("metadata.json") || path.basename(targetPath).endsWith("metadata.json")`.
+
+### 6.3. Normalización de Claves Multiplataforma
+
+En sistemas Windows o adaptadores donde el listado de archivos use barras invertidas (`\`), `revalidateTag` debe normalizar previamente todas las claves a barras estándar (`/`):
+```javascript
+const key = String(rawKey || "").replace(/\\/g, "/");
+```
+Esto asegura que las expresiones regulares de recorte (`/\/(?:layout\.metadata\.json|layout\.rsc)$/`, etc.) y el prefijado con `/` funcionen de manera uniforme en Linux, macOS y Windows.
+
+### 6.4. Pre-semillado en Deno KV y Cloudflare Assets
+* **Deno KV (`dinou/deno/seed-kv.js`):** Pre-semilla todos los archivos `metadata.json` (incluyendo `layout.metadata.json` y `slot.metadata.json`) usando `entry.name.endsWith("metadata.json")`.
+* **Cloudflare Workers (`dinou/core/handler.js`):** Al descargar bajo demanda una ruta estática desde `env.ASSETS`, se almacenan en el storage tanto `metaKey` (`metadata.json`) como `layoutMetaKey` (`layout.metadata.json`) para que `revalidateTag` disponga del mapa completo de tags en memoria.
+
