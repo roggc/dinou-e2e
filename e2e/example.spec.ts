@@ -1407,8 +1407,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // 3. Click cascade revalidate button
       const btn = page.getByTestId("reval-cascade-btn");
-      await btn.click();
-      await expect(btn).toBeEnabled({ timeout: 15000 });
+      await Promise.all([
+        page.waitForResponse((res) => res.request().method() === "POST"),
+        btn.click(),
+      ]);
 
       // 4. Verify parent page updated
       await expect
@@ -1464,8 +1466,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // 3. Click revalidate tag on page button
       const btn = page.getByTestId("reval-tag-page-btn");
-      await btn.click();
-      await expect(btn).toBeEnabled({ timeout: 15000 });
+      await Promise.all([
+        page.waitForResponse((res) => res.request().method() === "POST"),
+        btn.click(),
+      ]);
 
       // 4. Verify parent page timestamp updated (revalidatePage was called)
       await expect
@@ -1506,8 +1510,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.goto("/t-revalidate-cascade");
       await page.waitForSelector('body[data-hydrated="true"]');
       const btn = page.getByTestId("reval-tag-layout-default-btn");
-      await btn.click();
-      await expect(btn).toBeEnabled({ timeout: 15000 });
+      await Promise.all([
+        page.waitForResponse((res) => res.request().method() === "POST"),
+        btn.click(),
+      ]);
 
       // 3. Verify child index.html was NOT updated (proving revalidateLayout was called and not revalidatePath)
       await page.waitForTimeout(1000);
@@ -1536,8 +1542,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // 3. Click revalidate tag on layout WITH cascade
       const btn = page.getByTestId("reval-tag-layout-cascade-btn");
-      await btn.click();
-      await expect(btn).toBeEnabled({ timeout: 15000 });
+      await Promise.all([
+        page.waitForResponse((res) => res.request().method() === "POST"),
+        btn.click(),
+      ]);
 
       // 4. Verify parent page updated
       await expect
