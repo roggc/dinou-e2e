@@ -1658,7 +1658,7 @@ function notifyClientBuildEnd() {
     if (broadcast > 0) details.push(`Bcast: ${broadcast}ms`);
     if (rcm > 0) details.push(`RCM: ${rcm}ms`);
     const detailsStr = details.length > 0 ? ` [${details.join(" | ")}]` : "";
-    lastClientBuildDetails = detailsStr;
+    lastClientBuildDetails = isDebug ? detailsStr : "";
     delete globalThis.__DINOU_SWC_TIME__;
     delete globalThis.__DINOU_SWC_COUNT__;
     logTimeline(`Client Bundler (esbuild) build finished in ${elapsed}ms${detailsStr}`);
@@ -1837,7 +1837,7 @@ async function doRebuildBatch(changesMap) {
 
       await Promise.all(rebuildTasks);
 
-      const buildDetails = lastClientBuildDetails || "";
+      const buildDetails = isDebug && lastClientBuildDetails ? lastClientBuildDetails : "";
       lastClientBuildDetails = "";
       logSuccess(`Rebuilt in ${Date.now() - t0}ms (${baseName})${buildDetails}`);
 
