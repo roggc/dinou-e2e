@@ -253,7 +253,11 @@ function getCachedFileExports(filePath) {
     if (!exports.includes("default")) {
       exports.push("default");
     }
-    compExportsCache.set(filePath, { mtime: stat.mtimeMs, exports });
+    const prevExports = cached ? cached.exports : null;
+    const exportsChanged = prevExports
+      ? (prevExports.length !== exports.length || prevExports.some((e, i) => e !== exports[i]))
+      : false;
+    compExportsCache.set(filePath, { mtime: stat.mtimeMs, exports, exportsChanged });
     return exports;
   } catch (e) {
     return ["default"];
@@ -477,7 +481,7 @@ async function updateManifestsState(options = {}) {
       const compId = isValidEntryId(matchedEntry)
         ? matchedEntry.id
         : getFallbackChunkId(comp);
-      const compChunks = matchedEntry?.chunks || (isWebpackBuild ? [] : "default");
+      const compChunks = isWebpackBuild ? (matchedEntry?.chunks || []) : "default";
 
       for (const u of urlVariants) {
         if (!normalized[u] || !normalized[u].id || !isValidEntryId(normalized[u])) {
@@ -492,14 +496,9 @@ async function updateManifestsState(options = {}) {
           const expId = isValidEntryId(expEntry)
             ? expEntry.id
             : compId;
-          const expChunks = expEntry?.chunks || (isWebpackBuild ? compChunks : exp);
+          const expChunks = isWebpackBuild ? (expEntry?.chunks || compChunks) : exp;
 
-          if (!normalized[hashKey] || normalized[hashKey].name === "*" || !isValidEntryId(normalized[hashKey])) {
-            normalized[hashKey] = { id: expId, chunks: expChunks, name: exp };
-          } else if (isValidEntryId(expEntry)) {
-            normalized[hashKey].id = expId;
-            normalized[hashKey].chunks = expChunks;
-          }
+          normalized[hashKey] = { id: expId, chunks: expChunks, name: exp };
         }
       }
     }
@@ -512,6 +511,10 @@ async function updateManifestsState(options = {}) {
     for (const comp of clientComponents) {
       const urlVariants = generateAllUrlVariants(comp);
       const fileExports = getCachedFileExports(comp);
+      const cachedExportInfo = compExportsCache.get(comp);
+      if (cachedExportInfo?.exportsChanged) {
+        componentsChanged = true;
+      }
       let matchedEntry = null;
       for (const u of urlVariants) {
         if (isValidEntryId(parsedClientManifest[u])) { matchedEntry = parsedClientManifest[u]; break; }
@@ -542,7 +545,7 @@ async function updateManifestsState(options = {}) {
       const compId = isValidEntryId(matchedEntry)
         ? matchedEntry.id
         : getFallbackChunkId(comp);
-      const compChunks = matchedEntry?.chunks || (isWebpackBuild ? [] : "default");
+      const compChunks = isWebpackBuild ? (matchedEntry?.chunks || []) : "default";
 
       for (const u of urlVariants) {
         if (!normalized[u] || !normalized[u].id || !isValidEntryId(normalized[u])) {
@@ -557,14 +560,9 @@ async function updateManifestsState(options = {}) {
           const expId = isValidEntryId(expEntry)
             ? expEntry.id
             : compId;
-          const expChunks = expEntry?.chunks || (isWebpackBuild ? compChunks : exp);
+          const expChunks = isWebpackBuild ? (expEntry?.chunks || compChunks) : exp;
 
-          if (!normalized[hashKey] || normalized[hashKey].name === "*" || !isValidEntryId(normalized[hashKey])) {
-            normalized[hashKey] = { id: expId, chunks: expChunks, name: exp };
-          } else if (isValidEntryId(expEntry)) {
-            normalized[hashKey].id = expId;
-            normalized[hashKey].chunks = expChunks;
-          }
+          normalized[hashKey] = { id: expId, chunks: expChunks, name: exp };
         }
       }
     }
@@ -1757,6 +1755,15 @@ async function doRebuildBatch(changesMap) {
         clientDirectiveChanged ||
         isCssFile ||
         isJsTsSource;
+
+      if (isClientFile) {
+        getCachedFileExports(absFilePath);
+        const cached = compExportsCache.get(absFilePath);
+        if (cached?.exportsChanged) {
+          needsStructureRebuild = true;
+          needsClientBundlerRestart = true;
+        }
+      }
 
       if (clientDirectiveChanged || serverDirectiveChanged) {
         needsStructureRebuild = true;
