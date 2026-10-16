@@ -5305,6 +5305,62 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
   });
 
+  test.describe("Dinou export default config (pageConfig / layoutConfig)", () => {
+    test("Should independently supply props to layout and page using export default configs", async ({
+      page,
+    }) => {
+      // 1. Initial SSR render
+      const res = await page.goto("/t-page-config-default");
+      expect(res?.status()).toBe(200);
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+
+      // Verify layout props from default export in layout_functions.ts
+      await expect(page.locator("#default-layout-title")).toHaveText("Default Layout Functions Title");
+      await expect(page.locator("#default-layout-menu li")).toHaveText([
+        "Default-Home",
+        "Default-Settings",
+        "Default-Profile",
+      ]);
+
+      // Verify page props from default export in page_functions.ts
+      await expect(page.locator("#default-page-title")).toHaveText("Default Page Independent Title");
+      await expect(page.locator("#default-page-prop")).toHaveText("Current Page: 42");
+
+      // 2. Client soft navigation to subpage
+      await page.click("#default-go-to-sub");
+      await expect(page).toHaveURL("/t-page-config-default/sub");
+
+      // Verify layout is preserved and still has its props
+      await expect(page.locator("#default-layout-title")).toHaveText("Default Layout Functions Title");
+
+      // Verify subpage received its own independent props from default export
+      await expect(page.locator("#default-subpage-content #default-page-title")).toHaveText("Default Subpage Independent Title");
+      await expect(page.locator("#default-subpage-content #default-page-prop")).toHaveText("Current Page: 99");
+
+      // 3. Client soft navigation back to parent
+      await page.click("#default-back-to-parent");
+      await expect(page).toHaveURL("/t-page-config-default");
+      await expect(page.locator("#default-page-title")).toHaveText("Default Page Independent Title");
+      await expect(page.locator("#default-page-prop")).toHaveText("Current Page: 42");
+    });
+
+    test("Should enforce validateParams and getProps at dynamic layout level with export default config", async ({
+      page,
+    }) => {
+      // 1. Valid parameter
+      const validRes = await page.goto("/t-page-config-default/dyn/1");
+      expect(validRes?.status()).toBe(200);
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+      await expect(page.locator("#default-dyn-layout-heading")).toHaveText("Layout Param: 1");
+      await expect(page.locator("#default-dyn-layout-data")).toHaveText("Default Data for 1");
+      await expect(page.locator("#default-dyn-page-msg")).toHaveText("Default Page message for 1");
+
+      // 2. Invalid parameter rejected by layout_functions validateParams -> 404
+      const invalidRes = await page.goto("/t-page-config-default/dyn/invalid");
+      expect(invalidRes?.status()).toBe(404);
+    });
+  });
+
 });
 
 
