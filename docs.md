@@ -433,7 +433,7 @@ La implementación se diseñó meticulosamente para integrarse con la arquitectu
    Durante la fase de compilación estática (`buildStaticPages`):
    - Se activa un contexto especial `runWithPprContext({ isPpr: true })`.
    - Si un componente dentro de un límite Suspense intenta leer `req.cookies`, `req.headers` o `req.query`, los proxies espía de `createBailoutProxy` detectan el acceso dinámico y lanzan `Symbol.for("dinou.ppr.postpone")`.
-   - `renderJSXToClientJSX` captura este símbolo, registra el hueco dinámico (`ppr-hole-1`) y emite en su lugar el fallback envuelto con `<div data-ppr-hole="ppr-hole-1" style="display:contents">`.
+   - `asyncRenderJSXToClientJSX` captura este símbolo, registra el hueco dinámico (`ppr-hole-1`) y emite en su lugar el fallback envuelto con `<div data-ppr-hole="ppr-hole-1" style="display:contents">`.
    - Se guardan los artefactos base: `shell.html`, `shell.rsc` y `metadata.json` con la lista de huecos registrados.
 
 4. **Motor de Reanudación Streaming en Runtime (`ppr-runtime.js`):**
