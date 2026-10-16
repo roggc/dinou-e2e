@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "test:contracts": "node --test tests/contracts-duality.test.js",
     "dev": "npm run dev:esbuild",
     "build": "npm run build:node",
     "start": "npm run start:node",
