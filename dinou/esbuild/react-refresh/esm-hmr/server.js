@@ -1,4 +1,4 @@
-const WebSocket = require("ws");
+import WebSocket from "ws";
 
 /**
  * @typedef {Object} Dependency
@@ -129,6 +129,7 @@ class EsmHmrEngine {
   }
 }
 
-module.exports = {
+export {
   EsmHmrEngine,
 };
+export default EsmHmrEngine;

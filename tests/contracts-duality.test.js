@@ -1,14 +1,18 @@
-const test = require("node:test");
-const assert = require("node:assert");
-const fs = require("node:fs");
-const path = require("node:path");
+import test from "node:test";
+import assert from "node:assert";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 // Core framework modules
-const { resolveLayoutFunctionsConfig } = require("../dinou/core/layout-functions");
-const { resolvePageFunctionsConfig } = require("../dinou/core/handler");
-const { resolveModulePpr } = require("../dinou/core/resolve-module-ppr");
-const parseExports = require("../dinou/core/parse-exports");
+import { resolveLayoutFunctionsConfig } from "../dinou/core/layout-functions.js";
+import { resolvePageFunctionsConfig } from "../dinou/core/handler.js";
+import { resolveModulePpr } from "../dinou/core/resolve-module-ppr.js";
+import parseExports from "../dinou/core/parse-exports.js";
+import { isDynamicRoute } from "../dinou/core/build-static-pages.js";
+import importModule from "../dinou/core/import-module.js";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixturesDir = path.join(__dirname, "fixtures-duality");
 
 test.before(() => {
@@ -249,7 +253,7 @@ test("parsePprConfig parses both constant and function declarations", () => {
 // 8. DIRECT UNIT TEST: isDynamicRoute duality (revalidate)
 // ====================================================================
 test("isDynamicRoute evaluates revalidate as value, sync fn, and async fn", async () => {
-  const { isDynamicRoute } = require("../dinou/core/build-static-pages");
+
 
   // Dynamic (< 1)
   assert.strictEqual(await isDynamicRoute(0), true, "revalidate 0 is dynamic");
@@ -415,7 +419,6 @@ test("exact user pattern: PageFunctions & LayoutFunctions as export default obje
   assert.deepStrictEqual(layoutProps, { post: { title: "Dinou Guide" }, views: 100 });
 
   // Page getProps loader check (used by get-jsx and build-static-pages)
-  const importModule = require("../dinou/core/import-module");
   const pfModule = await importModule(path.join(dir, "page_functions.js"));
   const defaultExport = pfModule.default?.default ? pfModule.default.default : pfModule.default;
   const pageGetProps = pfModule.getProps || defaultExport?.getProps;
@@ -423,5 +426,53 @@ test("exact user pattern: PageFunctions & LayoutFunctions as export default obje
   const pageProps = await pageGetProps({ slug: "welcome" });
   assert.deepStrictEqual(pageProps, { post: { title: "Dinou Guide" }, views: 100 });
 });
+
+// ====================================================================
+// 11. NATIVE ESM USER PATTERN: PageFunctions & LayoutFunctions as .mjs with export default
+// ====================================================================
+test("native ESM pattern: PageFunctions & LayoutFunctions as .mjs with export default", async () => {
+  const dir = path.join(fixturesDir, "esm-pattern");
+  fs.mkdirSync(dir, { recursive: true });
+
+  const esmCode = `
+    const pageConfig = {
+      ppr: true,
+      revalidate: 120,
+      getStaticPaths: ["doc-1", "doc-2"],
+      getProps: async (params) => ({ title: "ESM Post", id: params?.id }),
+      validateParams: (params) => Boolean(params?.id),
+      getCacheTags: (params) => ["docs", "doc-" + params?.id],
+    };
+    export default pageConfig;
+  `;
+  fs.writeFileSync(path.join(dir, "page_functions.mjs"), esmCode, "utf8");
+  fs.writeFileSync(path.join(dir, "layout_functions.mjs"), esmCode, "utf8");
+  fs.writeFileSync(path.join(dir, "page.mjs"), "export default () => null;", "utf8");
+
+  // PageFunctions check
+  const pResult = await resolvePageFunctionsConfig(
+    path.join(dir, "page.mjs"),
+    [],
+    {},
+    { id: "doc-1" },
+    "/esm-pattern"
+  );
+  assert.strictEqual(pResult.ppr, true, "esm pageConfig.ppr should be true");
+  assert.strictEqual(pResult.revalidate, 120, "esm pageConfig.revalidate should be 120");
+  assert.strictEqual(pResult.isDynamicConfig, false, "revalidate 120 is static");
+  assert.deepStrictEqual(pResult.tags, ["docs", "doc-doc-1"], "esm pageConfig.getCacheTags with dynamicParams");
+  assert.ok(pResult.staticPathsSet.has("doc-1"), "esm pageConfig.getStaticPaths contains doc-1");
+  assert.strictEqual(pResult.isPathBlocked, false, "esm pageConfig.validateParams returns true for doc-1");
+
+  // LayoutFunctions check
+  const lConfig = await resolveLayoutFunctionsConfig(dir, { id: "doc-1" });
+  assert.strictEqual(lConfig.ppr, true, "esm layoutConfig.ppr should be true");
+  assert.strictEqual(lConfig.revalidate, 120, "esm layoutConfig.revalidate should be 120");
+  assert.deepStrictEqual(lConfig.tags, ["docs", "doc-doc-1"], "esm layoutConfig.tags");
+  assert.ok(typeof lConfig.getProps === "function", "esm layoutConfig.getProps is a function");
+  const layoutProps = await lConfig.getProps({ id: "doc-1" });
+  assert.deepStrictEqual(layoutProps, { title: "ESM Post", id: "doc-1" });
+});
+
 
 

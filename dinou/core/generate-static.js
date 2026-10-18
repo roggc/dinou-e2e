@@ -2,14 +2,15 @@
 // Unified Static Site Generation runner using the in-memory Dual-Bundle Engine.
 // Guarantees 100% parity with runtime Incremental Static Generation (ISG).
 
-const path = require("path");
-const { existsSync, rmSync, mkdirSync, renameSync } = require("fs");
-const { pathToFileURL } = require("url");
-const { setStorageAdapter, FileSystemStorage } = require("./storage-adapter.js");
-const {
+import path from "node:path";
+import { existsSync, rmSync, mkdirSync, renameSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+import { setStorageAdapter, FileSystemStorage } from "./storage-adapter.js";
+import {
   generateStaticPageRSC,
   generateStaticLayoutRSC,
-} = require("./generate-static-rsc.js");
+} from "./generate-static-rsc.js";
+import { resolveLayoutFunctionsConfig } from "./layout-functions.js";
 
 async function generateStatic() {
   const distFolder2 = path.resolve(process.cwd(), ".dinou/dist2");
@@ -84,7 +85,6 @@ async function generateStatic() {
             tags: [],
           };
           try {
-            const { resolveLayoutFunctionsConfig } = require("./layout-functions.js");
             const layoutConfig = await resolveLayoutFunctionsConfig(
               layoutInfo.layoutPath,
               layoutInfo.params || {}
@@ -221,4 +221,5 @@ async function generateStatic() {
   );
 }
 
-module.exports = generateStatic;
+export { generateStatic };
+export default generateStatic;

@@ -25,6 +25,20 @@ import {
   printReadyBanner,
 } from "./terminal-status.mjs";
 import { resolveDevPorts } from "./port-selector.mjs";
+import { getDinouConfig } from "../core/load-dinou-config.js";
+import { resolveSetupFiles } from "../core/resolve-setup-files.js";
+import { generateRouteModulesCode, generateRouteTypes } from "../core/route-generator.js";
+import parseExports from "../core/parse-exports.js";
+import { useClientRegex, useServerRegex } from "../constants.js";
+import { nodeToWebRequest, sendWebResponseToNode } from "../core/http-adapter.js";
+import { setStorageAdapter, FileSystemStorage, MemoryStorage } from "../core/storage-adapter.js";
+import createScopedName from "../core/createScopedName.js";
+import { regex as assetRegex } from "../core/asset-extensions.js";
+import {
+  isSupportedClientModule,
+  scanProjectDependenciesForClientComponents,
+  scanProjectDependenciesForClientComponentsAsync,
+} from "../core/scan-dependency-components.js";
 
 // Resolve dev HTTP and HMR ports before initiating background compilation
 const { port: PORT, hmrPort: HMR_PORT } = await resolveDevPorts();
@@ -77,8 +91,6 @@ const dinouDir = fs.existsSync(path.resolve(projectRoot, "dinou"))
 const dinouDirSlash = dinouDir.replace(/\\/g, "/");
 
 // Resolve and execute setupFiles immediately before any compilation
-const { getDinouConfig } = require(path.join(dinouDir, "core/load-dinou-config.js"));
-const { resolveSetupFiles } = require(path.join(dinouDir, "core/resolve-setup-files.js"));
 const dinouConfig = await getDinouConfig();
 const setupFiles = resolveSetupFiles(projectRoot, dinouConfig);
 if (setupFiles.length > 0) {
@@ -106,21 +118,9 @@ function getFallbackChunkId(absPath) {
   return `/${name}-${hash}.js`;
 }
 
-const { generateRouteModulesCode, generateRouteTypes } = require(path.join(dinouDir, "core/route-generator.js"));
 try {
   generateRouteTypes(projectRoot);
 } catch (e) {}
-const parseExports = require(path.join(dinouDir, "core/parse-exports.js"));
-const { useClientRegex, useServerRegex } = require(path.join(dinouDir, "constants.js"));
-const { nodeToWebRequest, sendWebResponseToNode } = require(path.join(dinouDir, "core/http-adapter.js"));
-const { setStorageAdapter, FileSystemStorage, MemoryStorage } = require(path.join(dinouDir, "core/storage-adapter.js"));
-const createScopedName = require(path.join(dinouDir, "core/createScopedName.js"));
-const { regex: assetRegex } = require(path.join(dinouDir, "core/asset-extensions.js"));
-const {
-  isSupportedClientModule,
-  scanProjectDependenciesForClientComponents,
-  scanProjectDependenciesForClientComponentsAsync,
-} = require(path.join(dinouDir, "core/scan-dependency-components.js"));
 
 const yieldToEventLoop = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -2325,7 +2325,6 @@ const nodeMiddlewares = [];
 
 async function applyServerPlugins(serverInstance) {
   try {
-    const { getDinouConfig } = require(path.join(dinouDir, "core/load-dinou-config.js"));
     const config = await getDinouConfig();
     if (config.plugins && Array.isArray(config.plugins)) {
       const serverContext = {
