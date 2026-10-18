@@ -2082,9 +2082,12 @@ async function startClientBundler(tool) {
 
   if (normTool === "rollup") {
     const { watch } = require("rollup");
-    const getRollupConfig = require(path.resolve(dinouDir, "rollup/rollup.config.js"));
-    const { getHmrEngine, closeHmrServer, notifyFileChanged } = require(path.resolve(dinouDir, "rollup/react-refresh/rollup-plugin-esm-hmr.js"));
-    const reactClientManifestPlugin = require(path.resolve(dinouDir, "rollup/rollup-plugins/rollup-plugin-react-client-manifest.js"));
+    const rollupConfigMod = await import(pathToFileURL(path.resolve(dinouDir, "rollup/rollup.config.js")).href);
+    const getRollupConfig = rollupConfigMod.default || rollupConfigMod;
+    const hmrMod = await import(pathToFileURL(path.resolve(dinouDir, "rollup/react-refresh/rollup-plugin-esm-hmr.js")).href);
+    const { getHmrEngine, closeHmrServer, notifyFileChanged } = hmrMod;
+    const rcmpMod = await import(pathToFileURL(path.resolve(dinouDir, "rollup/rollup-plugins/rollup-plugin-react-client-manifest.js")).href);
+    const reactClientManifestPlugin = rcmpMod.default || rcmpMod;
     reactClientManifestPlugin.setOnManifestUpdated?.(() => onManifestUpdated());
 
     let currentWatcher = null;
@@ -2231,7 +2234,8 @@ async function startClientBundler(tool) {
     }
     const webpack = require("webpack");
     const WebpackDevServer = require("webpack-dev-server");
-    const getWebpackConfig = require(path.resolve(dinouDir, "webpack/webpack.config.js"));
+    const webpackConfigMod = await import(pathToFileURL(path.resolve(dinouDir, "webpack/webpack.config.js")).href);
+    const getWebpackConfig = webpackConfigMod.default || webpackConfigMod;
     const webpackConfig = await getWebpackConfig();
     const compiler = webpack(webpackConfig);
 
