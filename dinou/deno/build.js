@@ -694,6 +694,8 @@ fs.writeFileSync(ssrClientManifestPath, ssrManifestCode, "utf8");
 const rscEntryContent = `// Auto-generated RSC Engine entry for Deno Deploy / Edge
 import "./env-setup.js";
 import "./route-modules.js";
+import * as edgeRenderer from "react-server-dom-webpack/server.edge";
+globalThis.__DINOU_EDGE_RENDERER__ = edgeRenderer;
 export { handleRequest } from "${dinouDirSlash}/core/handler.js";
 `;
 const rscEntryPath = path.join(denoDir, "rsc-entry.js");

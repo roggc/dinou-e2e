@@ -695,6 +695,8 @@ fs.writeFileSync(ssrClientManifestPath, ssrManifestCode, "utf8");
 const rscEntryContent = `// Auto-generated RSC Engine entry for Cloudflare Workers
 import "./env-setup.js";
 import "./route-modules.js";
+import * as edgeRenderer from "react-server-dom-webpack/server.edge";
+globalThis.__DINOU_EDGE_RENDERER__ = edgeRenderer;
 export { handleRequest } from "${dinouDirSlash}/core/handler.js";
 `;
 const rscEntryPath = path.join(cloudflareDir, "rsc-entry.js");
@@ -1069,6 +1071,7 @@ try {
       "process.env.NODE_ENV": '"production"',
       "process.env.DINOU_RUNTIME": '"edge"',
       "process.env.DINOU_BUILD_TOOL": JSON.stringify(isWebpackBuild ? "webpack" : (process.env.DINOU_BUILD_TOOL || "esbuild")),
+      "import.meta.url": '"file:///worker.js"',
     },
     logLevel: "warning",
   });
@@ -1093,6 +1096,7 @@ try {
       "process.env.NODE_ENV": '"production"',
       "process.env.DINOU_RUNTIME": '"edge"',
       "process.env.DINOU_BUILD_TOOL": JSON.stringify(isWebpackBuild ? "webpack" : (process.env.DINOU_BUILD_TOOL || "esbuild")),
+      "import.meta.url": '"file:///worker.js"',
     },
     logLevel: "warning",
   });
@@ -1117,6 +1121,7 @@ try {
       "process.env.NODE_ENV": '"production"',
       "process.env.DINOU_RUNTIME": '"edge"',
       "process.env.DINOU_BUILD_TOOL": JSON.stringify(isWebpackBuild ? "webpack" : (process.env.DINOU_BUILD_TOOL || "esbuild")),
+      "import.meta.url": '"file:///worker.js"',
     },
     logLevel: "warning",
   });

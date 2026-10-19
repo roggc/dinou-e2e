@@ -34,6 +34,9 @@ function getNodeRenderer() {
 
 let edgeRender = null;
 function getEdgeRenderer() {
+  if (typeof globalThis !== "undefined" && globalThis.__DINOU_EDGE_RENDERER__) {
+    return globalThis.__DINOU_EDGE_RENDERER__;
+  }
   if (!edgeRender) {
     try {
       edgeRender = require("react-server-dom-webpack/server.edge");
