@@ -23,8 +23,8 @@ import {
   logInfo,
   showIdleStatus,
   printReadyBanner,
-} from "./terminal-status.mjs";
-import { resolveDevPorts } from "./port-selector.mjs";
+} from "./terminal-status.js";
+import { resolveDevPorts } from "./port-selector.js";
 import { getDinouConfig } from "../core/load-dinou-config.js";
 import { resolveSetupFiles } from "../core/resolve-setup-files.js";
 import { generateRouteModulesCode, generateRouteTypes } from "../core/route-generator.js";
@@ -2071,7 +2071,7 @@ async function startClientBundler(tool) {
 
   if (normTool === "esbuild") {
     const { startEsbuildDev } = await import(
-      pathToFileURL(path.resolve(dinouDir, "esbuild/dev.mjs")).href
+      pathToFileURL(path.resolve(dinouDir, "esbuild/dev.js")).href
     );
     return await startEsbuildDev({
       onRebuilt: () => onManifestUpdated(),

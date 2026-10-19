@@ -20,12 +20,12 @@ async function generateStatic() {
   }
 
   const { updateBuildProgress, clearBuildProgress, isTTY } = await import(
-    "../node/terminal-status.mjs"
+    "../node/terminal-status.js"
   );
 
   // 1. Compile or ensure Dual-Bundle engines (Pass A & Pass B)
   updateBuildProgress("[SSG] Compiling Dual-Engine for static generation...");
-  const { bundleDualEngine } = await import("../node/bundle-dual-engine.mjs");
+  const { bundleDualEngine } = await import("../node/bundle-dual-engine.js");
   const { rscEnginePath, ssrEnginePath } = await bundleDualEngine({
     isDev: false,
     projectRoot: process.cwd(),

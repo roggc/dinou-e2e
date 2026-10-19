@@ -23,7 +23,7 @@
       "import": "./core/config.js",
       "default": "./core/config.js"
     },
-    "./adapters/node": "./adapters/node.mjs",
+    "./adapters/node": "./adapters/node.js",
     "./adapters/bun": "./adapters/bun.js",
     "./adapters/deno": "./adapters/deno.js",
     "./adapters/cloudflare": "./adapters/cloudflare.js",
