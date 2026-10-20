@@ -1388,7 +1388,27 @@ async function handleRequest(request, platformContext = {}) {
         for (const [lPath, lParams] of layouts) {
           const lConfig = await resolveLayoutFunctionsConfig(lPath, lParams);
           if (!isDevelopment && lConfig.allowISG === false) {
-            return new Response("Not Found", { status: 404 });
+            let isPathAllowed = false;
+            if (lConfig.staticPathsSet) {
+              const sortedEntries = Object.entries(lParams || {})
+                .sort((a, b) => a[0].localeCompare(b[0]))
+                .map(([k, v]) => {
+                  if (Array.isArray(v)) return [k, v.join(",")];
+                  return [k, String(v)];
+                });
+              const serializedQuery = JSON.stringify(sortedEntries);
+              const singleVal = Object.values(lParams || {})[0];
+              const singleValStr = Array.isArray(singleVal) ? singleVal.join(",") : String(singleVal);
+              isPathAllowed = lConfig.staticPathsSet.has(serializedQuery) || lConfig.staticPathsSet.has(singleValStr);
+            }
+            if (!isPathAllowed) {
+              const cleanReq = reqPath.replace(/^\//, "").replace(/\/$/, "");
+              const rscPath = path.join(process.cwd(), ".dinou/dist2", cleanReq, "layout.rsc");
+              if (!existsSync(rscPath)) {
+                isPathBlocked = true;
+                break;
+              }
+            }
           }
           if (lConfig.validateParams) {
             const isValid = await lConfig.validateParams(lParams);
@@ -1403,7 +1423,26 @@ async function handleRequest(request, platformContext = {}) {
           layoutConfig = await resolveLayoutFunctionsConfig(layoutPath, layoutParams);
         }
         if (!isDevelopment && layoutConfig.allowISG === false) {
-          return new Response("Not Found", { status: 404 });
+          let isPathAllowed = false;
+          if (layoutConfig.staticPathsSet) {
+            const sortedEntries = Object.entries(layoutParams || {})
+              .sort((a, b) => a[0].localeCompare(b[0]))
+              .map(([k, v]) => {
+                if (Array.isArray(v)) return [k, v.join(",")];
+                return [k, String(v)];
+              });
+            const serializedQuery = JSON.stringify(sortedEntries);
+            const singleVal = Object.values(layoutParams || {})[0];
+            const singleValStr = Array.isArray(singleVal) ? singleVal.join(",") : String(singleVal);
+            isPathAllowed = layoutConfig.staticPathsSet.has(serializedQuery) || layoutConfig.staticPathsSet.has(singleValStr);
+          }
+          if (!isPathAllowed) {
+            const cleanReq = reqPath.replace(/^\//, "").replace(/\/$/, "");
+            const rscPath = path.join(process.cwd(), ".dinou/dist2", cleanReq, "layout.rsc");
+            if (!existsSync(rscPath)) {
+              isPathBlocked = true;
+            }
+          }
         }
         if (layoutConfig.validateParams) {
           const isValid = await layoutConfig.validateParams(layoutParams);
