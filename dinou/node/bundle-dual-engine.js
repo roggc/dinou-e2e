@@ -694,6 +694,8 @@ globalThis.__DINOU_VFS__ = ${JSON.stringify(vfsSnapshot)};
   const rscEntryContent = `// Auto-generated RSC Engine entry for Node.js (Dual-Bundle)
 import "./env-setup.mjs";
 import "./route-modules.mjs";
+import * as edgeRenderer from "react-server-dom-webpack/server.edge";
+globalThis.__DINOU_EDGE_RENDERER__ = edgeRenderer;
 export { handleRequest } from "${dinouDirSlash}/core/handler.js";
 export { buildStaticPages, getStaticPaths, getStaticLayouts, getStaticMetadata } from "${dinouDirSlash}/core/build-static-pages.js";
 `;

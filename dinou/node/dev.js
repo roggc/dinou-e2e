@@ -976,6 +976,8 @@ globalThis.__DINOU_LAYOUTS__ = ${JSON.stringify(discoveredLayouts)};
   const rscEntryContent = `// Auto-generated RSC Engine entry for Dev (Dual-Bundle)
 import "./env-setup.mjs";
 import "./route-modules.mjs";
+import * as edgeRenderer from "react-server-dom-webpack/server.edge";
+globalThis.__DINOU_EDGE_RENDERER__ = edgeRenderer;
 export { handleRequest } from "${dinouDirSlash}/core/handler.js";
 `;
   fs.writeFileSync(path.join(devDir, "rsc-entry.mjs"), rscEntryContent, "utf8");
