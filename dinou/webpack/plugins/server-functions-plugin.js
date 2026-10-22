@@ -1,9 +1,13 @@
 import path from "node:path";
+import fs from "node:fs";
 import manifestGeneratorPlugin from "./manifest-generator-plugin.js";
+import parseExports from "../../core/parse-exports.js";
+import { useServerRegex } from "../../constants.js";
 
 class WebpackServerFunctionsPluginSimple {
-  constructor() {
+  constructor(options = {}) {
     this.serverFunctions = new Map();
+    this.serverFiles = options.serverFiles || null;
   }
 
   apply(compiler) {
@@ -41,6 +45,26 @@ class WebpackServerFunctionsPluginSimple {
                   delete assets[filename];
                 } catch (e) {
                   // Ignore parsing errors
+                }
+              }
+            }
+
+            if (this.serverFiles && this.serverFiles.size > 0) {
+              for (const filePath of this.serverFiles) {
+                const rel = path.relative(process.cwd(), filePath).replace(/\\/g, "/");
+                if (!serverFunctionsManifest[rel]) {
+                  try {
+                    const fileCode = fs.readFileSync(filePath, "utf8");
+                    if (useServerRegex.test(fileCode.trim())) {
+                      const exports = parseExports(fileCode);
+                      if (exports && exports.length > 0) {
+                        serverFunctionsManifest[rel] = exports;
+                        serverFunctionPaths.add(
+                          path.resolve(process.cwd(), rel).replace(/\\/g, "/").toLowerCase()
+                        );
+                      }
+                    }
+                  } catch (e) {}
                 }
               }
             }

@@ -83,6 +83,23 @@ function serverFunctionsPlugin(manifestData = {}, options = {}) {
         }
       }
 
+      if (serverFiles && serverFiles.size > 0) {
+        for (const filePath of serverFiles) {
+          const rel = path.relative(root, filePath).replace(/\\/g, "/");
+          if (!serverFunctions.has(rel)) {
+            try {
+              const fileCode = await fs.readFile(filePath, "utf8");
+              if (useServerRegex.test(fileCode.trim())) {
+                const exports = parseExports(fileCode);
+                if (exports && exports.length > 0) {
+                  serverFunctions.set(rel, new Set(exports));
+                }
+              }
+            } catch (e) {}
+          }
+        }
+      }
+
       // Generate manifest: convert Map to a simple object
       const manifestObj = {};
       for (const [relPath, exportsSet] of serverFunctions.entries()) {

@@ -181,6 +181,23 @@ export default function serverFunctionsPlugin(manifestData = {}, options = {}) {
             }
           }
 
+          if (serverFilesSet && serverFilesSet.size > 0) {
+            for (const filePath of serverFilesSet) {
+              const rel = path.relative(root, filePath).replace(/\\/g, "/");
+              if (!serverFunctions.has(rel)) {
+                try {
+                  const code = await fs.readFile(filePath, "utf8");
+                  if (useServerRegex.test(code.trim())) {
+                    const exports = parseExports(code);
+                    if (exports && exports.length > 0) {
+                      serverFunctions.set(rel, new Set(exports));
+                    }
+                  }
+                } catch (e) {}
+              }
+            }
+          }
+
           // Generate the final manifest by converting the Map to a plain object
           const manifestObj = {};
           for (const [path, exportsSet] of serverFunctions.entries()) {

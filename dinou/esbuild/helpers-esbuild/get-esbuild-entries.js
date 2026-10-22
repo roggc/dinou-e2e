@@ -156,7 +156,12 @@ export default async function getEsbuildEntries({
 
   function isPageOrLayout(absPath) {
     const fileName = path.basename(absPath);
-    return fileName.startsWith("page.") || fileName.startsWith("layout.");
+    return (
+      fileName.startsWith("page.") ||
+      fileName.startsWith("layout.") ||
+      fileName.startsWith("page_functions.") ||
+      fileName.startsWith("layout_functions.")
+    );
   }
 
 
@@ -173,12 +178,7 @@ export default async function getEsbuildEntries({
     }
     const code = readFileSync(absPath, "utf8");
     const isClientModule = useClientRegex.test(code.trim());
-    const isServerFunction = useServerRegex.test(code.trim());
     const normalizedPath = normalizePath(absPath);
-
-    if (isServerFunction) {
-      serverFunctions.add(normalizedPath);
-    }
 
     if (isClientModule) {
       const name = path.basename(absPath, path.extname(absPath));

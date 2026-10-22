@@ -15,6 +15,7 @@ export default function getConfigEsbuildProd({
   entryPoints,
   outdir = ".dinou/dist3",
   manifest = {},
+  serverFiles,
 }) {
   let plugins = [
     babelReactCompilerPlugin(),
@@ -26,7 +27,7 @@ export default function getConfigEsbuildProd({
     }),
     assetsPlugin(),
     manifestGeneratorPlugin(manifestData),
-    serverFunctionsPlugin(manifestData),
+    serverFunctionsPlugin({ ...manifestData, serverFiles }),
     writePlugin(),
   ];
 
