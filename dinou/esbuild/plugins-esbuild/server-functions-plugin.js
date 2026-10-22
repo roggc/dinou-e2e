@@ -2,6 +2,7 @@ import path from "path";
 import fs from "node:fs/promises";
 import parseExports from "../../core/parse-exports.js";
 import { useServerRegex } from "../../constants.js";
+import { extractServerFunctions, hasServerFunctions } from "../../core/transform-server-functions.js";
 
 export default function serverFunctionsPlugin(manifestData = {}, options = {}) {
   const opts =
@@ -191,6 +192,11 @@ export default function serverFunctionsPlugin(manifestData = {}, options = {}) {
                     const exports = parseExports(code);
                     if (exports && exports.length > 0) {
                       serverFunctions.set(rel, new Set(exports));
+                    }
+                  } else if (hasServerFunctions(code)) {
+                    const actions = extractServerFunctions(code, filePath);
+                    if (actions && actions.length > 0) {
+                      serverFunctions.set(rel, new Set(actions));
                     }
                   }
                 } catch (e) {}

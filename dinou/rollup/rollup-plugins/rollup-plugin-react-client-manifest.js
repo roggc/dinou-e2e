@@ -9,6 +9,7 @@ import { regex } from "../../core/asset-extensions.js";
 import createScopedName from "../../core/createScopedName.js";
 import { getAbsPathWithExt } from "../../core/get-abs-path-with-ext.js";
 import { useClientRegex, useServerRegex } from "../../constants.js";
+import { hasServerFunctions } from "../../core/transform-server-functions.js";
 import parseExports from "../../core/parse-exports.js";
 
 const require = createRequire(import.meta.url);
@@ -292,6 +293,8 @@ function setManifestEntry(fileUrl, expName, entry) {
         if (useServerRegex.test(importCode.trim())) {
           serverFiles.add(normalizeFsPath(absImportPathWithExt));
           continue;
+        } else if (hasServerFunctions(importCode)) {
+          serverFiles.add(normalizeFsPath(absImportPathWithExt));
         }
 
         const nested = await getImportsAndAssetsAndCsss(
@@ -556,7 +559,7 @@ function setManifestEntry(fileUrl, expName, entry) {
       }
       const code = readFileSync(normAbs, "utf8");
       const isClientModule = useClientRegex.test(code.trim());
-      const isServerModule = useServerRegex.test(code.trim());
+      const isServerModule = useServerRegex.test(code.trim()) || hasServerFunctions(code);
       if (isServerModule) {
         serverFiles.add(normId);
       } else {

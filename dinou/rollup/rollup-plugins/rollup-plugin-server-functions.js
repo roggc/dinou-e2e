@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import manifestGeneratorPlugin from "./manifest-generator-plugin.js";
 import parseExports from "../../core/parse-exports.js";
 import { useServerRegex } from "../../constants.js";
+import { extractServerFunctions, hasServerFunctions } from "../../core/transform-server-functions.js";
 
 function serverFunctionsPlugin(manifestData = {}, options = {}) {
   const opts =
@@ -93,6 +94,11 @@ function serverFunctionsPlugin(manifestData = {}, options = {}) {
                 const exports = parseExports(fileCode);
                 if (exports && exports.length > 0) {
                   serverFunctions.set(rel, new Set(exports));
+                }
+              } else if (hasServerFunctions(fileCode)) {
+                const actions = extractServerFunctions(fileCode, filePath);
+                if (actions && actions.length > 0) {
+                  serverFunctions.set(rel, new Set(actions));
                 }
               }
             } catch (e) {}

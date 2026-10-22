@@ -8,6 +8,7 @@ import crypto from "node:crypto";
 import { regex as assetRegex } from "../../core/asset-extensions.js";
 import { getAbsPathWithExt } from "../../core/get-abs-path-with-ext.js";
 import { useClientRegex, useServerRegex } from "../../constants.js";
+import { hasServerFunctions } from "../../core/transform-server-functions.js";
 
 const traverse = typeof _traverseRaw === "function" ? _traverseRaw : (_traverseRaw.default || _traverseRaw);
 
@@ -90,6 +91,8 @@ async function getCSSEntries({
         if (isImportedFileServer) {
           serverFiles.add(path.resolve(absImportPathWithExt).replace(/\\/g, "/").toLowerCase());
           continue;
+        } else if (hasServerFunctions(importedCode)) {
+          serverFiles.add(path.resolve(absImportPathWithExt).replace(/\\/g, "/").toLowerCase());
         }
       } else {
         const isImportedFileServer = useServerRegex.test(importedCode.trim());
@@ -97,6 +100,8 @@ async function getCSSEntries({
         if (isImportedFileServer) {
           serverFiles.add(path.resolve(absImportPathWithExt).replace(/\\/g, "/").toLowerCase());
           continue;
+        } else if (hasServerFunctions(importedCode)) {
+          serverFiles.add(path.resolve(absImportPathWithExt).replace(/\\/g, "/").toLowerCase());
         }
       }
 
@@ -183,6 +188,9 @@ async function getCSSEntries({
         await getImportsAndAssetsAndCsss(code, absPath, new Set(), true);
       } catch (err) {}
     } else if (isPageOrLayout(absPath)) {
+      if (hasServerFunctions(code)) {
+        serverFiles.add(path.resolve(absPath).replace(/\\/g, "/").toLowerCase());
+      }
       try {
         const { csss } = await getImportsAndAssetsAndCsss(code, absPath);
 

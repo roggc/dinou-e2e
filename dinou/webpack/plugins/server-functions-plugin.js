@@ -3,6 +3,7 @@ import fs from "node:fs";
 import manifestGeneratorPlugin from "./manifest-generator-plugin.js";
 import parseExports from "../../core/parse-exports.js";
 import { useServerRegex } from "../../constants.js";
+import { extractServerFunctions, hasServerFunctions } from "../../core/transform-server-functions.js";
 
 class WebpackServerFunctionsPluginSimple {
   constructor(options = {}) {
@@ -59,6 +60,14 @@ class WebpackServerFunctionsPluginSimple {
                       const exports = parseExports(fileCode);
                       if (exports && exports.length > 0) {
                         serverFunctionsManifest[rel] = exports;
+                        serverFunctionPaths.add(
+                          path.resolve(process.cwd(), rel).replace(/\\/g, "/").toLowerCase()
+                        );
+                      }
+                    } else if (hasServerFunctions(fileCode)) {
+                      const actions = extractServerFunctions(fileCode, filePath);
+                      if (actions && actions.length > 0) {
+                        serverFunctionsManifest[rel] = actions;
                         serverFunctionPaths.add(
                           path.resolve(process.cwd(), rel).replace(/\\/g, "/").toLowerCase()
                         );
