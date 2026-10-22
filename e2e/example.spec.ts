@@ -5363,7 +5363,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
 
   test.describe("Dinou Core: Server Functions as Props & Manifest Reachability", () => {
-    test("Server Functions passed as props from Server Component to Client Component work correctly", async ({ page }) => {
+    test("Server Functions (imported, inline with closure, unexported module) passed as props work correctly", async ({ page }) => {
       page.on("console", (msg) => {
         if (msg.type() === "error") {
           console.log(`[Browser Error]: ${msg.text()}`);
@@ -5373,7 +5373,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.goto("/t-sf-props");
       await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
 
-      // 1. Direct Server Function passed as prop
+      // 1. Direct Server Function imported from "use server" module
       await page.click("#btn-echo");
       await expect(page.locator("#result-echo")).toHaveText("echo:hola", { timeout: 10000 });
 
@@ -5381,7 +5381,15 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.click("#btn-bound");
       await expect(page.locator("#result-bound")).toHaveText("bound:hola", { timeout: 10000 });
 
-      // 3. Form action with useActionState passed as prop
+      // 3. Inline Server Function capturing closure variable `secret`
+      await page.click("#btn-inline");
+      await expect(page.locator("#result-inline")).toHaveText("inline:hola:captured", { timeout: 10000 });
+
+      // 4. Module-level unexported Server Function with "use server" in body
+      await page.click("#btn-module-unexported");
+      await expect(page.locator("#result-module-unexported")).toHaveText("module-unexported:hola", { timeout: 10000 });
+
+      // 5. Form action with useActionState passed as prop
       await page.click("#btn-submit");
       await expect(page.locator("#result-form")).toHaveText("form:dinou", { timeout: 10000 });
     });
@@ -5403,13 +5411,18 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         expect(manifest[reachableKey]).toContain("formAction");
       }
 
+      // Verify page containing inline and unexported module server functions is registered
+      const pageKey = manifestKeys.find((k) => k.replace(/\\/g, "/").includes("t-sf-props/page"));
+      expect(pageKey).toBeDefined();
+      if (pageKey) {
+        expect(manifest[pageKey]).toContain("unexportedModuleAction");
+        const hasInlineAction = manifest[pageKey].some((fn: string) => fn.startsWith("$$dinou_action_inlineAction_"));
+        expect(hasInlineAction).toBe(true);
+      }
+
       // Verify unimported orphan module is NOT included in the manifest
       const orphanKey = manifestKeys.find((k) => k.replace(/\\/g, "/").includes("orphan-action"));
       expect(orphanKey).toBeUndefined();
     });
   });
-
 });
-
-
-
