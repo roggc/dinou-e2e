@@ -571,6 +571,9 @@ function setManifestEntry(fileUrl, expName, entry) {
         knownClientChunks.set(normId, { id: normAbs, name: chunkName });
         serverModules.delete(normId);
         this.addWatchFile(normAbs);
+        try {
+          await getImportsAndAssetsAndCsss(code, normAbs, new Set(), this);
+        } catch (e) {}
       } else {
         clientModules.delete(normId);
         knownClientChunks.delete(normId);

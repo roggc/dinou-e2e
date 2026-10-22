@@ -188,6 +188,9 @@ export default async function getEsbuildEntries({
         absPath: normalizedPath,
         name,
       });
+      try {
+        await getImportsAndAssetsAndCsss(code, absPath, new Set(), true);
+      } catch (err) {}
     } else if (isPageOrLayout(absPath)) {
       serverModules.add(normalizedPath);
       try {

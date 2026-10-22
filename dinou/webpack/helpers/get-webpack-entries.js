@@ -179,6 +179,9 @@ async function getCSSEntries({
         absPath: normalizedPath,
         name,
       });
+      try {
+        await getImportsAndAssetsAndCsss(code, absPath, new Set(), true);
+      } catch (err) {}
     } else if (isPageOrLayout(absPath)) {
       try {
         const { csss } = await getImportsAndAssetsAndCsss(code, absPath);

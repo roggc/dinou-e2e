@@ -5361,6 +5361,54 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
   });
 
+
+  test.describe("Dinou Core: Server Functions as Props & Manifest Reachability", () => {
+    test("Server Functions passed as props from Server Component to Client Component work correctly", async ({ page }) => {
+      page.on("console", (msg) => {
+        if (msg.type() === "error") {
+          console.log(`[Browser Error]: ${msg.text()}`);
+        }
+      });
+
+      await page.goto("/t-sf-props");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+
+      // 1. Direct Server Function passed as prop
+      await page.click("#btn-echo");
+      await expect(page.locator("#result-echo")).toHaveText("echo:hola", { timeout: 10000 });
+
+      // 2. Bound Server Function (.bind) passed as prop
+      await page.click("#btn-bound");
+      await expect(page.locator("#result-bound")).toHaveText("bound:hola", { timeout: 10000 });
+
+      // 3. Form action with useActionState passed as prop
+      await page.click("#btn-submit");
+      await expect(page.locator("#result-form")).toHaveText("form:dinou", { timeout: 10000 });
+    });
+
+    test("Server Functions Manifest only includes reachable actions and excludes unimported modules", async () => {
+      const manifestPath = path.join(process.cwd(), ".dinou", "server_functions_manifest", "server-functions-manifest.json");
+      if (!fs.existsSync(manifestPath)) {
+        return; // In development or memory mode without disk write, skip disk assertion
+      }
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+      const manifestKeys = Object.keys(manifest);
+
+      // Verify reachable action module is present with its exported functions
+      const reachableKey = manifestKeys.find((k) => k.replace(/\\/g, "/").includes("t-sf-props/actions"));
+      expect(reachableKey).toBeDefined();
+      if (reachableKey) {
+        expect(manifest[reachableKey]).toContain("echoAction");
+        expect(manifest[reachableKey]).toContain("boundAction");
+        expect(manifest[reachableKey]).toContain("formAction");
+      }
+
+      // Verify unimported orphan module is NOT included in the manifest
+      const orphanKey = manifestKeys.find((k) => k.replace(/\\/g, "/").includes("orphan-action"));
+      expect(orphanKey).toBeUndefined();
+    });
+  });
+
 });
 
 
