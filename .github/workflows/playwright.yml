@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-24.04, windows-latest]
         bundler: [webpack, rollup, esbuild]
     steps:
       - uses: actions/checkout@v6
@@ -30,14 +30,12 @@ jobs:
             ~/.cache/ms-playwright
             ~\AppData\Local\ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
-      - name: Fix slow Ubuntu APT mirrors & set timeouts
-        if: matrix.os == 'ubuntu-latest'
+      - name: Configure APT (Force IPv4 & timeouts)
+        if: runner.os == 'Linux'
         run: |
-          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu/|http://archive.ubuntu.com/ubuntu/|g' /etc/apt/apt-mirrors.txt 2>/dev/null || true
-          sudo sed -i 's|mirror+file:/etc/apt/apt-mirrors.txt|http://archive.ubuntu.com/ubuntu/|g' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
-          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/* /etc/apt/apt-mirrors.txt 2>/dev/null || true
+          sudo sh -c 'echo "Acquire::ForceIPv4 \"true\";" > /etc/apt/apt.conf.d/99force-ipv4'
           sudo sh -c 'echo "Acquire::http::Timeout \"30\";\nAcquire::http::Retries \"3\";" > /etc/apt/apt.conf.d/99timeout'
-          sudo apt-get update -y || true
+          sudo apt-get update -y || (sleep 5 && sudo apt-get update -y)
       - name: Install Playwright Browsers & Deps
         timeout-minutes: 20
         run: npx playwright install --with-deps
@@ -60,7 +58,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-24.04, windows-latest]
         bundler: [esbuild, rollup, webpack]
     steps:
       - uses: actions/checkout@v6
@@ -78,14 +76,12 @@ jobs:
             ~/.cache/ms-playwright
             ~\AppData\Local\ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
-      - name: Fix slow Ubuntu APT mirrors & set timeouts
-        if: matrix.os == 'ubuntu-latest'
+      - name: Configure APT (Force IPv4 & timeouts)
+        if: runner.os == 'Linux'
         run: |
-          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu/|http://archive.ubuntu.com/ubuntu/|g' /etc/apt/apt-mirrors.txt 2>/dev/null || true
-          sudo sed -i 's|mirror+file:/etc/apt/apt-mirrors.txt|http://archive.ubuntu.com/ubuntu/|g' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
-          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/* /etc/apt/apt-mirrors.txt 2>/dev/null || true
+          sudo sh -c 'echo "Acquire::ForceIPv4 \"true\";" > /etc/apt/apt.conf.d/99force-ipv4'
           sudo sh -c 'echo "Acquire::http::Timeout \"30\";\nAcquire::http::Retries \"3\";" > /etc/apt/apt.conf.d/99timeout'
-          sudo apt-get update -y || true
+          sudo apt-get update -y || (sleep 5 && sudo apt-get update -y)
       - name: Install Playwright Browsers & Deps
         timeout-minutes: 20
         run: npx playwright install --with-deps
@@ -109,7 +105,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-24.04, windows-latest]
         bundler: [esbuild, rollup, webpack]
     steps:
       - uses: actions/checkout@v6
@@ -131,14 +127,12 @@ jobs:
             ~/.cache/ms-playwright
             ~\AppData\Local\ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
-      - name: Fix slow Ubuntu APT mirrors & set timeouts
-        if: matrix.os == 'ubuntu-latest'
+      - name: Configure APT (Force IPv4 & timeouts)
+        if: runner.os == 'Linux'
         run: |
-          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu/|http://archive.ubuntu.com/ubuntu/|g' /etc/apt/apt-mirrors.txt 2>/dev/null || true
-          sudo sed -i 's|mirror+file:/etc/apt/apt-mirrors.txt|http://archive.ubuntu.com/ubuntu/|g' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
-          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/* /etc/apt/apt-mirrors.txt 2>/dev/null || true
+          sudo sh -c 'echo "Acquire::ForceIPv4 \"true\";" > /etc/apt/apt.conf.d/99force-ipv4'
           sudo sh -c 'echo "Acquire::http::Timeout \"30\";\nAcquire::http::Retries \"3\";" > /etc/apt/apt.conf.d/99timeout'
-          sudo apt-get update -y || true
+          sudo apt-get update -y || (sleep 5 && sudo apt-get update -y)
       - name: Install Playwright Browsers & Deps
         timeout-minutes: 20
         run: npx playwright install --with-deps
@@ -163,7 +157,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-24.04, windows-latest]
         bundler: [esbuild, rollup, webpack]
     steps:
       - uses: actions/checkout@v6
@@ -185,14 +179,12 @@ jobs:
             ~/.cache/ms-playwright
             ~\AppData\Local\ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
-      - name: Fix slow Ubuntu APT mirrors & set timeouts
-        if: matrix.os == 'ubuntu-latest'
+      - name: Configure APT (Force IPv4 & timeouts)
+        if: runner.os == 'Linux'
         run: |
-          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu/|http://archive.ubuntu.com/ubuntu/|g' /etc/apt/apt-mirrors.txt 2>/dev/null || true
-          sudo sed -i 's|mirror+file:/etc/apt/apt-mirrors.txt|http://archive.ubuntu.com/ubuntu/|g' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
-          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/* /etc/apt/apt-mirrors.txt 2>/dev/null || true
+          sudo sh -c 'echo "Acquire::ForceIPv4 \"true\";" > /etc/apt/apt.conf.d/99force-ipv4'
           sudo sh -c 'echo "Acquire::http::Timeout \"30\";\nAcquire::http::Retries \"3\";" > /etc/apt/apt.conf.d/99timeout'
-          sudo apt-get update -y || true
+          sudo apt-get update -y || (sleep 5 && sudo apt-get update -y)
       - name: Install Playwright Browsers & Deps
         timeout-minutes: 20
         run: npx playwright install --with-deps
@@ -216,7 +208,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-24.04, windows-latest]
         bundler: [esbuild, rollup, webpack]
     steps:
       - uses: actions/checkout@v6
@@ -234,14 +226,12 @@ jobs:
             ~/.cache/ms-playwright
             ~\AppData\Local\ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
-      - name: Fix slow Ubuntu APT mirrors & set timeouts
-        if: matrix.os == 'ubuntu-latest'
+      - name: Configure APT (Force IPv4 & timeouts)
+        if: runner.os == 'Linux'
         run: |
-          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu/|http://archive.ubuntu.com/ubuntu/|g' /etc/apt/apt-mirrors.txt 2>/dev/null || true
-          sudo sed -i 's|mirror+file:/etc/apt/apt-mirrors.txt|http://archive.ubuntu.com/ubuntu/|g' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
-          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/* /etc/apt/apt-mirrors.txt 2>/dev/null || true
+          sudo sh -c 'echo "Acquire::ForceIPv4 \"true\";" > /etc/apt/apt.conf.d/99force-ipv4'
           sudo sh -c 'echo "Acquire::http::Timeout \"30\";\nAcquire::http::Retries \"3\";" > /etc/apt/apt.conf.d/99timeout'
-          sudo apt-get update -y || true
+          sudo apt-get update -y || (sleep 5 && sudo apt-get update -y)
       - name: Install Playwright Browsers & Deps
         timeout-minutes: 20
         run: npx playwright install --with-deps
@@ -265,7 +255,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-24.04, windows-latest]
         bundler: [esbuild, rollup, webpack]
     steps:
       - uses: actions/checkout@v6
@@ -287,14 +277,12 @@ jobs:
             ~/.cache/ms-playwright
             ~\AppData\Local\ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
-      - name: Fix slow Ubuntu APT mirrors & set timeouts
-        if: matrix.os == 'ubuntu-latest'
+      - name: Configure APT (Force IPv4 & timeouts)
+        if: runner.os == 'Linux'
         run: |
-          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu/|http://archive.ubuntu.com/ubuntu/|g' /etc/apt/apt-mirrors.txt 2>/dev/null || true
-          sudo sed -i 's|mirror+file:/etc/apt/apt-mirrors.txt|http://archive.ubuntu.com/ubuntu/|g' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
-          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/* /etc/apt/apt-mirrors.txt 2>/dev/null || true
+          sudo sh -c 'echo "Acquire::ForceIPv4 \"true\";" > /etc/apt/apt.conf.d/99force-ipv4'
           sudo sh -c 'echo "Acquire::http::Timeout \"30\";\nAcquire::http::Retries \"3\";" > /etc/apt/apt.conf.d/99timeout'
-          sudo apt-get update -y || true
+          sudo apt-get update -y || (sleep 5 && sudo apt-get update -y)
       - name: Install Playwright Browsers & Deps
         timeout-minutes: 20
         run: npx playwright install --with-deps
