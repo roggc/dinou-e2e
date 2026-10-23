@@ -1,0 +1,346 @@
+name: Playwright Tests
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+jobs:
+  dev-tests:
+    name: ${{ matrix.os }} - Node DEV - ${{ matrix.bundler }}
+    timeout-minutes: 60
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+        bundler: [webpack, rollup, esbuild]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Cache Playwright Browsers
+        id: playwright-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~\AppData\Local\ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
+      - name: Configure APT (Mirror, IPv4, Pipeline & Timeouts)
+        if: runner.os == 'Linux'
+        run: |
+          sudo sed -i 's|azure\.archive\.ubuntu\.com|archive\.ubuntu\.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          sudo tee /etc/apt/apt.conf.d/99custom << 'EOF'
+          Acquire::ForceIPv4 "true";
+          Acquire::http::Pipeline-Depth "0";
+          Acquire::http::No-Cache "true";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          Acquire::Retries "5";
+          EOF
+          sudo apt-get update -y || (sleep 5 && sudo apt-get update -y)
+      - name: Install Playwright Browsers & Deps
+        timeout-minutes: 10
+        run: npx playwright install --with-deps || (sleep 5 && npx playwright install --with-deps)
+
+      - name: Run Playwright Tests (Dev Mode)
+        env:
+          TEST_CMD: npm run dev:${{ matrix.bundler }}
+        run: npx playwright test
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: report-${{ matrix.os }}-node-dev-${{ matrix.bundler }}
+          path: playwright-report/
+          retention-days: 30
+
+  cloudflare-tests:
+    name: ${{ matrix.os }} - Cloudflare Worker - ${{ matrix.bundler }}
+    timeout-minutes: 60
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+        bundler: [esbuild, rollup, webpack]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Cache Playwright Browsers
+        id: playwright-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~\AppData\Local\ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
+      - name: Configure APT (Mirror, IPv4, Pipeline & Timeouts)
+        if: runner.os == 'Linux'
+        run: |
+          sudo sed -i 's|azure\.archive\.ubuntu\.com|archive\.ubuntu\.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          sudo tee /etc/apt/apt.conf.d/99custom << 'EOF'
+          Acquire::ForceIPv4 "true";
+          Acquire::http::Pipeline-Depth "0";
+          Acquire::http::No-Cache "true";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          Acquire::Retries "5";
+          EOF
+          sudo apt-get update -y || (sleep 5 && sudo apt-get update -y)
+      - name: Install Playwright Browsers & Deps
+        timeout-minutes: 10
+        run: npx playwright install --with-deps || (sleep 5 && npx playwright install --with-deps)
+      - name: Build Cloudflare Worker (${{ matrix.bundler }})
+        run: npm run build:cloudflare:${{ matrix.bundler }}
+      - name: Run Playwright Tests on Cloudflare
+        env:
+          TEST_CMD: npx wrangler dev --port 3000
+        run: npx playwright test
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: report-${{ matrix.os }}-cloudflare-${{ matrix.bundler }}
+          path: playwright-report/
+          retention-days: 30
+
+  deno-tests:
+    name: ${{ matrix.os }} - Deno - ${{ matrix.bundler }}
+    timeout-minutes: 60
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+        bundler: [esbuild, rollup, webpack]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: 'npm'
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Install dependencies
+        run: npm ci
+      - name: Cache Playwright Browsers
+        id: playwright-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~\AppData\Local\ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
+      - name: Configure APT (Mirror, IPv4, Pipeline & Timeouts)
+        if: runner.os == 'Linux'
+        run: |
+          sudo sed -i 's|azure\.archive\.ubuntu\.com|archive\.ubuntu\.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          sudo tee /etc/apt/apt.conf.d/99custom << 'EOF'
+          Acquire::ForceIPv4 "true";
+          Acquire::http::Pipeline-Depth "0";
+          Acquire::http::No-Cache "true";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          Acquire::Retries "5";
+          EOF
+          sudo apt-get update -y || (sleep 5 && sudo apt-get update -y)
+      - name: Install Playwright Browsers & Deps
+        timeout-minutes: 10
+        run: npx playwright install --with-deps || (sleep 5 && npx playwright install --with-deps)
+      - name: Build Deno App & Seed KV (${{ matrix.bundler }})
+        run: npm run build:deno:${{ matrix.bundler }}
+      - name: Run Playwright Tests on Deno
+        env:
+          TEST_CMD: npm run start:deno
+          PORT: 3000
+        run: npx playwright test
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: report-${{ matrix.os }}-deno-${{ matrix.bundler }}
+          path: playwright-report/
+          retention-days: 30
+
+  bun-tests:
+    name: ${{ matrix.os }} - Bun - ${{ matrix.bundler }}
+    timeout-minutes: 60
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+        bundler: [esbuild, rollup, webpack]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: 'npm'
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install dependencies
+        run: npm ci
+      - name: Cache Playwright Browsers
+        id: playwright-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~\AppData\Local\ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
+      - name: Configure APT (Mirror, IPv4, Pipeline & Timeouts)
+        if: runner.os == 'Linux'
+        run: |
+          sudo sed -i 's|azure\.archive\.ubuntu\.com|archive\.ubuntu\.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          sudo tee /etc/apt/apt.conf.d/99custom << 'EOF'
+          Acquire::ForceIPv4 "true";
+          Acquire::http::Pipeline-Depth "0";
+          Acquire::http::No-Cache "true";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          Acquire::Retries "5";
+          EOF
+          sudo apt-get update -y || (sleep 5 && sudo apt-get update -y)
+      - name: Install Playwright Browsers & Deps
+        timeout-minutes: 10
+        run: npx playwright install --with-deps || (sleep 5 && npx playwright install --with-deps)
+      - name: Build Bun App (${{ matrix.bundler }})
+        run: npm run build:bun:${{ matrix.bundler }}
+      - name: Run Playwright Tests on Bun
+        env:
+          TEST_CMD: npm run start:bun:${{ matrix.bundler }}
+        run: npx playwright test
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: report-${{ matrix.os }}-bun-${{ matrix.bundler }}
+          path: playwright-report/
+          retention-days: 30
+
+  node-aot-tests:
+    name: ${{ matrix.os }} - Node AOT - ${{ matrix.bundler }}
+    timeout-minutes: 60
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+        bundler: [esbuild, rollup, webpack]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Cache Playwright Browsers
+        id: playwright-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~\AppData\Local\ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
+      - name: Configure APT (Mirror, IPv4, Pipeline & Timeouts)
+        if: runner.os == 'Linux'
+        run: |
+          sudo sed -i 's|azure\.archive\.ubuntu\.com|archive\.ubuntu\.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          sudo tee /etc/apt/apt.conf.d/99custom << 'EOF'
+          Acquire::ForceIPv4 "true";
+          Acquire::http::Pipeline-Depth "0";
+          Acquire::http::No-Cache "true";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          Acquire::Retries "5";
+          EOF
+          sudo apt-get update -y || (sleep 5 && sudo apt-get update -y)
+      - name: Install Playwright Browsers & Deps
+        timeout-minutes: 10
+        run: npx playwright install --with-deps || (sleep 5 && npx playwright install --with-deps)
+      - name: Build Node AOT App (${{ matrix.bundler }})
+        run: npm run build:node:${{ matrix.bundler }}
+      - name: Run Playwright Tests on Node AOT
+        env:
+          TEST_CMD: npm run start:node:${{ matrix.bundler }}
+        run: npx playwright test
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: report-${{ matrix.os }}-node-aot-${{ matrix.bundler }}
+          path: playwright-report/
+          retention-days: 30
+
+  bun-pure-tests:
+    name: ${{ matrix.os }} - Bun Pure - ${{ matrix.bundler }}
+    timeout-minutes: 60
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+        bundler: [esbuild, rollup, webpack]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: 'npm'
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install dependencies
+        run: npm ci
+      - name: Cache Playwright Browsers
+        id: playwright-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~\AppData\Local\ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
+      - name: Configure APT (Mirror, IPv4, Pipeline & Timeouts)
+        if: runner.os == 'Linux'
+        run: |
+          sudo sed -i 's|azure\.archive\.ubuntu\.com|archive\.ubuntu\.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          sudo tee /etc/apt/apt.conf.d/99custom << 'EOF'
+          Acquire::ForceIPv4 "true";
+          Acquire::http::Pipeline-Depth "0";
+          Acquire::http::No-Cache "true";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          Acquire::Retries "5";
+          EOF
+          sudo apt-get update -y || (sleep 5 && sudo apt-get update -y)
+      - name: Install Playwright Browsers & Deps
+        timeout-minutes: 10
+        run: npx playwright install --with-deps || (sleep 5 && npx playwright install --with-deps)
+      - name: Build Bun Pure App (${{ matrix.bundler }})
+        run: npm run build:bun:pure:${{ matrix.bundler }}
+      - name: Run Playwright Tests on Bun Pure
+        env:
+          TEST_CMD: npm run start:bun:${{ matrix.bundler }}
+        run: npx playwright test
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: report-${{ matrix.os }}-bun-pure-${{ matrix.bundler }}
+          path: playwright-report/
+          retention-days: 30
+
+
+
+

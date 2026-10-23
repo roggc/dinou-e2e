@@ -1,0 +1,69 @@
+name: Setup E2E
+description: Setup Node, optional runtimes (Deno, Bun), dependencies and Playwright browsers
+
+inputs:
+  deno:
+    description: Install Deno
+    default: 'false'
+  bun:
+    description: Install Bun
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: lts/*
+        cache: npm
+
+    - name: Setup Deno
+      if: inputs.deno == 'true'
+      uses: denoland/setup-deno@v2
+      with:
+        deno-version: v2.x
+
+    - name: Setup Bun
+      if: inputs.bun == 'true'
+      uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: latest
+
+    - name: Install dependencies
+      shell: bash
+      run: npm ci
+
+    - name: Cache Playwright Browsers
+      id: playwright-cache
+      uses: actions/cache@v6
+      with:
+        path: |
+          ~/.cache/ms-playwright
+          ~\AppData\Local\ms-playwright
+        key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
+
+    - name: Configure APT (Mirror, IPv4, Pipeline & Timeouts)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo sed -i 's|azure\.archive\.ubuntu\.com|archive\.ubuntu\.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+        sudo tee /etc/apt/apt.conf.d/99custom << 'EOF'
+        Acquire::ForceIPv4 "true";
+        Acquire::http::Pipeline-Depth "0";
+        Acquire::http::No-Cache "true";
+        Acquire::http::Timeout "30";
+        Acquire::https::Timeout "30";
+        Acquire::Retries "5";
+        EOF
+        sudo apt-get update -y || (sleep 5 && sudo apt-get update -y)
+
+    - name: Install Playwright OS Dependencies (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: npx playwright install-deps || (sleep 5 && npx playwright install-deps)
+
+    - name: Install Playwright Browsers
+      if: steps.playwright-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: npx playwright install
