@@ -4,14 +4,10 @@ import parseExports from "../../core/parse-exports.js";
 import { useServerRegex } from "../../constants.js";
 import { extractServerFunctions, hasServerFunctions } from "../../core/transform-server-functions.js";
 
-export default function serverFunctionsPlugin(manifestData = {}, options = {}) {
-  const opts =
-    typeof manifestData === "object" && manifestData !== null && ("onManifestUpdated" in manifestData || "serverFiles" in manifestData || "manifestData" in manifestData)
-      ? manifestData
-      : options;
-  const manifestMap = opts.manifestData || (manifestData && manifestData.manifestData) || (manifestData.onManifestUpdated ? {} : manifestData) || {};
-  const onManifestUpdated = opts.onManifestUpdated;
-  const serverFiles = opts.serverFiles || manifestData.serverFiles || options.serverFiles || null;
+export default function serverFunctionsPlugin({
+  manifestData = {},
+  serverFiles = null,
+} = {}) {
   const normalizeNormPath = (p) => {
     let s = path.resolve(p).replace(/\\/g, "/");
     if (process.platform === "win32") {
@@ -164,13 +160,8 @@ export default function serverFunctionsPlugin(manifestData = {}, options = {}) {
             }
             return;
           }
-          const proxyName =
-            manifestMap["serverFunctionProxy.js"] ||
-            opts.manifestData?.["serverFunctionProxy.js"] ||
-            manifestData?.["serverFunctionProxy.js"];
-          const hashedProxy =
-            "/" +
-            (proxyName || "serverFunctionProxy.js");
+          const proxyName = manifestData["serverFunctionProxy.js"];
+          const hashedProxy = "/" + (proxyName || "serverFunctionProxy.js");
 
           const serverFnNormalized = new Set();
           for (const relPath of serverFunctions.keys()) {
