@@ -19,7 +19,8 @@ function serverFunctionsPlugin(manifestData = {}, options = {}) {
   const serverFunctions = new Map(); // Collect here: Map<relativePath, Set<exports>>
 
   function normalizeFsPath(p) {
-    return path.resolve(p).replace(/\\/g, "/").toLowerCase();
+    const resolved = path.resolve(p).replace(/\\/g, "/");
+    return process.platform === "win32" ? resolved.toLowerCase() : resolved;
   }
 
   return {
@@ -68,27 +69,6 @@ function serverFunctionsPlugin(manifestData = {}, options = {}) {
     },
     // 🪄 After manifest exists, replace the placeholder with the final URL
     async generateBundle(options, bundle) {
-      if (serverFunctions.size === 0) {
-        if (typeof globalThis !== "undefined") {
-          globalThis.__DINOU_RAW_SERVER_FUNCTIONS_MANIFEST__ = {};
-        }
-        return;
-      }
-      const manifest = manifestGeneratorPlugin.manifestData;
-      const hashedPath =
-        "/" + (manifest["serverFunctionProxy.js"] || "serverFunctionProxy.js");
-
-      for (const file of Object.keys(bundle)) {
-        const chunk = bundle[file];
-        if (chunk.type === "asset" || !chunk.code) continue;
-        if (chunk.code.includes("/__SERVER_FUNCTION_PROXY__")) {
-          chunk.code = chunk.code.replace(
-            /\/__SERVER_FUNCTION_PROXY__/g,
-            hashedPath
-          );
-        }
-      }
-
       if (serverFiles && serverFiles.size > 0) {
         for (const filePath of serverFiles) {
           const rel = path.relative(root, filePath).replace(/\\/g, "/");
@@ -108,6 +88,27 @@ function serverFunctionsPlugin(manifestData = {}, options = {}) {
               }
             } catch (e) {}
           }
+        }
+      }
+
+      if (serverFunctions.size === 0) {
+        if (typeof globalThis !== "undefined") {
+          globalThis.__DINOU_RAW_SERVER_FUNCTIONS_MANIFEST__ = {};
+        }
+        return;
+      }
+      const manifest = manifestGeneratorPlugin.manifestData;
+      const hashedPath =
+        "/" + (manifest["serverFunctionProxy.js"] || "serverFunctionProxy.js");
+
+      for (const file of Object.keys(bundle)) {
+        const chunk = bundle[file];
+        if (chunk.type === "asset" || !chunk.code) continue;
+        if (chunk.code.includes("/__SERVER_FUNCTION_PROXY__")) {
+          chunk.code = chunk.code.replace(
+            /\/__SERVER_FUNCTION_PROXY__/g,
+            hashedPath
+          );
         }
       }
 

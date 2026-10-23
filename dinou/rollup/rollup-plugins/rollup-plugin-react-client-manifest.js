@@ -88,7 +88,8 @@ const urlToManifestKeys = new Map();
 const defaultExportCache = new Map();
 
 function normalizeFsPath(p) {
-  return path.resolve(p).replace(/\\/g, "/").toLowerCase();
+  const resolved = path.resolve(p).replace(/\\/g, "/");
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
 function alignDrive(p) {
@@ -474,6 +475,9 @@ function setManifestEntry(fileUrl, expName, entry) {
           } catch (e) {}
         } else if (isPageOrLayout(normAbs)) {
           serverModules.add(normKey);
+          if (useServerRegex.test(code.trim()) || hasServerFunctions(code)) {
+            serverFiles.add(normKey);
+          }
           this.addWatchFile(normAbs);
           const { imports, assets, csss } = await getImportsAndAssetsAndCsss(
             code,
