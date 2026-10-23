@@ -29,4 +29,94 @@ test("Server Functions: reachable modules are registered and unimported modules 
   // 3. Module imported by Client Component must be in manifest
   const hasCacheSlotActions = keys.some((k) => k.includes("t-cache-slot/actions"));
   assert.strictEqual(hasCacheSlotActions, true, "t-cache-slot/actions.ts imported by Client Component must be in manifest");
+
+  // 4. Page declaring inline and unexported server functions with "use server" in body must be in manifest
+  const pageKey = Object.keys(manifest).find((k) => k.replace(/\\/g, "/").includes("t-sf-props/page"));
+  assert.ok(pageKey, "t-sf-props/page.tsx must be in the manifest");
+  const pageFns = manifest[pageKey];
+  assert.ok(pageFns.includes("unexportedModuleAction"), "unexportedModuleAction must be registered in page");
+  assert.ok(pageFns.some((fn) => fn.startsWith("$$dinou_action_inlineAction_")), "inlineAction must be registered in page");
+});
+
+test("Server Functions: Rollup, esbuild and Webpack plugins process serverFiles before manifest generation when only body 'use server' exists", async () => {
+  const originalWriteToDisk = process.env.DINOU_WRITE_TO_DISK;
+  const originalNodeEnv = process.env.NODE_ENV;
+  process.env.DINOU_WRITE_TO_DISK = "false";
+  process.env.NODE_ENV = "production";
+
+  try {
+    const pagePath = path.resolve(projectRoot, "src/t-sf-props/page.tsx");
+
+    // 1. Rollup Plugin
+    const { default: rollupPluginFn } = await import("../dinou/rollup/rollup-plugins/rollup-plugin-server-functions.js");
+    const rollupPlugin = rollupPluginFn({ serverFiles: new Set([pagePath]) });
+    // Notice: no transform() called, so serverFunctions Map starts empty (size === 0)
+    await rollupPlugin.generateBundle({}, {});
+  const rollupManifest = globalThis.__DINOU_RAW_SERVER_FUNCTIONS_MANIFEST__ || {};
+  const rollupPageKey = Object.keys(rollupManifest).find((k) => k.replace(/\\/g, "/").includes("t-sf-props/page"));
+  assert.ok(rollupPageKey, "Rollup must register page with body-level server functions when client bundle has 0 module-level actions");
+  assert.ok(rollupManifest[rollupPageKey].includes("unexportedModuleAction"));
+  assert.ok(rollupManifest[rollupPageKey].some((fn) => fn.startsWith("$$dinou_action_inlineAction_")));
+
+  // 2. esbuild Plugin
+  const { default: esbuildPluginFn } = await import("../dinou/esbuild/plugins-esbuild/server-functions-plugin.js");
+  const esbuildPlugin = esbuildPluginFn({ serverFiles: new Set([pagePath]) });
+  let onEndCb;
+  const mockEsbuild = {
+    onStart: () => {},
+    onLoad: () => {},
+    onEnd: (cb) => { onEndCb = cb; }
+  };
+  esbuildPlugin.setup(mockEsbuild);
+  // Notice: onLoad was never invoked, serverFunctions Map starts empty (size === 0)
+  await onEndCb({ outputFiles: [] });
+  const esbuildManifest = globalThis.__DINOU_RAW_SERVER_FUNCTIONS_MANIFEST__ || {};
+  const esbuildPageKey = Object.keys(esbuildManifest).find((k) => k.replace(/\\/g, "/").includes("t-sf-props/page"));
+  assert.ok(esbuildPageKey, "esbuild must register page with body-level server functions when client bundle has 0 module-level actions");
+  assert.ok(esbuildManifest[esbuildPageKey].includes("unexportedModuleAction"));
+  assert.ok(esbuildManifest[esbuildPageKey].some((fn) => fn.startsWith("$$dinou_action_inlineAction_")));
+
+  // 3. Webpack Plugin
+  const { default: WebpackPluginClass } = await import("../dinou/webpack/plugins/server-functions-plugin.js");
+  const webpackPlugin = new WebpackPluginClass({ serverFiles: new Set([pagePath]) });
+  let processAssetsCb;
+  let emittedManifest = null;
+  const mockCompiler = {
+    webpack: {
+      Compilation: { PROCESS_ASSETS_STAGE_REPORT: "report" },
+      sources: { RawSource: class { constructor(source) { this.source = source; } } }
+    },
+    hooks: {
+      thisCompilation: {
+        tap: (name, fn) => {
+          const compilation = {
+            chunks: [],
+            emitAsset: (filename, rawSource) => {
+              if (filename === "server-functions-manifest.json") {
+                emittedManifest = JSON.parse(rawSource.source);
+              }
+            },
+            hooks: {
+              processAssets: {
+                tap: (opts, cb) => { processAssetsCb = cb; }
+              }
+            }
+          };
+          fn(compilation);
+        }
+      }
+    }
+  };
+  webpackPlugin.apply(mockCompiler);
+  // Notice: loader never outputted any temporary JSON files into assets
+  processAssetsCb({});
+  assert.ok(emittedManifest, "Webpack must emit server-functions-manifest.json");
+  const webpackPageKey = Object.keys(emittedManifest).find((k) => k.replace(/\\/g, "/").includes("t-sf-props/page"));
+  assert.ok(webpackPageKey, "Webpack must register page with body-level server functions when client bundle has 0 module-level actions");
+  assert.ok(emittedManifest[webpackPageKey].includes("unexportedModuleAction"));
+  assert.ok(emittedManifest[webpackPageKey].some((fn) => fn.startsWith("$$dinou_action_inlineAction_")));
+  } finally {
+    process.env.DINOU_WRITE_TO_DISK = originalWriteToDisk;
+    process.env.NODE_ENV = originalNodeEnv;
+  }
 });
