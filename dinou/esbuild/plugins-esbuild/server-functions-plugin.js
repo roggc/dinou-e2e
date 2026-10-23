@@ -136,6 +136,28 @@ export default function serverFunctionsPlugin(manifestData = {}, options = {}) {
       build.onEnd(async (result) => {
         const tEnd0 = Date.now();
         try {
+          if (serverFilesSet && serverFilesSet.size > 0) {
+            for (const filePath of serverFilesSet) {
+              const rel = path.relative(root, filePath).replace(/\\/g, "/");
+              if (!serverFunctions.has(rel)) {
+                try {
+                  const code = await fs.readFile(filePath, "utf8");
+                  if (useServerRegex.test(code.trim())) {
+                    const exports = parseExports(code);
+                    if (exports && exports.length > 0) {
+                      serverFunctions.set(rel, new Set(exports));
+                    }
+                  } else if (hasServerFunctions(code)) {
+                    const actions = extractServerFunctions(code, filePath);
+                    if (actions && actions.length > 0) {
+                      serverFunctions.set(rel, new Set(actions));
+                    }
+                  }
+                } catch (e) {}
+              }
+            }
+          }
+
           if (serverFunctions.size === 0) {
             if (typeof globalThis !== "undefined") {
               globalThis.__DINOU_RAW_SERVER_FUNCTIONS_MANIFEST__ = {};
@@ -179,28 +201,6 @@ export default function serverFunctionsPlugin(manifestData = {}, options = {}) {
                 hashedProxy
               );
               outputFile.contents = new TextEncoder().encode(newCode);
-            }
-          }
-
-          if (serverFilesSet && serverFilesSet.size > 0) {
-            for (const filePath of serverFilesSet) {
-              const rel = path.relative(root, filePath).replace(/\\/g, "/");
-              if (!serverFunctions.has(rel)) {
-                try {
-                  const code = await fs.readFile(filePath, "utf8");
-                  if (useServerRegex.test(code.trim())) {
-                    const exports = parseExports(code);
-                    if (exports && exports.length > 0) {
-                      serverFunctions.set(rel, new Set(exports));
-                    }
-                  } else if (hasServerFunctions(code)) {
-                    const actions = extractServerFunctions(code, filePath);
-                    if (actions && actions.length > 0) {
-                      serverFunctions.set(rel, new Set(actions));
-                    }
-                  }
-                } catch (e) {}
-              }
             }
           }
 
