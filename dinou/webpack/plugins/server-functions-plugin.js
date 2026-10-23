@@ -138,8 +138,17 @@ class WebpackServerFunctionsPluginSimple {
             }
 
             // 5. Replace placeholder ONLY in chunks that actually contain server functions
+            const isProd =
+              process.env.NODE_ENV === "production" &&
+              process.env.DINOU_DEV !== "true";
             const manifest = manifestGeneratorPlugin.manifestData;
-            const hashedPath = manifest["serverFunctionProxy.js"] || "serverFunctionProxy.js";
+            const proxyName = manifest["serverFunctionProxy.js"];
+            if (isProd && !proxyName) {
+              throw new Error(
+                "[Dinou] webpack serverFunctionsPlugin: could not find hashed 'serverFunctionProxy.js' in manifest during production build."
+              );
+            }
+            const hashedPath = proxyName || "serverFunctionProxy.js";
 
             for (const filename of targetAssetFiles) {
               if (filename.endsWith(".js") && assets[filename]) {

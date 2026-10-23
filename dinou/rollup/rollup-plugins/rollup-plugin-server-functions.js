@@ -97,9 +97,18 @@ function serverFunctionsPlugin(manifestData = {}, options = {}) {
         }
         return;
       }
+      const isProd =
+        process.env.NODE_ENV === "production" &&
+        process.env.DINOU_DEV !== "true";
       const manifest = manifestGeneratorPlugin.manifestData;
+      const proxyName = manifest["serverFunctionProxy.js"];
+      if (isProd && !proxyName) {
+        throw new Error(
+          "[Dinou] rollup-plugin-server-functions: could not find hashed 'serverFunctionProxy.js' in manifest during production build."
+        );
+      }
       const hashedPath =
-        "/" + (manifest["serverFunctionProxy.js"] || "serverFunctionProxy.js");
+        "/" + (proxyName || "serverFunctionProxy.js");
 
       for (const file of Object.keys(bundle)) {
         const chunk = bundle[file];

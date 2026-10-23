@@ -160,7 +160,13 @@ export default function serverFunctionsPlugin({
             }
             return;
           }
+          const isProd = process.env.NODE_ENV === "production";
           const proxyName = manifestData["serverFunctionProxy.js"];
+          if (isProd && !proxyName) {
+            throw new Error(
+              "[Dinou] serverFunctionsPlugin: could not find hashed 'serverFunctionProxy.js' in manifestData during production build."
+            );
+          }
           const hashedProxy = "/" + (proxyName || "serverFunctionProxy.js");
 
           const serverFnNormalized = new Set();
