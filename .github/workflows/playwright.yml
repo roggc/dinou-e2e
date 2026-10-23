@@ -30,15 +30,22 @@ jobs:
             ~/.cache/ms-playwright
             ~\AppData\Local\ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
-      - name: Configure APT (Force IPv4 & timeouts)
+      - name: Configure APT (Mirror, IPv4, Pipeline & Timeouts)
         if: runner.os == 'Linux'
         run: |
-          sudo sh -c 'echo "Acquire::ForceIPv4 \"true\";" > /etc/apt/apt.conf.d/99force-ipv4'
-          sudo sh -c 'echo "Acquire::http::Timeout \"30\";\nAcquire::http::Retries \"3\";" > /etc/apt/apt.conf.d/99timeout'
+          sudo sed -i 's|azure\.archive\.ubuntu\.com|archive\.ubuntu\.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          sudo tee /etc/apt/apt.conf.d/99custom << 'EOF'
+          Acquire::ForceIPv4 "true";
+          Acquire::http::Pipeline-Depth "0";
+          Acquire::http::No-Cache "true";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          Acquire::Retries "5";
+          EOF
           sudo apt-get update -y || (sleep 5 && sudo apt-get update -y)
       - name: Install Playwright Browsers & Deps
-        timeout-minutes: 20
-        run: npx playwright install --with-deps
+        timeout-minutes: 10
+        run: npx playwright install --with-deps || (sleep 5 && npx playwright install --with-deps)
 
       - name: Run Playwright Tests (Dev Mode)
         env:
@@ -76,15 +83,22 @@ jobs:
             ~/.cache/ms-playwright
             ~\AppData\Local\ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
-      - name: Configure APT (Force IPv4 & timeouts)
+      - name: Configure APT (Mirror, IPv4, Pipeline & Timeouts)
         if: runner.os == 'Linux'
         run: |
-          sudo sh -c 'echo "Acquire::ForceIPv4 \"true\";" > /etc/apt/apt.conf.d/99force-ipv4'
-          sudo sh -c 'echo "Acquire::http::Timeout \"30\";\nAcquire::http::Retries \"3\";" > /etc/apt/apt.conf.d/99timeout'
+          sudo sed -i 's|azure\.archive\.ubuntu\.com|archive\.ubuntu\.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          sudo tee /etc/apt/apt.conf.d/99custom << 'EOF'
+          Acquire::ForceIPv4 "true";
+          Acquire::http::Pipeline-Depth "0";
+          Acquire::http::No-Cache "true";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          Acquire::Retries "5";
+          EOF
           sudo apt-get update -y || (sleep 5 && sudo apt-get update -y)
       - name: Install Playwright Browsers & Deps
-        timeout-minutes: 20
-        run: npx playwright install --with-deps
+        timeout-minutes: 10
+        run: npx playwright install --with-deps || (sleep 5 && npx playwright install --with-deps)
       - name: Build Cloudflare Worker (${{ matrix.bundler }})
         run: npm run build:cloudflare:${{ matrix.bundler }}
       - name: Run Playwright Tests on Cloudflare
@@ -127,15 +141,22 @@ jobs:
             ~/.cache/ms-playwright
             ~\AppData\Local\ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
-      - name: Configure APT (Force IPv4 & timeouts)
+      - name: Configure APT (Mirror, IPv4, Pipeline & Timeouts)
         if: runner.os == 'Linux'
         run: |
-          sudo sh -c 'echo "Acquire::ForceIPv4 \"true\";" > /etc/apt/apt.conf.d/99force-ipv4'
-          sudo sh -c 'echo "Acquire::http::Timeout \"30\";\nAcquire::http::Retries \"3\";" > /etc/apt/apt.conf.d/99timeout'
+          sudo sed -i 's|azure\.archive\.ubuntu\.com|archive\.ubuntu\.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          sudo tee /etc/apt/apt.conf.d/99custom << 'EOF'
+          Acquire::ForceIPv4 "true";
+          Acquire::http::Pipeline-Depth "0";
+          Acquire::http::No-Cache "true";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          Acquire::Retries "5";
+          EOF
           sudo apt-get update -y || (sleep 5 && sudo apt-get update -y)
       - name: Install Playwright Browsers & Deps
-        timeout-minutes: 20
-        run: npx playwright install --with-deps
+        timeout-minutes: 10
+        run: npx playwright install --with-deps || (sleep 5 && npx playwright install --with-deps)
       - name: Build Deno App & Seed KV (${{ matrix.bundler }})
         run: npm run build:deno:${{ matrix.bundler }}
       - name: Run Playwright Tests on Deno
@@ -179,15 +200,22 @@ jobs:
             ~/.cache/ms-playwright
             ~\AppData\Local\ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
-      - name: Configure APT (Force IPv4 & timeouts)
+      - name: Configure APT (Mirror, IPv4, Pipeline & Timeouts)
         if: runner.os == 'Linux'
         run: |
-          sudo sh -c 'echo "Acquire::ForceIPv4 \"true\";" > /etc/apt/apt.conf.d/99force-ipv4'
-          sudo sh -c 'echo "Acquire::http::Timeout \"30\";\nAcquire::http::Retries \"3\";" > /etc/apt/apt.conf.d/99timeout'
+          sudo sed -i 's|azure\.archive\.ubuntu\.com|archive\.ubuntu\.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          sudo tee /etc/apt/apt.conf.d/99custom << 'EOF'
+          Acquire::ForceIPv4 "true";
+          Acquire::http::Pipeline-Depth "0";
+          Acquire::http::No-Cache "true";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          Acquire::Retries "5";
+          EOF
           sudo apt-get update -y || (sleep 5 && sudo apt-get update -y)
       - name: Install Playwright Browsers & Deps
-        timeout-minutes: 20
-        run: npx playwright install --with-deps
+        timeout-minutes: 10
+        run: npx playwright install --with-deps || (sleep 5 && npx playwright install --with-deps)
       - name: Build Bun App (${{ matrix.bundler }})
         run: npm run build:bun:${{ matrix.bundler }}
       - name: Run Playwright Tests on Bun
@@ -226,15 +254,22 @@ jobs:
             ~/.cache/ms-playwright
             ~\AppData\Local\ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
-      - name: Configure APT (Force IPv4 & timeouts)
+      - name: Configure APT (Mirror, IPv4, Pipeline & Timeouts)
         if: runner.os == 'Linux'
         run: |
-          sudo sh -c 'echo "Acquire::ForceIPv4 \"true\";" > /etc/apt/apt.conf.d/99force-ipv4'
-          sudo sh -c 'echo "Acquire::http::Timeout \"30\";\nAcquire::http::Retries \"3\";" > /etc/apt/apt.conf.d/99timeout'
+          sudo sed -i 's|azure\.archive\.ubuntu\.com|archive\.ubuntu\.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          sudo tee /etc/apt/apt.conf.d/99custom << 'EOF'
+          Acquire::ForceIPv4 "true";
+          Acquire::http::Pipeline-Depth "0";
+          Acquire::http::No-Cache "true";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          Acquire::Retries "5";
+          EOF
           sudo apt-get update -y || (sleep 5 && sudo apt-get update -y)
       - name: Install Playwright Browsers & Deps
-        timeout-minutes: 20
-        run: npx playwright install --with-deps
+        timeout-minutes: 10
+        run: npx playwright install --with-deps || (sleep 5 && npx playwright install --with-deps)
       - name: Build Node AOT App (${{ matrix.bundler }})
         run: npm run build:node:${{ matrix.bundler }}
       - name: Run Playwright Tests on Node AOT
@@ -277,15 +312,22 @@ jobs:
             ~/.cache/ms-playwright
             ~\AppData\Local\ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
-      - name: Configure APT (Force IPv4 & timeouts)
+      - name: Configure APT (Mirror, IPv4, Pipeline & Timeouts)
         if: runner.os == 'Linux'
         run: |
-          sudo sh -c 'echo "Acquire::ForceIPv4 \"true\";" > /etc/apt/apt.conf.d/99force-ipv4'
-          sudo sh -c 'echo "Acquire::http::Timeout \"30\";\nAcquire::http::Retries \"3\";" > /etc/apt/apt.conf.d/99timeout'
+          sudo sed -i 's|azure\.archive\.ubuntu\.com|archive\.ubuntu\.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          sudo tee /etc/apt/apt.conf.d/99custom << 'EOF'
+          Acquire::ForceIPv4 "true";
+          Acquire::http::Pipeline-Depth "0";
+          Acquire::http::No-Cache "true";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          Acquire::Retries "5";
+          EOF
           sudo apt-get update -y || (sleep 5 && sudo apt-get update -y)
       - name: Install Playwright Browsers & Deps
-        timeout-minutes: 20
-        run: npx playwright install --with-deps
+        timeout-minutes: 10
+        run: npx playwright install --with-deps || (sleep 5 && npx playwright install --with-deps)
       - name: Build Bun Pure App (${{ matrix.bundler }})
         run: npm run build:bun:pure:${{ matrix.bundler }}
       - name: Run Playwright Tests on Bun Pure
