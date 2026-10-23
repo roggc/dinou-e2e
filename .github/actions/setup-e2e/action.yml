@@ -43,25 +43,39 @@ runs:
           ~\AppData\Local\ms-playwright
         key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
 
-    - name: Configure APT (Mirror, IPv4, Pipeline & Timeouts)
+    - name: Configure APT mirror & timeouts (Linux)
       if: runner.os == 'Linux'
       shell: bash
       run: |
-        sudo sed -i 's|azure\.archive\.ubuntu\.com|archive\.ubuntu\.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
-        sudo tee /etc/apt/apt.conf.d/99custom << 'EOF'
-        Acquire::ForceIPv4 "true";
-        Acquire::http::Pipeline-Depth "0";
-        Acquire::http::No-Cache "true";
+        # En Ubuntu 24.04 (Noble), los runners de GitHub usan mirror+file:/etc/apt/apt-mirrors.txt
+        if [ -f /etc/apt/apt-mirrors.txt ]; then
+          echo "http://archive.ubuntu.com/ubuntu/" | sudo tee /etc/apt/apt-mirrors.txt
+        fi
+        sudo sed -i 's|azure\.archive\.ubuntu\.com|archive\.ubuntu\.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list 2>/dev/null || true
+        sudo tee /etc/apt/apt.conf.d/99custom >/dev/null << 'EOF'
+        Acquire::Retries "5";
         Acquire::http::Timeout "30";
         Acquire::https::Timeout "30";
-        Acquire::Retries "5";
+        Acquire::ForceIPv4 "true";
         EOF
-        sudo apt-get update -y || (sleep 5 && sudo apt-get update -y)
+        sudo apt-get update -y
 
     - name: Install Playwright OS Dependencies (Linux)
       if: runner.os == 'Linux'
       shell: bash
-      run: npx playwright install-deps || (sleep 5 && npx playwright install-deps)
+      run: |
+        for i in 1 2 3; do
+          echo "Intento $i: Instalando dependencias de Playwright para Linux..."
+          if timeout 420 npx playwright install-deps; then
+            echo "Dependencias de Playwright instaladas correctamente."
+            exit 0
+          fi
+          echo "::warning::install-deps intento $i falló o se colgó; reintentando..."
+          sudo dpkg --configure -a || true
+          sleep 15
+        done
+        echo "Error: install-deps falló tras 3 intentos."
+        exit 1
 
     - name: Install Playwright Browsers
       if: steps.playwright-cache.outputs.cache-hit != 'true'
