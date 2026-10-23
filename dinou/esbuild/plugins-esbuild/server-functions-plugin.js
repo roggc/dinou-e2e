@@ -6,10 +6,10 @@ import { extractServerFunctions, hasServerFunctions } from "../../core/transform
 
 export default function serverFunctionsPlugin(manifestData = {}, options = {}) {
   const opts =
-    typeof manifestData === "object" && manifestData !== null && ("onManifestUpdated" in manifestData || "serverFiles" in manifestData)
+    typeof manifestData === "object" && manifestData !== null && ("onManifestUpdated" in manifestData || "serverFiles" in manifestData || "manifestData" in manifestData)
       ? manifestData
       : options;
-  const manifestMap = opts.manifestData || (manifestData.onManifestUpdated ? {} : manifestData) || {};
+  const manifestMap = opts.manifestData || (manifestData && manifestData.manifestData) || (manifestData.onManifestUpdated ? {} : manifestData) || {};
   const onManifestUpdated = opts.onManifestUpdated;
   const serverFiles = opts.serverFiles || manifestData.serverFiles || options.serverFiles || null;
   const normalizeNormPath = (p) => {
@@ -164,9 +164,13 @@ export default function serverFunctionsPlugin(manifestData = {}, options = {}) {
             }
             return;
           }
+          const proxyName =
+            manifestMap["serverFunctionProxy.js"] ||
+            opts.manifestData?.["serverFunctionProxy.js"] ||
+            manifestData?.["serverFunctionProxy.js"];
           const hashedProxy =
-          "/" +
-          (manifestMap["serverFunctionProxy.js"] || "serverFunctionProxy.js");
+            "/" +
+            (proxyName || "serverFunctionProxy.js");
 
           const serverFnNormalized = new Set();
           for (const relPath of serverFunctions.keys()) {
@@ -174,32 +178,22 @@ export default function serverFunctionsPlugin(manifestData = {}, options = {}) {
           }
 
           let targetOutputFiles = Object.values(result.outputFiles || {});
-          if (result.metafile && result.metafile.outputs) {
-            const allowedOutputs = new Set();
-            for (const [outPath, outMeta] of Object.entries(result.metafile.outputs)) {
-              const hasSf = Object.keys(outMeta.inputs || {}).some((inPath) => {
-                const norm = path.resolve(root, inPath).replace(/\\/g, "/").toLowerCase();
-                return serverFnNormalized.has(norm);
-              });
-              if (hasSf) {
-                allowedOutputs.add(path.resolve(root, outPath).replace(/\\/g, "/").toLowerCase());
-              }
-            }
-            targetOutputFiles = targetOutputFiles.filter((outputFile) => {
-              const norm = path.resolve(outputFile.path).replace(/\\/g, "/").toLowerCase();
-              return allowedOutputs.has(norm);
-            });
-          }
 
           for (const outputFile of targetOutputFiles) {
             const fileCode = new TextDecoder().decode(outputFile.contents);
 
             if (!fileCode) continue;
-            if (fileCode.includes("/__SERVER_FUNCTION_PROXY__")) {
-              const newCode = fileCode.replace(
+            if (fileCode.includes("/__SERVER_FUNCTION_PROXY__") || (proxyName && fileCode.includes("/serverFunctionProxy.js"))) {
+              let newCode = fileCode.replace(
                 /\/__SERVER_FUNCTION_PROXY__/g,
                 hashedProxy
               );
+              if (proxyName && proxyName !== "serverFunctionProxy.js") {
+                newCode = newCode.replace(
+                  /\/serverFunctionProxy\.js/g,
+                  hashedProxy
+                );
+              }
               outputFile.contents = new TextEncoder().encode(newCode);
             }
           }
