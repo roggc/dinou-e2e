@@ -26,11 +26,16 @@ function serverFunctionsPlugin(manifestData = {}, options = {}) {
     name: "server-functions-proxy",
     transform(code, id) {
       if (id.includes("node_modules") || id.includes("\0")) return null;
-      if (serverFiles && !serverFiles.has(normalizeFsPath(id))) return null;
-      if (!useServerRegex.test(code)) return null;
+      if (serverFiles && !serverFiles.has(normalizeFsPath(id))) {
+        if (!useServerRegex.test(code.trim()) && !hasServerFunctions(code)) return null;
+        serverFiles.add(normalizeFsPath(id));
+      } else if (!useServerRegex.test(code.trim()) && !hasServerFunctions(code)) {
+        return null;
+      }
 
-      const exports = parseExports(code);
-      if (exports.length === 0) return null;
+      const isModuleLevel = useServerRegex.test(code.trim());
+      const exports = isModuleLevel ? parseExports(code) : extractServerFunctions(code, id);
+      if (!exports || exports.length === 0) return null;
 
       const relativePath = path.relative(root, id).replace(/\\/g, "/");
       serverFunctions.set(relativePath, new Set(exports)); // Save exports as a Set for uniqueness

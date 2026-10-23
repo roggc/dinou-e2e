@@ -463,6 +463,15 @@ function setManifestEntry(fileUrl, expName, entry) {
               name: chunkName,
             });
           }
+          try {
+            await getImportsAndAssetsAndCsss(
+              code,
+              normAbs,
+              new Set(),
+              this,
+              sharedAstCache
+            );
+          } catch (e) {}
         } else if (isPageOrLayout(normAbs)) {
           serverModules.add(normKey);
           this.addWatchFile(normAbs);
