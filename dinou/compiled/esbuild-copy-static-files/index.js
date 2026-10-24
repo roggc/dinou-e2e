@@ -15,9 +15,9 @@ var __commonJS = (cb, mod) => function __require2() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
 
-// node_modules/esbuild-copy-static-files/index.js
+// ../node_modules/esbuild-copy-static-files/index.js
 var require_esbuild_copy_static_files = __commonJS({
-  "node_modules/esbuild-copy-static-files/index.js"(exports, module) {
+  "../node_modules/esbuild-copy-static-files/index.js"(exports, module) {
     var crypto = __require("crypto");
     var fs = __require("fs");
     var getDigest = (string) => {

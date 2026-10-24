@@ -15,9 +15,9 @@ var __commonJS = (cb, mod) => function __require2() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
 
-// node_modules/isexe/windows.js
+// ../node_modules/isexe/windows.js
 var require_windows = __commonJS({
-  "node_modules/isexe/windows.js"(exports, module) {
+  "../node_modules/isexe/windows.js"(exports, module) {
     module.exports = isexe;
     isexe.sync = sync;
     var fs = __require("fs");
@@ -55,9 +55,9 @@ var require_windows = __commonJS({
   }
 });
 
-// node_modules/isexe/mode.js
+// ../node_modules/isexe/mode.js
 var require_mode = __commonJS({
-  "node_modules/isexe/mode.js"(exports, module) {
+  "../node_modules/isexe/mode.js"(exports, module) {
     module.exports = isexe;
     isexe.sync = sync;
     var fs = __require("fs");
@@ -88,9 +88,9 @@ var require_mode = __commonJS({
   }
 });
 
-// node_modules/isexe/index.js
+// ../node_modules/isexe/index.js
 var require_isexe = __commonJS({
-  "node_modules/isexe/index.js"(exports, module) {
+  "../node_modules/isexe/index.js"(exports, module) {
     var fs = __require("fs");
     var core;
     if (process.platform === "win32" || global.TESTING_WINDOWS) {
@@ -143,9 +143,9 @@ var require_isexe = __commonJS({
   }
 });
 
-// node_modules/which/which.js
+// ../node_modules/which/which.js
 var require_which = __commonJS({
-  "node_modules/which/which.js"(exports, module) {
+  "../node_modules/which/which.js"(exports, module) {
     var isWindows = process.platform === "win32" || process.env.OSTYPE === "cygwin" || process.env.OSTYPE === "msys";
     var path = __require("path");
     var COLON = isWindows ? ";" : ":";
@@ -239,9 +239,9 @@ var require_which = __commonJS({
   }
 });
 
-// node_modules/path-key/index.js
+// ../node_modules/path-key/index.js
 var require_path_key = __commonJS({
-  "node_modules/path-key/index.js"(exports, module) {
+  "../node_modules/path-key/index.js"(exports, module) {
     "use strict";
     var pathKey = (options = {}) => {
       const environment = options.env || process.env;
@@ -256,9 +256,9 @@ var require_path_key = __commonJS({
   }
 });
 
-// node_modules/cross-spawn/lib/util/resolveCommand.js
+// ../node_modules/cross-spawn/lib/util/resolveCommand.js
 var require_resolveCommand = __commonJS({
-  "node_modules/cross-spawn/lib/util/resolveCommand.js"(exports, module) {
+  "../node_modules/cross-spawn/lib/util/resolveCommand.js"(exports, module) {
     "use strict";
     var path = __require("path");
     var which = require_which();
@@ -298,9 +298,9 @@ var require_resolveCommand = __commonJS({
   }
 });
 
-// node_modules/cross-spawn/lib/util/escape.js
+// ../node_modules/cross-spawn/lib/util/escape.js
 var require_escape = __commonJS({
-  "node_modules/cross-spawn/lib/util/escape.js"(exports, module) {
+  "../node_modules/cross-spawn/lib/util/escape.js"(exports, module) {
     "use strict";
     var metaCharsRegExp = /([()\][%!^"`<>&|;, *?])/g;
     function escapeCommand(arg) {
@@ -323,17 +323,17 @@ var require_escape = __commonJS({
   }
 });
 
-// node_modules/shebang-regex/index.js
+// ../node_modules/shebang-regex/index.js
 var require_shebang_regex = __commonJS({
-  "node_modules/shebang-regex/index.js"(exports, module) {
+  "../node_modules/shebang-regex/index.js"(exports, module) {
     "use strict";
     module.exports = /^#!(.*)/;
   }
 });
 
-// node_modules/shebang-command/index.js
+// ../node_modules/shebang-command/index.js
 var require_shebang_command = __commonJS({
-  "node_modules/shebang-command/index.js"(exports, module) {
+  "../node_modules/shebang-command/index.js"(exports, module) {
     "use strict";
     var shebangRegex = require_shebang_regex();
     module.exports = (string = "") => {
@@ -351,9 +351,9 @@ var require_shebang_command = __commonJS({
   }
 });
 
-// node_modules/cross-spawn/lib/util/readShebang.js
+// ../node_modules/cross-spawn/lib/util/readShebang.js
 var require_readShebang = __commonJS({
-  "node_modules/cross-spawn/lib/util/readShebang.js"(exports, module) {
+  "../node_modules/cross-spawn/lib/util/readShebang.js"(exports, module) {
     "use strict";
     var fs = __require("fs");
     var shebangCommand = require_shebang_command();
@@ -373,9 +373,9 @@ var require_readShebang = __commonJS({
   }
 });
 
-// node_modules/cross-spawn/lib/parse.js
+// ../node_modules/cross-spawn/lib/parse.js
 var require_parse = __commonJS({
-  "node_modules/cross-spawn/lib/parse.js"(exports, module) {
+  "../node_modules/cross-spawn/lib/parse.js"(exports, module) {
     "use strict";
     var path = __require("path");
     var resolveCommand = require_resolveCommand();
@@ -435,9 +435,9 @@ var require_parse = __commonJS({
   }
 });
 
-// node_modules/cross-spawn/lib/enoent.js
+// ../node_modules/cross-spawn/lib/enoent.js
 var require_enoent = __commonJS({
-  "node_modules/cross-spawn/lib/enoent.js"(exports, module) {
+  "../node_modules/cross-spawn/lib/enoent.js"(exports, module) {
     "use strict";
     var isWin = process.platform === "win32";
     function notFoundError(original, syscall) {
@@ -485,9 +485,9 @@ var require_enoent = __commonJS({
   }
 });
 
-// node_modules/cross-spawn/index.js
+// ../node_modules/cross-spawn/index.js
 var require_cross_spawn = __commonJS({
-  "node_modules/cross-spawn/index.js"(exports, module) {
+  "../node_modules/cross-spawn/index.js"(exports, module) {
     "use strict";
     var cp = __require("child_process");
     var parse = require_parse();
@@ -512,16 +512,16 @@ var require_cross_spawn = __commonJS({
   }
 });
 
-// node_modules/cross-env/src/is-windows.js
+// ../node_modules/cross-env/src/is-windows.js
 var require_is_windows = __commonJS({
-  "node_modules/cross-env/src/is-windows.js"(exports, module) {
+  "../node_modules/cross-env/src/is-windows.js"(exports, module) {
     module.exports = () => process.platform === "win32" || /^(msys|cygwin)$/.test(process.env.OSTYPE);
   }
 });
 
-// node_modules/cross-env/src/command.js
+// ../node_modules/cross-env/src/command.js
 var require_command = __commonJS({
-  "node_modules/cross-env/src/command.js"(exports, module) {
+  "../node_modules/cross-env/src/command.js"(exports, module) {
     var path = __require("path");
     var isWindows = require_is_windows();
     module.exports = commandConvert;
@@ -539,9 +539,9 @@ var require_command = __commonJS({
   }
 });
 
-// node_modules/cross-env/src/variable.js
+// ../node_modules/cross-env/src/variable.js
 var require_variable = __commonJS({
-  "node_modules/cross-env/src/variable.js"(exports, module) {
+  "../node_modules/cross-env/src/variable.js"(exports, module) {
     var isWindows = require_is_windows();
     var pathLikeEnvVarWhitelist = /* @__PURE__ */ new Set(["PATH", "NODE_PATH"]);
     module.exports = varValueConvert;
@@ -575,9 +575,9 @@ var require_variable = __commonJS({
   }
 });
 
-// node_modules/cross-env/src/index.js
+// ../node_modules/cross-env/src/index.js
 var require_src = __commonJS({
-  "node_modules/cross-env/src/index.js"(exports, module) {
+  "../node_modules/cross-env/src/index.js"(exports, module) {
     var { spawn } = require_cross_spawn();
     var commandConvert = require_command();
     var varValueConvert = require_variable();

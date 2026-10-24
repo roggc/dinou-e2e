@@ -124,6 +124,7 @@ async function buildVendors() {
   for (const vendor of VENDORS) {
     const t0 = Date.now();
     const vendorOutdir = path.join(COMPILED_DIR, vendor.name);
+    await fs.rm(vendorOutdir, { recursive: true, force: true });
     await fs.mkdir(vendorOutdir, { recursive: true });
 
     const externals = Array.from(

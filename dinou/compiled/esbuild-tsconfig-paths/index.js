@@ -36,9 +36,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// node_modules/yocto-queue/index.js
+// ../node_modules/yocto-queue/index.js
 var require_yocto_queue = __commonJS({
-  "node_modules/yocto-queue/index.js"(exports, module) {
+  "../node_modules/yocto-queue/index.js"(exports, module) {
     var Node = class {
       /// value;
       /// next;
@@ -95,9 +95,9 @@ var require_yocto_queue = __commonJS({
   }
 });
 
-// node_modules/p-limit/index.js
+// ../node_modules/p-limit/index.js
 var require_p_limit = __commonJS({
-  "node_modules/p-limit/index.js"(exports, module) {
+  "../node_modules/p-limit/index.js"(exports, module) {
     "use strict";
     var Queue = require_yocto_queue();
     var pLimit = (concurrency) => {
@@ -153,9 +153,9 @@ var require_p_limit = __commonJS({
   }
 });
 
-// node_modules/p-locate/index.js
+// ../node_modules/p-locate/index.js
 var require_p_locate = __commonJS({
-  "node_modules/p-locate/index.js"(exports, module) {
+  "../node_modules/p-locate/index.js"(exports, module) {
     "use strict";
     var pLimit = require_p_limit();
     var EndError = class extends Error {
@@ -194,9 +194,9 @@ var require_p_locate = __commonJS({
   }
 });
 
-// node_modules/locate-path/index.js
+// ../node_modules/locate-path/index.js
 var require_locate_path = __commonJS({
-  "node_modules/locate-path/index.js"(exports, module) {
+  "../node_modules/locate-path/index.js"(exports, module) {
     "use strict";
     var path = __require("path");
     var fs = __require("fs");
@@ -255,9 +255,9 @@ var require_locate_path = __commonJS({
   }
 });
 
-// node_modules/path-exists/index.js
+// ../node_modules/path-exists/index.js
 var require_path_exists = __commonJS({
-  "node_modules/path-exists/index.js"(exports, module) {
+  "../node_modules/path-exists/index.js"(exports, module) {
     "use strict";
     var fs = __require("fs");
     var { promisify } = __require("util");
@@ -281,9 +281,9 @@ var require_path_exists = __commonJS({
   }
 });
 
-// node_modules/find-up/index.js
+// ../node_modules/find-up/index.js
 var require_find_up = __commonJS({
-  "node_modules/find-up/index.js"(exports, module) {
+  "../node_modules/find-up/index.js"(exports, module) {
     "use strict";
     var path = __require("path");
     var locatePath = require_locate_path();
@@ -351,9 +351,9 @@ var require_find_up = __commonJS({
   }
 });
 
-// node_modules/strip-json-comments/index.js
+// ../node_modules/strip-json-comments/index.js
 var require_strip_json_comments = __commonJS({
-  "node_modules/strip-json-comments/index.js"(exports, module) {
+  "../node_modules/strip-json-comments/index.js"(exports, module) {
     "use strict";
     var singleComment = /* @__PURE__ */ Symbol("singleComment");
     var multiComment = /* @__PURE__ */ Symbol("multiComment");
@@ -423,9 +423,9 @@ var require_strip_json_comments = __commonJS({
   }
 });
 
-// node_modules/ms/index.js
+// ../node_modules/ms/index.js
 var require_ms = __commonJS({
-  "node_modules/ms/index.js"(exports, module) {
+  "../node_modules/ms/index.js"(exports, module) {
     var s = 1e3;
     var m = s * 60;
     var h = m * 60;
@@ -539,9 +539,9 @@ var require_ms = __commonJS({
   }
 });
 
-// node_modules/debug/src/common.js
+// ../node_modules/debug/src/common.js
 var require_common = __commonJS({
-  "node_modules/debug/src/common.js"(exports, module) {
+  "../node_modules/debug/src/common.js"(exports, module) {
     function setup(env) {
       createDebug.debug = createDebug;
       createDebug.default = createDebug;
@@ -716,9 +716,9 @@ var require_common = __commonJS({
   }
 });
 
-// node_modules/debug/src/browser.js
+// ../node_modules/debug/src/browser.js
 var require_browser = __commonJS({
-  "node_modules/debug/src/browser.js"(exports, module) {
+  "../node_modules/debug/src/browser.js"(exports, module) {
     exports.formatArgs = formatArgs;
     exports.save = save;
     exports.load = load;
@@ -886,9 +886,9 @@ var require_browser = __commonJS({
   }
 });
 
-// node_modules/has-flag/index.js
+// ../node_modules/has-flag/index.js
 var require_has_flag = __commonJS({
-  "node_modules/has-flag/index.js"(exports, module) {
+  "../node_modules/has-flag/index.js"(exports, module) {
     "use strict";
     module.exports = (flag, argv = process.argv) => {
       const prefix = flag.startsWith("-") ? "" : flag.length === 1 ? "-" : "--";
@@ -899,9 +899,9 @@ var require_has_flag = __commonJS({
   }
 });
 
-// node_modules/supports-color/index.js
+// ../node_modules/supports-color/index.js
 var require_supports_color = __commonJS({
-  "node_modules/supports-color/index.js"(exports, module) {
+  "../node_modules/supports-color/index.js"(exports, module) {
     "use strict";
     var os = __require("os");
     var tty = __require("tty");
@@ -1013,9 +1013,9 @@ var require_supports_color = __commonJS({
   }
 });
 
-// node_modules/debug/src/node.js
+// ../node_modules/debug/src/node.js
 var require_node = __commonJS({
-  "node_modules/debug/src/node.js"(exports, module) {
+  "../node_modules/debug/src/node.js"(exports, module) {
     var tty = __require("tty");
     var util = __require("util");
     exports.init = init;
@@ -1187,9 +1187,9 @@ var require_node = __commonJS({
   }
 });
 
-// node_modules/debug/src/index.js
+// ../node_modules/debug/src/index.js
 var require_src = __commonJS({
-  "node_modules/debug/src/index.js"(exports, module) {
+  "../node_modules/debug/src/index.js"(exports, module) {
     if (typeof process === "undefined" || process.type === "renderer" || process.browser === true || process.__nwjs) {
       module.exports = require_browser();
     } else {
@@ -1198,9 +1198,9 @@ var require_src = __commonJS({
   }
 });
 
-// node_modules/@esbuild-plugins/tsconfig-paths/dist/index.js
+// ../node_modules/@esbuild-plugins/tsconfig-paths/dist/index.js
 var require_dist = __commonJS({
-  "node_modules/@esbuild-plugins/tsconfig-paths/dist/index.js"(exports) {
+  "../node_modules/@esbuild-plugins/tsconfig-paths/dist/index.js"(exports) {
     "use strict";
     var __awaiter = exports && exports.__awaiter || function(thisArg, _arguments, P, generator) {
       function adopt(value) {
@@ -1303,7 +1303,7 @@ var require_dist = __commonJS({
   }
 });
 
-// dinou/esbuild-tsconfig-paths-wrapper.js
+// esbuild-tsconfig-paths-wrapper.js
 var import_tsconfig_paths = __toESM(require_dist());
 var actual = import_tsconfig_paths.default?.default || import_tsconfig_paths.default;
 var TsconfigPathsPlugin = actual.TsconfigPathsPlugin || actual;

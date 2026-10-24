@@ -6,5 +6,5 @@ const __filename = __dinou_fileURLToPath(import.meta.url);
 const __dirname = __dinou_path.dirname(__filename);
 import {
   require_dist
-} from "./chunk-R6DP5ZYM.js";
+} from "./chunk-YYEJWYXE.js";
 export default require_dist();

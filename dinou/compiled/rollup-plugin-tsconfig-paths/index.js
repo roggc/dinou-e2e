@@ -36,9 +36,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// node_modules/typescript-paths/lib/core.js
+// ../node_modules/typescript-paths/lib/core.js
 var require_core = __commonJS({
-  "node_modules/typescript-paths/lib/core.js"(exports) {
+  "../node_modules/typescript-paths/lib/core.js"(exports) {
     "use strict";
     var Module = __require("module");
     var path2 = __require("path");
@@ -496,9 +496,9 @@ var require_core = __commonJS({
   }
 });
 
-// node_modules/typescript-paths/lib/index.js
+// ../node_modules/typescript-paths/lib/index.js
 var require_lib = __commonJS({
-  "node_modules/typescript-paths/lib/index.js"(exports) {
+  "../node_modules/typescript-paths/lib/index.js"(exports) {
     "use strict";
     var register = require_core();
     __require("module");
@@ -520,7 +520,7 @@ var require_lib = __commonJS({
   }
 });
 
-// node_modules/rollup-plugin-tsconfig-paths/index.mjs
+// ../node_modules/rollup-plugin-tsconfig-paths/index.mjs
 var import_typescript_paths = __toESM(require_lib(), 1);
 import fs from "node:fs";
 import path from "node:path";
