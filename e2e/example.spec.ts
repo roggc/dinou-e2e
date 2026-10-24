@@ -6,6 +6,7 @@ const isCloudflare = (process.env.TEST_CMD || "").includes("cloudflare") || (pro
 const isDeno = (process.env.TEST_CMD || "").includes("deno");
 const isProd = (process.env.TEST_CMD || "npm run build:esbuild && npm run start:esbuild").includes("start") || isCloudflare || isDeno;
 const isDev = (process.env.TEST_CMD || "").includes("dev") && !isProd;
+const isWebpack = (process.env.TEST_CMD || "").includes("webpack");
 
 // Función auxiliar que espera hasta que el servidor diga "isReady: true"
 async function pollUntilReady(request: APIRequestContext, maxRetries = 800) {
@@ -5434,8 +5435,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     // Run tests in serial mode so they do not collide on the same files on disk
     test.describe.configure({ mode: "serial" });
 
-    // Only runs when the active webServer is running in DEV mode
-    test.skip(!isDev || isProd, "HMR tests only run against DEV server (Node DEV)");
+    // Only runs when the active webServer is running in DEV mode with Fast Refresh support (esbuild / rollup)
+    test.skip(!isDev || isProd || isWebpack, "HMR tests only run against DEV server with Fast Refresh (esbuild / rollup)");
 
     const projectRoot = process.cwd();
     const clientComponentPath = path.resolve(projectRoot, "src/t-hmr-test/counter.tsx");
