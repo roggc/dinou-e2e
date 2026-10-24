@@ -55,3 +55,31 @@ jobs:
           name: report-${{ matrix.os }}-${{ matrix.runtime.id }}-${{ matrix.bundler }}
           path: playwright-report/
           retention-days: 30
+
+  unvendorized:
+    name: Ubuntu - Node AOT (-u Unvendorized) - esbuild
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Environment & Dependencies
+        uses: ./.github/actions/setup-e2e
+
+      - name: Build (Node AOT / esbuild) with -u flag
+        run: npm run build:node:esbuild -- -u
+
+      - name: Run Playwright tests (-u runtime)
+        env:
+          TEST_CMD: npm run start:node:esbuild -- -u
+          PORT: 3000
+        run: npx playwright test
+
+      - name: Upload Playwright Report
+        uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: report-ubuntu-24.04-node-aot-unvendorized-esbuild
+          path: playwright-report/
+          retention-days: 30
