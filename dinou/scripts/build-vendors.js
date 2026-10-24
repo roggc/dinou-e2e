@@ -65,6 +65,16 @@ const VENDORS = [
       index: "mini-css-extract-plugin",
       loader: "mini-css-extract-plugin/dist/loader.js"
     },
+    splitting: true,
+    postProcess: async (vendorOutdir) => {
+      const loaderFile = path.join(vendorOutdir, "loader.js");
+      let content = await fs.readFile(loaderFile, "utf8");
+      content = content.replace(
+        "export default require_loader();",
+        "const _loader = require_loader();\nexport default _loader;\nexport const pitch = _loader.pitch;\nexport const hotLoader = _loader.hotLoader;\n"
+      );
+      await fs.writeFile(loaderFile, content, "utf8");
+    },
     external: ["webpack", "schema-utils"]
   },
   { name: "copy-webpack-plugin", entry: "copy-webpack-plugin" },
@@ -83,7 +93,12 @@ const VENDORS = [
   { name: "esbuild-copy-static-files", entry: "esbuild-copy-static-files" },
   {
     name: "esbuild-tsconfig-paths",
-    entry: "@esbuild-plugins/tsconfig-paths",
+    wrapper: `
+      import pkg from "@esbuild-plugins/tsconfig-paths";
+      const actual = pkg?.default || pkg;
+      export const TsconfigPathsPlugin = actual.TsconfigPathsPlugin || actual;
+      export default actual;
+    `,
     external: ["typescript"]
   }
 ];
@@ -116,7 +131,23 @@ async function buildVendors() {
     );
 
     try {
-      if (vendor.entries) {
+      if (vendor.wrapper) {
+        // Custom wrapper for synthesized named exports
+        await esbuild.build({
+          stdin: {
+            contents: vendor.wrapper,
+            resolveDir: DINOU_ROOT,
+            sourcefile: `${vendor.name}-wrapper.js`
+          },
+          bundle: true,
+          platform: "node",
+          target: "node18",
+          format: "esm",
+          outfile: path.join(vendorOutdir, "index.js"),
+          banner: { js: BANNER_JS },
+          external: externals
+        });
+      } else if (vendor.entries) {
         // Multi-entrypoint vendor (e.g. mini-css-extract-plugin with loader.js)
         await esbuild.build({
           entryPoints: vendor.entries,
@@ -126,8 +157,12 @@ async function buildVendors() {
           format: "esm",
           outdir: vendorOutdir,
           banner: { js: BANNER_JS },
-          external: externals
+          external: externals,
+          splitting: Boolean(vendor.splitting)
         });
+        if (vendor.postProcess) {
+          await vendor.postProcess(vendorOutdir);
+        }
       } else {
         // Single entrypoint vendor
         await esbuild.build({

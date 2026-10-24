@@ -4,7 +4,12 @@ import __dinou_path from "node:path";
 const require = __dinou_createRequire(import.meta.url);
 const __filename = __dinou_fileURLToPath(import.meta.url);
 const __dirname = __dinou_path.dirname(__filename);
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
   get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
 }) : x)(function(x) {
@@ -14,6 +19,22 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
 var __commonJS = (cb, mod) => function __require2() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
 
 // node_modules/yocto-queue/index.js
 var require_yocto_queue = __commonJS({
@@ -1180,6 +1201,7 @@ var require_src = __commonJS({
 // node_modules/@esbuild-plugins/tsconfig-paths/dist/index.js
 var require_dist = __commonJS({
   "node_modules/@esbuild-plugins/tsconfig-paths/dist/index.js"(exports) {
+    "use strict";
     var __awaiter = exports && exports.__awaiter || function(thisArg, _arguments, P, generator) {
       function adopt(value) {
         return value instanceof P ? value : new P(function(resolve) {
@@ -1218,7 +1240,7 @@ var require_dist = __commonJS({
     var strip_json_comments_1 = __importDefault(require_strip_json_comments());
     var NAME = "tsconfig-paths";
     var debug = require_src()(NAME);
-    function TsconfigPathsPlugin({ name = NAME, absolute = true, onResolved, tsconfig }) {
+    function TsconfigPathsPlugin2({ name = NAME, absolute = true, onResolved, tsconfig }) {
       debug("setup");
       const compilerOptions = loadCompilerOptions(tsconfig);
       return {
@@ -1248,7 +1270,7 @@ var require_dist = __commonJS({
         }
       };
     }
-    exports.TsconfigPathsPlugin = TsconfigPathsPlugin;
+    exports.TsconfigPathsPlugin = TsconfigPathsPlugin2;
     function loadJSON(p) {
       try {
         let data = fs_1.default.readFileSync(p).toString();
@@ -1277,7 +1299,16 @@ var require_dist = __commonJS({
       }
       return {};
     }
-    exports.default = TsconfigPathsPlugin;
+    exports.default = TsconfigPathsPlugin2;
   }
 });
-export default require_dist();
+
+// dinou/esbuild-tsconfig-paths-wrapper.js
+var import_tsconfig_paths = __toESM(require_dist());
+var actual = import_tsconfig_paths.default?.default || import_tsconfig_paths.default;
+var TsconfigPathsPlugin = actual.TsconfigPathsPlugin || actual;
+var esbuild_tsconfig_paths_wrapper_default = actual;
+export {
+  TsconfigPathsPlugin,
+  esbuild_tsconfig_paths_wrapper_default as default
+};

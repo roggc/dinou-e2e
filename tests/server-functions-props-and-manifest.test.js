@@ -49,6 +49,8 @@ test("Server Functions: Rollup, esbuild and Webpack plugins process serverFiles 
 
     // 1. Rollup Plugin
     const { default: rollupPluginFn } = await import("../dinou/rollup/rollup-plugins/rollup-plugin-server-functions.js");
+    const { default: manifestGeneratorPlugin } = await import("../dinou/rollup/rollup-plugins/manifest-generator-plugin.js");
+    manifestGeneratorPlugin.manifestData = { "serverFunctionProxy.js": "serverFunctionProxy.js" };
     const rollupPlugin = rollupPluginFn({ serverFiles: new Set([pagePath]) });
     // Notice: no transform() called, so serverFunctions Map starts empty (size === 0)
     await rollupPlugin.generateBundle({}, {});
@@ -60,7 +62,10 @@ test("Server Functions: Rollup, esbuild and Webpack plugins process serverFiles 
 
   // 2. esbuild Plugin
   const { default: esbuildPluginFn } = await import("../dinou/esbuild/plugins-esbuild/server-functions-plugin.js");
-  const esbuildPlugin = esbuildPluginFn({ serverFiles: new Set([pagePath]) });
+  const esbuildPlugin = esbuildPluginFn({
+    serverFiles: new Set([pagePath]),
+    manifestData: { "serverFunctionProxy.js": "serverFunctionProxy.js" }
+  });
   let onEndCb;
   const mockEsbuild = {
     onStart: () => {},
@@ -78,6 +83,8 @@ test("Server Functions: Rollup, esbuild and Webpack plugins process serverFiles 
 
   // 3. Webpack Plugin
   const { default: WebpackPluginClass } = await import("../dinou/webpack/plugins/server-functions-plugin.js");
+  const { default: webpackManifestGenerator } = await import("../dinou/webpack/plugins/manifest-generator-plugin.js");
+  webpackManifestGenerator.manifestData = { "serverFunctionProxy.js": "serverFunctionProxy.js" };
   const webpackPlugin = new WebpackPluginClass({ serverFiles: new Set([pagePath]) });
   let processAssetsCb;
   let emittedManifest = null;
