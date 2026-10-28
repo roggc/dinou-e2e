@@ -5753,6 +5753,291 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
   // -------------------------------------------------------------
   // HMR & Fast Refresh automated verification (DEV server only)
   // -------------------------------------------------------------
+  test.describe("Partial Prerendering (PPR): Rigorous Casuistics, Hole Alignment & Security Audit", () => {
+    function extractTestIdText(html: string, testId: string): string | null {
+      const escaped = testId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(`data-testid="${escaped}"[^>]*>([^<]*)<`, "i");
+      const m = html.match(re);
+      return m ? m[1] : null;
+    }
+
+    function splitShellAndStream(fullHtml: string) {
+      const tplIdx = fullHtml.indexOf('<template id="ppr-content-');
+      if (tplIdx !== -1) {
+        return {
+          shellPart: fullHtml.slice(0, tplIdx),
+          streamPart: fullHtml.slice(tplIdx),
+        };
+      }
+      return { shellPart: fullHtml, streamPart: "" };
+    }
+
+    test("1. Build artifacts, metadata.holes preservation, inline <script> syntax & pre-hydration DOM replacement (/t-ppr-rigorous)", async ({
+      page,
+      request,
+      context,
+    }) => {
+      const expectedHoles = [
+        "ppr-hole-2",
+        "ppr-hole-3",
+        "ppr-hole-4",
+        "ppr-hole-6",
+        "ppr-hole-7",
+        "ppr-hole-8",
+        "ppr-hole-9",
+      ];
+
+      if (isProd) {
+        const metaPath = path.resolve(".dinou/dist2/t-ppr-rigorous/metadata.json");
+        const shellPath = path.resolve(".dinou/dist2/t-ppr-rigorous/shell.html");
+        const shellRscPath = path.resolve(".dinou/dist2/t-ppr-rigorous/shell.rsc");
+
+        if (fs.existsSync(metaPath)) {
+          expect(fs.existsSync(shellPath)).toBe(true);
+          expect(fs.existsSync(shellRscPath)).toBe(true);
+
+          const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+          expect(meta.ppr).toBe(true);
+          expect(Array.isArray(meta.holes)).toBe(true);
+          expect(meta.holes).toEqual(expectedHoles);
+
+          const shellDisk = fs.readFileSync(shellPath, "utf8");
+          // Static <Suspense> #1 (StaticAsyncCard) and Outer Static <Suspense> #5 must be baked into shell.html
+          expect(shellDisk).toContain('data-testid="static-suspense-resolved"');
+          expect(shellDisk).toContain('data-testid="outer-static-wrapper"');
+
+          const diskHoleMarkers = [...shellDisk.matchAll(/data-ppr-hole="(ppr-hole-\d+)"/g)].map(
+            (m) => m[1]
+          );
+          expect(diskHoleMarkers).toEqual(expectedHoles);
+        }
+
+        // Probe two raw HTTP requests with different cookies, queries & headers
+        const resA = await request.get(
+          "/t-ppr-rigorous?theme=cyberpunk&lang=en&plan=enterprise&nested=nestA&deep=deepA&memo=memoA",
+          {
+            headers: {
+              Cookie: "ppr_user=Alice; ppr_session=sess-111; ppr_tier=vip",
+              "x-ppr-probe": "probe-alpha",
+            },
+          }
+        );
+        expect(resA.status()).toBe(200);
+        const htmlA = await resA.text();
+
+        const resB = await request.get(
+          "/t-ppr-rigorous?theme=solarized&lang=fr&plan=pro&nested=nestB&deep=deepB&memo=memoB",
+          {
+            headers: {
+              Cookie: "ppr_user=Bob; ppr_session=sess-222; ppr_tier=gold",
+              "x-ppr-probe": "probe-beta",
+            },
+          }
+        );
+        expect(resB.status()).toBe(200);
+        const htmlB = await resB.text();
+
+        const { shellPart: shellA, streamPart: streamA } = splitShellAndStream(htmlA);
+        const { shellPart: shellB } = splitShellAndStream(htmlB);
+
+        // Static shell and static <Suspense> boundaries must remain identical across requests
+        const shellIdA = extractTestIdText(shellA, "shell-build-id");
+        const shellIdB = extractTestIdText(shellB, "shell-build-id");
+        expect(Boolean(shellIdA)).toBe(true);
+        expect(shellIdA).toBe(shellIdB);
+
+        const staticHashA = extractTestIdText(shellA, "static-suspense-hash");
+        const staticHashB = extractTestIdText(shellB, "static-suspense-hash");
+        expect(Boolean(staticHashA)).toBe(true);
+        expect(staticHashA).toBe(staticHashB);
+
+        if (streamA) {
+          // StaticAsyncCard and OuterStaticWithInnerDynamicHole wrapper must NOT be re-streamed
+          expect(streamA).not.toContain('data-testid="static-suspense-resolved"');
+          expect(streamA).not.toContain('data-testid="outer-static-id"');
+
+          // Every data-ppr-hole in shell must match a streamed <template id="ppr-content-...">
+          const shellHoles = [...shellA.matchAll(/data-ppr-hole="(ppr-hole-\d+)"/g)].map(
+            (m) => m[1]
+          );
+          const streamHoles = [
+            ...streamA.matchAll(/<template id="ppr-content-(ppr-hole-\d+)">/g),
+          ].map((m) => m[1]);
+          expect([...shellHoles].sort()).toEqual([...streamHoles].sort());
+
+          // Every inline replacement <script> must have valid JavaScript syntax (0 SyntaxErrors)
+          const scripts = [...streamA.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+          expect(scripts.length).toBeGreaterThanOrEqual(expectedHoles.length);
+          for (const scriptCode of scripts) {
+            expect(() => new Function(scriptCode)).not.toThrow();
+          }
+        }
+
+        // Verify pre-hydration DOM replacement by blocking client bundle main*.js
+        await context.addCookies([
+          { name: "ppr_user", value: "PreHydratedAda", path: "/", domain: "localhost" },
+        ]);
+        await page.route("**/main*.js", (route) => route.abort());
+        try {
+          await page.goto(
+            "/t-ppr-rigorous?theme=no-hydration&nested=pre-nest&deep=pre-deep&memo=pre-memo"
+          );
+          await expect(page.getByTestId("hole-cookies-user")).toHaveText("PreHydratedAda");
+          await expect(page.getByTestId("hole-query-theme")).toHaveText("no-hydration");
+          await expect(page.getByTestId("inner-dynamic-val")).toHaveText("pre-nest");
+          await expect(page.getByTestId("deep-inner-val")).toHaveText("pre-deep");
+          await expect(page.getByTestId("hole-memo-param")).toHaveText("pre-memo");
+        } finally {
+          await page.unroute("**/main*.js");
+        }
+      } else {
+        // In dev mode, verify the route responds 200 and renders shell + holes
+        const resDev = await request.get("/t-ppr-rigorous?theme=dev-theme");
+        expect(resDev.status()).toBe(200);
+      }
+    });
+
+    test("2. All 8 <Suspense> casuistics resolve & interactive Client Component inside dynamic hole hydrates (/t-ppr-rigorous)", async ({
+      page,
+      context,
+    }) => {
+      await context.addCookies([
+        { name: "ppr_user", value: "Elena", path: "/", domain: "localhost" },
+        { name: "ppr_session", value: "sess-999", path: "/", domain: "localhost" },
+        { name: "ppr_tier", value: "enterprise", path: "/", domain: "localhost" },
+      ]);
+
+      await page.goto(
+        "/t-ppr-rigorous?theme=synthwave&lang=fr&plan=ultra&nested=inner-ok&deep=deep-ok&memo=memo-custom"
+      );
+
+      // 1. Static shell & Static <Suspense>
+      await expect(page.getByTestId("ppr-static-shell")).toBeVisible();
+      await expect(page.getByTestId("static-suspense-resolved")).toBeVisible();
+
+      // 2. Concurrent sibling holes (35ms cookies hole & 10ms query/headers hole)
+      await expect(page.getByTestId("hole-cookies-user")).toHaveText("Elena");
+      await expect(page.getByTestId("hole-cookies-session")).toHaveText("sess-999");
+      await expect(page.getByTestId("hole-query-theme")).toHaveText("synthwave");
+      await expect(page.getByTestId("hole-query-lang")).toHaveText("fr");
+      await expect(page.getByTestId("hole-header-ua")).toHaveText("present");
+
+      // 3. Interactive Client Component inside Dynamic Hole
+      await expect(page.getByTestId("hole-client-tier")).toHaveText("tier=enterprise | plan=ultra");
+      await expect(page.getByTestId("hole-client-clicks")).toHaveText("0");
+      await page.getByTestId("hole-client-btn").click();
+      await page.getByTestId("hole-client-btn").click();
+      await expect(page.getByTestId("hole-client-clicks")).toHaveText("2");
+
+      // 4. Nested <Suspense> inside Static <Suspense> & inside Dynamic <Suspense>
+      await expect(page.getByTestId("outer-static-wrapper")).toBeVisible();
+      await expect(page.getByTestId("inner-dynamic-val")).toHaveText("inner-ok");
+      await expect(page.getByTestId("inner-dynamic-user")).toHaveText("Elena");
+      await expect(page.getByTestId("outer-dynamic-user")).toHaveText("Elena");
+      await expect(page.getByTestId("deep-inner-val")).toHaveText("deep-ok");
+
+      // 5. React.memo dynamic hole
+      await expect(page.getByTestId("hole-memo-param")).toHaveText("memo-custom");
+      await expect(page.getByTestId("hole-memo-user")).toHaveText("Elena");
+
+      // 6. Special </template><script> payload rendered safely as text without XSS execution
+      await expect(page.getByTestId("hole-edge-payload")).toContainText(
+        "</template><script>window.__PPR_XSS__=1</script>"
+      );
+      const xssTriggered = await page.evaluate(() => Boolean((window as any).__PPR_XSS__));
+      expect(xssTriggered).toBe(false);
+    });
+
+    test("3. Layout <Suspense> + Page <Suspense> hole alignment & child opt-out (/t-ppr-rigorous/inherited)", async ({
+      page,
+      context,
+      request,
+    }) => {
+      if (isProd) {
+        const inhShellPath = path.resolve(".dinou/dist2/t-ppr-rigorous/inherited/shell.html");
+        const optOutShellPath = path.resolve(
+          ".dinou/dist2/t-ppr-rigorous/inherited/opt-out/shell.html"
+        );
+        if (fs.existsSync(inhShellPath)) {
+          const inhShell = fs.readFileSync(inhShellPath, "utf8");
+          const inhHoles = [...inhShell.matchAll(/data-ppr-hole="(ppr-hole-\d+)"/g)].map(
+            (m) => m[1]
+          );
+          expect(inhHoles).toEqual(["ppr-hole-1", "ppr-hole-2"]);
+        }
+        expect(fs.existsSync(optOutShellPath)).toBe(false);
+
+        const rawInh = await request.get("/t-ppr-rigorous/inherited?from=raw-stream", {
+          headers: {
+            Cookie: "ppr_layout_banner=BannerStream; ppr_user=StreamUser",
+          },
+        });
+        const inhHtml = await rawInh.text();
+        const { shellPart, streamPart } = splitShellAndStream(inhHtml);
+        if (streamPart) {
+          const shHoles = [...shellPart.matchAll(/data-ppr-hole="(ppr-hole-\d+)"/g)].map(
+            (m) => m[1]
+          );
+          const stHoles = [
+            ...streamPart.matchAll(/<template id="ppr-content-(ppr-hole-\d+)">/g),
+          ].map((m) => m[1]);
+          expect([...shHoles].sort()).toEqual([...stHoles].sort());
+        }
+      }
+
+      await context.addCookies([
+        { name: "ppr_layout_banner", value: "BannerPro", path: "/", domain: "localhost" },
+        { name: "ppr_user", value: "InheritedUser", path: "/", domain: "localhost" },
+      ]);
+
+      await page.goto("/t-ppr-rigorous/inherited?from=e2e");
+      await expect(page.getByTestId("inherited-layout-cookie")).toHaveText("BannerPro");
+      await expect(page.getByTestId("inherited-page-user")).toHaveText("InheritedUser");
+      await expect(page.getByTestId("inherited-page-from")).toHaveText("e2e");
+
+      await page.goto("/t-ppr-rigorous/inherited/opt-out");
+      await expect(page.getByTestId("opt-out-user")).toHaveText("InheritedUser");
+    });
+
+    test("4. Unwrapped dynamic access outside <Suspense> in a PPR route bails out full page per-request (/t-ppr-rigorous/unwrapped-bailout)", async ({
+      request,
+    }) => {
+      if (isProd) {
+        const unwShellPath = path.resolve(
+          ".dinou/dist2/t-ppr-rigorous/unwrapped-bailout/shell.html"
+        );
+        expect(fs.existsSync(unwShellPath)).toBe(false);
+      }
+
+      const res1 = await request.get("/t-ppr-rigorous/unwrapped-bailout", {
+        headers: { Cookie: "ppr_user=DirectUserOne" },
+      });
+      const html1 = await res1.text();
+
+      const res2 = await request.get("/t-ppr-rigorous/unwrapped-bailout", {
+        headers: { Cookie: "ppr_user=DirectUserTwo" },
+      });
+      const html2 = await res2.text();
+
+      expect(extractTestIdText(html1, "unwrapped-cookie")).toBe("DirectUserOne");
+      expect(extractTestIdText(html2, "unwrapped-cookie")).toBe("DirectUserTwo");
+      expect(extractTestIdText(html1, "unwrapped-render-id")).not.toBe(
+        extractTestIdText(html2, "unwrapped-render-id")
+      );
+    });
+
+    test("5. Security: Error messages inside PPR dynamic holes are HTML-escaped against </template> breakout", async ({
+      request,
+    }) => {
+      const xssPayload = "</template><script>window.__PPR_ERR_XSS__=1</script>";
+      const res = await request.get(
+        `/t-ppr-rigorous?throw_err=${encodeURIComponent(xssPayload)}`
+      );
+      const html = await res.text();
+      expect(html).not.toContain(`[PPR Error: SimulatedHoleError: ${xssPayload}]`);
+    });
+  });
+
   test.describe("HMR & Fast Refresh automated verification", () => {
     // Run tests in serial mode so they do not collide on the same files on disk
     test.describe.configure({ mode: "serial" });
