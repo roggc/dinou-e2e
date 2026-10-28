@@ -42,7 +42,7 @@ import { handlePprResume } from "./ppr-runtime.js";
 import { resolveModulePpr } from "./resolve-module-ppr.js";
 import { getDinouConfig as loadDinouConfig } from "./load-dinou-config.js";
 import { getSlotJSX } from "./cache-slot.js";
-import { runWithPprContext, getRegisteredHoles } from "./ppr-context.js";
+import { runWithPprContext, getRegisteredHoles, resetPprHoles } from "./ppr-context.js";
 import { asyncRenderJSXToClientJSX } from "./render-jsx-to-client-jsx.js";
 
 // Load Dinou configuration and plugins
@@ -1228,7 +1228,7 @@ async function handleRequest(request, platformContext = {}) {
     if (!isDynamic.has(cleanPath)) {
       isDynamic.set(cleanPath, { value: false });
     }
-    const dynamicState = isDynamic.get(cleanPath);
+    const dynamicState = isLayoutReq ? { value: false } : isDynamic.get(cleanPath);
 
     const reqPath = cleanPath.endsWith("/") ? cleanPath : cleanPath + "/";
     let isPathBlocked = false;
@@ -1517,6 +1517,9 @@ async function handleRequest(request, platformContext = {}) {
     isDynamic.set(reqPath, { value: false });
   }
   const dynamicState = isDynamic.get(reqPath);
+  if (platformContext?.isSSG) {
+    dynamicState.value = false;
+  }
 
   let { isPathBlocked, allowISGValue, isDynamicConfig, revalidate, tags, ppr: isPprConfig } = await resolvePageFunctionsConfig(
     pagePath,
@@ -1849,6 +1852,7 @@ async function handleRequest(request, platformContext = {}) {
               await requestStorage.run(context, async () => {
                 await runWithPprContext({ isPpr: true }, async () => {
                   jsx = await getJSX(reqPath, queryObj, isNotFound, isDevelopment, !pagePath);
+                  resetPprHoles();
                   jsx = await asyncRenderJSXToClientJSX(jsx);
                   pprHoles = getRegisteredHoles();
                 });
@@ -1912,7 +1916,7 @@ async function handleRequest(request, platformContext = {}) {
             !dynamicState.value &&
             allowISGValue !== false &&
             Object.keys(queryObj).length === 0) ||
-          platformContext.isSSG === true;
+          (!dynamicState.value && platformContext.isSSG === true);
 
         if (!shouldCacheISG && inFlightKey) {
           inFlightGenerations.delete(inFlightKey);
@@ -2156,7 +2160,7 @@ async function handleRequest(request, platformContext = {}) {
             }
 
             if (fullHtml) {
-              if (!dynamicState.value || platformContext.isSSG === true) {
+              if (!dynamicState.value) {
                 try {
                   await storage.set(rscKey, rscPayload);
                   await storage.set(htmlKey, fullHtml, genMeta);
@@ -2165,7 +2169,7 @@ async function handleRequest(request, platformContext = {}) {
                     const shellHtmlKey = cleanPath ? `${cleanPath}/shell.html` : "shell.html";
                     const shellRscKey = cleanPath ? `${cleanPath}/shell.rsc` : "shell.rsc";
                     await storage.set(shellHtmlKey, fullHtml, genMeta);
-                    await storage.set(shellRscKey, rscPayload, { ppr: true });
+                    await storage.set(shellRscKey, rscPayload);
                   }
                   if (!platformContext?.isSSG || process.env.DINOU_DEBUG) {
                     console.log(`✅ [Edge ISG] Successfully cached ${reqPath} to KV`);
