@@ -5431,6 +5431,328 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
   // -------------------------------------------------------------
   // HMR & Fast Refresh automated verification (DEV server only)
   // -------------------------------------------------------------
+  test.describe("Dinou Core: 'use server' in Function Body & Direct Client Import (v9.0.2)", () => {
+    test.describe.configure({ mode: "serial" });
+
+    test("1. Direct import in 'use client' of functions with 'use server' in body (from mixed file without module-level 'use server') executes on server via RPC proxy", async ({
+      page,
+    }) => {
+      page.on("console", (msg) => {
+        if (msg.type() === "error") {
+          console.log(`[Browser Error]: ${msg.text()}`);
+        }
+      });
+
+      await page.goto("/t-sf-body");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+
+      // Non-server exported helper from mixed-server-utils.ts renders normally on server
+      await expect(page.locator("#sf-body-subtitle")).toHaveText(
+        "[Helper Local] Suite use server in body"
+      );
+
+      // A. Exported async function declaration with "use server" in body imported directly in "use client"
+      await page.click("#btn-direct-client-fn");
+      await expect(page.locator("#result-direct-client-fn")).toHaveText(
+        "DirectProbe|server:true|ctx:true|discount:20|server-rpc",
+        { timeout: 10000 }
+      );
+
+      // B. Exported arrow function with "use server" in body imported directly in "use client"
+      await page.click("#btn-direct-client-arrow");
+      await expect(page.locator("#result-direct-client-arrow")).toHaveText(
+        "50|bonus:10|total:60|server:true",
+        { timeout: 10000 }
+      );
+    });
+
+    test("2. Granular Manifest Tree-Shaking: mixed file without module-level 'use server' only registers functions with 'use server' in body", async ({
+      page,
+    }) => {
+      await page.goto("/t-sf-body");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+
+      // Runtime manifest inspection via Server Function
+      await page.click("#btn-inspect-manifest");
+      await expect(page.locator("#result-manifest-treeshaking")).toHaveText(
+        "verified:true|exports:calculateOrderOnServer,directClientArrowServerFn,directClientImportedServerFn,inspectSfManifest,verifyContextAndSign",
+        { timeout: 10000 }
+      );
+
+      // Disk manifest verification when present
+      const manifestPath = path.join(
+        process.cwd(),
+        ".dinou",
+        "server_functions_manifest",
+        "server-functions-manifest.json"
+      );
+      if (fs.existsSync(manifestPath)) {
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+        const manifestKeys = Object.keys(manifest);
+        const mixedKey = manifestKeys.find((k) =>
+          k.replace(/\\/g, "/").includes("t-sf-body/utils/mixed-server-utils")
+        );
+        expect(mixedKey).toBeDefined();
+        if (mixedKey) {
+          expect(manifest[mixedKey]).toContain("calculateOrderOnServer");
+          expect(manifest[mixedKey]).toContain("verifyContextAndSign");
+          expect(manifest[mixedKey]).toContain("directClientImportedServerFn");
+          expect(manifest[mixedKey]).toContain("directClientArrowServerFn");
+          expect(manifest[mixedKey]).toContain("inspectSfManifest");
+          expect(manifest[mixedKey]).not.toContain("nonServerHelperFormat");
+          expect(manifest[mixedKey]).not.toContain("computeInternalDiscount");
+        }
+      }
+    });
+
+    test("3. Mixed utility file Server Functions execute private helpers and access getContext() cookies/headers", async ({
+      page,
+    }) => {
+      await page.goto("/t-sf-body");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+
+      // 1. calculateOrderOnServer(200, "DINOU9") -> discount 40, taxable 160, tax 33.6, total 193.6
+      await page.click("#btn-mixed-order");
+      await expect(page.locator("#result-mixed-order")).toHaveText(
+        "200|40|33.6|193.6|DINOU9|true",
+        { timeout: 10000 }
+      );
+
+      // 2. verifyContextAndSign sets cookie "sf_test_tag=cookie-v902" via getContext().res.cookie
+      await page.click("#btn-mixed-context");
+      await expect(page.locator("#result-mixed-context")).toContainText(
+        "ctx-payload|cookie-v902|",
+        { timeout: 10000 }
+      );
+      await expect(page.locator("#result-mixed-context")).toContainText(
+        "|set:cookie-v902|ua:true|server:true"
+      );
+
+      // 3. Second call reads back the cookie set in the first call via getContext().req.cookies
+      await page.click("#btn-mixed-context");
+      await expect(page.locator("#result-mixed-context")).toHaveText(
+        "ctx-payload|cookie-v902|prev:cookie-v902|set:cookie-v902|ua:true|server:true",
+        { timeout: 10000 }
+      );
+    });
+
+    test("4. Inline 'use server' functions in Server Component: basic RPC, lexical closure hoisting (.bind), .map() loop closures, and unexported top-level auto-export", async ({
+      page,
+    }) => {
+      await page.goto("/t-sf-body");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+
+      // Case 1: Basic inline server function
+      await page.click("#btn-inline-counter");
+      await expect(page.locator("#result-inline-counter")).toHaveText(
+        "count:105:delta:5:server:true",
+        { timeout: 10000 }
+      );
+
+      // Case 2: Lexical closure capture (pageRenderId="RND-SF-902", serverSecretToken="SECRET-DINOU-902", baseMultiplier=7 * 8 = 56)
+      await page.click("#btn-inline-closure");
+      await expect(page.locator("#result-inline-closure")).toHaveText(
+        "RND-SF-902|SECRET-DINOU-902|56|ClientNote",
+        { timeout: 10000 }
+      );
+
+      // Case 3A: Inline server function inside .map() loop capturing item + outer scope
+      await page.click("#btn-preset-hyper");
+      await expect(page.locator("#result-preset")).toHaveText(
+        "hyper|Hyper +25|25|125|RND-SF-902|PresetRunner",
+        { timeout: 10000 }
+      );
+
+      await page.click("#btn-preset-quantum");
+      await expect(page.locator("#result-preset")).toHaveText(
+        "quantum|Quantum +50|50|150|RND-SF-902|PresetRunner",
+        { timeout: 10000 }
+      );
+
+      // Case 4: Top-level function without explicit export auto-exported by transformServerFunctions
+      await page.click("#btn-auto-export");
+      await expect(page.locator("#result-auto-export")).toHaveText(
+        "enilni-uonid|DINOU-INLINE|12",
+        { timeout: 10000 }
+      );
+    });
+
+    test("5. Inline 'use server' with React 19 useActionState, inline JSX <form action={...}> arrow function, and Flight RSC streaming", async ({
+      page,
+    }) => {
+      await page.goto("/t-sf-body");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+
+      // Case 6A: React 19 useActionState with inline server function capturing pageRenderId
+      await expect(page.locator("#result-action-state")).toHaveText(
+        "0|-|-|RND-SF-902"
+      );
+      await page.click("#btn-action-state-submit");
+      await expect(page.locator("#result-action-state")).toHaveText(
+        "1|Ada|ClosureAction|RND-SF-902",
+        { timeout: 10000 }
+      );
+
+      await page.fill("#input-action-dev", "Grace");
+      await page.fill("#input-action-feat", "BodyUseServer");
+      await page.click("#btn-action-state-submit");
+      await expect(page.locator("#result-action-state")).toHaveText(
+        "2|Grace|BodyUseServer|RND-SF-902",
+        { timeout: 10000 }
+      );
+
+      // Case 3B: Anonymous arrow function with "use server" inside JSX <form action={...}> attribute
+      const uniqueMsg = `JSX-Action-${Date.now()}`;
+      await page.fill("#input-jsx-form", uniqueMsg);
+      await page.click("#btn-jsx-form-submit");
+
+      await expect
+        .poll(
+          async () => {
+            await page.click("#btn-refresh-logs");
+            return await page.locator("#result-jsx-form-logs").innerText();
+          },
+          { timeout: 10000, intervals: [200, 400, 800] }
+        )
+        .toBe(`${uniqueMsg}|RND-SF-902`);
+
+      // Case 6B: Inline server function returning async Server Component (<ServerBadgeCard />) via Flight RPC
+      await page.click("#btn-stream-rsc");
+      await expect(page.locator("#rsc-badge-card")).toBeVisible({ timeout: 10000 });
+      await expect(page.locator("#rsc-badge-topic")).toHaveText("Topic:Flight-RSC-Topic");
+      await expect(page.locator("#rsc-badge-secret")).toHaveText("Secret:SECRET-DINOU-902");
+      await expect(page.locator("#rsc-badge-env")).toHaveText("Server:true");
+    });
+
+    test("6. Hot-Reload (DEV): injecting a new inline 'use server' function into page.tsx + client.tsx syncs manifest and executes without server restart", async ({
+      page,
+      browserName,
+    }) => {
+      test.skip(
+        !isDev || isProd || browserName !== "chromium",
+        "Live file-mutation hot-reload test runs once on chromium against active DEV server (esbuild / rollup / webpack)"
+      );
+
+      const projectRoot = process.cwd();
+      const sfBodyPagePath = path.resolve(projectRoot, "src/t-sf-body/page.tsx");
+      const sfBodyClientPath = path.resolve(
+        projectRoot,
+        "src/t-sf-body/components/sf-body-client.tsx"
+      );
+
+      const originalPageCode = fs.readFileSync(sfBodyPagePath, "utf8");
+      const originalClientCode = fs.readFileSync(sfBodyClientPath, "utf8");
+
+      try {
+        await page.goto("/t-sf-body");
+        await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+        await expect(page.locator("#btn-hot-injected")).toHaveCount(0);
+
+        // 1. Inject a brand-new inline "use server" function in page.tsx and pass it to SfBodyClient
+        const modifiedPageCode = originalPageCode
+          .replace(
+            /  return \(\r?\n    <main/,
+            `  async function hotInjectedBodyAction(tag: string) {
+    "use server";
+    const rawManifest =
+      (globalThis as Record<string, any>).__DINOU_SERVER_FUNCTIONS_MANIFEST__ ||
+      (globalThis as Record<string, any>).__DINOU_RAW_SERVER_FUNCTIONS_MANIFEST__ ||
+      {};
+    const pageKey = Object.keys(rawManifest).find((k) =>
+      k.replace(/\\\\/g, "/").includes("t-sf-body/page")
+    );
+    const pageExportsRaw = pageKey ? rawManifest[pageKey] : [];
+    const pageExports: string[] = Array.isArray(pageExportsRaw)
+      ? pageExportsRaw
+      : Array.from(pageExportsRaw as Iterable<string>);
+    const registeredInManifest = pageExports.some((name) =>
+      name.includes("hotInjectedBodyAction")
+    );
+    return {
+      tag,
+      capturedPageRenderId: pageRenderId,
+      capturedSecretToken: serverSecretToken,
+      registeredInManifest,
+    };
+  }
+
+  return (\n    <main`
+          )
+          .replace(
+            "getServerFormLogs={getServerFormLogs}",
+            "getServerFormLogs={getServerFormLogs}\n        hotInjectedBodyAction={hotInjectedBodyAction}"
+          );
+
+        // 2. Update sf-body-client.tsx ("use client") to render #btn-hot-injected and invoke the new action
+        const modifiedClientCode = originalClientCode
+          .replace(
+            "  getServerFormLogs: () => Promise<ServerFormLogEntry[]>;",
+            `  getServerFormLogs: () => Promise<ServerFormLogEntry[]>;
+  hotInjectedBodyAction?: (tag: string) => Promise<{
+    tag: string;
+    capturedPageRenderId: string;
+    capturedSecretToken: string;
+    registeredInManifest: boolean;
+  }>;`
+          )
+          .replace(
+            /  getServerFormLogs,\r?\n\}: SfBodyClientProps\)/,
+            "  getServerFormLogs,\n  hotInjectedBodyAction,\n}: SfBodyClientProps)"
+          )
+          .replace(
+            '  const [directClientArrowResult, setDirectClientArrowResult] = useState("");',
+            '  const [directClientArrowResult, setDirectClientArrowResult] = useState("");\n  const [hotInjectedResult, setHotInjectedResult] = useState("");'
+          )
+          .replace(
+            "      {/* Case 7 (Point 1):",
+            `      {/* Hot-Injected Inline Server Function */}
+      {hotInjectedBodyAction && (
+        <section style={{ marginBottom: "12px" }}>
+          <button
+            id="btn-hot-injected"
+            onClick={async () => {
+              const res = await hotInjectedBodyAction("hot-tag-ok");
+              setHotInjectedResult(
+                \`\${res.tag}|\${res.capturedPageRenderId}|\${res.capturedSecretToken}|manifest:\${res.registeredInManifest}\`
+              );
+            }}
+          >
+            Run Hot Injected Action
+          </button>
+          <span id="result-hot-injected">{hotInjectedResult}</span>
+        </section>
+      )}
+
+      {/* Case 7 (Point 1):`
+          );
+
+        fs.writeFileSync(sfBodyPagePath, modifiedPageCode, "utf8");
+        fs.writeFileSync(sfBodyClientPath, modifiedClientCode, "utf8");
+
+        // 3. Wait for Dinou dev server to automatically recompile and update the page without server restart
+        await expect(page.locator("#btn-hot-injected")).toBeVisible({
+          timeout: 30000,
+        });
+
+        // 4. Invoke the newly injected inline Server Function and verify closure + manifest registration
+        await page.click("#btn-hot-injected");
+        await expect(page.locator("#result-hot-injected")).toHaveText(
+          "hot-tag-ok|RND-SF-902|SECRET-DINOU-902|manifest:true",
+          { timeout: 15000 }
+        );
+      } finally {
+        fs.writeFileSync(sfBodyPagePath, originalPageCode, "utf8");
+        fs.writeFileSync(sfBodyClientPath, originalClientCode, "utf8");
+        await expect(page.locator("#btn-hot-injected")).toHaveCount(0, {
+          timeout: 30000,
+        }).catch(() => {});
+      }
+    });
+  });
+
+  // -------------------------------------------------------------
+  // HMR & Fast Refresh automated verification (DEV server only)
+  // -------------------------------------------------------------
   test.describe("HMR & Fast Refresh automated verification", () => {
     // Run tests in serial mode so they do not collide on the same files on disk
     test.describe.configure({ mode: "serial" });
