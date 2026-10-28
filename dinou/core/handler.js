@@ -1465,7 +1465,7 @@ async function handleRequest(request, platformContext = {}) {
       isPathBlocked = pageConfig.isPathBlocked;
     }
 
-    const context = createRequestContext(simReq, bridge, platformContext, dynamicState);
+    const context = createRequestContext(simReq, bridge, platformContext, isRoutePpr ? { value: false } : dynamicState);
     copyCustomContextProperties(rootContext, context);
     const isNotFound = {};
     const segment = isLayoutReq ? "layout" : "page";
@@ -1679,7 +1679,7 @@ async function handleRequest(request, platformContext = {}) {
     }
 
     // 3. If we found a cached/pre-rendered page:
-    if (!isDevelopment && cachedItem && !dynamicState.value && !isPathBlocked && queryObj.ssr_crash !== "true" && !platformContext?.isSSG) {
+    if (!isDevelopment && cachedItem && (!dynamicState.value || cachedItem?.metadata?.ppr || isPprConfig) && !isPathBlocked && queryObj.ssr_crash !== "true" && !platformContext?.isSSG) {
       const metadata = cachedItem.metadata || {};
       const { revalidate, generatedAt } = metadata;
       const isExpired =
@@ -1916,7 +1916,7 @@ async function handleRequest(request, platformContext = {}) {
             !dynamicState.value &&
             allowISGValue !== false &&
             Object.keys(queryObj).length === 0) ||
-          (!dynamicState.value && platformContext.isSSG === true);
+          platformContext.isSSG === true;
 
         if (!shouldCacheISG && inFlightKey) {
           inFlightGenerations.delete(inFlightKey);
@@ -2160,7 +2160,8 @@ async function handleRequest(request, platformContext = {}) {
             }
 
             if (fullHtml) {
-              if (!dynamicState.value) {
+              if (!dynamicState.value || platformContext.isSSG === true) {
+                if (platformContext.isSSG === true) dynamicState.value = false;
                 try {
                   await storage.set(rscKey, rscPayload);
                   await storage.set(htmlKey, fullHtml, genMeta);
@@ -2267,7 +2268,7 @@ async function handleRequest(request, platformContext = {}) {
   }
 
   // Node.js Runtime: Serve static pre-rendered HTML if available in production
-  if (!isDevelopment && !dynamicState.value && pagePath && !isPathBlocked) {
+  if (!isDevelopment && (!dynamicState.value || isPprConfig) && pagePath && !isPathBlocked) {
     revalidating(reqPath, dynamicState);
     let htmlPathOld;
     if (regenerating.has(reqPath)) {
@@ -2276,7 +2277,7 @@ async function handleRequest(request, platformContext = {}) {
     const htmlPath = path.join(".dinou/dist2", reqPath, "index.html");
     const fileToRead = (htmlPathOld && existsSync(htmlPathOld)) ? htmlPathOld : htmlPath;
 
-    if (existsSync(fileToRead) && !dynamicState.value) {
+    if (existsSync(fileToRead) && (!dynamicState.value || isPprConfig)) {
       bridge.setHeader("Content-Type", "text/html; charset=utf-8");
       bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
       let status = getStatus(reqPath);
