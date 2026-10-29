@@ -41,11 +41,11 @@ export default async function Page() {
         Page Render Time: <span id="page-time">{pageTime}</span>
       </p>
 
-      <DinouCacheSlot id="slot-alpha" tag="tag-alpha" revalidate={60}>
+      <DinouCacheSlot id="slot-alpha" tag="tag-alpha" revalidate={3600}>
         <SlowComponentAlpha />
       </DinouCacheSlot>
 
-      <DinouCacheSlot id="slot-beta" tag="tag-beta" revalidate={60}>
+      <DinouCacheSlot id="slot-beta" tag="tag-beta" revalidate={3600}>
         <SlowComponentBeta />
       </DinouCacheSlot>
 

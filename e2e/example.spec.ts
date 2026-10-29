@@ -6038,6 +6038,278 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
   });
 
+  test.describe.serial("DinouCacheSlot: Rigorous Vertical Segmentation & Micro-ISR Casuistics", () => {
+    function extractSlotIdText(html: string, id: string): string | null {
+      const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(`id="${escaped}"[^>]*>([^<]*)<`, "i");
+      const m = html.match(re);
+      return m ? m[1].trim() : null;
+    }
+
+    test("1. Static Host Page & Cold-Start Slot Endpoints (/t-rigorous-cache-slot/static-host): cold-start page/layout slot RSC, revalidateTag reload & live refreshSlot", async ({
+      page,
+      request,
+    }) => {
+      // 1a. Cold-start probe on /____rsc_slot____/rig-slot-static-host and layout slot /____rsc_slot____/rig-slot-layout-banner
+      const coldStaticSlot = await request.get(
+        `/____rsc_slot____/rig-slot-static-host?t=${Date.now()}&fresh=1`,
+        {
+          headers: { "x-dinou-current-path": "/t-rigorous-cache-slot/static-host" },
+        }
+      );
+      expect(coldStaticSlot.status()).toBe(200);
+      expect(await coldStaticSlot.text()).toContain("static-slot-");
+
+      const coldLayoutSlot = await request.get(
+        `/____rsc_slot____/rig-slot-layout-banner?t=${Date.now()}&fresh=1`,
+        {
+          headers: { "x-dinou-current-path": "/t-rigorous-cache-slot/static-host" },
+        }
+      );
+      expect(coldLayoutSlot.status()).toBe(200);
+      expect(await coldLayoutSlot.text()).toContain("layout-banner-");
+
+      // 1b. Navigate to Static Host Page and verify revalidateTag updates static page on reload
+      await page.goto("/t-rigorous-cache-slot/static-host");
+      await expect(page.locator("#static-host-controls")).toHaveAttribute("data-hydrated", "true");
+
+      const token1 = await page.locator("#slot-static-host-token").innerText();
+      expect(token1).toContain("static-slot-");
+
+      await page.click("#btn-static-host-inv-only");
+      await expect(page.locator("#static-host-status")).toHaveText("invalidated");
+
+      await page.reload();
+      await expect(page.locator("#static-host-controls")).toHaveAttribute("data-hydrated", "true");
+      await expect(page.locator("#slot-static-host-token")).not.toHaveText(token1);
+      const token2 = await page.locator("#slot-static-host-token").innerText();
+      const staticPageTimeBeforeLive = await page.locator("#static-page-time").innerText();
+
+      // 1c. Live refreshSlot({ fresh: true }) on Static Host Page without page reload
+      await page.click("#btn-static-host-fresh-only");
+      await expect(page.locator("#slot-static-host-token")).not.toHaveText(token2, {
+        timeout: 10000,
+      });
+      expect(await page.locator("#static-page-time").innerText()).toBe(staticPageTimeBeforeLive);
+    });
+
+    test("2. Vertical Cache Isolation, revalidate={0} No-Cache, Function Child, Tag-Only Slot & Multi-Tag Shared Invalidation (/t-rigorous-cache-slot)", async ({
+      page,
+    }) => {
+      await page.goto("/t-rigorous-cache-slot");
+      await expect(page.locator("#cache-slot-controls")).toHaveAttribute("data-hydrated", "true");
+
+      const pageToken1 = await page.locator("#page-token").innerText();
+      const alphaToken1 = await page.locator("#slot-alpha-token").innerText();
+      const betaToken1 = await page.locator("#slot-beta-token").innerText();
+      const gammaToken1 = await page.locator("#slot-gamma-token").innerText();
+      const nocacheToken1 = await page.locator("#slot-nocache-token").innerText();
+      const tagOnlyToken1 = await page.locator("#slot-tag-only-token").innerText();
+
+      // Reload: Dynamic page & revalidate={0} slot must re-render; cached slots must hit cache
+      await page.reload();
+      await expect(page.locator("#cache-slot-controls")).toHaveAttribute("data-hydrated", "true");
+
+      const pageToken2 = await page.locator("#page-token").innerText();
+      const alphaToken2 = await page.locator("#slot-alpha-token").innerText();
+      const betaToken2 = await page.locator("#slot-beta-token").innerText();
+      const gammaToken2 = await page.locator("#slot-gamma-token").innerText();
+      const nocacheToken2 = await page.locator("#slot-nocache-token").innerText();
+      const tagOnlyToken2 = await page.locator("#slot-tag-only-token").innerText();
+
+      expect(pageToken2).not.toBe(pageToken1);
+      expect(nocacheToken2).not.toBe(nocacheToken1);
+      expect(alphaToken2).toBe(alphaToken1);
+      expect(betaToken2).toBe(betaToken1);
+      expect(gammaToken2).toBe(gammaToken1);
+      expect(tagOnlyToken2).toBe(tagOnlyToken1);
+
+      // Multi-tag shared invalidation: revalidateTag('rig-tag-shared') invalidates beta & gamma while preserving alpha
+      await page.click("#btn-inv-shared");
+      await expect(page.locator("#last-action-status")).toContainText("invalidated:rig-tag-shared");
+
+      await page.reload();
+      await expect(page.locator("#cache-slot-controls")).toHaveAttribute("data-hydrated", "true");
+
+      expect(await page.locator("#slot-alpha-token").innerText()).toBe(alphaToken2);
+      expect(await page.locator("#slot-beta-token").innerText()).not.toBe(betaToken2);
+      expect(await page.locator("#slot-gamma-token").innerText()).not.toBe(gammaToken2);
+    });
+
+    test("3. Live Client-Side refreshSlot (by ID, by Tag, via useRouter().refreshSlot, Layout Slot & Wildcard '*') while preserving Client State & Server Action Props", async ({
+      page,
+    }) => {
+      await page.goto("/t-rigorous-cache-slot");
+      await expect(page.locator("#cache-slot-controls")).toHaveAttribute("data-hydrated", "true");
+      await expect(page.locator("#slot-client-widget")).toHaveAttribute("data-hydrated", "true");
+
+      // Mutate page-level client state
+      await page.click("#btn-inc-page-counter");
+      await page.click("#btn-inc-page-counter");
+      await expect(page.locator("#page-client-counter")).toHaveText("102");
+
+      // Verify Server Action prop (onPingProp={pingFromInsideSlot}) survived slot serialization/deserialization
+      await expect(page.locator("#slot-client-prop-action-status")).toHaveText("fn-present");
+      await page.click("#btn-slot-client-prop-ping");
+      await expect(page.locator("#slot-client-prop-action-status")).toContainText("ok:pong:");
+
+      // Verify direct imported Server Action inside cached slot
+      await page.click("#btn-slot-client-ping");
+      await expect(page.locator("#slot-client-ping-result")).toContainText("pong:");
+
+      // Refresh by tag ("rig-tag-alpha") when slot has id="rig-slot-alpha"
+      const alphaBefore = await page.locator("#slot-alpha-token").innerText();
+      const betaBefore = await page.locator("#slot-beta-token").innerText();
+      await page.click("#btn-refresh-by-tag-alpha");
+      await expect(page.locator("#slot-alpha-token")).not.toHaveText(alphaBefore, {
+        timeout: 10000,
+      });
+      expect(await page.locator("#slot-beta-token").innerText()).toBe(betaBefore);
+      await expect(page.locator("#page-client-counter")).toHaveText("102");
+
+      // Refresh via useRouter().refreshSlot("rig-slot-beta", { fresh: true })
+      await page.click("#btn-refresh-beta-fresh");
+      await expect(page.locator("#slot-beta-token")).not.toHaveText(betaBefore, {
+        timeout: 10000,
+      });
+      await expect(page.locator("#page-client-counter")).toHaveText("102");
+
+      // Refresh Layout Banner Slot live
+      const layoutBannerBefore = await page.locator("#slot-layout-banner-id").innerText();
+      await page.click("#btn-refresh-layout-banner-fresh");
+      await expect(page.locator("#slot-layout-banner-id")).not.toHaveText(layoutBannerBefore, {
+        timeout: 10000,
+      });
+      await expect(page.locator("#page-client-counter")).toHaveText("102");
+
+      // Wildcard refreshSlot("*", { fresh: true })
+      const alphaPreWild = await page.locator("#slot-alpha-token").innerText();
+      const betaPreWild = await page.locator("#slot-beta-token").innerText();
+      const gammaPreWild = await page.locator("#slot-gamma-token").innerText();
+      await page.click("#btn-refresh-wildcard-fresh");
+      await expect(page.locator("#slot-alpha-token")).not.toHaveText(alphaPreWild, {
+        timeout: 10000,
+      });
+      await expect(page.locator("#slot-beta-token")).not.toHaveText(betaPreWild, {
+        timeout: 10000,
+      });
+      await expect(page.locator("#slot-gamma-token")).not.toHaveText(gammaPreWild, {
+        timeout: 10000,
+      });
+      await expect(page.locator("#page-client-counter")).toHaveText("102");
+    });
+
+    test("4. Nested <DinouCacheSlot> Isolation: invalidating or refreshing inner slot updates inner slot while outer slot stays cached", async ({
+      page,
+    }) => {
+      await page.goto("/t-rigorous-cache-slot");
+      await expect(page.locator("#cache-slot-controls")).toHaveAttribute("data-hydrated", "true");
+
+      const outerToken1 = await page.locator("#slot-nested-outer-token").innerText();
+      const innerToken1 = await page.locator("#slot-nested-inner-token").innerText();
+
+      // 4a. Invalidate ONLY inner slot tag ("rig-tag-inner") and reload page
+      await page.click("#btn-inv-inner");
+      await expect(page.locator("#last-action-status")).toContainText("invalidated:rig-tag-inner");
+
+      await page.reload();
+      await expect(page.locator("#cache-slot-controls")).toHaveAttribute("data-hydrated", "true");
+
+      // Outer slot must remain cached; inner slot must update
+      await expect(page.locator("#slot-nested-outer-token")).toHaveText(outerToken1);
+      await expect(page.locator("#slot-nested-inner-token")).not.toHaveText(innerToken1);
+      const innerToken2 = await page.locator("#slot-nested-inner-token").innerText();
+
+      // 4b. Live client refreshSlot("rig-slot-nested-inner", { fresh: true })
+      await page.click("#btn-refresh-nested-inner-fresh");
+      await expect(page.locator("#slot-nested-inner-token")).not.toHaveText(innerToken2, {
+        timeout: 10000,
+      });
+      await expect(page.locator("#slot-nested-outer-token")).toHaveText(outerToken1);
+    });
+
+    test("5. Concurrency Stampede Protection, Hybrid PPR + DinouCacheSlot, Dynamic Route Param Slots & Endpoint Security", async ({
+      page,
+      request,
+    }) => {
+      await page.goto("/t-rigorous-cache-slot");
+      await expect(page.locator("#cache-slot-controls")).toHaveAttribute("data-hydrated", "true");
+
+      // 5a. Concurrency Stampede Protection (5 simultaneous requests on cache MISS)
+      await page.click("#btn-reset-stampede");
+      await expect(page.locator("#last-action-status")).toHaveText("stampede-reset");
+
+      const stampedeResponses = await Promise.all(
+        Array.from({ length: 5 }, (_, i) =>
+          request.get(`/t-rigorous-cache-slot?stampede_probe=${i}`)
+        )
+      );
+      const stampedeHtmls = await Promise.all(stampedeResponses.map((r) => r.text()));
+      const stampedeTokens = stampedeHtmls.map((h) => extractSlotIdText(h, "slot-stampede-token"));
+      const uniqueTokens = new Set(stampedeTokens.filter(Boolean));
+      expect(uniqueTokens.size).toBe(1);
+
+      // 5b. Hybrid PPR + DinouCacheSlot (/t-rigorous-cache-slot/ppr-host)
+      const pprResA = await request.get("/t-rigorous-cache-slot/ppr-host", {
+        headers: { Cookie: "slot_user=Alice" },
+      });
+      const pprHtmlA = await pprResA.text();
+
+      const pprResB = await request.get("/t-rigorous-cache-slot/ppr-host", {
+        headers: { Cookie: "slot_user=Bob" },
+      });
+      const pprHtmlB = await pprResB.text();
+
+      expect(extractSlotIdText(pprHtmlA, "ppr-hole-user")).toBe("Alice");
+      expect(extractSlotIdText(pprHtmlB, "ppr-hole-user")).toBe("Bob");
+
+      const innerPprSlotA = extractSlotIdText(pprHtmlA, "slot-inside-ppr-hole-token");
+      const innerPprSlotB = extractSlotIdText(pprHtmlB, "slot-inside-ppr-hole-token");
+      expect(Boolean(innerPprSlotA)).toBe(true);
+      expect(innerPprSlotA).toBe(innerPprSlotB);
+
+      if (isProd) {
+        expect(extractSlotIdText(pprHtmlA, "ppr-shell-time")).toBe(
+          extractSlotIdText(pprHtmlB, "ppr-shell-time")
+        );
+      }
+
+      // 5c. Dynamic Route Param Slots (/t-rigorous-cache-slot/dynamic-route/alpha vs beta)
+      const dynAlpha1 = await (
+        await request.get("/t-rigorous-cache-slot/dynamic-route/alpha")
+      ).text();
+      const dynAlpha2 = await (
+        await request.get("/t-rigorous-cache-slot/dynamic-route/alpha")
+      ).text();
+      const dynBeta1 = await (
+        await request.get("/t-rigorous-cache-slot/dynamic-route/beta")
+      ).text();
+
+      const tokenAlpha1 = extractSlotIdText(dynAlpha1, "slot-param-token");
+      const tokenAlpha2 = extractSlotIdText(dynAlpha2, "slot-param-token");
+      const tokenBeta1 = extractSlotIdText(dynBeta1, "slot-param-token");
+      expect(Boolean(tokenAlpha1)).toBe(true);
+      expect(tokenAlpha1).toBe(tokenAlpha2);
+      expect(tokenAlpha1).not.toBe(tokenBeta1);
+
+      const paramSlotRsc = await request.get(
+        `/____rsc_slot____/rig-slot-param-alpha?t=${Date.now()}&fresh=1`,
+        {
+          headers: { "x-dinou-current-path": "/t-rigorous-cache-slot/dynamic-route/alpha" },
+        }
+      );
+      expect(paramSlotRsc.status()).toBe(200);
+      expect(await paramSlotRsc.text()).toContain("param-alpha-");
+
+      // 5d. Security: Path Traversal & Unknown Slot
+      const travRes = await request.get("/____rsc_slot____/..%2F..%2Fpackage.json");
+      expect([400, 404]).toContain(travRes.status());
+
+      const unknownRes = await request.get("/____rsc_slot____/non-existent-rig-slot-999");
+      expect(unknownRes.status()).toBe(404);
+    });
+  });
+
   test.describe("HMR & Fast Refresh automated verification", () => {
     // Run tests in serial mode so they do not collide on the same files on disk
     test.describe.configure({ mode: "serial" });
