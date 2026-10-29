@@ -14,6 +14,7 @@ import {
   isPprBuildActive,
   isInsideSuspense,
   deferPprSuspenseEffect,
+  runWithPprContext,
 } from "./ppr-context.js";
 import { createRequire } from "node:module";
 
@@ -697,21 +698,23 @@ async function getSlotJSX(slotId, options = {}) {
     preEvaluatingRoutes.add(options.currentPath);
     try {
       const isNotFound = { value: false };
-      const pageJsx = await getJSX(options.currentPath, {}, isNotFound, false, false, {
-        segment: "page",
-      });
-      if (pageJsx) {
-        await asyncRenderJSXToClientJSX(pageJsx);
-      }
-      targetId = await resolveCanonicalSlotId(slotId, storage);
-
-      if (!slotRegistry.has(targetId)) {
-        const fullJsx = await getJSX(options.currentPath, {}, isNotFound, false, false);
-        if (fullJsx) {
-          await asyncRenderJSXToClientJSX(fullJsx);
+      await runWithPprContext({ isPpr: true }, async () => {
+        const pageJsx = await getJSX(options.currentPath, {}, isNotFound, false, false, {
+          segment: "page",
+        });
+        if (pageJsx) {
+          await asyncRenderJSXToClientJSX(pageJsx);
         }
         targetId = await resolveCanonicalSlotId(slotId, storage);
-      }
+
+        if (!slotRegistry.has(targetId)) {
+          const fullJsx = await getJSX(options.currentPath, {}, isNotFound, false, false);
+          if (fullJsx) {
+            await asyncRenderJSXToClientJSX(fullJsx);
+          }
+          targetId = await resolveCanonicalSlotId(slotId, storage);
+        }
+      });
     } catch (e) {
       console.warn(
         `[getSlotJSX] Could not pre-evaluate route "${options.currentPath}" to register slot "${slotId}":`,
@@ -747,6 +750,24 @@ async function getSlotJSX(slotId, options = {}) {
             slotId: targetId,
             inStaticShell: Boolean(cached?.metadata?.inStaticShell),
           });
+          if (Boolean(cached?.metadata?.inStaticShell) && options.currentPath) {
+            const cleanRouteKey = String(options.currentPath)
+              .split("?")[0]
+              .replace(/^\/+/, "")
+              .replace(/\/+$/, "");
+            const htmlKey = cleanRouteKey ? `${cleanRouteKey}/index.html` : "index.html";
+            const shellHtmlKey = cleanRouteKey ? `${cleanRouteKey}/shell.html` : "shell.html";
+            const metaKey = cleanRouteKey ? `${cleanRouteKey}/metadata.json` : "metadata.json";
+            const shellRscKey = cleanRouteKey ? `${cleanRouteKey}/shell.rsc` : "shell.rsc";
+            const rscKey = cleanRouteKey ? `${cleanRouteKey}/rsc.rsc` : "rsc.rsc";
+            await Promise.all([
+              storage.delete(htmlKey),
+              storage.delete(shellHtmlKey),
+              storage.delete(metaKey),
+              storage.delete(shellRscKey),
+              storage.delete(rscKey),
+            ]);
+          }
         }
         return deserializeJSX(serialized);
       })();
