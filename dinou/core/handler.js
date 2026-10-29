@@ -2221,7 +2221,6 @@ async function handleRequest(request, platformContext = {}) {
             if (fullHtml) {
               if (!dynamicState.value || (platformContext.isSSG === true && !ssgPprUnwrappedBailout)) {
                 if (platformContext.isSSG === true && !ssgPprUnwrappedBailout) dynamicState.value = false;
-
                 if (context._slotTags && context._slotTags.size > 0) {
                   genMeta.slotTags = Array.from(context._slotTags);
                 }
