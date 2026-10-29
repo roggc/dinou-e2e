@@ -334,6 +334,7 @@ async function revalidateTag(tag, options = {}) {
       if (typeof storage.markTagInvalidated === "function") {
         storage.markTagInvalidated(tag);
       }
+      globalThis[Symbol.for("dinou.slot.recent.fresh")]?.clear?.();
       const slotReg = globalThis[Symbol.for("dinou.slot.registry")];
       if (slotReg && typeof slotReg.entries === "function") {
         for (const [regId, entry] of slotReg.entries()) {

@@ -27,6 +27,12 @@ if (!globalThis[INFLIGHT_KEY]) {
 }
 const inflightSlotRenders = globalThis[INFLIGHT_KEY];
 
+const RECENT_FRESH_KEY = Symbol.for("dinou.slot.recent.fresh");
+if (!globalThis[RECENT_FRESH_KEY]) {
+  globalThis[RECENT_FRESH_KEY] = new Map();
+}
+const recentFreshSlotRenders = globalThis[RECENT_FRESH_KEY];
+
 const BG_REVAL_KEY = Symbol.for("dinou.slot.background.revalidations");
 if (!globalThis[BG_REVAL_KEY]) {
   globalThis[BG_REVAL_KEY] = new Set();
@@ -794,15 +800,34 @@ async function getSlotJSX(slotId, options = {}) {
 
   if (slotRegistry.has(targetId)) {
     const entry = slotRegistry.get(targetId);
+    const reqUrl = String(options.req?.url || "");
+    const qIdx = reqUrl.indexOf("?");
+    const queryKey = qIdx !== -1 ? reqUrl.slice(qIdx) : "";
+    const stampedeKey = `${storageKey}::${queryKey}`;
     try {
       if (inflightSlotRenders.has(storageKey)) {
         const deduped = await inflightSlotRenders.get(storageKey);
         return await refreshNestedSlotsInTree(deduped, targetId, options);
       }
 
+      if (options.fresh && recentFreshSlotRenders.has(stampedeKey)) {
+        const recent = recentFreshSlotRenders.get(stampedeKey);
+        if (recent && Date.now() - recent.timestamp < 1000 && recent.serialized) {
+          const restored = deserializeJSX(recent.serialized);
+          return await refreshNestedSlotsInTree(restored, targetId, options);
+        }
+        recentFreshSlotRenders.delete(stampedeKey);
+      }
+
       const renderPromise = (async () => {
         const resolved = await entry.render();
         const serialized = serializeJSX(resolved);
+        if (options.fresh) {
+          recentFreshSlotRenders.set(stampedeKey, {
+            timestamp: Date.now(),
+            serialized,
+          });
+        }
         if (storage && entry.revalidate !== 0) {
           await storage.set(storageKey, serialized, {
             tags: entry.tags,
