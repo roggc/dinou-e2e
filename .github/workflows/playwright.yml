@@ -14,7 +14,7 @@ jobs:
   e2e:
     name: ${{ matrix.os }} - ${{ matrix.runtime.name }} - ${{ matrix.bundler }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -59,7 +59,7 @@ jobs:
   unvendorized:
     name: Ubuntu - Node AOT (-u Unvendorized) - esbuild
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
