@@ -248,13 +248,6 @@ export function DinouPageSlot() {
   );
 }
 
-function SlotConsumer({ slotPromise, fallback }) {
-  if (slotPromise && slotPromise.status === "rejected") {
-    throw slotPromise.reason;
-  }
-  return use ? use(slotPromise) : (slotPromise || fallback);
-}
-
 export function DinouCacheSlotBoundary({ id, tags, children }) {
   if (typeof useState !== "function") {
     return children;
@@ -304,17 +297,6 @@ export function DinouCacheSlotBoundary({ id, tags, children }) {
 
   if (slotContent !== null) {
     return slotContent;
-  }
-  if (false) {
-    return createElement(
-      SlotErrorBoundary,
-      { resetKey: slotPromise, pagePromise: slotPromise },
-      createElement(
-        Suspense,
-        { fallback: children },
-        createElement(SlotConsumer, { slotPromise, fallback: children })
-      )
-    );
   }
   return children;
 }
