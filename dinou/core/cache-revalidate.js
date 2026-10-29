@@ -333,9 +333,10 @@ async function revalidateTag(tag, options = {}) {
       const targetSlotKeys = new Set();
       const targetSlotHostCleanKeys = new Set();
       const targetSlotLayoutCleanKeys = new Set();
+      const isFsStorage = Boolean(storage && storage.baseDir);
       for (const rawKey of allKeys) {
         const key = String(rawKey || "").replace(/\\/g, "/");
-        if (key.startsWith("slots/") || key.endsWith("/slot.json") || key.endsWith("/slot.metadata.json")) {
+        if (key.endsWith("/slot.metadata.json") || (!isFsStorage && (key.startsWith("slots/") || key.endsWith("/slot.json")))) {
           try {
             const item = await storage.get(key);
             let meta = item?.metadata;
@@ -351,7 +352,7 @@ async function revalidateTag(tag, options = {}) {
               }
             }
           } catch (e) {}
-        } else if (key.endsWith("layout.metadata.json") || key.endsWith("layout.rsc")) {
+        } else if (key.endsWith("layout.metadata.json") || (!isFsStorage && key.endsWith("layout.rsc"))) {
           try {
             const item = await storage.get(key);
             let meta = item?.metadata;
@@ -391,7 +392,7 @@ async function revalidateTag(tag, options = {}) {
               targetPaths.add(normPath);
             }
           } catch (e) {}
-        } else if (key.endsWith("index.html") || key.endsWith("shell.html")) {
+        } else if (!isFsStorage && (key.endsWith("index.html") || key.endsWith("shell.html"))) {
           try {
             const item = await storage.get(key);
             const meta = item?.metadata;

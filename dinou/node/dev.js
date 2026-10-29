@@ -133,6 +133,7 @@ const yieldToEventLoop = () => new Promise((resolve) => setImmediate(resolve));
 // Initialize Dinou Storage
 try {
   const dist2Dir = path.resolve(projectRoot, ".dinou/dist2");
+  try { fs.rmSync(path.join(dist2Dir, "slots"), { recursive: true, force: true }); } catch (e) {}
   setStorageAdapter(new FileSystemStorage(dist2Dir));
 } catch (e) {
   setStorageAdapter(new MemoryStorage());

@@ -192,8 +192,8 @@ export default function SynergyControlPanel() {
           type="button"
           onClick={async () => {
             setActionStatus("pending");
-            await invalidateSynergyTag("tag-syn-hole-slot-a");
-            setActionStatus("invalidated:tag-syn-hole-slot-a");
+            try { await invalidateSynergyTag("tag-syn-hole-slot-a"); setActionStatus("invalidated:tag-syn-hole-slot-a"); } catch (e: any) { setActionStatus("err:" + (e?.message || String(e))); }
+            // handled above
           }}
         >
           Invalidate Hole Slot A Tag

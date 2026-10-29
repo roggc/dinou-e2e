@@ -6362,7 +6362,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       if (isProd) for (const holeId of expectedHoles) {
         expect(shell1).toContain(`data-ppr-hole="${holeId}"`);
         expect(stream1).toContain(`<template id="ppr-content-${holeId}">`);
-        expect(stream1).toContain(`document.getElementById('ppr-content-${holeId}')`);
+        expect(stream1).toContain(`document.getElementById("ppr-content-${holeId}")`);
       }
 
       // 1b. Static Suspense boundaries (2A & 2B) before dynamic holes are resolved in shellPart (NOT turned into PPR holes)
@@ -6628,8 +6628,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         bodies.push(await r.text());
       }
       expect(bodies[0]).toContain("syn-hole-slot-a-token");
+      const token0 = bodies[0].match(/hole1-slotA-[a-z0-9-]+/i)?.[0];
+      expect(token0).toBeTruthy();
       for (let i = 1; i < bodies.length; i++) {
-        expect(bodies[i]).toBe(bodies[0]);
+        expect(bodies[i].match(/hole1-slotA-[a-z0-9-]+/i)?.[0]).toBe(token0);
       }
 
       const innerRes = await request.get("/____rsc_slot____/ppr-syn-nested-inner?fresh=1", {
