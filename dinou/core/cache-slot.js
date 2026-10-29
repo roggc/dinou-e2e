@@ -383,7 +383,17 @@ async function DinouCacheSlot(props) {
       content
     );
     if (alreadyRendered) {
-      return { ...elem, __clientJsxAlreadyRendered: true };
+      return Object.defineProperties(
+        Object.create(Object.getPrototypeOf(elem)),
+        {
+          ...Object.getOwnPropertyDescriptors(elem),
+          __clientJsxAlreadyRendered: {
+            value: true,
+            enumerable: false,
+            configurable: true,
+          },
+        }
+      );
     }
     return elem;
   }

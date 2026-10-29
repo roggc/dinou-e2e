@@ -6310,6 +6310,342 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
   });
 
+  test.describe.serial("PPR + DinouCacheSlot Synergy: Rigorous Casuistics (/t-rigorous-sinergy)", () => {
+    function extractSynIdText(html: string, id: string): string | null {
+      const m = html.match(new RegExp(`id="${id}"[^>]*>([^<]+)<`));
+      return m ? m[1].trim() : null;
+    }
+
+    function splitPprWireHtml(rawHtml: string) {
+      const firstTemplateIdx = rawHtml.indexOf('<template id="ppr-content-');
+      if (firstTemplateIdx === -1) {
+        return { shellPart: rawHtml, streamPart: "" };
+      }
+      return {
+        shellPart: rawHtml.slice(0, firstTemplateIdx),
+        streamPart: rawHtml.slice(firstTemplateIdx),
+      };
+    }
+
+    test("1. Raw Wire Streaming Protocol: Static Shell Slots, Static Suspense + Slot Combinations, Dynamic PPR Holes with Cached/No-Cache/Nested Slots & Direct Cookie Read in Slot (/t-rigorous-sinergy)", async ({
+      request,
+    }) => {
+      const res1 = await request.get("/t-rigorous-sinergy?mode=alpha-mode", {
+        headers: {
+          Cookie:
+            "syn_layout_theme=cyberpunk; syn_user=alice; syn_tier=pro-tier; syn_bailout=bail-1; syn_direct_cookie=cookie-1",
+          "x-syn-probe": "probe-1",
+        },
+      });
+      expect(res1.status()).toBe(200);
+      const html1 = await res1.text();
+
+      await new Promise((r) => setTimeout(r, 30));
+
+      const res2 = await request.get("/t-rigorous-sinergy?mode=beta-mode", {
+        headers: {
+          Cookie:
+            "syn_layout_theme=solarized; syn_user=bob; syn_tier=enterprise-tier; syn_bailout=bail-2; syn_direct_cookie=cookie-2",
+          "x-syn-probe": "probe-2",
+        },
+      });
+      expect(res2.status()).toBe(200);
+      const html2 = await res2.text();
+
+      const { shellPart: shell1, streamPart: stream1 } = splitPprWireHtml(html1);
+      const { shellPart: shell2, streamPart: stream2 } = splitPprWireHtml(html2);
+
+      // 1a. All 5 dynamic PPR holes exist in the static shell with fallbacks and stream later as <template> chunks
+      for (let i = 0; i < 5; i++) {
+        expect(shell1).toContain(`data-ppr-hole="ppr-hole-${i}"`);
+        expect(stream1).toContain(`<template id="ppr-content-ppr-hole-${i}">`);
+        expect(stream1).toContain(`document.getElementById('ppr-content-ppr-hole-${i}')`);
+      }
+
+      // 1b. Static Suspense boundaries (2A & 2B) before dynamic holes are resolved in shellPart (NOT turned into PPR holes)
+      expect(shell1).not.toContain('id="syn-static-suspense-fallback"');
+      expect(shell1).not.toContain('id="syn-slot-wrapping-susp-fallback"');
+      const staticSuspSlot1 = extractSynIdText(shell1, "syn-static-susp-slot-token");
+      const slotWrappingSusp1 = extractSynIdText(shell1, "syn-slot-wrapping-susp-token");
+      expect(staticSuspSlot1).toBeTruthy();
+      expect(slotWrappingSusp1).toBeTruthy();
+      expect(extractSynIdText(shell2, "syn-static-susp-slot-token")).toBe(staticSuspSlot1);
+      expect(extractSynIdText(shell2, "syn-slot-wrapping-susp-token")).toBe(slotWrappingSusp1);
+
+      // 1c. Layout & Page Static Shell DinouCacheSlots are stable across requests
+      const layoutShellSlot1 = extractSynIdText(shell1, "syn-layout-shell-slot-token");
+      const pageShellSlot1 = extractSynIdText(shell1, "syn-shell-slot-token");
+      expect(layoutShellSlot1).toBeTruthy();
+      expect(pageShellSlot1).toBeTruthy();
+      expect(extractSynIdText(shell2, "syn-layout-shell-slot-token")).toBe(layoutShellSlot1);
+      expect(extractSynIdText(shell2, "syn-shell-slot-token")).toBe(pageShellSlot1);
+
+      // 1d. Dynamic PPR holes re-execute per request (cookies, headers, query change between R1 and R2)
+      expect(extractSynIdText(stream1, "syn-layout-hole-theme")).toBe("cyberpunk");
+      expect(extractSynIdText(stream2, "syn-layout-hole-theme")).toBe("solarized");
+      expect(extractSynIdText(stream1, "syn-hole-1-user")).toBe("alice");
+      expect(extractSynIdText(stream2, "syn-hole-1-user")).toBe("bob");
+      expect(extractSynIdText(stream1, "syn-hole-1-probe")).toBe("probe-1");
+      expect(extractSynIdText(stream2, "syn-hole-1-probe")).toBe("probe-2");
+      expect(extractSynIdText(stream1, "syn-hole-1-mode")).toBe("alpha-mode");
+      expect(extractSynIdText(stream2, "syn-hole-1-mode")).toBe("beta-mode");
+      expect(extractSynIdText(stream1, "syn-hole-2-tier")).toBe("pro-tier");
+      expect(extractSynIdText(stream2, "syn-hole-2-tier")).toBe("enterprise-tier");
+      expect(extractSynIdText(stream1, "syn-hole-3-cookie")).toBe("bail-1");
+      expect(extractSynIdText(stream2, "syn-hole-3-cookie")).toBe("bail-2");
+
+      // 1e. Cached DinouCacheSlots inside those dynamic PPR holes remain cached across R1 and R2,
+      // while revalidate=0 slot inside Hole 1 regenerates on every request
+      const layoutHoleSlot1 = extractSynIdText(stream1, "syn-layout-hole-slot-token");
+      const hole1SlotA1 = extractSynIdText(stream1, "syn-hole-slot-a-token");
+      const hole1NoCache1 = extractSynIdText(stream1, "syn-hole-slot-nocache-token");
+      const nestedOuter1 = extractSynIdText(stream1, "syn-nested-outer-token");
+      const nestedInner1 = extractSynIdText(stream1, "syn-nested-inner-token");
+      const clientWidgetSlot1 = extractSynIdText(stream1, "syn-slot-widget-token");
+
+      expect(layoutHoleSlot1).toBeTruthy();
+      expect(hole1SlotA1).toBeTruthy();
+      expect(hole1NoCache1).toBeTruthy();
+      expect(nestedOuter1).toBeTruthy();
+      expect(nestedInner1).toBeTruthy();
+      expect(clientWidgetSlot1).toBeTruthy();
+
+      expect(extractSynIdText(stream2, "syn-layout-hole-slot-token")).toBe(layoutHoleSlot1);
+      expect(extractSynIdText(stream2, "syn-hole-slot-a-token")).toBe(hole1SlotA1);
+      expect(extractSynIdText(stream2, "syn-hole-slot-nocache-token")).not.toBe(hole1NoCache1);
+      expect(extractSynIdText(stream2, "syn-nested-outer-token")).toBe(nestedOuter1);
+      expect(extractSynIdText(stream2, "syn-nested-inner-token")).toBe(nestedInner1);
+      expect(extractSynIdText(stream2, "syn-slot-widget-token")).toBe(clientWidgetSlot1);
+
+      // 1f. Scenario 6: Direct cookie read inside DinouCacheSlot was NOT poisoned at build time
+      // with "default-direct-cookie"; it captured "cookie-1" on R1 and stayed cached on R2
+      const directCookie1 = extractSynIdText(stream1, "syn-direct-dynamic-cookie");
+      const directToken1 = extractSynIdText(stream1, "syn-direct-dynamic-token");
+      expect(directCookie1).toBe("cookie-1");
+      expect(directToken1).toContain("direct-dyn-cookie-1-");
+      expect(extractSynIdText(stream2, "syn-direct-dynamic-cookie")).toBe("cookie-1");
+      expect(extractSynIdText(stream2, "syn-direct-dynamic-token")).toBe(directToken1);
+    });
+
+    test("2. Server-Side revalidateTag on Inner Dynamic-Hole Slots & Static-Shell Slots + Background PPR Shell Regeneration (/t-rigorous-sinergy)", async ({
+      page,
+      context,
+      request,
+    }) => {
+      await context.addCookies([
+        { name: "syn_layout_theme", value: "dracula", path: "/", domain: "localhost" },
+        { name: "syn_user", value: "charlie", path: "/", domain: "localhost" },
+        { name: "syn_tier", value: "vip-tier", path: "/", domain: "localhost" },
+        { name: "syn_bailout", value: "bail-3", path: "/", domain: "localhost" },
+        { name: "syn_direct_cookie", value: "cookie-1", path: "/", domain: "localhost" },
+      ]);
+
+      await page.goto("/t-rigorous-sinergy?mode=gamma-mode");
+      await expect(page.locator("#syn-controls")).toHaveAttribute("data-hydrated", "true");
+      await expect(page.locator("#syn-hole-outer-client")).toHaveAttribute("data-hydrated", "true");
+      await expect(page.locator("#syn-slot-client-widget")).toHaveAttribute("data-hydrated", "true");
+
+      const layoutShellBefore = await page.locator("#syn-layout-shell-slot-token").innerText();
+      const pageShellBefore = await page.locator("#syn-shell-slot-token").innerText();
+      const layoutHoleSlotBefore = await page.locator("#syn-layout-hole-slot-token").innerText();
+      const holeSlotABefore = await page.locator("#syn-hole-slot-a-token").innerText();
+      const nestedOuterBefore = await page.locator("#syn-nested-outer-token").innerText();
+      const nestedInnerBefore = await page.locator("#syn-nested-inner-token").innerText();
+
+      // 2a. Invalidate tag-syn-hole-slot-a and tag-syn-nested-inner via Server Action
+      await page.locator("#btn-inv-hole-slot-a").click();
+      await expect(page.locator("#syn-action-status")).toHaveText("invalidated:tag-syn-hole-slot-a");
+
+      await page.locator("#btn-inv-nested-inner").click();
+      await expect(page.locator("#syn-action-status")).toHaveText("invalidated:tag-syn-nested-inner");
+
+      const resAfterHoleInv = await request.get("/t-rigorous-sinergy?mode=delta-mode", {
+        headers: {
+          Cookie:
+            "syn_layout_theme=monokai; syn_user=diana; syn_tier=ultra-tier; syn_direct_cookie=cookie-1",
+        },
+      });
+      const htmlAfterHoleInv = await resAfterHoleInv.text();
+      const { shellPart: shellA, streamPart: streamA } = splitPprWireHtml(htmlAfterHoleInv);
+
+      // Only the 2 invalidated slots inside the dynamic holes regenerated; outer parent & shell slots stayed cached
+      const holeSlotAAfter = extractSynIdText(streamA, "syn-hole-slot-a-token");
+      const nestedInnerAfter = extractSynIdText(streamA, "syn-nested-inner-token");
+      expect(holeSlotAAfter).not.toBe(holeSlotABefore);
+      expect(nestedInnerAfter).not.toBe(nestedInnerBefore);
+      expect(extractSynIdText(streamA, "syn-nested-outer-token")).toBe(nestedOuterBefore);
+      expect(extractSynIdText(streamA, "syn-layout-hole-slot-token")).toBe(layoutHoleSlotBefore);
+      expect(extractSynIdText(shellA, "syn-shell-slot-token")).toBe(pageShellBefore);
+      expect(extractSynIdText(shellA, "syn-layout-shell-slot-token")).toBe(layoutShellBefore);
+
+      // 2b. Invalidate tag-syn-shell-slot (slot inside the PPR Static Shell) and verify background shell.html regeneration
+      await page.locator("#btn-inv-shell-slot").click();
+      await expect(page.locator("#syn-action-status")).toHaveText("invalidated:tag-syn-shell-slot");
+
+      await expect
+        .poll(
+          async () => {
+            const res = await request.get("/t-rigorous-sinergy?mode=epsilon-mode");
+            const { shellPart } = splitPprWireHtml(await res.text());
+            return extractSynIdText(shellPart, "syn-shell-slot-token");
+          },
+          { timeout: 6000 }
+        )
+        .not.toBe(pageShellBefore);
+
+      const resAfterShellInv = await request.get("/t-rigorous-sinergy?mode=epsilon-mode");
+      const { shellPart: shellB, streamPart: streamB } = splitPprWireHtml(
+        await resAfterShellInv.text()
+      );
+      expect(extractSynIdText(shellB, "syn-layout-shell-slot-token")).toBe(layoutShellBefore);
+      expect(extractSynIdText(streamB, "syn-hole-slot-a-token")).toBe(holeSlotAAfter);
+      expect(extractSynIdText(streamB, "syn-nested-inner-token")).toBe(nestedInnerAfter);
+    });
+
+    test("3. Live refreshSlot (By ID, By Tag, Nested Inner via useRouter, Static Shell Slot & Wildcard *) Preserving Sibling Client State & Embedded Server Actions (/t-rigorous-sinergy)", async ({
+      page,
+      context,
+    }) => {
+      await context.addCookies([
+        { name: "syn_layout_theme", value: "nord", path: "/", domain: "localhost" },
+        { name: "syn_user", value: "live-user", path: "/", domain: "localhost" },
+        { name: "syn_tier", value: "live-tier", path: "/", domain: "localhost" },
+        { name: "syn_bailout", value: "bail-live", path: "/", domain: "localhost" },
+        { name: "syn_direct_cookie", value: "cookie-1", path: "/", domain: "localhost" },
+      ]);
+
+      await page.goto("/t-rigorous-sinergy?mode=live-mode");
+      await expect(page.locator("#syn-controls")).toHaveAttribute("data-hydrated", "true");
+      await expect(page.locator("#syn-hole-outer-client")).toHaveAttribute("data-hydrated", "true");
+      await expect(page.locator("#syn-slot-client-widget")).toHaveAttribute("data-hydrated", "true");
+
+      // Increment client states at all 3 levels: Static Shell (500->502), PPR Hole 1 (50->53), Slot Widget (0->2)
+      await page.locator("#btn-inc-shell-counter").click();
+      await page.locator("#btn-inc-shell-counter").click();
+      await expect(page.locator("#syn-shell-client-counter")).toHaveText("502");
+
+      await page.locator("#btn-inc-hole-outer-counter").click();
+      await page.locator("#btn-inc-hole-outer-counter").click();
+      await page.locator("#btn-inc-hole-outer-counter").click();
+      await expect(page.locator("#syn-hole-outer-counter")).toHaveText("53");
+
+      await page.locator("#btn-inc-slot-widget").click();
+      await page.locator("#btn-inc-slot-widget").click();
+      await expect(page.locator("#syn-slot-widget-clicks")).toHaveText("2");
+
+      // Test both direct and prop-passed "use server" actions inside the slot streamed in PPR Hole #3
+      const widgetToken1 = await page.locator("#syn-slot-widget-token").innerText();
+      await page.locator("#btn-syn-slot-direct-action").click();
+      await expect(page.locator("#syn-slot-direct-action-res")).toHaveText(
+        `ppr-slot-ack:direct-${widgetToken1}`
+      );
+
+      await expect(page.locator("#syn-slot-prop-action-res")).toHaveText("fn-ready");
+      await page.locator("#btn-syn-slot-prop-action").click();
+      await expect(page.locator("#syn-slot-prop-action-res")).toHaveText(
+        `ok:ppr-slot-ack:prop-${widgetToken1}`
+      );
+
+      // 3a. Live refresh Hole 1 Slot A by ID (fresh)
+      const holeSlotA1 = await page.locator("#syn-hole-slot-a-token").innerText();
+      const nestedOuter1 = await page.locator("#syn-nested-outer-token").innerText();
+      const nestedInner1 = await page.locator("#syn-nested-inner-token").innerText();
+      const shellSlot1 = await page.locator("#syn-shell-slot-token").innerText();
+      const layoutHoleSlot1 = await page.locator("#syn-layout-hole-slot-token").innerText();
+
+      await page.locator("#btn-refresh-hole-slot-a-fresh").click();
+      await expect(page.locator("#syn-hole-slot-a-token")).not.toHaveText(holeSlotA1);
+      const holeSlotA2 = await page.locator("#syn-hole-slot-a-token").innerText();
+
+      // Sibling client states in static shell, PPR hole 1, and PPR hole 3 slot widget are all preserved
+      await expect(page.locator("#syn-shell-client-counter")).toHaveText("502");
+      await expect(page.locator("#syn-hole-outer-counter")).toHaveText("53");
+      await expect(page.locator("#syn-slot-widget-clicks")).toHaveText("2");
+
+      // 3b. Live refresh Hole 1 Slot A by Tag
+      await page.locator("#btn-refresh-hole-slot-a-by-tag").click();
+      await expect(page.locator("#syn-hole-slot-a-token")).not.toHaveText(holeSlotA2);
+      const holeSlotA3 = await page.locator("#syn-hole-slot-a-token").innerText();
+
+      // 3c. Live refresh Nested Inner Slot via useRouter().refreshSlot while Outer Slot remains untouched
+      await page.locator("#btn-refresh-nested-inner-fresh").click();
+      await expect(page.locator("#syn-nested-inner-token")).not.toHaveText(nestedInner1);
+      const nestedInner2 = await page.locator("#syn-nested-inner-token").innerText();
+      await expect(page.locator("#syn-nested-outer-token")).toHaveText(nestedOuter1);
+
+      // 3d. Live refresh Static Shell Slot & Layout Hole Slot
+      await page.locator("#btn-refresh-shell-slot-fresh").click();
+      await expect(page.locator("#syn-shell-slot-token")).not.toHaveText(shellSlot1);
+      const shellSlot2 = await page.locator("#syn-shell-slot-token").innerText();
+
+      await page.locator("#btn-refresh-layout-hole-slot-fresh").click();
+      await expect(page.locator("#syn-layout-hole-slot-token")).not.toHaveText(layoutHoleSlot1);
+
+      // 3e. Live refresh Client Widget Slot by Tag & re-verify Server Action prop binding after live refresh
+      await page.locator("#btn-refresh-client-slot-by-tag").click();
+      await expect(page.locator("#syn-slot-widget-token")).not.toHaveText(widgetToken1);
+      const widgetToken2 = await page.locator("#syn-slot-widget-token").innerText();
+      await expect(page.locator("#syn-slot-widget-clicks")).toHaveText("2");
+
+      await page.locator("#btn-syn-slot-prop-action").click();
+      await expect(page.locator("#syn-slot-prop-action-res")).toHaveText(
+        `ok:ppr-slot-ack:prop-${widgetToken2}`
+      );
+
+      // 3f. Wildcard refreshSlot("*", { fresh: true }) updates all slots across shell, layout, and PPR holes
+      await page.locator("#btn-refresh-all-wildcard").click();
+      await expect(page.locator("#syn-shell-slot-token")).not.toHaveText(shellSlot2);
+      await expect(page.locator("#syn-hole-slot-a-token")).not.toHaveText(holeSlotA3);
+      await expect(page.locator("#syn-nested-outer-token")).not.toHaveText(nestedOuter1);
+      await expect(page.locator("#syn-nested-inner-token")).not.toHaveText(nestedInner2);
+
+      // Client state outside & inside PPR holes is still intact after wildcard refresh
+      await expect(page.locator("#syn-shell-client-counter")).toHaveText("502");
+      await expect(page.locator("#syn-hole-outer-counter")).toHaveText("53");
+      await expect(page.locator("#syn-slot-widget-clicks")).toHaveText("2");
+    });
+
+    test("4. Direct /____rsc_slot____ Endpoint & Concurrency Stampede Deduplication for Slots Inside PPR Holes (/t-rigorous-sinergy)", async ({
+      request,
+    }) => {
+      const concurrentFreshPromises = Array.from({ length: 6 }, () =>
+        request.get("/____rsc_slot____/ppr-syn-hole-slot-a?fresh=1", {
+          headers: {
+            "x-dinou-current-path": "/t-rigorous-sinergy",
+          },
+        })
+      );
+      const responses = await Promise.all(concurrentFreshPromises);
+      const bodies: string[] = [];
+      for (const r of responses) {
+        expect(r.status()).toBe(200);
+        bodies.push(await r.text());
+      }
+      expect(bodies[0]).toContain("syn-hole-slot-a-token");
+      for (let i = 1; i < bodies.length; i++) {
+        expect(bodies[i]).toBe(bodies[0]);
+      }
+
+      const innerRes = await request.get("/____rsc_slot____/ppr-syn-nested-inner?fresh=1", {
+        headers: {
+          "x-dinou-current-path": "/t-rigorous-sinergy",
+        },
+      });
+      expect(innerRes.status()).toBe(200);
+      expect(await innerRes.text()).toContain("syn-nested-inner-token");
+
+      const tagRes = await request.get("/____rsc_slot____/tag-syn-client?fresh=1", {
+        headers: {
+          "x-dinou-current-path": "/t-rigorous-sinergy",
+        },
+      });
+      expect(tagRes.status()).toBe(200);
+      const tagBody = await tagRes.text();
+      expect(tagBody).toContain("syn-client-slot-box");
+      expect(tagBody).toContain("slotGeneratedToken");
+    });
+  });
+
   test.describe("HMR & Fast Refresh automated verification", () => {
     // Run tests in serial mode so they do not collide on the same files on disk
     test.describe.configure({ mode: "serial" });
