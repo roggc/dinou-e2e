@@ -46,7 +46,7 @@ When `<DinouCacheSlot id="my-slot" tags={["tag-a", "tag-b"]} revalidate={60}>` e
 
 ## 3. Architectural Fixes Implemented in Dinou (v9.0.3)
 
-During rigorous auditing (`src/cache-slot-test` in `test-9.0.2` and `src/t-rigorous-cache-slot` in `dinou-e2e`), 6 bugs were discovered and fixed:
+During rigorous auditing (`src/cache-slot-test` in `test-9.0.2` and `src/t-rigorous-cache-slot` in `dinou-e2e`), 8 bugs were discovered and fixed:
 
 ### 3.1. Cold-Start Route, Layout & Nested Slot Pre-Evaluation in `getSlotJSX`
 - **Files Modified**: `dinou/core/cache-slot.js`
@@ -101,6 +101,26 @@ During rigorous auditing (`src/cache-slot-test` in `test-9.0.2` and `src/t-rigor
   - `DinouCacheSlot` records rendered slot tags on `reqContext._slotTags`, and `handler.js` persists `genMeta.slotTags = Array.from(context._slotTags)` in the page's `metadata.json`.
   - In `revalidateTag(tag)` (`dinou/core/cache-revalidate.js`), matching `slots/<id>/slot.json` keys are deleted **first**, and any non-PPR static host page whose `meta.slotTags` includes `tag` has its cached `index.html` / `metadata.json` / `page.rsc` / `rsc.rsc` evicted so the next request re-renders the page with the fresh slot (while all other slots on that page still hit their `slots/<other>/slot.json` cache).
   - Updated `FileSystemStorage` and `revalidateTag` to detect slot keys strictly via `normSlotKey.startsWith("slots/") || normSlotKey.endsWith("/slot.json") || normSlotKey.endsWith("/slot.metadata.json")`.
+
+### 3.7. Preserving React 19 Development Properties (`_debugStack`, `_debugTask`, `_debugInfo`) in `asyncRenderJSXToClientJSX`
+- **Files Modified**: `dinou/core/render-jsx-to-client-jsx.js`
+- **Problem**:
+  - When `<DinouCacheSlot revalidate={0}>` bypassed `serializeJSX`/`deserializeJSX` (which reconstructs elements via `React.createElement`) and returned `await asyncRenderJSXToClientJSX(childElement)` directly, `asyncRenderJSXToClientJSX` cloned elements using object spread (`{ ...jsx, props: ..., key: ... }`).
+  - Because React 19 defines `_debugStack`, `_debugTask`, `_debugInfo`, `ref`, and `_store.validated` as non-enumerable properties in development mode (`NODE_ENV !== "production"`), object spread stripped them.
+  - When `react-server-dom-webpack/server.edge` serialized those cloned elements in `dev` mode (`dev:esbuild`, `dev:rollup`, `dev:webpack`), it logged `"Attempted to render <div> without development properties"` and crashed inside `parseStackTrace(task.debugStack, 1)` with `TypeError: Cannot read properties of undefined (reading 'stack')`, aborting the SSR stream.
+- **Solution**:
+  - Added `cloneWithDevProps(jsx, renderedProps, resolvedKey)` in `dinou/core/render-jsx-to-client-jsx.js`, which copies the non-enumerable property descriptors (`_owner`, `_store`, `ref`, `_debugInfo`, `_debugStack`, `_debugTask`) from the original React element onto the cloned element.
+
+### 3.8. Edge/Deno KV & Cloudflare Assets Parity for `page.rsc` and `slotTags` Invalidation
+- **Files Modified**: `dinou/core/handler.js`, `dinou/core/storage-adapter.js`, `dinou/core/cache-revalidate.js`, `dinou/deno/seed-kv.js`, `dinou/deno/build.js`, `dinou/cloudflare/build.js`, `dinou/bun/build.js`
+- **Problem**:
+  1. In `dinou/core/handler.js` (Segmented RSC Payload Endpoint `/____rsc_page_static____/*`), `if (isEdgeRuntime(platformContext))` was followed by `if (existsSync(payloadPath))` instead of `else if (existsSync(payloadPath))`. On Deno (`start:deno`), when `revalidateTag` deleted a static host page from `DenoKVStorage` (`.dinou/kv.db`) and Edge ISG regenerated `index.html`, Edge ISG did not write `page.rsc` to `DenoKVStorage`. When the browser hydrated the reloaded page and requested `/____rsc_page_static____/...`, `storage.get(".../page.rsc")` returned `null` and fell through to `if (existsSync(payloadPath))`, serving the stale build-time `.dinou/dist2/.../page.rsc` from disk and overwriting the fresh DOM with the build-time slot token!
+  2. `DenoKVStorage.keys(prefix)` passed `["dinou_cache", prefix]` to `kv.list()`, which in Deno KV treats `prefix` as an exact key segment rather than a string prefix, and `dinou/deno/seed-kv.js` did not seed `slots/*/slot.json` and `slot.metadata.json` into `.dinou/kv.db`.
+  3. `dinou/deno/build.js`, `dinou/cloudflare/build.js`, and `dinou/bun/build.js` lacked the `candidateSlotPaths` / `slotChunkId` client manifest fallback mappings present in `dinou/node/bundle-dual-engine.js`.
+- **Solution**:
+  - Changed `if (existsSync(payloadPath))` to `else if (existsSync(payloadPath))` in `dinou/core/handler.js`, and updated Edge ISG (`shouldCacheISG`) to also render and store `page.rsc` (`segment: "page"`) in `storage` alongside `rsc.rsc`, `index.html`, and `metadata.json` (preserving `tags` and `slotTags` across Edge ISR/ISG).
+  - Guarded `platformContext.env.ASSETS` fallback in `dinou/core/handler.js` with `storage.isDeleted(...)` (`_deletedKeys` in `storage-adapter.js`) so invalidated static routes/RSC payloads are never resurrected from immutable Cloudflare `env.ASSETS`.
+  - Fixed `DenoKVStorage.keys(prefix)` to list `["dinou_cache"]` and filter `entry.key[1].startsWith(prefix)`, updated `dinou/deno/seed-kv.js` to seed `slot.json` and `slot.metadata.json`, and added `candidateSlotPaths` / `slotChunkId` mappings to `dinou/deno/build.js`, `dinou/cloudflare/build.js`, and `dinou/bun/build.js`.
 
 ---
 
