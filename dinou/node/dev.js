@@ -1907,7 +1907,7 @@ async function doRebuildBatch(changesMap) {
     if (needsClientBundlerRestart && clientBundlerHandle?.restart) {
       updateSpinner(`Directive or structure change detected. Recreating client bundle...`);
       await clientBundlerHandle.restart();
-      if (! needsStructureRebuild && queuedChanges.size === 0 && pendingSrcChanges.size === 0) {
+      if (!needsStructureRebuild && queuedChanges.size === 0 && pendingSrcChanges.size === 0) {
         await broadcastToClients({ type: "reload" });
         logSuccess(`Recreated bundle for ${baseName} in ${Date.now() - t0}ms`);
         return;
