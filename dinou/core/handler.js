@@ -1475,9 +1475,20 @@ async function handleRequest(request, platformContext = {}) {
 
     await requestStorage.run(context, async () => {
       try {
-        const jsx = await getJSX(reqPath, queryObj, isNotFound, isDevelopment, isPathBlocked, {
-          segment,
-        });
+        let jsx;
+        if (platformContext?.isSSG && (isRoutePpr || Boolean(layoutConfig?.ppr))) {
+          jsx = await runWithPprContext({ isPpr: true }, async () => {
+            const rawJsx = await getJSX(reqPath, queryObj, isNotFound, isDevelopment, isPathBlocked, {
+              segment,
+            });
+            resetPprHoles();
+            return await asyncRenderJSXToClientJSX(rawJsx);
+          });
+        } else {
+          jsx = await getJSX(reqPath, queryObj, isNotFound, isDevelopment, isPathBlocked, {
+            segment,
+          });
+        }
         if (bridge.headers.has("x-rsc-redirect") || bridge.headers.has("Location")) {
           return;
         }
@@ -1682,6 +1693,34 @@ async function handleRequest(request, platformContext = {}) {
           }
         }
       } catch (e) {}
+    }
+
+    // 2b. If PPR route shell was invalidated (e.g. by revalidateTag on a static shell slot),
+    // regenerate the static shell in an isolated SSG pass before resuming dynamic holes.
+    if (
+      !isDevelopment &&
+      !cachedItem &&
+      isPprConfig &&
+      !isPathBlocked &&
+      queryObj.ssr_crash !== "true" &&
+      !platformContext?.isSSG
+    ) {
+      try {
+        const ssgUrl = new URL(reqPath, request.url);
+        const ssgReq = new Request(ssgUrl.href, { method: "GET" });
+        const ssgRes = await handleRequest(ssgReq, {
+          ...platformContext,
+          isSSG: true,
+        });
+        await ssgRes.text();
+        cachedItem = await storage.get(htmlKey);
+        if (!cachedItem) {
+          const shellHtmlKey = cleanPath ? `${cleanPath}/shell.html` : "shell.html";
+          cachedItem = await storage.get(shellHtmlKey);
+        }
+      } catch (e) {
+        console.error(`[Dinou PPR] Error regenerating static shell for ${reqPath}:`, e);
+      }
     }
 
     // 3. If we found a cached/pre-rendered page:
