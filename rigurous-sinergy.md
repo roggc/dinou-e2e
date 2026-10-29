@@ -26,7 +26,7 @@ When combined on the **same route**, Dinou unlocks a **3-Tier Hybrid Rendering A
 
 ## 2. Architectural Fixes Implemented in Dinou (v9.0.3)
 
-Combining build-time two-pass PPR shell extraction with per-component `<DinouCacheSlot>` serialization and live client-side `/____rsc_slot____` re-fetching exposed several subtle lifecycle interactions. The following 5 core fixes were implemented in Dinou:
+Combining build-time two-pass PPR shell extraction with per-component `<DinouCacheSlot>` serialization and live client-side `/____rsc_slot____` re-fetching exposed several subtle lifecycle interactions. The following 6 core fixes were implemented in Dinou:
 
 ### 2.1. Transactional Deferred Side-Effects for `<DinouCacheSlot>` Inside `<Suspense>` During PPR Phase 1
 - **Files Modified**: `dinou/core/ppr-context.js`, `dinou/core/render-jsx-to-client-jsx.js`, `dinou/core/cache-slot.js`
@@ -43,11 +43,11 @@ Combining build-time two-pass PPR shell extraction with per-component `<DinouCac
   - During build-time PPR Phase 1, `asyncRenderJSXToClientJSX` evaluated `<DinouCacheSlot id="slot-a">` **before** `<DynamicCookieReader />` threw `PprBailoutError`.
   - As a result, `<DinouCacheSlot>` immediately wrote `slots/slot-a/slot.json` to disk with `inStaticShell: true` and added `"tag-a"` to the route's static `metadata.json` (`slotTags`), even though the enclosing `<Suspense>` boundary subsequently bailed out into a dynamic PPR hole!
 - **Solution**:
-  - Added a per-`<Suspense>` transactional effect queue in `dinou/core/ppr-context.js` (`deferPprSuspenseEffect(fn)` and `commitPprSuspenseEffects(suspenseStore)`).
+  - Added a per-`<Suspense>` transactional effect frame stack in `dinou/core/ppr-context.js` (`pushPprSuspenseEffects()`, `popPprSuspenseEffects(commit)`, and `deferPprSuspenseEffect(fn)`).
   - When `isPprBuildActive() && isInsideSuspense()` is true, `<DinouCacheSlot>` does **not** immediately write to `storage` or push to `reqContext._slotTags`; instead, it registers those operations via `deferPprSuspenseEffect(...)`.
   - In `dinou/core/render-jsx-to-client-jsx.js`:
-    - If the `<Suspense>` boundary finishes rendering all children **without** throwing a PPR postpone, `await commitPprSuspenseEffects(suspenseStore)` commits the deferred effects (or bubbles them to the parent `<Suspense>` boundary if nested, only committing to storage/metadata once the outermost enclosing `<Suspense>` boundary is confirmed static).
-    - If **any** child inside the `<Suspense>` boundary throws `dinou.ppr.postpone`, the `<Suspense>` boundary catches it, registers `ppr-hole-N`, and discards `suspenseStore.pendingEffects` cleanly.
+    - If the `<Suspense>` boundary finishes rendering all children **without** throwing a PPR postpone, `await popPprSuspenseEffects(true)` commits the deferred effects (or bubbles them to the parent `<Suspense>` frame if nested, only committing to storage/metadata once the outermost enclosing `<Suspense>` boundary is confirmed static).
+    - If **any** child inside the `<Suspense>` boundary throws `dinou.ppr.postpone`, `await popPprSuspenseEffects(false)` discards the frame's pending effects cleanly.
 
 ### 2.2. Preventing Build-Time Cache Poisoning When Dynamic Request Data Is Read Directly Inside `<DinouCacheSlot>`
 - **Files Modified**: `dinou/core/cache-slot.js`
@@ -63,10 +63,11 @@ Combining build-time two-pass PPR shell extraction with per-component `<DinouCac
       </DinouCacheSlot>
     </Suspense>
     ```
-  - During Phase 1, accessing `req.cookies.theme` throws `PprBailoutError` (`$$typeof: Symbol.for("dinou.ppr.postpone")`). If `<DinouCacheSlot>` did not explicitly recognize PPR postpone signals, or if build-time pre-evaluation ran without a PPR context first, the slot could cache `"build-default"` at build time and serve stale build-time fallback data on runtime requests.
+  - During Phase 1, accessing `req.cookies.theme` throws `PprBailoutError` (`$$typeof: Symbol.for("dinou.ppr.postpone")`). If `<DinouCacheSlot>` did not explicitly recognize PPR postpone signals, or if a cached `slot.json` from a prior run prevented the slot from executing during a PPR shell rebuild, the enclosing `<Suspense>` boundary would fail to register as a dynamic PPR hole or would cache `"build-default"` at build time.
 - **Solution**:
-  - Inside `DinouCacheSlot` (`dinou/core/cache-slot.js`), the render promise explicitly detects `err.$$typeof === Symbol.for("dinou.ppr.postpone")` and `Symbol.for("react.postpone")`, evicts the in-flight key from `inflightSlotRenders`, skips `storage.set`, and rethrows the postpone error straight to the enclosing `<Suspense>` boundary.
-  - Consequently, the `<Suspense>` boundary becomes a dynamic PPR hole at build time (`data-ppr-hole="ppr-hole-N"`), and `direct-cookie-slot` remains uncached until the **first real runtime HTTP request** arrives with actual request cookies/headers.
+  - Inside `DinouCacheSlot` (`dinou/core/cache-slot.js`), when `isPprBuildActive() && isInsideSuspense()` is true, any cached entry without `metadata?.inStaticShell` is bypassed during the PPR shell build (`cached = null`) so dynamic reads inside the slot are guaranteed to execute and trigger the PPR postpone.
+  - Furthermore, the slot render promise explicitly detects `err.$$typeof === Symbol.for("dinou.ppr.postpone")` and `Symbol.for("react.postpone")`, evicts the in-flight key from `inflightSlotRenders`, skips `storage.set`, and rethrows the postpone error straight to the enclosing `<Suspense>` boundary.
+  - Consequently, the `<Suspense>` boundary becomes a dynamic PPR hole at build time (`data-ppr-hole="ppr-hole-N"`), and `direct-cookie-slot` is only cached once a real runtime HTTP request evaluates the hole with live request cookies/headers.
 
 ### 2.3. Preventing Double Traversal of `<DinouCacheSlot>` Subtrees & Preserving React 19 Dev Descriptors
 - **Files Modified**: `dinou/core/cache-slot.js`, `dinou/core/render-jsx-to-client-jsx.js`
@@ -79,20 +80,21 @@ Combining build-time two-pass PPR shell extraction with per-component `<DinouCac
   - `wrapWithBoundary` in `dinou/core/cache-slot.js` now marks the returned `<DinouCacheSlotBoundary>` element with `__clientJsxAlreadyRendered: true` using `Object.defineProperties(Object.create(Object.getPrototypeOf(elem)), { ...Object.getOwnPropertyDescriptors(elem), __clientJsxAlreadyRendered: { value: true, enumerable: false, configurable: true } })`, preserving all React 19 enumerable and non-enumerable descriptors across `dev` and `prod`.
   - In `dinou/core/render-jsx-to-client-jsx.js`, when `isClientComponent(Component)` is true and `jsx.__clientJsxAlreadyRendered` is set, `asyncRenderJSXToClientJSX` returns the boundary element directly without re-traversing its already-rendered `props.children`.
 
-### 2.4. Surgical `revalidateTag` Differentiation Between Static-Shell Slots and Dynamic-Hole Slots
-- **Files Modified**: `dinou/core/cache-slot.js`, `dinou/core/cache-revalidate.js`
+### 2.4. Surgical `revalidateTag` Differentiation & On-Demand PPR Static Shell Regeneration
+- **Files Modified**: `dinou/core/cache-slot.js`, `dinou/core/cache-revalidate.js`, `dinou/core/handler.js`
 - **Problem**:
   - On a PPR page, a `<DinouCacheSlot>` can live in two very different places:
     1. **Inside the PPR Static Shell** (baked into `shell.html` and `shell.rsc`).
     2. **Inside a Dynamic PPR `<Suspense>` Hole** (streamed at request time via `streamDynamicHoles`; **not** present in `shell.html`).
-  - If `revalidateTag("tag-hole-slot")` wiped `shell.html`, invalidating a micro-slot inside a dynamic hole would unnecessarily destroy the static PPR shell. Conversely, if `revalidateTag("tag-shell-slot")` only deleted `slots/<slotId>/slot.json` without invalidating `shell.html`, subsequent page loads would keep serving the old `shell.html` with stale slot markup!
+  - If `revalidateTag("tag-hole-slot")` wiped `shell.html`, invalidating a micro-slot inside a dynamic hole would unnecessarily destroy the static PPR shell. Conversely, if `revalidateTag("tag-shell-slot")` only deleted `slots/<slotId>/slot.json` without invalidating and regenerating `shell.html`, subsequent page loads would either serve the old `shell.html` or fall back to non-PPR rendering!
 - **Solution**:
-  - `DinouCacheSlot` now tracks whether a slot was rendered as part of the static shell (`inStaticShell: Boolean(!isPprBuildActive() || !isInsideSuspense())` when committed) and only pushes `slotTags` into the route's `metadata.json` (`reqContext._slotTags`) for slots in the static shell.
+  - `DinouCacheSlot` tracks whether a slot was committed as part of the static shell (`inStaticShell: true`) and only records `slotTags` into the route's `metadata.json` (`reqContext._slotTags`) for slots in the static shell.
   - When `revalidateTag("tag-hole-slot")` is called for a slot inside a dynamic PPR hole:
     - Only `.dinou/dist2/slots/<slotId>` is removed.
     - The route's `shell.html` and `metadata.json` are **untouched**, preserving instant `0ms TTFB` while the next request's `streamDynamicHoles` re-renders only that invalidated slot inside its hole.
   - When `revalidateTag("tag-shell-slot")` is called for a slot in the PPR static shell:
-    - `.dinou/dist2/slots/<slotId>` is removed **and** the route's cached `shell.html` / `shell.rsc` are invalidated (`dinou/core/cache-revalidate.js`), so the next request regenerates `shell.html` with the fresh static-shell slot while reusing all other cached static-shell slots from `.dinou/dist2/slots/`.
+    - `.dinou/dist2/slots/<slotId>` is removed **and** the route's cached `shell.html`, `shell.rsc`, `index.html`, and `metadata.json` are invalidated (`dinou/core/cache-revalidate.js`).
+    - On the next request (or in `dev` mode when `shell.html` does not exist yet), `dinou/core/handler.js` regenerates `shell.html`, `shell.rsc`, and `metadata.json` inside `runWithPprContext({ isPpr: true })` with the fresh static-shell slot (reusing any other still-valid static-shell slots from `.dinou/dist2/slots/`) and serves the route via `handlePprResume`.
 
 ### 2.5. Cold-Start Nested Slot Discovery (`discoverFromRegisteredSlots`) & `/____rsc_slot____` Concurrency Deduplication
 - **Files Modified**: `dinou/core/cache-slot.js`
@@ -102,8 +104,16 @@ Combining build-time two-pass PPR shell extraction with per-component `<DinouCac
   - Because `outer` hit its disk cache, `outer`'s render function never executed in this process, so `inner` was not yet in `slotRegistry`!
   - Furthermore, while page-level slot rendering deduplicated concurrent cache misses via `inflightSlotRenders`, direct requests to `/____rsc_slot____/:id?fresh=1` (`getSlotJSX`) did not share an in-flight promise when hit concurrently.
 - **Solution**:
-  - `refreshNestedSlotsInTree` and `getSlotJSX` now invoke `await discoverFromRegisteredSlots()`, which runs `entry.discover()` on registered outer slots to populate `slotRegistry` for nested inner slots even when outer slots were served from disk cache.
-  - `getSlotJSX` now wraps `entry.render()` in `inflightSlotRenders` deduplication, ensuring concurrent `?fresh=1` requests to `/____rsc_slot____/:id` execute the slot only once and share the resulting payload.
+  - `getSlotJSX` pre-evaluates the route and layout inside `runWithPprContext({ isPpr: true })`, and both `refreshNestedSlotsInTree` and `getSlotJSX` invoke `await discoverFromRegisteredSlots()`, which runs `entry.discover()` on registered outer slots to populate `slotRegistry` for nested inner slots even when outer slots were served from disk cache.
+  - `getSlotJSX` wraps `entry.render()` in `inflightSlotRenders` deduplication, ensuring concurrent `?fresh=1` requests to `/____rsc_slot____/:id` execute the slot only once and share the resulting payload.
+
+### 2.6. In-Place Client Fiber Reconciliation on Live `refreshSlot` (`dinou/core/slot.js`)
+- **Files Modified**: `dinou/core/slot.js`
+- **Problem**:
+  - Previously, `DinouCacheSlotBoundary` returned `children` initially, and when `refreshSlot` was triggered, switched its return tree to `<SlotErrorBoundary><Suspense><SlotConsumer slotPromise={slotPromise} /></Suspense></SlotErrorBoundary>`.
+  - Changing the wrapper element hierarchy on the first refresh caused React to unmount and remount any Client Component rendered **inside** the `<DinouCacheSlot>`, resetting its local `useState` hooks.
+- **Solution**:
+  - `DinouCacheSlotBoundary` now resolves the `window.__DINOU_FETCH_SLOT__` promise and updates `slotContent` inside `React.startTransition(() => setSlotContent(resolved))`, returning `slotContent !== null ? slotContent : children`. Because the Fiber tree depth remains identical before and after `refreshSlot`, Client Components inside the slot update their props (`slotToken`) in place while preserving all local `useState` state.
 
 ---
 
@@ -257,4 +267,3 @@ The complete PPR + `<DinouCacheSlot>` synergy is continuously verified in GitHub
   2. **Surgical `revalidateTag` on Dynamic-Hole Slots vs. Static-Shell Slots**: Verifies that invalidating inner hole slots (`tag-syn-hole-slot-a`, `tag-syn-nested-inner`) updates only those slots on the next request while keeping `ppr-syn-nested-outer` and `shell.html` intact, and that invalidating `tag-syn-shell-slot` regenerates `shell.html` with a fresh shell slot token.
   3. **Live `refreshSlot` Across All 3 Hierarchy Levels**: Verifies live client-side slot refreshes by ID, by tag, via `useRouter().refreshSlot` on a nested inner slot, on a static-shell slot, and via wildcard `refreshSlot("*", { fresh: true })`, while preserving React client state in the static shell (`#syn-shell-client-counter`), inside PPR Hole #1 (`#syn-hole-outer-counter`), and inside the slot's own Client Component (`#syn-slot-widget-clicks`), as well as verifying direct and prop-passed `"use server"` actions before and after live slot refresh.
   4. **Direct `/____rsc_slot____` Endpoint & Concurrency Stampede Deduplication**: Verifies that 6 simultaneous `?fresh=1` requests to a slot inside a PPR route are deduplicated via `inflightSlotRenders` and return identical RSC Flight payloads.
-

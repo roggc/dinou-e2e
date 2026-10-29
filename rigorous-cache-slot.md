@@ -13,7 +13,7 @@ Dinou supports two complementary axes of component segmentation in React Server 
 2. **Vertical Segmentation (`<DinouCacheSlot>` & `refreshSlot` — Micro-ISR)**:
    - Any arbitrary Server Component subtree **inside** a page or layout can be wrapped in `<DinouCacheSlot>` with its own independent cache lifecycle (`id`, `tag` / `tags`, and `revalidate` TTL in seconds).
    - Even if the host page is **100% dynamic** (`revalidate: () => 0`), each `<DinouCacheSlot>` caches its resolved RSC element tree in Dinou's pluggable Storage Adapter (`FileSystemStorage` in `.dinou/dist2/slots/<slotId>/slot.json`, `CloudflareKVStorage`, `DenoKVStorage`, `RedisStorage`, or `MemoryStorage`).
-   - Conversely, even if the host page is **100% static** (pre-rendered at build time), individual slots inside it can be invalidated on demand via `revalidateTag(tag)` or refreshed live in the browser without a page reload via `refreshSlot(idOrTag, { fresh?: boolean })`.
+   - Conversely, even if the host page is **100% static** (pre-rendered at build time) or uses **Partial Prerendering (PPR)**, individual slots inside it can be invalidated on demand via `revalidateTag(tag)` or refreshed live in the browser without a page reload via `refreshSlot(idOrTag, { fresh?: boolean })`.
 
 ---
 
@@ -26,7 +26,7 @@ When `<DinouCacheSlot id="my-slot" tags={["tag-a", "tag-b"]} revalidate={60}>` e
 2. **In-Memory Registry (`slotRegistry`)**:
    - Registers `{ render, discover, tags, revalidate }` in `globalThis[Symbol.for("dinou.slot.registry")]` so `/____rsc_slot____/:id` can re-evaluate the slot on demand.
 3. **Host Page Slot-Tag Tracking**:
-   - Records `allTags` onto the active request context (`reqContext._slotTags`) so static/ISG host pages record `slotTags: [...]` in their `metadata.json`.
+   - Records `allTags` onto the active request context (`reqContext._slotTags`) so static/ISG/PPR host pages record `slotTags: [...]` in their `metadata.json`.
 4. **Cache Lookup & TTL / Stale-While-Revalidate (SWR)**:
    - **`revalidate === 0` (No-Cache)**: Bypasses storage cache completely and always renders fresh on both SSR and `/____rsc_slot____/:id`.
    - **Cache HIT (within TTL or infinite TTL)**: Deserializes `slot.json` back into a React 19 element tree via `deserializeJSX`, refreshes any invalidated nested `<DinouCacheSlot>` descendants via `refreshNestedSlotsInTree`, and wraps the subtree in `<DinouCacheSlotBoundary id={slotId} tags={allTags}>`.
@@ -40,24 +40,24 @@ When `<DinouCacheSlot id="my-slot" tags={["tag-a", "tag-b"]} revalidate={60}>` e
    - `e.detail.id === "*"` (wildcard refresh of all mounted slots on the page), or
    - `Array.isArray(tags) && tags.includes(e.detail.id)` (tag match).
 3. Matching boundaries call `window.__DINOU_FETCH_SLOT__(id, options)`, which fetches `/____rsc_slot____/${encodeURIComponent(id)}?t=${Date.now()}${options?.fresh ? "&fresh=1" : ""}` with header `X-Dinou-Current-Path: window.location.pathname`.
-4. The streamed Flight RSC payload is decoded via `createFromFetch` and applied inside `React.startTransition` + `<Suspense fallback={children}>`, updating **only** that slot's DOM subtree while preserving all page and sibling React client state.
+4. Once the streamed Flight RSC payload promise resolves, `DinouCacheSlotBoundary` commits the resolved React tree inside `React.startTransition(() => setSlotContent(resolved))` and returns `slotContent !== null ? slotContent : children`. Because the Fiber tree depth remains identical before and after the refresh, React reconciles the subtree in place—preserving all page state, sibling state, and even local `useState` hooks inside Client Components mounted **inside** the refreshed slot itself.
 
 ---
 
 ## 3. Architectural Fixes Implemented in Dinou (v9.0.3)
 
-During rigorous auditing (`src/cache-slot-test` in `test-9.0.2` and `src/t-rigorous-cache-slot` in `dinou-e2e`), 8 bugs were discovered and fixed:
+During rigorous auditing (`src/cache-slot-test` in `test-9.0.2` and `src/t-rigorous-cache-slot` / `src/t-rigorous-sinergy` in `dinou-e2e`), the following core fixes were implemented:
 
 ### 3.1. Cold-Start Route, Layout & Nested Slot Pre-Evaluation in `getSlotJSX`
 - **Files Modified**: `dinou/core/cache-slot.js`
 - **Problem**:
-  - When a server process booted in production and served a pre-rendered static page (`index.html`), no Server Components had executed yet in memory (`slotRegistry` was empty).
+  - When a server process booted in production and served a pre-rendered static page (`index.html` or `shell.html`), no Server Components had executed yet in memory (`slotRegistry` was empty).
   - If a client called `refreshSlot("my-slot", { fresh: true })` (or after `revalidateTag` deleted `slot.json`), `getSlotJSX` called `await getJSX(options.currentPath, ..., { segment: "page" })` without calling `asyncRenderJSXToClientJSX()`. Because `getJSX` only returns an uninvoked `React.createElement(Page, props)`, `DinouCacheSlot` never ran, `slotRegistry` remained empty, and `/____rsc_slot____/:id` returned `404`.
   - Furthermore, `{ segment: "page" }` skipped `layout.tsx`, so slots defined inside layouts also returned `404` on cold start.
 - **Solution**:
-  - `getSlotJSX` now evaluates `await asyncRenderJSXToClientJSX(pageJsx)` when pre-evaluating `options.currentPath`.
+  - `getSlotJSX` now evaluates `await asyncRenderJSXToClientJSX(pageJsx)` inside `runWithPprContext({ isPpr: true })` when pre-evaluating `options.currentPath` (so any `<Suspense>` boundaries that read dynamic request data catch their PPR postpone cleanly without aborting traversal of sibling slots).
   - If the slot is still not in `slotRegistry`, `getSlotJSX` evaluates the full route including layouts (`await getJSX(options.currentPath, {}, isNotFound, false, false)` + `await asyncRenderJSXToClientJSX(fullJsx)`).
-  - If still not found (e.g., a nested slot inside an outer slot that hit its disk cache during route pre-evaluation), `getSlotJSX` invokes `await entry.discover()` on registered outer slots to discover and register nested slots.
+  - If still not found (e.g., a nested slot inside an outer slot that hit its disk cache during route pre-evaluation), `getSlotJSX` invokes `await entry.discover()` on registered outer slots (`discoverFromRegisteredSlots`) to discover and register nested slots.
 
 ### 3.2. Strict `revalidate={0}` (No-Cache) Support
 - **Files Modified**: `dinou/core/cache-slot.js`
@@ -92,24 +92,26 @@ During rigorous auditing (`src/cache-slot-test` in `test-9.0.2` and `src/t-rigor
   - Whenever an outer slot hits its cache in `DinouCacheSlot` or `getSlotJSX`, `refreshNestedSlotsInTree(restored, slotId)` walks the deserialized element tree and replaces any descendant `<DinouCacheSlotBoundary __dinou_slot__={nestedSlotId}>`'s children with `await getSlotJSX(nestedSlotId)`.
   - As a result, invalidating `"tag-inner"` updates the inner slot while keeping the outer slot cached!
 
-### 3.6. Static Host Page `slotTags` Invalidation & `slots/` Key Disambiguation
-- **Files Modified**: `dinou/core/handler.js`, `dinou/core/cache-revalidate.js`, `dinou/core/storage-adapter.js`
+### 3.6. Static & PPR Host Page `slotTags` Invalidation, Fast Metadata Scanning & `slots/` Key Disambiguation
+- **Files Modified**: `dinou/core/handler.js`, `dinou/core/cache-revalidate.js`, `dinou/core/storage-adapter.js`, `dinou/node/dev.js`
 - **Problem**:
-  1. When a static page (without `revalidate: 0`) embedded `<DinouCacheSlot tag="my-slot-tag">`, calling `revalidateTag("my-slot-tag")` deleted `slots/my-slot/slot.json`, but the static page's `index.html` in `.dinou/dist2` had no record that it contained `"my-slot-tag"`, continuing to serve stale HTML on page reload.
+  1. When a static or PPR page embedded `<DinouCacheSlot tag="my-slot-tag">` in its static shell, calling `revalidateTag("my-slot-tag")` deleted `slots/my-slot/slot.json`, but the page's `index.html` / `shell.html` in `.dinou/dist2` had no record that it contained `"my-slot-tag"`, continuing to serve stale HTML on page reload.
   2. `FileSystemStorage` (`dinou/core/storage-adapter.js`) and `revalidateTag` (`dinou/core/cache-revalidate.js`) checked `key.includes("slot")` to detect slot storage keys. Any page route whose URL path contained the substring `"slot"` (such as `/t-cache-slot` or `/cache-slot-test`) was misclassified as a slot artifact!
+  3. On `FileSystemStorage`, `revalidateTag` scanned all keys in `.dinou/dist2` and called `storage.get(key)` on large `index.html`, `shell.html`, and `layout.rsc` files unnecessarily.
 - **Solution**:
-  - `DinouCacheSlot` records rendered slot tags on `reqContext._slotTags`, and `handler.js` persists `genMeta.slotTags = Array.from(context._slotTags)` in the page's `metadata.json`.
-  - In `revalidateTag(tag)` (`dinou/core/cache-revalidate.js`), matching `slots/<id>/slot.json` keys are deleted **first**, and any non-PPR static host page whose `meta.slotTags` includes `tag` has its cached `index.html` / `metadata.json` / `page.rsc` / `rsc.rsc` evicted so the next request re-renders the page with the fresh slot (while all other slots on that page still hit their `slots/<other>/slot.json` cache).
-  - Updated `FileSystemStorage` and `revalidateTag` to detect slot keys strictly via `normSlotKey.startsWith("slots/") || normSlotKey.endsWith("/slot.json") || normSlotKey.endsWith("/slot.metadata.json")`.
+  - `DinouCacheSlot` records rendered static-shell slot tags on `reqContext._slotTags`, and `handler.js` persists `genMeta.slotTags = Array.from(context._slotTags)` in the page's `metadata.json`.
+  - In `revalidateTag(tag)` (`dinou/core/cache-revalidate.js`), matching `slots/<id>/slot.json` keys are deleted **first**, and any static or PPR host page whose `meta.slotTags` includes `tag` has its cached `index.html` / `shell.html` / `shell.rsc` / `metadata.json` / `page.rsc` / `rsc.rsc` evicted so the next request regenerates the static shell with the fresh slot (while all other slots on that page still hit their `slots/<other>/slot.json` cache).
+  - Optimized `revalidateTag` on `FileSystemStorage` to read only `*metadata.json` files (`slot.metadata.json`, `layout.metadata.json`, `metadata.json`), reducing tag invalidation latency to a few milliseconds.
+  - Updated `dinou/node/dev.js` to clear `.dinou/dist2/slots` on dev server startup so stale slot artifacts from previous builds do not trigger SWR on the first dev request.
 
 ### 3.7. Preserving React 19 Development Properties (`_debugStack`, `_debugTask`, `_debugInfo`) in `asyncRenderJSXToClientJSX`
-- **Files Modified**: `dinou/core/render-jsx-to-client-jsx.js`
+- **Files Modified**: `dinou/core/render-jsx-to-client-jsx.js`, `dinou/core/cache-slot.js`
 - **Problem**:
   - When `<DinouCacheSlot revalidate={0}>` bypassed `serializeJSX`/`deserializeJSX` (which reconstructs elements via `React.createElement`) and returned `await asyncRenderJSXToClientJSX(childElement)` directly, `asyncRenderJSXToClientJSX` cloned elements using object spread (`{ ...jsx, props: ..., key: ... }`).
   - Because React 19 defines `_debugStack`, `_debugTask`, `_debugInfo`, `ref`, and `_store.validated` as non-enumerable properties in development mode (`NODE_ENV !== "production"`), object spread stripped them.
   - When `react-server-dom-webpack/server.edge` serialized those cloned elements in `dev` mode (`dev:esbuild`, `dev:rollup`, `dev:webpack`), it logged `"Attempted to render <div> without development properties"` and crashed inside `parseStackTrace(task.debugStack, 1)` with `TypeError: Cannot read properties of undefined (reading 'stack')`, aborting the SSR stream.
 - **Solution**:
-  - Added `cloneWithDevProps(jsx, renderedProps, resolvedKey)` in `dinou/core/render-jsx-to-client-jsx.js`, which copies the non-enumerable property descriptors (`_owner`, `_store`, `ref`, `_debugInfo`, `_debugStack`, `_debugTask`) from the original React element onto the cloned element.
+  - Added `cloneWithDevProps(jsx, renderedProps, resolvedKey)` in `dinou/core/render-jsx-to-client-jsx.js` and descriptor-preserving cloning in `wrapWithBoundary` (`dinou/core/cache-slot.js`), copying the non-enumerable property descriptors (`_owner`, `_store`, `ref`, `_debugInfo`, `_debugStack`, `_debugTask`) from the original React element onto the cloned element.
 
 ### 3.8. Edge/Deno KV & Cloudflare Assets Parity for `page.rsc` and `slotTags` Invalidation
 - **Files Modified**: `dinou/core/handler.js`, `dinou/core/storage-adapter.js`, `dinou/core/cache-revalidate.js`, `dinou/deno/seed-kv.js`, `dinou/deno/build.js`, `dinou/cloudflare/build.js`, `dinou/bun/build.js`
@@ -207,4 +209,3 @@ export function SlotControls() {
 The rigorous E2E test suite in `dinou-e2e` is located at:
 - **Source files**: `src/t-rigorous-cache-slot/` (`page.tsx`, `page_functions.ts`, `layout.tsx`, `actions.ts`, `slot-client-widgets.tsx`, `static-host/page.tsx`, `static-host/static-host-client.tsx`, `ppr-host/page.tsx`, `ppr-host/page_functions.ts`, `dynamic-route/[slug]/page.tsx`, `dynamic-route/[slug]/page_functions.ts`)
 - **Playwright Spec**: `e2e/example.spec.ts` → `test.describe.serial("DinouCacheSlot: Rigorous Vertical Segmentation & Micro-ISR Casuistics", ...)`
-
