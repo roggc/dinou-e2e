@@ -331,6 +331,18 @@ async function revalidateTag(tag, options = {}) {
       const targetPaths = new Set();
       const targetLayoutPaths = new Set();
       const targetSlotKeys = new Set();
+      if (typeof storage.markTagInvalidated === "function") {
+        storage.markTagInvalidated(tag);
+      }
+      const slotReg = globalThis[Symbol.for("dinou.slot.registry")];
+      if (slotReg && typeof slotReg.entries === "function") {
+        for (const [regId, entry] of slotReg.entries()) {
+          if (regId === tag || (Array.isArray(entry?.tags) && entry.tags.includes(tag))) {
+            targetSlotKeys.add(`slots/${regId}/slot.json`);
+            targetSlotKeys.add(`slots/${regId}/slot.metadata.json`);
+          }
+        }
+      }
       const targetSlotHostCleanKeys = new Set();
       const targetSlotLayoutCleanKeys = new Set();
       const isFsStorage = Boolean(storage && storage.baseDir);

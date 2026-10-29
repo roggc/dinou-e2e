@@ -5924,6 +5924,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // 3. Interactive Client Component inside Dynamic Hole
       await expect(page.getByTestId("hole-client-tier")).toHaveText("tier=enterprise | plan=ultra");
+      await expect(page.getByTestId("hole-client-widget")).toHaveAttribute("data-hydrated", "true");
       await expect(page.getByTestId("hole-client-clicks")).toHaveText("0");
       await page.getByTestId("hole-client-btn").click();
       await page.getByTestId("hole-client-btn").click();

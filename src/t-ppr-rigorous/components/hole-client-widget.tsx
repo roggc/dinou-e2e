@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 export default function HoleClientWidget({
   serverTier,
@@ -12,10 +12,16 @@ export default function HoleClientWidget({
   requestStamp: string;
 }) {
   const [clicks, setClicks] = useState(0);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
 
   return (
     <div
       data-testid="hole-client-widget"
+      data-hydrated={hydrated ? "true" : "false"}
       className="mt-2 p-3 rounded-lg bg-indigo-950/60 border border-indigo-500/40 text-xs"
     >
       <div className="flex items-center justify-between gap-2">

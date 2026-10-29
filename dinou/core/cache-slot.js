@@ -271,6 +271,75 @@ function commitSlotTags(tags) {
 }
 
 /**
+ * Reads a slot entry from storage, falling back to pre-rendered Edge static assets (env.ASSETS)
+ * when the runtime KV/Memory storage has not yet hydrated the build-time slot artifact.
+ */
+async function getSlotFromStorage(storage, storageKey, knownTags = []) {
+  if (!storage) return null;
+  let cached = null;
+  try {
+    cached = await storage.get(storageKey);
+  } catch (err) {}
+  if (cached && cached.content) {
+    return cached;
+  }
+
+  const isDeleted =
+    typeof storage.isDeleted === "function" && storage.isDeleted(storageKey);
+  if (isDeleted) {
+    return null;
+  }
+
+  try {
+    const reqContext = getContext();
+    const assets =
+      reqContext?.env?.ASSETS ||
+      reqContext?.platformContext?.env?.ASSETS ||
+      reqContext?.req?.env?.ASSETS;
+    if (assets && typeof assets.fetch === "function") {
+      const cleanKey = String(storageKey || "").replace(/^\/+/, "");
+      const metaKey = cleanKey.endsWith("/slot.json")
+        ? cleanKey.slice(0, -"/slot.json".length) + "/slot.metadata.json"
+        : `${cleanKey}.metadata.json`;
+      const [slotRes, metaRes] = await Promise.all([
+        assets.fetch(new Request(`http://localhost/${cleanKey}`)),
+        assets.fetch(new Request(`http://localhost/${metaKey}`)),
+      ]);
+      if (slotRes && slotRes.status === 200) {
+        const ct = slotRes.headers?.get?.("content-type") || "";
+        const content = await slotRes.text();
+        if (!ct.includes("text/html") && !content.trimStart().startsWith("<")) {
+          let metadata = null;
+          if (metaRes && metaRes.status === 200) {
+            try {
+              metadata = await metaRes.json();
+            } catch (e) {}
+          }
+          const generatedAt = metadata?.generatedAt || 0;
+          const combinedTags = new Set([
+            ...(Array.isArray(metadata?.tags) ? metadata.tags : []),
+            ...(Array.isArray(knownTags) ? knownTags : []),
+          ]);
+          if (typeof storage.getTagInvalidatedAt === "function") {
+            for (const t of combinedTags) {
+              const invAt = storage.getTagInvalidatedAt(t);
+              if (invAt > 0 && invAt >= generatedAt) {
+                return null;
+              }
+            }
+          }
+          cached = { content, metadata };
+          await storage.set(cleanKey, content, metadata);
+          return cached;
+        }
+      }
+    }
+  } catch (e) {}
+
+  return cached;
+}
+
+/**
  * Traverses a deserialized JSX tree from a cached outer slot and refreshes
  * any nested <DinouCacheSlot> boundaries so inner slot invalidations are
  * respected even when the outer slot hits its cache.
@@ -436,10 +505,7 @@ async function DinouCacheSlot(props) {
   }
 
   // 1. Check if cached in storage
-  let cached = null;
-  try {
-    cached = await storage.get(storageKey);
-  } catch (err) {}
+  let cached = await getSlotFromStorage(storage, storageKey, allTags);
 
   // During a PPR static shell build, if a slot is inside a <Suspense> boundary
   // and was only cached at runtime (not part of the static shell), do not short-circuit
@@ -594,7 +660,7 @@ async function resolveCanonicalSlotId(slotIdOrTag, storage) {
   }
   if (storage) {
     try {
-      const direct = await storage.get(`slots/${slotIdOrTag}/slot.json`);
+      const direct = await getSlotFromStorage(storage, `slots/${slotIdOrTag}/slot.json`);
       if (direct && direct.content) {
         return slotIdOrTag;
       }
@@ -632,12 +698,7 @@ async function getSlotJSX(slotId, options = {}) {
   let storageKey = `slots/${targetId}/slot.json`;
 
   // 1. Check storage cache
-  let cached = null;
-  if (storage) {
-    try {
-      cached = await storage.get(storageKey);
-    } catch (e) {}
-  }
+  let cached = await getSlotFromStorage(storage, storageKey);
 
   const regEntryInitial = slotRegistry.get(targetId);
   const now = Date.now();
