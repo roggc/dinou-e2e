@@ -1700,6 +1700,7 @@ async function handleRequest(request, platformContext = {}) {
     if (
       !isDevelopment &&
       !cachedItem &&
+      !dynamicState.value &&
       isPprConfig &&
       !isPathBlocked &&
       queryObj.ssr_crash !== "true" &&
@@ -1973,7 +1974,7 @@ async function handleRequest(request, platformContext = {}) {
             !dynamicState.value &&
             allowISGValue !== false &&
             Object.keys(queryObj).length === 0) ||
-          platformContext.isSSG === true;
+          false;
 
         if (!shouldCacheISG && inFlightKey) {
           inFlightGenerations.delete(inFlightKey);
@@ -2217,8 +2218,8 @@ async function handleRequest(request, platformContext = {}) {
             }
 
             if (fullHtml) {
-              if (!dynamicState.value || platformContext.isSSG === true) {
-                if (platformContext.isSSG === true) dynamicState.value = false;
+              if (!dynamicState.value) {
+
                 if (context._slotTags && context._slotTags.size > 0) {
                   genMeta.slotTags = Array.from(context._slotTags);
                 }
