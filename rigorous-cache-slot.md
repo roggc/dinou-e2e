@@ -39,7 +39,7 @@ When `<DinouCacheSlot id="my-slot" tags={["tag-a", "tag-b"]} revalidate={60}>` e
    - `e.detail.id === id` (exact slot ID match),
    - `e.detail.id === "*"` (wildcard refresh of all mounted slots on the page), or
    - `Array.isArray(tags) && tags.includes(e.detail.id)` (tag match).
-3. Matching boundaries call `window.__DINOU_FETCH_SLOT__(id, options)`, which fetches `/____rsc_slot____/${encodeURIComponent(id)}?t=${Date.now()}${options?.fresh ? "&fresh=1" : ""}` with header `X-Dinou-Current-Path: window.location.pathname`.
+3. Matching boundaries call `window.__DINOU_FETCH_SLOT__(id, options)`, which fetches `/____rsc_slot____/${encodeURIComponent(id)}?t=${Date.now()}-${slotSeq}${options?.fresh ? "&fresh=1" : ""}` with header `X-Dinou-Current-Path: window.location.pathname`.
 4. Once the streamed Flight RSC payload promise resolves, `DinouCacheSlotBoundary` commits the resolved React tree inside `React.startTransition(() => setSlotContent(resolved))` and returns `slotContent !== null ? slotContent : children`. Because the Fiber tree depth remains identical before and after the refresh, React reconciles the subtree in place—preserving all page state, sibling state, and even local `useState` hooks inside Client Components mounted **inside** the refreshed slot itself.
 
 ---
@@ -113,8 +113,8 @@ During rigorous auditing (`src/cache-slot-test` in `test-9.0.2` and `src/t-rigor
 - **Solution**:
   - Added `cloneWithDevProps(jsx, renderedProps, resolvedKey)` in `dinou/core/render-jsx-to-client-jsx.js` and descriptor-preserving cloning in `wrapWithBoundary` (`dinou/core/cache-slot.js`), copying the non-enumerable property descriptors (`_owner`, `_store`, `ref`, `_debugInfo`, `_debugStack`, `_debugTask`) from the original React element onto the cloned element.
 
-### 3.8. Edge/Deno KV & Cloudflare Assets Parity for `page.rsc` and `slotTags` Invalidation
-- **Files Modified**: `dinou/core/handler.js`, `dinou/core/storage-adapter.js`, `dinou/core/cache-revalidate.js`, `dinou/deno/seed-kv.js`, `dinou/deno/build.js`, `dinou/cloudflare/build.js`, `dinou/bun/build.js`
+### 3.8. Edge/Deno KV, Cloudflare `env.ASSETS` Slot Hydration & Burst Coalescing Parity
+- **Files Modified**: `dinou/core/handler.js`, `dinou/core/cache-slot.js`, `dinou/core/storage-adapter.js`, `dinou/core/cache-revalidate.js`, `dinou/core/client.jsx`, `dinou/core/client-webpack.jsx`, `dinou/deno/seed-kv.js`, `dinou/deno/build.js`, `dinou/cloudflare/build.js`, `dinou/bun/build.js`
 - **Problem**:
   1. In `dinou/core/handler.js` (Segmented RSC Payload Endpoint `/____rsc_page_static____/*`), `if (isEdgeRuntime(platformContext))` was followed by `if (existsSync(payloadPath))` instead of `else if (existsSync(payloadPath))`. On Deno (`start:deno`), when `revalidateTag` deleted a static host page from `DenoKVStorage` (`.dinou/kv.db`) and Edge ISG regenerated `index.html`, Edge ISG did not write `page.rsc` to `DenoKVStorage`. When the browser hydrated the reloaded page and requested `/____rsc_page_static____/...`, `storage.get(".../page.rsc")` returned `null` and fell through to `if (existsSync(payloadPath))`, serving the stale build-time `.dinou/dist2/.../page.rsc` from disk and overwriting the fresh DOM with the build-time slot token!
   2. `DenoKVStorage.keys(prefix)` passed `["dinou_cache", prefix]` to `kv.list()`, which in Deno KV treats `prefix` as an exact key segment rather than a string prefix, and `dinou/deno/seed-kv.js` did not seed `slots/*/slot.json` and `slot.metadata.json` into `.dinou/kv.db`.
@@ -123,6 +123,9 @@ During rigorous auditing (`src/cache-slot-test` in `test-9.0.2` and `src/t-rigor
   - Changed `if (existsSync(payloadPath))` to `else if (existsSync(payloadPath))` in `dinou/core/handler.js`, and updated Edge ISG (`shouldCacheISG`) to also render and store `page.rsc` (`segment: "page"`) in `storage` alongside `rsc.rsc`, `index.html`, and `metadata.json` (preserving `tags` and `slotTags` across Edge ISR/ISG).
   - Guarded `platformContext.env.ASSETS` fallback in `dinou/core/handler.js` with `storage.isDeleted(...)` (`_deletedKeys` in `storage-adapter.js`) so invalidated static routes/RSC payloads are never resurrected from immutable Cloudflare `env.ASSETS`.
   - Fixed `DenoKVStorage.keys(prefix)` to list `["dinou_cache"]` and filter `entry.key[1].startsWith(prefix)`, updated `dinou/deno/seed-kv.js` to seed `slot.json` and `slot.metadata.json`, and added `candidateSlotPaths` / `slotChunkId` mappings to `dinou/deno/build.js`, `dinou/cloudflare/build.js`, and `dinou/bun/build.js`.
+  - Added `getSlotFromStorage(storage, storageKey)` in `dinou/core/cache-slot.js` (paired with `markTagInvalidated` / `getTagInvalidatedAt` in `dinou/core/storage-adapter.js` and `slotRegistry` tag scanning in `dinou/core/cache-revalidate.js`) to hydrate build-time `slots/<id>/slot.json` and `slot.metadata.json` from `platformContext.env.ASSETS` into runtime KV/Memory storage when not yet present and not deleted or tag-invalidated since `generatedAt`.
+  - When `getSlotJSX` refreshes a static-shell slot (`inStaticShell: true`) with `{ fresh: true }` and `options.currentPath`, it also invalidates the host route's `index.html`, `shell.html`, `metadata.json`, `shell.rsc`, and `rsc.rsc` so subsequent full-page requests stay synchronized with `slots/<id>/slot.json`.
+  - Added `recentFreshSlotRenders` (`1000ms` window keyed by `${storageKey}::${queryKey}`) in `dinou/core/cache-slot.js` alongside monotonic `?t=${Date.now()}-${slotSeq}` in `dinou/core/client.jsx` and `dinou/core/client-webpack.jsx` so queued waves of identical concurrent `?fresh=1` requests coalesce cleanly across `wrangler dev`, Deno, and Node.
 
 ---
 
