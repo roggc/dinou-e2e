@@ -98,7 +98,7 @@ During rigorous auditing of Dinou's PPR implementation (`src/t-ppr-rigorous` and
 - **Problem**:
   - In `dev` mode (where `build-static-pages.js` does not run ahead of time), or in production after `revalidateTag` invalidates a `<DinouCacheSlot>` inside a PPR route's static shell, `.dinou/dist2/<route>/shell.html` does not exist on disk when the request arrives.
 - **Solution**:
-  - When `pprEnabled` is true and no cached `shell.html` exists yet, `handler.js` generates the static shell on demand inside `runWithPprContext({ isPpr: true })`, persists `shell.html`, `shell.rsc`, and `metadata.json` (`ppr: true`, `holes`, `slotTags`), and immediately serves the response via `handlePprResume` (`shellPart` + streamed `data-ppr-hole` chunks)—unless an unwrapped dynamic access occurred outside `<Suspense>` (`dynamicState.value === true`), in which case it cleanly falls back to per-request dynamic SSR without writing `shell.html`.
+  - When `pprEnabled` is true and no cached `shell.html` exists yet, `handler.js` generates the static shell on demand inside `runWithPprContext({ isPpr: true })`, persists `shell.html`, `shell.rsc`, and `metadata.json` (`ppr: true`, `holes`, `slotTags`), and immediately serves the response via `handlePprResume` (`shellPart` + streamed `data-ppr-hole` chunks)—unless an unwrapped dynamic access occurred in Pass A outside `<Suspense>` (`ssgPprUnwrappedBailout`), in which case it cleanly falls back to per-request dynamic SSR without writing `shell.html` (while preserving `platformContext.isSSG === true` static caching for non-PPR routes whose Client Components invoke Server Functions during Pass B SSR).
 
 ### 3.6. Safe DOM Template Replacement & XSS Hardening
 - **Files Modified**: `dinou/core/ppr-runtime.js`
