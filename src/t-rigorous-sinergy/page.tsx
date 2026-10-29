@@ -117,6 +117,7 @@ async function DynamicHole1MicroIsrInsidePpr({
       >
         {async () => {
           await new Promise((r) => setTimeout(r, 10));
+          await new Promise((r) => setTimeout(r, 120));
           const slotAToken = `hole1-slotA-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
           return (
             <div id="syn-hole-slot-a-box" data-testid="syn-hole-slot-a-box">

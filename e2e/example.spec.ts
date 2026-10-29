@@ -6601,13 +6601,15 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // 3f. Wildcard refreshSlot("*", { fresh: true }) updates all slots across shell, layout, and PPR holes
       const layoutShellPreWild = await page.locator("#syn-layout-shell-slot-token").innerText();
       const layoutHolePreWild = await page.locator("#syn-layout-hole-slot-token").innerText();
-      const staticSuspSlotPreWild = await page.locator("#syn-static-suspense-slot-token").innerText();
+      const staticSuspSlotPreWild = await page.locator("#syn-static-susp-slot-token").innerText();
+      const slotWrapSuspPreWild = await page.locator("#syn-slot-wrapping-susp-token").innerText();
       const nocacheSlotPreWild = await page.locator("#syn-hole-slot-nocache-token").innerText();
       const directDynPreWild = await page.locator("#syn-direct-dynamic-token").innerText();
       await page.locator("#btn-refresh-all-wildcard").click();
       await expect(page.locator("#syn-layout-shell-slot-token")).not.toHaveText(layoutShellPreWild);
       await expect(page.locator("#syn-layout-hole-slot-token")).not.toHaveText(layoutHolePreWild);
-      await expect(page.locator("#syn-static-suspense-slot-token")).not.toHaveText(staticSuspSlotPreWild);
+      await expect(page.locator("#syn-static-susp-slot-token")).not.toHaveText(staticSuspSlotPreWild);
+      await expect(page.locator("#syn-slot-wrapping-susp-token")).not.toHaveText(slotWrapSuspPreWild);
       await expect(page.locator("#syn-hole-slot-nocache-token")).not.toHaveText(nocacheSlotPreWild);
       await expect(page.locator("#syn-slot-widget-token")).not.toHaveText(widgetToken2);
       await expect(page.locator("#syn-direct-dynamic-token")).not.toHaveText(directDynPreWild);
