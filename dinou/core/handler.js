@@ -1701,7 +1701,7 @@ async function handleRequest(request, platformContext = {}) {
             await requestStorage.run(context, async () => {
               jsx = await getJSX(reqPath, queryObj, isNotFound, false, false);
               const clientManifest = getClientManifest();
-              const rscStream = renderRSCStream(jsx, clientManifest, { runtime: "edge" });
+              const rscStream = requestStorage.run(context, () => renderRSCStream(jsx, clientManifest, { runtime: "edge" }));
               if (platformContext && platformContext.renderHtmlStream) {
                 const [streamForSsr, streamForKv] = rscStream.tee();
                 const [rscText, htmlStream] = await Promise.all([
@@ -1945,7 +1945,7 @@ async function handleRequest(request, platformContext = {}) {
         }
 
         const clientManifest = getClientManifest();
-        const rscStream = renderRSCStream(jsx, clientManifest, { runtime: "edge" });
+        const rscStream = requestStorage.run(context, () => renderRSCStream(jsx, clientManifest, { runtime: "edge" }));
 
         if (platformContext && platformContext.renderHtmlStream) {
           const [streamForSsr, streamForCache] = rscStream.tee();
@@ -2162,6 +2162,9 @@ async function handleRequest(request, platformContext = {}) {
             if (fullHtml) {
               if (!dynamicState.value || platformContext.isSSG === true) {
                 if (platformContext.isSSG === true) dynamicState.value = false;
+                if (context._slotTags && context._slotTags.size > 0) {
+                  genMeta.slotTags = Array.from(context._slotTags);
+                }
                 try {
                   await storage.set(rscKey, rscPayload);
                   await storage.set(htmlKey, fullHtml, genMeta);
