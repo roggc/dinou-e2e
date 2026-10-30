@@ -273,7 +273,13 @@ export function DinouCacheSlotBoundary({ id, tags, children }) {
   if (typeof useState !== "function") {
     return children;
   }
-  const [slotContent, setSlotContent] = useState(null);
+  const [override, setOverride] = useState({
+    baseChildren: children,
+    content: null,
+  });
+  const childrenRef =
+    typeof React.useRef === "function" ? React.useRef(children) : { current: children };
+  childrenRef.current = children;
 
   useEffect(() => {
     const handleRefresh = (e) => {
@@ -288,12 +294,16 @@ export function DinouCacheSlotBoundary({ id, tags, children }) {
           if (promise && typeof promise.then === "function") {
             promise.then(
               (resolved) => {
-                if (typeof startTransition === "function") {
-                  startTransition(() => {
-                    setSlotContent(resolved);
+                const applyUpdate = () => {
+                  setOverride({
+                    baseChildren: childrenRef.current,
+                    content: resolved,
                   });
+                };
+                if (typeof startTransition === "function") {
+                  startTransition(applyUpdate);
                 } else {
-                  setSlotContent(resolved);
+                  applyUpdate();
                 }
               },
               (err) => {
@@ -301,12 +311,16 @@ export function DinouCacheSlotBoundary({ id, tags, children }) {
               }
             );
           } else if (promise) {
-            if (typeof startTransition === "function") {
-              startTransition(() => {
-                setSlotContent(promise);
+            const applyUpdate = () => {
+              setOverride({
+                baseChildren: childrenRef.current,
+                content: promise,
               });
+            };
+            if (typeof startTransition === "function") {
+              startTransition(applyUpdate);
             } else {
-              setSlotContent(promise);
+              applyUpdate();
             }
           }
         }
@@ -316,8 +330,8 @@ export function DinouCacheSlotBoundary({ id, tags, children }) {
     return () => window.removeEventListener("dinou:refresh-slot", handleRefresh);
   }, [id, tags]);
 
-  if (slotContent !== null) {
-    return slotContent;
+  if (override.content !== null && override.baseChildren === children) {
+    return override.content;
   }
   return children;
 }

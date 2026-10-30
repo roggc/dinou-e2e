@@ -4,7 +4,10 @@ import {
   runInSuspense,
   commitPprSuspenseEffects,
   registerHole,
+  isPageRootElement,
+  runInPageSegment,
 } from "./ppr-context.js";
+import { getContext } from "./request-context.js";
 
 function cloneWithDevProps(jsx, newProps, resolvedKey, overrideType) {
   const cloned = {
@@ -46,6 +49,20 @@ function isClientComponent(type) {
 }
 
 async function asyncRenderJSXToClientJSX(jsx, key = null) {
+  if (isPageRootElement(jsx)) {
+    return await runInPageSegment(async () => {
+      const resolved = await asyncRenderJSXToClientJSXInner(jsx, key);
+      const ctx = getContext();
+      if (ctx) {
+        ctx._resolvedPageClientJsx = resolved;
+      }
+      return resolved;
+    });
+  }
+  return await asyncRenderJSXToClientJSXInner(jsx, key);
+}
+
+async function asyncRenderJSXToClientJSXInner(jsx, key = null) {
   if (
     typeof jsx === "string" ||
     typeof jsx === "number" ||
