@@ -148,8 +148,8 @@ To avoid a breaking semver change in `v9.0.3`:
    - Added `getActiveLayoutChain` in `dinou/core/layout-functions.js` and lazy re-composition in `dinou/core/handler.js` (for both HTML GET requests—with or without query parameters—and `/____rsc_layout____` requests), plus `readRscFromStorage` / `readMetaFromStorage` helpers compatible across Node, Bun, Deno, and Cloudflare Workers (`env.ASSETS` + KV).
 6. **Edge/Cloudflare/Deno/Bun Bundler Parity (`dinou/node/bundle-dual-engine.js`, `dinou/bun/build.js`, `dinou/deno/build.js`, `dinou/cloudflare/build.js`)**:
    - Registered `dinou/core/slot.js` (`DinouPageSlot`, `DinouCacheSlotBoundary`) in the client manifest across all four platform bundlers so `options.segment === "layout"` serializes `<DinouPageSlot />` as a valid client reference in every runtime.
-7. **Collision-Proof Internal RSC Query Parameters (`____buildId____` & `____v____` in `dinou/core/client.jsx`, `dinou/core/client-webpack.jsx`, `dinou/core/handler.js`)**:
-   - Renamed the internal hydration build ID and refresh version query parameters sent to `/____rsc_page*` and `/____rsc_layout*` from `buildId` / `v` to `____buildId____` / `____v____`, and stripped both keys from `queryObj` upon request entry in `handler.js`.
+7. **Collision-Proof Internal RSC Query Parameters (`____build_id____` & `____v____` in `dinou/core/client.jsx`, `dinou/core/client-webpack.jsx`, `dinou/core/handler.js`)**:
+   - Renamed the internal hydration build ID and refresh version query parameters sent to `/____rsc_page*` and `/____rsc_layout*` from `buildId` / `v` to `____build_id____` / `____v____`, and stripped both keys from `queryObj` upon request entry in `handler.js`.
    - This ensures user application routes can freely use `?buildId=...` or `?v=...` query parameters without colliding with Dinou's internal RSC hydration/refresh mechanics or polluting `query` in `getProps({ query })` and `page.tsx`.
 
 ---

@@ -162,7 +162,7 @@ const getPagePayload = (route, isPrefetch = false, version = 0) => {
     (!document.body || document.body.getAttribute("data-hydrated") !== "true");
   const buildId = isInitialHydration ? window.__DINOU_BUILD_ID__ : undefined;
   if (buildId && !version) {
-    payloadUrl += (payloadUrl.includes("?") ? "&" : "?") + "____buildId____=" + buildId;
+    payloadUrl += (payloadUrl.includes("?") ? "&" : "?") + "____build_id____=" + buildId;
   }
   if (version) {
     payloadUrl += (payloadUrl.includes("?") ? "&" : "?") + "____v____=" + version;
@@ -215,7 +215,7 @@ const getLayoutPayload = (layoutKey, searchPart = "", version = 0) => {
       : "/____rsc_layout____") + cleanKey + searchPart;
 
   if (buildId && !version) {
-    layoutUrl += (layoutUrl.includes("?") ? "&" : "?") + "____buildId____=" + buildId;
+    layoutUrl += (layoutUrl.includes("?") ? "&" : "?") + "____build_id____=" + buildId;
   }
 
   if (version) {

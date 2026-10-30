@@ -1006,9 +1006,9 @@ async function handleRequest(request, platformContext = {}) {
   }
   const cookiesObj = parseCookieHeader(headersObj["cookie"] || "");
   const queryObj = Object.fromEntries(url.searchParams.entries());
-  const internalBuildId = queryObj.____buildId____;
+  const internalBuildId = queryObj.____build_id____;
   const internalRefreshVersion = queryObj.____v____;
-  delete queryObj.____buildId____;
+  delete queryObj.____build_id____;
   delete queryObj.____v____;
 
   const simReq = {
