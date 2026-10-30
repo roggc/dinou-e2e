@@ -217,7 +217,10 @@ class SlotErrorBoundary extends Component {
   }
 }
 
-function PageConsumer({ pagePromise }) {
+function PageConsumer({ pagePromise, pageElement }) {
+  if (pageElement !== undefined) {
+    return pageElement;
+  }
   if (pagePromise && pagePromise.status === "rejected") {
     throw pagePromise.reason;
   }
@@ -225,13 +228,19 @@ function PageConsumer({ pagePromise }) {
 }
 
 export function DinouPageSlot() {
-  if (typeof useContext !== "function" || !DinouPageContext) {
-    return null;
-  }
-  const slotContext = useContext(DinouPageContext);
+  const fallbackContext =
+    typeof globalThis !== "undefined" ? globalThis.__DINOU_SSR_SLOT_CONTEXT__ : null;
+  const slotContext =
+    typeof useContext === "function" && DinouPageContext
+      ? useContext(DinouPageContext) || fallbackContext
+      : fallbackContext;
   if (!slotContext) {
     return null;
   }
+  const pageElement =
+    slotContext && slotContext.pageElement !== undefined
+      ? slotContext.pageElement
+      : undefined;
   const pagePromise =
     slotContext && slotContext.pagePromise !== undefined
       ? slotContext.pagePromise
@@ -244,7 +253,7 @@ export function DinouPageSlot() {
   return createElement(
     SlotErrorBoundary,
     { resetKey, pagePromise },
-    createElement(PageConsumer, { pagePromise })
+    createElement(PageConsumer, { pagePromise, pageElement })
   );
 }
 
