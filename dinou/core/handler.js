@@ -1856,7 +1856,7 @@ async function handleRequest(request, platformContext = {}) {
 
     // 3. If we found a cached/pre-rendered page:
     if (!isDevelopment && cachedItem && (!dynamicState.value || cachedItem?.metadata?.ppr || isPprConfig) && !isPathBlocked && queryObj.ssr_crash !== "true" && !platformContext?.isSSG) {
-      if (!cachedItem?.metadata?.ppr && !isPprConfig && Object.keys(queryObj).length === 0) {
+      if (!cachedItem?.metadata?.ppr && !isPprConfig) {
         try {
           const activeLayoutChain = getActiveLayoutChain(reqSegments, queryObj, srcFolder);
           if (activeLayoutChain.length > 0) {

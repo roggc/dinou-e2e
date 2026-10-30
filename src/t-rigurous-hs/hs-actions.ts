@@ -20,10 +20,12 @@ export async function hsResetAllState() {
 
 export async function hsMutateSiblingAOnly(note: string) {
   const cur = readHsState();
-  return writeHsState({
+  const next = writeHsState({
     siblingASeq: cur.siblingASeq + 1,
     siblingANote: note,
   });
+  await revalidatePage("/t-rigurous-hs/sibling-a");
+  return next;
 }
 
 export async function hsMutateAndRevalidatePage(note: string) {

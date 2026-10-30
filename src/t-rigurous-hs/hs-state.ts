@@ -41,7 +41,7 @@ function getNodeFsAndPath(): { fs: any; stateFile: string } | null {
       if (fs && path) {
         return {
           fs,
-          stateFile: path.resolve(proc.cwd(), ".dinou/hs-test-state.json"),
+          stateFile: path.resolve(proc.cwd(), ".dinou/dist2/hs-test-state.json"),
         };
       }
     }
