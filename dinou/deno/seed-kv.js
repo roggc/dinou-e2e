@@ -25,7 +25,7 @@ if (kvUrl) {
     if (fs.existsSync(kvPath)) fs.unlinkSync(kvPath);
     if (fs.existsSync(kvPath + "-wal")) fs.unlinkSync(kvPath + "-wal");
     if (fs.existsSync(kvPath + "-shm")) fs.unlinkSync(kvPath + "-shm");
-  } catch (e) {}
+  } catch (e) { }
   console.log(`💾 [Deno KV Seed] Pre-seeding local Deno KV at ${kvPath}...`);
   kv = await Deno.openKv(kvPath);
 }
@@ -73,7 +73,7 @@ async function processDir(dir, relPrefix = "") {
       if (fs.existsSync(metaPath)) {
         try {
           metadata = JSON.parse(fs.readFileSync(metaPath, "utf8"));
-        } catch (e) {}
+        } catch (e) { }
       }
 
       await setKvCache(kv, cleanRelPath, html, metadata);
@@ -93,7 +93,7 @@ async function processDir(dir, relPrefix = "") {
       let metadata = null;
       try {
         metadata = JSON.parse(metaContent);
-      } catch (e) {}
+      } catch (e) { }
       await setKvCache(kv, cleanRelPath, metaContent, metadata);
       seededCount++;
       if (process.env.DINOU_DEBUG) {
@@ -106,7 +106,7 @@ async function processDir(dir, relPrefix = "") {
       if (fs.existsSync(metaPath)) {
         try {
           metadata = JSON.parse(fs.readFileSync(metaPath, "utf8"));
-        } catch (e) {}
+        } catch (e) { }
       }
       await setKvCache(kv, cleanRelPath, slotContent, metadata);
       seededCount++;
