@@ -721,11 +721,15 @@ function Router() {
     return getPagePayload(route, false, version);
   }, [route, version, navError]);
 
-  useEffect(() => {
-    if (typeof document !== "undefined" && document.body) {
+  useLayoutEffect(() => {
+    if (
+      typeof document !== "undefined" &&
+      document.body &&
+      document.body.getAttribute("data-hydrated") !== "true"
+    ) {
       document.body.setAttribute("data-hydrated", "true");
     }
-  }, [route, layoutKey]);
+  });
 
   const layoutPromise = useMemo(() => {
     return layoutKey !== null

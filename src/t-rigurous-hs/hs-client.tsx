@@ -745,6 +745,7 @@ export function HsAutomatedSuiteRunner() {
       // TEST 10
       await runStep(10, async () => {
         clickEl("hs-link-reset");
+        try {
         await waitForEl("hs-reset-layout");
         await waitForEl("hs-reset-root-page");
 
@@ -767,11 +768,22 @@ export function HsAutomatedSuiteRunner() {
         clickEl("hs-reset-link-back");
         await waitForEl("hs-index-page");
         return `reset_layout unmounted parent #hs-section-layout, preserved #hs-reset-layout state (count=${resetCount}) to /sub, and kept data-hydrated="true"`;
+        } finally {
+          if (!document.getElementById("hs-index-page")) {
+            if (document.getElementById("hs-reset-link-back")) {
+              clickEl("hs-reset-link-back");
+            } else if (typeof (window as any).__DINOU_ROUTER_NAVIGATE__ === "function") {
+              (window as any).__DINOU_ROUTER_NAVIGATE__("/t-rigurous-hs");
+            }
+            await waitForEl("hs-index-page");
+          }
+        }
       });
 
       // TEST 11
       await runStep(11, async () => {
         clickEl("hs-link-no-layout");
+        try {
         await waitForEl("hs-no-layout-root");
 
         if (document.getElementById("hs-section-layout")) {
@@ -788,6 +800,17 @@ export function HsAutomatedSuiteRunner() {
         await waitForEl("hs-section-layout");
         await waitForEl("hs-index-page");
         return `no_layout rendered #hs-no-layout-root with 0 ancestor layouts and cleanly remounted #hs-section-layout on return`;
+        } finally {
+          if (!document.getElementById("hs-index-page")) {
+            if (document.getElementById("hs-no-layout-back-link")) {
+              clickEl("hs-no-layout-back-link");
+            } else if (typeof (window as any).__DINOU_ROUTER_NAVIGATE__ === "function") {
+              (window as any).__DINOU_ROUTER_NAVIGATE__("/t-rigurous-hs");
+            }
+            await waitForEl("hs-section-layout");
+            await waitForEl("hs-index-page");
+          }
+        }
       });
 
       // TEST 12

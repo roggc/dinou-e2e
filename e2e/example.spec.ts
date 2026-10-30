@@ -5742,7 +5742,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           timeout: 30000,
         });
 
-        // 4. Invoke the newly injected inline Server Function and verify closure + manifest registration
+        // 4. Wait for hydration of the reloaded page, then invoke the newly injected inline Server Function
+        await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
         await page.click("#btn-hot-injected");
         await expect(page.locator("#result-hot-injected")).toHaveText(
           "hot-tag-ok|RND-SF-902|SECRET-DINOU-902|manifest:true",
@@ -6689,6 +6690,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // Soft-navigate from no_layout back into segmented section layout
       await page.click("#hs-no-layout-back-link");
+      await expect(page.locator("#hs-section-layout")).toBeVisible({ timeout: 20000 });
+      await expect(page.locator("#hs-index-page")).toBeVisible({ timeout: 20000 });
       await expect(page.locator("#hs-section-layout")).toBeVisible();
       await expect(page.locator("#hs-index-page")).toBeVisible();
 
@@ -6759,6 +6762,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       try {
         await page.goto("/t-hmr-test");
 
+        await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
         // 1. Initial assertions
         await expect(page.locator("#hmr-client-title")).toHaveText("Client Counter Component");
         await expect(page.locator("#hmr-count-display")).toHaveText("Count: 0");
@@ -6795,6 +6799,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       } finally {
         // Always restore original file content
         fs.writeFileSync(clientComponentPath, originalClientCode, "utf8");
+        await expect(page.locator("#hmr-client-title")).toHaveText("Client Counter Component", { timeout: 15000 }).catch(() => {});
       }
     });
 
@@ -6806,6 +6811,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       try {
         await page.goto("/t-hmr-test");
 
+        await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
         // 1. Mutate client counter to verify RSC updates do not blow away client state
         await page.locator("#hmr-increment-btn").click();
         await page.locator("#hmr-increment-btn").click();
@@ -6837,6 +6843,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       } finally {
         // Always restore original file content
         fs.writeFileSync(serverPagePath, originalServerCode, "utf8");
+        await expect(page.locator("#hmr-server-title")).toHaveText("Initial Server Title", { timeout: 15000 }).catch(() => {});
       }
     });
   });

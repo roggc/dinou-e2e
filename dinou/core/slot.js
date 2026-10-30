@@ -7,6 +7,7 @@ const useContext = React.useContext;
 const useMemo = React.useMemo;
 const useState = React.useState;
 const useEffect = React.useEffect;
+const useLayoutEffect = React.useLayoutEffect || React.useEffect;
 const startTransition = React.startTransition;
 const use = React.use;
 const createElement = React.createElement;
@@ -218,6 +219,17 @@ class SlotErrorBoundary extends Component {
 }
 
 function PageConsumer({ pagePromise, pageElement }) {
+  if (typeof useLayoutEffect === "function" && typeof window !== "undefined") {
+    useLayoutEffect(() => {
+      if (
+        typeof document !== "undefined" &&
+        document.body &&
+        document.body.getAttribute("data-hydrated") !== "true"
+      ) {
+        document.body.setAttribute("data-hydrated", "true");
+      }
+    });
+  }
   if (pageElement !== undefined) {
     return pageElement;
   }
