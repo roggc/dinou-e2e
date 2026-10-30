@@ -1390,14 +1390,15 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         .toBeGreaterThan(new Date(time1).getTime());
     });
 
-    test("revalidatePath with { cascade: true } revalidates layout and cascades to child pages", async ({
+    test("revalidatePath with deprecated { cascade: true } revalidates layout and parent page while lazily re-composing child index.html (preserving child page.rsc)", async ({
       page,
     }) => {
       if (!isProd) test.skip();
 
-      // 1. Go to child page and read initial timestamp
+      // 1. Go to child page and read initial layout & child page timestamps
       await page.goto("/t-revalidate-cascade/child");
       await page.waitForSelector('body[data-hydrated="true"]');
+      const childLayoutTime1 = await page.getByTestId("cascade-layout-timestamp").innerText();
       const childTime1 = await page.getByTestId("cascade-child-timestamp").innerText();
       const childUrl = page.url().split("?")[0];
 
@@ -1407,7 +1408,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const parentTime1 = await page.getByTestId("cascade-parent-timestamp").innerText();
       const parentUrl = page.url().split("?")[0];
 
-      // 3. Click cascade revalidate button
+      // 3. Click revalidatePath button
       const btn = page.getByTestId("reval-cascade-btn");
       await Promise.all([
         page.waitForResponse((res) => res.request().method() === "POST"),
@@ -1424,29 +1425,32 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
             return new Date(currentTime).getTime();
           },
           {
-            message: "Cascade revalidation did not refresh parent page cache",
+            message: "revalidatePath did not refresh parent page cache",
             timeout: 15000,
             intervals: [500],
           }
         )
         .toBeGreaterThan(new Date(parentTime1).getTime());
 
-      // 5. Verify child page ALSO updated via cascade
+      // 5. Verify child page lazily re-composed layout timestamp while preserving child page.rsc timestamp
       await expect
         .poll(
           async () => {
             const bypassUrl = `${childUrl}?t=${Date.now()}_${Math.random()}`;
             await page.goto(bypassUrl);
-            const currentTime = await page.getByTestId("cascade-child-timestamp").innerText();
-            return new Date(currentTime).getTime();
+            const currentLayoutTime = await page.getByTestId("cascade-layout-timestamp").innerText();
+            return new Date(currentLayoutTime).getTime();
           },
           {
-            message: "Cascade revalidation did not refresh child page cache",
+            message: "revalidatePath did not lazily refresh child layout timestamp",
             timeout: 15000,
             intervals: [500],
           }
         )
-        .toBeGreaterThan(new Date(childTime1).getTime());
+        .toBeGreaterThan(new Date(childLayoutTime1).getTime());
+
+      const childTimeAfter = await page.getByTestId("cascade-child-timestamp").innerText();
+      expect(childTimeAfter).toBe(childTime1);
     });
 
     test("revalidateTag on page_functions tag invokes revalidatePage (regenerates page without cascading to child)", async ({
@@ -1525,63 +1529,67 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(childTimeAfter).toBe(childTime1);
     });
 
-    test("revalidateTag on layout_functions tag with { cascade: true } invokes revalidatePath with cascade (regenerates all child pages)", async ({
+    test("revalidateTag on layout_functions tag with deprecated { cascade: true } ignores cascade and lazily re-composes index.html (preserving parent & child page.rsc)", async ({
       page,
     }) => {
       if (!isProd) test.skip();
 
-      // 1. Read initial child timestamp
+      // 1. Read initial child layout & page timestamps
       await page.goto("/t-revalidate-cascade/child");
       await page.waitForSelector('body[data-hydrated="true"]');
+      const childLayoutTime1 = await page.getByTestId("cascade-layout-timestamp").innerText();
       const childTime1 = await page.getByTestId("cascade-child-timestamp").innerText();
       const childUrl = page.url().split("?")[0];
 
-      // 2. Read initial parent timestamp
+      // 2. Read initial parent layout & page timestamps
       await page.goto("/t-revalidate-cascade");
       await page.waitForSelector('body[data-hydrated="true"]');
+      const parentLayoutTime1 = await page.getByTestId("cascade-layout-timestamp").innerText();
       const parentTime1 = await page.getByTestId("cascade-parent-timestamp").innerText();
       const parentUrl = page.url().split("?")[0];
 
-      // 3. Click revalidate tag on layout WITH cascade
+      // 3. Click revalidate tag on layout WITH deprecated cascade
       const btn = page.getByTestId("reval-tag-layout-cascade-btn");
       await Promise.all([
         page.waitForResponse((res) => res.request().method() === "POST"),
         btn.click(),
       ]);
 
-      // 4. Verify parent page updated
+      // 4. Verify parent layout updated lazily while parent page.rsc stayed preserved
       await expect
         .poll(
           async () => {
             const bypassUrl = `${parentUrl}?t=${Date.now()}_${Math.random()}`;
             await page.goto(bypassUrl);
-            const currentTime = await page.getByTestId("cascade-parent-timestamp").innerText();
-            return new Date(currentTime).getTime();
+            const currentLayoutTime = await page.getByTestId("cascade-layout-timestamp").innerText();
+            return new Date(currentLayoutTime).getTime();
           },
           {
-            message: "Layout tag cascade revalidation did not refresh parent page cache",
+            message: "Layout tag revalidation did not refresh parent layout timestamp",
             timeout: 15000,
             intervals: [500],
           }
         )
-        .toBeGreaterThan(new Date(parentTime1).getTime());
+        .toBeGreaterThan(new Date(parentLayoutTime1).getTime());
+      expect(await page.getByTestId("cascade-parent-timestamp").innerText()).toBe(parentTime1);
 
-      // 5. Verify child page ALSO updated via cascade
+      // 5. Verify child layout ALSO updated lazily while child page.rsc stayed preserved
       await expect
         .poll(
           async () => {
             const bypassUrl = `${childUrl}?t=${Date.now()}_${Math.random()}`;
             await page.goto(bypassUrl);
-            const currentTime = await page.getByTestId("cascade-child-timestamp").innerText();
-            return new Date(currentTime).getTime();
+            const currentLayoutTime = await page.getByTestId("cascade-layout-timestamp").innerText();
+            return new Date(currentLayoutTime).getTime();
           },
           {
-            message: "Layout tag cascade revalidation did not refresh child page cache",
+            message: "Layout tag revalidation did not lazily refresh child layout timestamp",
             timeout: 15000,
             intervals: [500],
           }
         )
-        .toBeGreaterThan(new Date(childTime1).getTime());
+        .toBeGreaterThan(new Date(childLayoutTime1).getTime());
+      expect(await page.getByTestId("cascade-child-timestamp").innerText()).toBe(childTime1);
     });
   });
 
@@ -6665,6 +6673,70 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const tagBody = await tagRes.text();
       expect(tagBody).toContain("syn-client-slot-box");
       expect(tagBody).toContain("slotGeneratedToken");
+    });
+  });
+
+  test.describe.serial("Dinou Core: Rigorous Horizontal Segmentation (/t-rigurous-hs)", () => {
+    test("1. Direct SSR of no_layout and reset_layout isolates layout trees and hydrates cleanly", async ({
+      page,
+    }) => {
+      // 1. Direct SSR load of no_layout route
+      await page.goto("/t-rigurous-hs/no-layout-page");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+      await expect(page.locator("#hs-no-layout-root")).toBeVisible();
+      await expect(page.locator("#hs-section-layout")).toHaveCount(0);
+      await expect(page.locator("#hs-reset-layout")).toHaveCount(0);
+
+      // Soft-navigate from no_layout back into segmented section layout
+      await page.click("#hs-no-layout-back-link");
+      await expect(page.locator("#hs-section-layout")).toBeVisible();
+      await expect(page.locator("#hs-index-page")).toBeVisible();
+
+      // 2. Direct SSR load of reset_layout route
+      await page.goto("/t-rigurous-hs/reset-branch");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+      await expect(page.locator("#hs-reset-layout")).toBeVisible();
+      await expect(page.locator("#hs-reset-root-page")).toBeVisible();
+      await expect(page.locator("#hs-section-layout")).toHaveCount(0);
+    });
+
+    test("2. Full 12-Scenario Horizontal Segmentation Stress Suite passes end-to-end and F5 reload after revalidateLayout has zero hydration mismatch", async ({
+      page,
+    }) => {
+      const hydrationErrors: string[] = [];
+      page.on("console", (msg) => {
+        if (msg.type() === "error" && /hydration|didn't match/i.test(msg.text())) {
+          hydrationErrors.push(msg.text());
+        }
+      });
+      page.on("pageerror", (err) => {
+        if (/hydration|didn't match/i.test(err.message)) {
+          hydrationErrors.push(err.message);
+        }
+      });
+
+      await page.goto("/t-rigurous-hs");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+
+      await page.click("#hs-run-automated-suite");
+      await expect(page.locator("#hs-suite-summary-badge")).toHaveText("12/12 PASSED", {
+        timeout: 60000,
+      });
+
+      for (let i = 1; i <= 12; i++) {
+        await expect(page.locator(`#hs-test-status-${i}`)).toHaveText("passed");
+      }
+
+      // Hard reload (F5) after revalidateLayout to verify lazy index.html re-composition & zero hydration mismatch
+      const layoutSeqBeforeReload = Number(await page.locator("#hs-section-layout-seq").textContent());
+      const pageSeqBeforeReload = Number(await page.locator("#hs-index-page-seq").textContent());
+      await page.reload();
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+      const layoutSeqAfterReload = Number(await page.locator("#hs-section-layout-seq").textContent());
+      const pageSeqAfterReload = Number(await page.locator("#hs-index-page-seq").textContent());
+      expect(layoutSeqAfterReload).toBeGreaterThanOrEqual(layoutSeqBeforeReload);
+      expect(pageSeqAfterReload).toBeGreaterThanOrEqual(pageSeqBeforeReload);
+      expect(hydrationErrors).toEqual([]);
     });
   });
 
