@@ -1409,6 +1409,9 @@ async function handleRequest(request, platformContext = {}) {
         if (edgeMeta) {
           currentGeneratedAt = edgeMeta.generatedAt || null;
           if (isLayoutReq) {
+            if (edgeMeta.dynamic) {
+              dynamicState.value = true;
+            }
             if (Array.isArray(edgeMeta.holes) && edgeMeta.holes.length > 0) {
               isRoutePpr = true;
             }
@@ -1426,6 +1429,9 @@ async function handleRequest(request, platformContext = {}) {
           const metaObj = JSON.parse(readFileSync(metadataPath, "utf8"));
           currentGeneratedAt = metaObj.generatedAt || null;
           if (isLayoutReq) {
+            if (metaObj.dynamic) {
+              dynamicState.value = true;
+            }
             if (Array.isArray(metaObj.holes) && metaObj.holes.length > 0) {
               isRoutePpr = true;
             }
@@ -1636,7 +1642,8 @@ async function handleRequest(request, platformContext = {}) {
       isPathBlocked = pageConfig.isPathBlocked;
     }
 
-    const context = createRequestContext(simReq, bridge, platformContext, isRoutePpr ? { value: false } : dynamicState);
+    const rscDynamicState = isLayoutReq ? dynamicState : (isRoutePpr ? { value: false } : dynamicState);
+    const context = createRequestContext(simReq, bridge, platformContext, rscDynamicState);
     copyCustomContextProperties(rootContext, context);
     const isNotFound = {};
     const segment = isLayoutReq ? "layout" : "page";
@@ -1664,6 +1671,9 @@ async function handleRequest(request, platformContext = {}) {
               bridge.setHeader("X-Dinou-Ppr-Holes", JSON.stringify(regHoles));
             }
             bridge.setHeader("X-Dinou-Suspense-Count", String(getPprHoleCounter()));
+            if (rscDynamicState.value) {
+              bridge.setHeader("X-Dinou-Dynamic", "true");
+            }
             if (!isLayoutReq && isRoutePpr && rendered && isEdgeRuntime(platformContext)) {
               try {
                 const storage = getStorageAdapter();

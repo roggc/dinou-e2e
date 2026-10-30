@@ -116,6 +116,9 @@ async function generateStatic() {
             if (suspenseCountHeader !== null) {
               layoutMeta.suspenseCount = Number(suspenseCountHeader) || 0;
             }
+            if (layoutRes.headers.get("x-dinou-dynamic") === "true") {
+              layoutMeta.dynamic = true;
+            }
           } catch (e) {}
 
           await storage.set(layoutRscKey, layoutRscText, layoutMeta);
