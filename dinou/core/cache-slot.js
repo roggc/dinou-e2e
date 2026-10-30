@@ -897,61 +897,6 @@ async function getSlotJSX(slotId, options = {}) {
             slotId: targetId,
             inStaticShell: Boolean(cached?.metadata?.inStaticShell),
           });
-          if (options.fresh && Boolean(cached?.metadata?.inStaticShell) && options.currentPath) {
-            try {
-              const cleanRouteKey = String(options.currentPath)
-                .split("?")[0]
-                .replace(/^\/+/, "")
-                .replace(/\/+$/, "");
-              const slotTagsToMatch = new Set([
-                targetId,
-                slotId,
-                ...(Array.isArray(entry.tags) ? entry.tags : []),
-              ]);
-              const metaKey = cleanRouteKey ? `${cleanRouteKey}/metadata.json` : "metadata.json";
-              const metaItem = await storage.get(metaKey);
-              let pageMeta = metaItem?.metadata;
-              if (!pageMeta && metaItem?.content) {
-                try {
-                  pageMeta = JSON.parse(metaItem.content);
-                } catch (e) {}
-              }
-              if (
-                pageMeta &&
-                Array.isArray(pageMeta.slotTags) &&
-                pageMeta.slotTags.some((t) => slotTagsToMatch.has(t))
-              ) {
-                const { revalidatePage } = await import("./cache-revalidate.js");
-                await revalidatePage("/" + cleanRouteKey, { onlyRefreshSlots: true });
-              } else {
-                const segments = cleanRouteKey.split("/").filter(Boolean);
-                const candidateLayoutKeys = [""];
-                let acc = "";
-                for (const seg of segments) {
-                  acc = acc ? `${acc}/${seg}` : seg;
-                  candidateLayoutKeys.push(acc);
-                }
-                for (const lKey of candidateLayoutKeys) {
-                  const lMetaKey = lKey ? `${lKey}/layout.metadata.json` : "layout.metadata.json";
-                  const lItem = await storage.get(lMetaKey);
-                  let lMeta = lItem?.metadata;
-                  if (!lMeta && lItem?.content) {
-                    try {
-                      lMeta = JSON.parse(lItem.content);
-                    } catch (e) {}
-                  }
-                  if (
-                    lMeta &&
-                    Array.isArray(lMeta.slotTags) &&
-                    lMeta.slotTags.some((t) => slotTagsToMatch.has(t))
-                  ) {
-                    const { revalidateLayout } = await import("./cache-revalidate.js");
-                    await revalidateLayout(lKey ? "/" + lKey : "/");
-                  }
-                }
-              }
-            } catch (e) {}
-          }
         }
         if (options.fresh) {
           recentFreshSlotRenders.set(stampedeKey, {
@@ -962,13 +907,77 @@ async function getSlotJSX(slotId, options = {}) {
         return deserializeJSX(serialized);
       })();
 
+      let restored;
       inflightSlotRenders.set(storageKey, renderPromise);
       try {
-        const restored = await renderPromise;
-        return await refreshNestedSlotsInTree(restored, targetId, options);
+        restored = await renderPromise;
       } finally {
         inflightSlotRenders.delete(storageKey);
       }
+
+      if (
+        storage &&
+        entry.revalidate !== 0 &&
+        options.fresh &&
+        Boolean(cached?.metadata?.inStaticShell) &&
+        options.currentPath
+      ) {
+        try {
+          const cleanRouteKey = String(options.currentPath)
+            .split("?")[0]
+            .replace(/^\/+/, "")
+            .replace(/\/+$/, "");
+          const slotTagsToMatch = new Set([
+            targetId,
+            slotId,
+            ...(Array.isArray(entry.tags) ? entry.tags : []),
+          ]);
+          const metaKey = cleanRouteKey ? `${cleanRouteKey}/metadata.json` : "metadata.json";
+          const metaItem = await storage.get(metaKey);
+          let pageMeta = metaItem?.metadata;
+          if (!pageMeta && metaItem?.content) {
+            try {
+              pageMeta = JSON.parse(metaItem.content);
+            } catch (e) {}
+          }
+          if (
+            pageMeta &&
+            Array.isArray(pageMeta.slotTags) &&
+            pageMeta.slotTags.some((t) => slotTagsToMatch.has(t))
+          ) {
+            const { revalidatePage } = await import("./cache-revalidate.js");
+            await revalidatePage("/" + cleanRouteKey, { onlyRefreshSlots: true });
+          } else {
+            const segments = cleanRouteKey.split("/").filter(Boolean);
+            const candidateLayoutKeys = [""];
+            let acc = "";
+            for (const seg of segments) {
+              acc = acc ? `${acc}/${seg}` : seg;
+              candidateLayoutKeys.push(acc);
+            }
+            for (const lKey of candidateLayoutKeys) {
+              const lMetaKey = lKey ? `${lKey}/layout.metadata.json` : "layout.metadata.json";
+              const lItem = await storage.get(lMetaKey);
+              let lMeta = lItem?.metadata;
+              if (!lMeta && lItem?.content) {
+                try {
+                  lMeta = JSON.parse(lItem.content);
+                } catch (e) {}
+              }
+              if (
+                lMeta &&
+                Array.isArray(lMeta.slotTags) &&
+                lMeta.slotTags.some((t) => slotTagsToMatch.has(t))
+              ) {
+                const { revalidateLayout } = await import("./cache-revalidate.js");
+                await revalidateLayout(lKey ? "/" + lKey : "/");
+              }
+            }
+          }
+        } catch (e) {}
+      }
+
+      return await refreshNestedSlotsInTree(restored, targetId, options);
     } catch (e) {
       console.error(`[getSlotJSX] Failed to regenerate slot "${targetId}":`, e);
     }
