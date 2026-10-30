@@ -113,7 +113,7 @@ async function processDir(dir, relPrefix = "") {
       if (process.env.DINOU_DEBUG) {
         console.log(`   ✅ Cached Slot: ${cleanRelPath}`);
       }
-    } else if (entry.name.endsWith(".rsc")) {
+    } else if (entry.name.endsWith(".rsc") || entry.name === "shell.page.json" || entry.name === "shell.html") {
       const rsc = fs.readFileSync(fullPath, "utf8");
       await setKvCache(kv, cleanRelPath, rsc, null);
       seededCount++;

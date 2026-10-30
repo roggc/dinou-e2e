@@ -177,22 +177,23 @@ When the browser requests `/____rsc_page____` on a PPR route (e.g. during `route
 
 ---
 
-## 4. Phase 3: The 12-Scenario Triple Synergy Test Suite (`src/triple-sinergy-test/` & `e2e/triple-sinergy.spec.ts`)
+## 4. Phase 3: The 12-Scenario Triple Synergy Test Suite (`dinou-e2e/src/t-rigurous-triple-sinergy/` & `test-9.0.2/src/triple-sinergy-test/`)
 
-### 4.1. Route Hierarchy Created in `test-9.0.2/src/triple-sinergy-test/`
+### 4.1. Route Hierarchy Created in `dinou-e2e/src/t-rigurous-triple-sinergy/` (and `test-9.0.2/src/triple-sinergy-test/`)
 
 | Route / File | Role in Triple Synergy Suite |
 | :--- | :--- |
-| `src/triple-sinergy-test/ts-state.ts` | Persistent JSON state store (`.dinou/ts-test-state.json`) with independent sequence counters for L1 layout, L1 layout slot, L2 nested layout, L2 nested layout slot, PPR Page A (shell, shell slot, dynamic hole, hole slot, nested outer/inner hole slots), PPR Page B, Static Page A, Static Page B, and nested pages. |
-| `src/triple-sinergy-test/ts-actions.ts` | `"use server"` actions: `tsGetState`, `tsMutateOnly`, `tsBumpKeys`, `tsResetAllAndRevalidate`, `tsRunRevalidateTag`, `tsRunRevalidatePage`, `tsRunRevalidateLayout`, `tsRunRevalidatePath`, `tsEchoAction`. |
-| `src/triple-sinergy-test/ts-client.tsx` | Client state trackers (`TsClientStateBox`), slot widget (`TsHoleSlotClientWidget` testing both direct and prop-passed `"use server"` functions inside a cached slot inside a PPR hole), manual controls (`TsManualControls`), and the 12-scenario automated runner (`TsAutomatedSuiteRunner`). |
-| `src/triple-sinergy-test/layout.tsx` & `layout_functions.ts` | Level-1 section layout with `export const ppr = true`, `getCacheTags() -> ["ts-layout-tag"]`, client state box, and `<DinouCacheSlot id="ts-layout-shell-slot" tag="ts-layout-shell-slot-tag">`. |
-| `src/triple-sinergy-test/page.tsx` & `page_functions.ts` | **PPR Page A** (inherits `ppr = true` from L1 layout, `getCacheTags() -> ["ts-ppr-a-page-tag"]`): static shell `<DinouCacheSlot id="ts-ppr-a-shell-slot">` + dynamic `<Suspense>` hole reading `req.cookies` & `req.query.mode`, containing `<DinouCacheSlot id="ts-ppr-a-hole-slot">` and nested `<DinouCacheSlot id="ts-hole-nested-outer">` → `<DinouCacheSlot id="ts-hole-nested-inner">`. |
-| `src/triple-sinergy-test/ppr-b/page.tsx` & `page_functions.ts` | **PPR Page B** (sibling PPR route sharing L1 layout): static shell + `<DinouCacheSlot id="ts-ppr-b-shell-slot">` + dynamic `<Suspense>` hole with `<DinouCacheSlot id="ts-ppr-b-hole-slot">`. |
-| `src/triple-sinergy-test/static-a/page.tsx` & `page_functions.ts` | **Static Page A** (`export const ppr = false` explicit opt-out under the `ppr = true` L1 layout) with `<DinouCacheSlot id="ts-static-a-slot">`. |
-| `src/triple-sinergy-test/static-b/page.tsx` & `page_functions.ts` | **Static Page B** (`export const ppr = false` explicit opt-out) with `<DinouCacheSlot id="ts-static-b-slot">`. |
-| `src/triple-sinergy-test/nested/layout.tsx`, `page.tsx` & `static-child/page.tsx` | **Level-2 Nested Layout** (`ts-nested-layout-tag` + `<DinouCacheSlot id="ts-nested-layout-slot">`) wrapping a nested PPR page (`/nested`) and a nested static opt-out child (`/nested/static-child` with `export const ppr = false`). |
-| `src/triple-sinergy-test/no-layout-ppr/page.tsx`, `page_functions.ts` & `no_layout` | Standalone `no_layout` + `export const ppr = true` + `<DinouCacheSlot>` + dynamic `<Suspense>` hole route. |
+| `src/t-rigurous-triple-sinergy/ts-state.ts` | Cross-runtime state store (`globalThis[Symbol.for("dinou.e2e.rigorous.ts.state")]` + `.dinou/dist2/ts-test-state.json` on Node/Bun) with independent sequence counters for L1 layout, L1 layout slot, L2 nested layout, L2 nested layout slot, PPR Page A (shell, shell slot, dynamic hole, hole slot, nested outer/inner hole slots), PPR Page B, Static Page A, Static Page B, and nested pages. |
+| `src/t-rigurous-triple-sinergy/ts-actions.ts` | `"use server"` actions: `tsGetState`, `tsMutateOnly`, `tsBumpKeys`, `tsResetAllAndRevalidate`, `tsRunRevalidateTag`, `tsRunRevalidatePage`, `tsRunRevalidateLayout`, `tsRunRevalidatePath`, `tsEchoAction`. |
+| `src/t-rigurous-triple-sinergy/ts-client.tsx` | Client state trackers (`TsClientStateBox`), slot widget (`TsHoleSlotClientWidget` testing both direct and prop-passed `"use server"` functions inside a cached slot inside a PPR hole), manual controls (`TsManualControls`), and the 12-scenario automated runner (`TsAutomatedSuiteRunner`). |
+| `src/t-rigurous-triple-sinergy/layout.tsx` & `layout_functions.ts` | Level-1 section layout with `export const ppr = true`, `getCacheTags() -> ["ts-layout-tag"]`, client state box, and `<DinouCacheSlot id="ts-layout-shell-slot" tag="ts-layout-shell-slot-tag">`. |
+| `src/t-rigurous-triple-sinergy/page.tsx` & `page_functions.ts` | **PPR Page A** (inherits `ppr = true` from L1 layout, `getCacheTags() -> ["ts-ppr-a-page-tag"]`): static shell `<DinouCacheSlot id="ts-ppr-a-shell-slot">` + dynamic `<Suspense>` hole reading `req.cookies` & `req.query.mode`, containing `<DinouCacheSlot id="ts-ppr-a-hole-slot">` and nested `<DinouCacheSlot id="ts-hole-nested-outer">` → `<DinouCacheSlot id="ts-hole-nested-inner">`. |
+| `src/t-rigurous-triple-sinergy/ppr-b/page.tsx` & `page_functions.ts` | **PPR Page B** (sibling PPR route sharing L1 layout): static shell + `<DinouCacheSlot id="ts-ppr-b-shell-slot">` + dynamic `<Suspense>` hole with `<DinouCacheSlot id="ts-ppr-b-hole-slot">`. |
+| `src/t-rigurous-triple-sinergy/static-a/page.tsx` & `page_functions.ts` | **Static Page A** (`export const ppr = false` explicit opt-out under the `ppr = true` L1 layout) with `<DinouCacheSlot id="ts-static-a-slot">`. |
+| `src/t-rigurous-triple-sinergy/static-b/page.tsx` & `page_functions.ts` | **Static Page B** (`export const ppr = false` explicit opt-out) with `<DinouCacheSlot id="ts-static-b-slot">`. |
+| `src/t-rigurous-triple-sinergy/nested/layout.tsx`, `page.tsx` & `static-child/page.tsx` | **Level-2 Nested Layout** (`ts-nested-layout-tag` + `<DinouCacheSlot id="ts-nested-layout-slot">`) wrapping a nested PPR page (`/nested`) and a nested static opt-out child (`/nested/static-child` with `export const ppr = false`). |
+| `src/t-rigurous-triple-sinergy/no-layout-ppr/page.tsx`, `page_functions.ts` & `no_layout` | Standalone `no_layout` + `export const ppr = true` + `<DinouCacheSlot>` + dynamic `<Suspense>` hole route. |
+| `e2e/example.spec.ts` | Playwright E2E test suite (`Dinou Core: Rigorous Triple Synergy — Horizontal + Vertical + PPR (/t-rigurous-triple-sinergy)`) running across GitHub Actions (`esbuild`, `rollup`, `webpack` × `node`, `bun`, `deno`, `cloudflare`). |
 
 ### 4.2. Summary of the 12 Automated Verification Scenarios (`12/12 PASSED`)
 

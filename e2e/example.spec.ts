@@ -6743,6 +6743,66 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
   });
 
+  test.describe.serial("Dinou Core: Rigorous Triple Synergy — Horizontal + Vertical + PPR (/t-rigurous-triple-sinergy)", () => {
+    test("1. Direct SSR of standalone no_layout + PPR + DinouCacheSlot route streams hole and soft-navigates back into segmented PPR section layout", async ({
+      page,
+    }) => {
+      await page.goto("/t-rigurous-triple-sinergy/no-layout-ppr?mode=direct-ssr");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+      await expect(page.locator("#ts-no-layout-ppr-page")).toBeVisible();
+      await expect(page.locator("#ts-no-layout-slot-box")).toHaveText("Standalone Slot Ready");
+      await expect(page.locator("#ts-no-layout-ppr-hole")).toContainText("direct-ssr");
+      await expect(page.locator("#ts-section-layout")).toHaveCount(0);
+
+      // Soft-navigate from standalone no_layout PPR route back into segmented PPR section layout
+      await page.click("#ts-no-layout-back-link");
+      await expect(page.locator("#ts-section-layout")).toBeVisible({ timeout: 20000 });
+      await expect(page.locator("#ts-ppr-a-page")).toBeVisible({ timeout: 20000 });
+      await expect(page.locator("#ts-ppr-a-hole-resolved")).toBeVisible({ timeout: 20000 });
+    });
+
+    test("2. Full 12-Scenario Triple Synergy Stress Suite passes end-to-end and F5 reload after revalidateLayout on PPR route has zero hydration mismatch", async ({
+      page,
+    }) => {
+      const hydrationErrors: string[] = [];
+      page.on("console", (msg) => {
+        if (msg.type() === "error" && /hydration|didn't match/i.test(msg.text())) {
+          hydrationErrors.push(msg.text());
+        }
+      });
+      page.on("pageerror", (err) => {
+        if (/hydration|didn't match/i.test(err.message)) {
+          hydrationErrors.push(err.message);
+        }
+      });
+
+      await page.goto("/t-rigurous-triple-sinergy");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+      await expect(page.locator("#ts-ppr-a-hole-resolved")).toBeVisible({ timeout: 15000 });
+
+      await page.click("#ts-run-automated-suite");
+      await expect(page.locator("#ts-suite-summary-badge")).toHaveText("12/12 PASSED", {
+        timeout: 60000,
+      });
+
+      for (let i = 1; i <= 12; i++) {
+        await expect(page.locator(`#ts-test-status-${i}`)).toHaveText("passed");
+      }
+
+      // Hard reload (F5) after revalidateLayout on PPR route to verify lazy shell.html re-composition & zero hydration mismatch
+      const layoutSeqBeforeReload = Number(await page.locator("#ts-layout-seq").textContent());
+      const pageSeqBeforeReload = Number(await page.locator("#ts-ppr-a-page-seq").textContent());
+      await page.reload();
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+      await expect(page.locator("#ts-ppr-a-hole-resolved")).toBeVisible({ timeout: 15000 });
+      const layoutSeqAfterReload = Number(await page.locator("#ts-layout-seq").textContent());
+      const pageSeqAfterReload = Number(await page.locator("#ts-ppr-a-page-seq").textContent());
+      expect(layoutSeqAfterReload).toBeGreaterThanOrEqual(layoutSeqBeforeReload);
+      expect(pageSeqAfterReload).toBeGreaterThanOrEqual(pageSeqBeforeReload);
+      expect(hydrationErrors).toEqual([]);
+    });
+  });
+
   test.describe("HMR & Fast Refresh automated verification", () => {
     // Run tests in serial mode so they do not collide on the same files on disk
     test.describe.configure({ mode: "serial" });
