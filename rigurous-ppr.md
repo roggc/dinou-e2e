@@ -103,9 +103,16 @@ During rigorous auditing of Dinou's PPR implementation (`src/t-ppr-rigorous` and
 ### 3.6. Safe DOM Template Replacement & XSS Hardening
 - **Files Modified**: `dinou/core/ppr-runtime.js`
 - **Problem**:
-  - Previously, streamed hole replacement scripts injected HTML or error strings in ways that could break if the component output or error message contained `</template><script>` or special quotes.
+  - Previously, streamed hole replacement scripts injected HTML or error strings in ways that could break if the component output or error message contained `</template><script>` or special quotes, and async hole resolution closures referenced a mutated outer counter (`holeIndex - 1`) instead of the hole's captured index.
 - **Solution**:
-  - Replacement chunks use `<template id="ppr-content-${currentHoleId}">${html}</template>` paired with a DOM node replacement script (`t.replaceWith(c.content)`) and `escapeHtml()` on error fallback messages, guaranteeing `0` `SyntaxError`s and preventing `<template>` breakout.
+  - Replacement chunks capture a constant `currentHoleIndex` per `<Suspense>` boundary and emit `<template id="ppr-content-${currentHoleId}">${html}</template>` paired with a DOM node replacement script (`t.replaceWith(c.content)`) and `escapeHtml()` on error fallback messages, guaranteeing `0` `SyntaxError`s and preventing `<template>` breakout.
+
+### 3.7. PPR Client Hydration Stability & Query Parameter Forwarding
+- **Files Modified**: `dinou/core/client.jsx`, `dinou/core/client-webpack.jsx`
+- **Problem**:
+  - On initial load of a PPR page (`window.__DINOU_PPR__`), triggering an immediate background `/____rsc_page____` or `/____rsc_layout____` fetch during initial hydration could overwrite already-streamed dynamic holes with their build-time `<Suspense>` fallbacks or drop `window.location.search` query parameters during subsequent client refreshes.
+- **Solution**:
+  - Skipped redundant initial RSC page/layout fetches when hydrating PPR pages (`window.__DINOU_PPR__`) so streamed dynamic holes never flash back to `<Suspense>` fallbacks, and forwarded `window.location.search` on client-side RSC refreshes so dynamic holes reading `req.query` retain their query parameters.
 
 ---
 
@@ -118,14 +125,108 @@ During rigorous auditing of Dinou's PPR implementation (`src/t-ppr-rigorous` and
 | **Dynamic `<Suspense>` hole** (reads `cookies`, `headers`, `query`) | Catches `PprBailoutError`, bakes `<div data-ppr-hole="ppr-hole-N">` fallback into `shell.html`, records in `metadata.holes` | Evaluates in parallel at request time and streams `<template id="ppr-content-ppr-hole-N">` + inline DOM swap `<script>` |
 | **Client Component (`"use client"`) inside Dynamic `<Suspense>` hole** | Fallback baked into `shell.html` | Streamed at request time via Pass A (RSC) + Pass B (SSR) and hydrated on the client |
 | **Nested Dynamic `<Suspense>` inside Static `<Suspense>`** | Outer boundary baked into `shell.html`; inner boundary bails out as `ppr-hole-N` | Outer wrapper served in `shellPrelude`; inner hole streamed on demand |
-| **Nested Dynamic `<Suspense>` inside Dynamic `<Suspense>`** | Outer boundary bails out at build time (`ppr-hole-N`) | Outer boundary streams and resolves its inner `<Suspense>` tree at request time |
+| **Nested Dynamic `<Suspense>` inside Dynamic `<Suspense>`** | Outer boundary bails out at build time (`ppr-hole-N`) without duplicate inner registration | Outer boundary streams and resolves its inner `<Suspense>` tree at request time |
+| **`React.memo` / `React.forwardRef` Dynamic Server Component in `<Suspense>`** | Unwrapped at build time; bails out as `ppr-hole-N` | Unwrapped at request time in `streamDynamicHoles` and streamed cleanly |
 | **Layout `<Suspense>` hole + Page `<Suspense>` hole** | Unified hole numbering (`ppr-hole-1` in layout, `ppr-hole-2` in page) | Both layout and page holes stream in parallel on request |
 | **Unwrapped dynamic access outside `<Suspense>`** | Route-level `PprBailoutError` aborts static shell caching (`shell.html` not written) | Full route renders dynamically via streaming SSR on every request |
 
 ---
 
-## 5. E2E Test Suite Reference (`src/t-ppr-rigorous`)
+## 5. Comprehensive E2E Test Suite Reference
 
-The rigorous E2E test suite in `dinou-e2e` is located at:
-- **Source files**: `src/t-ppr-rigorous/` (`page.tsx`, `page_functions.ts`, `ppr-hole-client.tsx`, `components/hole-client-widget.tsx`, `inherited/layout.tsx`, `inherited/layout_functions.ts`, `inherited/page.tsx`, `inherited/opt-out/page.tsx`, `inherited/opt-out/page_functions.ts`, `unwrapped-bailout/page.tsx`, `unwrapped-bailout/page_functions.ts`)
-- **Playwright Spec**: `e2e/example.spec.ts` → `test.describe("Partial Prerendering (PPR): Rigorous Casuistics", ...)`
+Dinou's PPR engine is verified end-to-end across **Node.js, Deno, Bun, and Cloudflare Workers** and across all three bundlers (**Esbuild, Rollup, and Webpack**) in `e2e/example.spec.ts` through four complementary test suites:
+
+---
+
+### 5.1. Foundational PPR & Layout Inheritance Suite (`/t-ppr`, `/t-ppr-layout`, `/t-ppr-fn`)
+- **Source Files**: `src/t-ppr/`, `src/t-ppr-layout/`, `src/t-ppr-fn/`
+- **Playwright Spec**: `e2e/example.spec.ts` → `test.describe("Partial Prerendering (PPR)", ...)`
+- **Scenarios Covered**:
+  1. **Instant Static Shell + Default Dynamic Hole (`/t-ppr`)**: Verifies that `#ppr-static-title` and `#ppr-static-timestamp` ("Static Build Shell Loaded") render immediately from the static shell while `#ppr-dynamic` resolves the default user (`"Alice"`).
+  2. **Cookie Personalization Preserving Static Shell (`/t-ppr`)**: Injects cookie `username=Charlie` and verifies that the static shell remains untouched while the dynamic hole personalizes `#ppr-user-name` to `"Charlie"`.
+  3. **Query Parameter Personalization (`/t-ppr?user=David`)**: Verifies that `req.query.user` inside a `<Suspense>` boundary bails out only that boundary and streams `"David"` at request time.
+  4. **Layout-to-Page PPR Inheritance (`/t-ppr-layout`)**: Enables `export const ppr = true` in `src/t-ppr-layout/layout_functions.ts` and verifies that child and deep 2nd-level nested routes (`/t-ppr-layout/nested?user=DeepNestedChild`) inherit PPR automatically without redeclaring `ppr` in `page_functions.ts`.
+  5. **Child Page & Nested Subtree Opt-Out (`/t-ppr-layout/opt-out` & `/t-ppr-layout/nested-optout`)**: Verifies that a child page with `export const ppr = false` or a nested layout with `export function ppr() { return false; }` cleanly opts out its route/subtree from the parent layout's PPR.
+  6. **Async Function Opt-In (`/t-ppr-fn`)**: Verifies activating PPR dynamically via `export async function ppr() { return true; }` in `page_functions.ts`.
+
+---
+
+### 5.2. Multi-Level Cascading Opt-In / Opt-Out & Anti-Test Suite (`/t-ppr-levels`, `/t-ppr-anti`)
+- **Source Files**: `src/t-ppr-levels/`, `src/t-ppr-anti/`
+- **Playwright Spec**: `e2e/example.spec.ts` → `test.describe("Partial Prerendering (PPR): dinou.config.js & Multi-Level Cascading Opt-Out", ...)`
+- **Scenarios Covered**:
+  1. **3-Level Cascading Override (`Parent Opt-In -> Nested Layout Opt-Out -> Subpage Opt-In`)**:
+     - On `/t-ppr-levels/nested-optout`, `layout_functions.ts` sets `ppr = false`, disabling PPR (`metadata.ppr === false`, no `shell.html`).
+     - On its child `/t-ppr-levels/nested-optout/page-optin`, `page_functions.ts` sets `ppr = true`, re-enabling PPR and generating `.dinou/dist2/t-ppr-levels/nested-optout/page-optin/shell.html` + `metadata.json` (`ppr: true`).
+  2. **Page-Level Explicit Opt-Out (`/t-ppr-levels/page-optout`)**: Verifies `metadata.ppr === false` and absence of `shell.html` on disk.
+  3. **Unconfigured Route Default (`/t-ppr-levels`)**: Verifies that routes without `ppr` enabled at global, layout, or page level default to `metadata.ppr === false`.
+  4. **Creative Anti-Test — Component File Exports Ignored (`/t-ppr-anti`)**:
+     - Exports `export const ppr = true` directly inside `src/t-ppr-anti/page.tsx` and `src/t-ppr-anti/layout.tsx` (instead of `page_functions.ts` / `layout_functions.ts`).
+     - Verifies that Dinou strictly ignores configuration exports inside UI component files (`metadata.ppr === false`, `shell.html` is **not** generated), while rendering the page normally without errors.
+
+---
+
+### 5.3. Rigorous PPR Casuistics, Wire Protocol, Pre-Hydration Streaming & Security Suite (`/t-ppr-rigorous`)
+- **Source Files**:
+  - `src/t-ppr-rigorous/page.tsx` & `src/t-ppr-rigorous/page_functions.ts`
+  - `src/t-ppr-rigorous/components/ppr-holes.tsx` & `src/t-ppr-rigorous/components/hole-client-widget.tsx`
+  - `src/t-ppr-rigorous/inherited/layout.tsx`, `layout_functions.ts`, `page.tsx`, and `inherited/opt-out/page.tsx` + `page_functions.ts`
+  - `src/t-ppr-rigorous/unwrapped-bailout/page.tsx` & `page_functions.ts`
+- **Playwright Spec**: `e2e/example.spec.ts` → `test.describe("Partial Prerendering (PPR): Rigorous Casuistics, Hole Alignment & Security Audit", ...)`
+
+#### Test 1 — Build Artifacts, `metadata.holes` Preservation, Wire-Level Shell/Stream Split, Inline `<script>` Syntax & Pre-Hydration DOM Replacement (`main*.js` Blocked)
+1. **Disk Artifact & Hole Index Verification**:
+   - Inspects `.dinou/dist2/t-ppr-rigorous/{metadata.json,shell.html,shell.rsc}`.
+   - Verifies `meta.ppr === true` and `meta.holes` equals `["ppr-hole-2", "ppr-hole-3", "ppr-hole-4", "ppr-hole-6", "ppr-hole-7", "ppr-hole-8", "ppr-hole-9"]`.
+   - Notice that `ppr-hole-1` (`StaticAsyncCard`, an async `<Suspense>` boundary with a `15ms` timer that reads no request data) and `ppr-hole-5` (`OuterStaticWithInnerDynamicHole`, an outer static `<Suspense>` boundary wrapping an inner dynamic `<Suspense>` boundary `ppr-hole-6`) are **baked directly into `shell.html`** (`data-testid="static-suspense-resolved"` and `data-testid="outer-static-wrapper"`) and excluded from `meta.holes`, while preserving deterministic 1-based hole numbering for all dynamic holes!
+2. **Raw HTTP Wire Protocol Inspection (`splitShellAndStream`)**:
+   - Issues two raw HTTP GET requests (`resA` and `resB`) with completely different cookies (`ppr_user=Alice` vs `Bob`, `ppr_session`, `ppr_tier`), query parameters (`theme`, `lang`, `plan`, `nested`, `deep`, `memo`), and headers (`x-ppr-probe: probe-alpha` vs `probe-beta`).
+   - Splits the raw HTML response at `<template id="ppr-content-` into `shellPart` (flushed immediately at `0ms TTFB`) and `streamPart` (streamed dynamically):
+     - Asserts `shell-build-id` and `static-suspense-hash` are **identical** across `shellA` and `shellB`.
+     - Asserts `streamPart` **never** re-streams `static-suspense-resolved` or `outer-static-id`.
+     - Asserts a 1-to-1 match between every `data-ppr-hole="ppr-hole-N"` in `shellPart` and `<template id="ppr-content-ppr-hole-N">` in `streamPart`.
+     - Extracts every streamed inline `<script>` tag from `streamPart` and compiles it via `new Function(scriptCode)` to assert **zero JavaScript syntax errors**.
+3. **Creative Pre-Hydration DOM Replacement Proof (Blocking Client JS Bundle)**:
+   - Uses `await page.route("**/main*.js", (route) => route.abort())` to completely block React and the client JavaScript bundle from loading in the browser.
+   - Navigates to `/t-ppr-rigorous?theme=no-hydration&nested=pre-nest&deep=pre-deep&memo=pre-memo` with cookie `ppr_user=PreHydratedAda`.
+   - Verifies that `hole-cookies-user` (`"PreHydratedAda"`), `hole-query-theme` (`"no-hydration"`), `inner-dynamic-val` (`"pre-nest"`), `deep-inner-val` (`"pre-deep"`), and `hole-memo-param` (`"pre-memo"`) are all visible in the live DOM—proving that Dinou's inline `<template>` + `<script>` replacement swaps `[data-ppr-hole]` fallbacks **before** client-side React hydration even runs.
+
+#### Test 2 — All 8 `<Suspense>` Casuistics, Out-of-Order Parallel Hole Streaming, Interactive `"use client"` Child Hydration & `</template><script>` Breakout Immunity
+Verifies all 8 `<Suspense>` boundary casuistics on `/t-ppr-rigorous` in a real hydrated browser session:
+1. **Casuistic 1 — Static `<Suspense>` Before Dynamic Holes (`StaticAsyncCard`)**: Resolved at build time into `shell.html` (`data-testid="static-suspense-resolved"`).
+2. **Casuistic 2 — Slow Dynamic Cookie Hole (`DynamicCookieHole`, `35ms` delay, `ppr-hole-2`)**: Reads `ctx.req.cookies.ppr_user` (`"Elena"`) and `ppr_session` (`"sess-999"`).
+3. **Casuistic 3 — Fast Sibling Query & Header Hole (`DynamicQueryHeaderHole`, `10ms` delay, `ppr-hole-3`)**: Resolves *before* Hole #2 (`10ms < 35ms`), proving out-of-order parallel streaming without closure index drift (`B:${currentHoleIndex - 1}`), reading `query.theme` (`"synthwave"`), `query.lang` (`"fr"`), and `headers["user-agent"]`.
+4. **Casuistic 4 — Interactive `"use client"` Widget Inside a Dynamic Hole (`DynamicWithClientChildHole` -> `<HoleClientWidget />`, `ppr-hole-4`)**:
+   - Server hole reads `cookies.ppr_tier` (`"enterprise"`) and `query.plan` (`"ultra"`) and passes them as props to `<HoleClientWidget />`.
+   - Verifies that `<HoleClientWidget />` streams inside the hole, hydrates on the client (`data-hydrated="true"`), and responds to user clicks (`#hole-client-btn` increments `#hole-client-clicks` from `0` to `2`) without flashing back to its `<Suspense>` fallback.
+5. **Casuistic 5 — Outer Static `<Suspense>` Wrapping an Inner Dynamic `<Suspense>` (`OuterStaticWithInnerDynamicHole` -> `InnerDynamicInStaticHole`, `ppr-hole-6`)**: Outer wrapper is served from the static shell while the nested inner `<Suspense>` streams `query.nested` (`"inner-ok"`) and `cookies.ppr_user` (`"Elena"`).
+6. **Casuistic 6 — Outer Dynamic `<Suspense>` Wrapping a Deep Inner Dynamic `<Suspense>` (`OuterDynamicWithInnerDynamicHole` -> `DeepInnerDynamicBadge`, `ppr-hole-7`)**: Verifies that nested dynamic `<Suspense>` boundaries inside an already-postponed outer `<Suspense>` boundary do not register duplicate holes at build time and resolve both outer (`"Elena"`) and deep inner (`"deep-ok"`) values at runtime.
+7. **Casuistic 7 — `React.memo` Wrapping an Async Dynamic Server Component (`MemoizedDynamicHole`, `ppr-hole-8`)**: Verifies `Symbol.for("react.memo")` unwrapping during both build-time shell extraction and runtime `streamDynamicHoles` traversal (`memoParam="memo-custom"`).
+8. **Casuistic 8 — `</template><script>` XSS Breakout Payload in Normal Hole Output (`EdgeCasePayloadHole`, `ppr-hole-9`)**: Renders the literal string `Safe text </template><script>window.__PPR_XSS__=1</script>` inside a streamed PPR hole, verifying that the full string appears as safe text in `#hole-edge-payload` and `window.__PPR_XSS__` is `false`.
+
+#### Test 3 — Unified Layout `<Suspense>` + Page `<Suspense>` Hole Alignment & Child Opt-Out (`/t-ppr-rigorous/inherited` & `/t-ppr-rigorous/inherited/opt-out`)
+- Verifies that when `inherited/layout.tsx` contains a dynamic `<Suspense>` hole (`ppr-hole-1`, reading `cookies.ppr_layout_banner`) and `inherited/page.tsx` contains a dynamic `<Suspense>` hole (`ppr-hole-2`, reading `cookies.ppr_user` and `query.from`):
+  - `.dinou/dist2/t-ppr-rigorous/inherited/shell.html` contains `["ppr-hole-1", "ppr-hole-2"]` in unified pre-order (`resetPprHoles()` called before `getJSX()`).
+  - Both layout (`"BannerPro"`) and page (`"InheritedUser"`, `"e2e"`) holes stream and resolve in parallel.
+- Verifies that the child route `/t-ppr-rigorous/inherited/opt-out` (`export const ppr = false` in `page_functions.ts`) does **not** create `shell.html` and renders dynamically.
+
+#### Test 4 — Unwrapped Dynamic Access Outside `<Suspense>` on a PPR Route (`/t-ppr-rigorous/unwrapped-bailout`)
+- On `/t-ppr-rigorous/unwrapped-bailout`, `page_functions.ts` sets `export const ppr = true`, but `page.tsx` reads `ctx.req.cookies.ppr_user` **outside** any `<Suspense>` boundary.
+- Verifies that:
+  1. No `shell.html` is written to `.dinou/dist2/t-ppr-rigorous/unwrapped-bailout/shell.html` (avoiding static cache poisoning).
+  2. Two consecutive requests with `Cookie: ppr_user=DirectUserOne` and `Cookie: ppr_user=DirectUserTwo` each execute full dynamic SSR and return their respective cookie values and distinct `unwrapped-render-id`s.
+
+#### Test 5 — Security: HTML Escaping of Error Messages Thrown Inside Dynamic PPR Holes
+- Sends a request to `/t-ppr-rigorous?throw_err=%3C%2Ftemplate%3E%3Cscript%3Ewindow.__PPR_ERR_XSS__%3D1%3C%2Fscript%3E`, causing `EdgeCasePayloadHole` to throw `new Error("SimulatedHoleError: </template><script>window.__PPR_ERR_XSS__=1</script>")` during `streamDynamicHoles`.
+- Verifies that the streamed `[PPR Error: ...]` fallback block in `ppr-runtime.js` HTML-escapes the error message (`escapeHtml`), preventing `</template><script>` from breaking out of the `<template>` tag in the raw HTTP stream.
+
+---
+
+### 5.4. PPR + `<DinouCacheSlot>` (Micro-ISR) Synergy Suite (`/t-rigorous-sinergy`)
+- **Source Files**: `src/t-rigorous-sinergy/` (`page.tsx`, `layout.tsx`, `page_functions.ts`, `layout_functions.ts`, `synergy-client.tsx`, `actions.ts`)
+- **Playwright Spec**: `e2e/example.spec.ts` → `test.describe.serial("PPR + DinouCacheSlot Synergy: Rigorous Casuistics (/t-rigorous-sinergy)", ...)`
+- **Detailed Reference**: See [`rigurous-sinergy.md`](./rigurous-sinergy.md) for the complete breakdown of the 4 synergy tests covering:
+  1. Static-shell `<DinouCacheSlot>`s, static `<Suspense>` + `<DinouCacheSlot>` combinations (`__clientJsxAlreadyRendered` preventing `ppr-hole-N` drift), transactional `<Suspense>` slot effects (`pushPprSuspenseEffects` / `popPprSuspenseEffects`), per-request dynamic PPR holes containing cached, `revalidate={0}`, and nested `<DinouCacheSlot>`s, and build-time cache-poisoning prevention when reading cookies directly inside a `<DinouCacheSlot>`.
+  2. Surgical `revalidateTag` differentiation between dynamic-hole slots (`inStaticShell: false`, keeping `shell.html` intact) and static-shell slots (`inStaticShell: true`, triggering background `shell.html` regeneration).
+  3. Live `refreshSlot` (by ID, by tag, via `useRouter().refreshSlot`, and wildcard `'*'`) across static-shell slots, layout hole slots, and nested dynamic-hole slots while preserving 3 levels of Client Component `useState` and `"use server"` Server Action prop bindings.
+  4. Direct `/____rsc_slot____` cold-start recovery and 6-way concurrent `?fresh=1` stampede deduplication for slots inside PPR holes.
