@@ -166,8 +166,9 @@ When the browser requests `/____rsc_page____` on a PPR route (e.g. during `route
            Streams live dynamic hole: <template id="ppr-content-ppr-hole-1"> + <script>
 ```
 
-1. **Lazy Layout Re-Composition for Both Static and PPR Routes (`dinou/core/handler.js`)**:
+1. **Lazy Layout Re-Composition & Dynamic Parallel `@slot` Bailout Preservation (`dinou/core/handler.js` & `dinou/core/generate-static.js`)**:
    - Removed the `!cachedItem?.metadata?.ppr && !isPprConfig` restriction so whenever `leafLayout.generatedAt > pageGeneratedAt` (including after cascading an ancestor L1 layout update to an L2 nested layout), Dinou re-composes `index.html` (and `shell.html` for PPR routes) from the fresh `layout.rsc` + the existing `shell.rsc` (or `page.rsc`), preserving `window.__DINOU_PPR__ = true` and all `[data-ppr-hole]` placeholders without re-executing `page.tsx`.
+   - Allowed static cached `layout.rsc` (`isLayoutReq`) to be served on URLs with query parameters (`?mode=...`) on PPR routes while preserving per-request dynamic rendering for layouts (or parallel `@slots`) that access `req.query` / `req.cookies` / `req.headers` outside `<Suspense>` via `X-Dinou-Dynamic: true` during SSG and `dynamic: true` in `layout.metadata.json`.
 2. **PPR-Aware `revalidatePage` & `{ onlyRefreshSlots: true }` (`dinou/core/cache-revalidate.js`)**:
    - `revalidatePage` now loads `activeLayoutRscText` (`layout.rsc`) and `leafSuspenseCount` for both Static and PPR routes, wraps `revalContext.req` in `createBailoutProxy`, and evaluates PPR pages inside `runWithPprContext({ isPpr: true })` + `resetPprHoles(leafSuspenseCount)` + `asyncRenderJSXToClientJSX`.
    - It updates `page.rsc`, `shell.rsc`, `shell.page.json`, `index.html`, `shell.html`, and `metadata.json` (`ppr: true`, `holes`, `slotTags`) while composing HTML with the cached `layout.rsc` so `layout.tsx` is never re-executed.
