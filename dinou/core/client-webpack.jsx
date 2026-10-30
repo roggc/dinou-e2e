@@ -162,10 +162,10 @@ const getPagePayload = (route, isPrefetch = false, version = 0) => {
     (!document.body || document.body.getAttribute("data-hydrated") !== "true");
   const buildId = isInitialHydration ? window.__DINOU_BUILD_ID__ : undefined;
   if (buildId && !version) {
-    payloadUrl += (payloadUrl.includes("?") ? "&" : "?") + "buildId=" + buildId;
+    payloadUrl += (payloadUrl.includes("?") ? "&" : "?") + "____buildId____=" + buildId;
   }
   if (version) {
-    payloadUrl += (payloadUrl.includes("?") ? "&" : "?") + "v=" + version;
+    payloadUrl += (payloadUrl.includes("?") ? "&" : "?") + "____v____=" + version;
   }
 
   const promise = createFromFetch(
@@ -215,11 +215,11 @@ const getLayoutPayload = (layoutKey, searchPart = "", version = 0) => {
       : "/____rsc_layout____") + cleanKey + searchPart;
 
   if (buildId && !version) {
-    layoutUrl += (layoutUrl.includes("?") ? "&" : "?") + "buildId=" + buildId;
+    layoutUrl += (layoutUrl.includes("?") ? "&" : "?") + "____buildId____=" + buildId;
   }
 
   if (version) {
-    layoutUrl += (layoutUrl.includes("?") ? "&" : "?") + "v=" + version;
+    layoutUrl += (layoutUrl.includes("?") ? "&" : "?") + "____v____=" + version;
   }
 
   const promise = createFromFetch(

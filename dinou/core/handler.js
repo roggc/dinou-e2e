@@ -1006,6 +1006,10 @@ async function handleRequest(request, platformContext = {}) {
   }
   const cookiesObj = parseCookieHeader(headersObj["cookie"] || "");
   const queryObj = Object.fromEntries(url.searchParams.entries());
+  const internalBuildId = queryObj.____buildId____;
+  const internalRefreshVersion = queryObj.____v____;
+  delete queryObj.____buildId____;
+  delete queryObj.____v____;
 
   const simReq = {
     path: pathname,
@@ -1344,7 +1348,7 @@ async function handleRequest(request, platformContext = {}) {
       isPathBlocked = pageConfig.isPathBlocked;
     }
 
-    const nonBuildIdQueryKeys = Object.keys(queryObj).filter((k) => k !== "buildId");
+    const nonBuildIdQueryKeys = Object.keys(queryObj);
     const hasQueryParams = nonBuildIdQueryKeys.length > 0;
 
     const targetFileName = isLayoutReq
@@ -1414,10 +1418,10 @@ async function handleRequest(request, platformContext = {}) {
       const useOld =
         isOld ||
         regenerating.has(cleanPath) ||
-        (!queryObj.v &&
-          queryObj.buildId &&
+        (!internalRefreshVersion &&
+          internalBuildId &&
           currentGeneratedAt &&
-          queryObj.buildId !== String(currentGeneratedAt));
+          internalBuildId !== String(currentGeneratedAt));
 
       const actualFileName = useOld
         ? isLayoutReq
