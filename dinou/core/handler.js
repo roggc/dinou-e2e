@@ -1394,17 +1394,19 @@ async function handleRequest(request, platformContext = {}) {
         }
       }
     }
-    try {
-      const metaFileName = isLayoutReq ? "layout.metadata.json" : "metadata.json";
-      const metadataPath = path.join(".dinou/dist2", cleanPath, metaFileName);
-      if (existsSync(metadataPath)) {
-        const metaObj = JSON.parse(readFileSync(metadataPath, "utf8"));
-        currentGeneratedAt = metaObj.generatedAt || null;
-        if (metaObj.ppr) {
-          isRoutePpr = true;
+    if (!currentGeneratedAt) {
+      try {
+        const metaFileName = isLayoutReq ? "layout.metadata.json" : "metadata.json";
+        const metadataPath = path.join(".dinou/dist2", cleanPath, metaFileName);
+        if (existsSync(metadataPath)) {
+          const metaObj = JSON.parse(readFileSync(metadataPath, "utf8"));
+          currentGeneratedAt = metaObj.generatedAt || null;
+          if (metaObj.ppr) {
+            isRoutePpr = true;
+          }
         }
-      }
-    } catch (e) {}
+      } catch (e) {}
+    }
 
     if (!isRoutePpr) {
       isRoutePpr = isLayoutReq
