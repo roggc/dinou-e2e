@@ -138,14 +138,15 @@ To avoid a breaking semver change in `v9.0.3`:
    - Updated client-side `getLayoutKey(pathname)` to return `null` when matching a `"!"`-prefixed `no_layout` entry so the client router renders the standalone page directly without wrapping it in an ancestor layout.
 2. **Dynamic Layout Parameter Validation & `allowISG: false` Enforcement (`dinou/core/layout-functions.js`, `dinou/core/get-jsx.js`, `dinou/core/handler.js`)**:
    - Enforced `validateParams`, `getStaticPaths`, and `allowISG() === false` defined in `layout_functions.ts` across both full-page SSR requests and `/____rsc_layout____` / `/____rsc_page____` endpoints, returning HTTP `404` and rendering `not_found.tsx` when a dynamic layout parameter is invalid or unlisted.
-3. **Full-Document Root Swap Hydration (`dinou/core/client.jsx`, `dinou/core/client-webpack.jsx`)**:
-   - Added a `useEffect` in the `Router` component that ensures `document.body.setAttribute("data-hydrated", "true")` is restored whenever a client navigation swaps the root `<html><body>` element (such as navigating into or out of a `reset_layout` or `no_layout` route).
+3. **Full-Document Root Swap Hydration (`dinou/core/client.jsx`, `dinou/core/client-webpack.jsx`, `dinou/core/slot.js`)**:
+   - Added a `useLayoutEffect` in both the `Router` component and `PageConsumer` (`<DinouPageSlot />`) that synchronously restores `document.body.setAttribute("data-hydrated", "true")` during React's commit phase (`commitLayoutEffects`) whenever a client navigation swaps the root `<html><body>` element (such as navigating into or out of a `reset_layout` or `no_layout` route).
+
 4. **Surgical Layout Tag Tracking & Revalidation (`dinou/core/handler.js`, `dinou/core/cache-revalidate.js`)**:
    - During SSG and `revalidateLayout`, `getLayoutProps` runs with `skipLayoutTags: false` only when `segment === "layout"`, writing layout cache tags exclusively to `layout.metadata.json`.
    - During `segment === "page"` renders, `skipLayoutTags: true` prevents layout tags from polluting the page's `metadata.json`.
    - `revalidateTag(tag)` inspects `layout.metadata.json` files and invokes `revalidateLayout(layoutRoutePath)` surgically without invalidating `page.rsc`.
 5. **Lazy `index.html` & Nested `layout.rsc` Re-Composition (`dinou/core/handler.js`, `dinou/core/layout-functions.js`)**:
-   - Added `getActiveLayoutChain` in `dinou/core/layout-functions.js` and lazy re-composition in `dinou/core/handler.js` (for both HTML GET requests—with or without query parameters—and `/____rsc_layout____` requests), plus `readRscFromStorage` / `readMetaFromStorage` helpers compatible across Node, Bun, Deno, and Cloudflare Workers (`env.ASSETS` + KV).
+   - Added `getActiveLayoutChain` in `dinou/core/layout-functions.js` and lazy re-composition in `dinou/core/handler.js` (for both HTML GET requests—with or without query parameters—and `/____rsc_layout____` requests, preserving runtime `DenoKVStorage` `generatedAt` timestamps over build-time `.dinou/dist2` metadata), plus `readRscFromStorage` / `readMetaFromStorage` helpers compatible across Node, Bun, Deno, and Cloudflare Workers (`env.ASSETS` + KV).
 6. **Edge/Cloudflare/Deno/Bun Bundler Parity (`dinou/node/bundle-dual-engine.js`, `dinou/bun/build.js`, `dinou/deno/build.js`, `dinou/cloudflare/build.js`)**:
    - Registered `dinou/core/slot.js` (`DinouPageSlot`, `DinouCacheSlotBoundary`) in the client manifest across all four platform bundlers so `options.segment === "layout"` serializes `<DinouPageSlot />` as a valid client reference in every runtime.
 7. **Collision-Proof Internal RSC Query Parameters (`____build_id____` & `____v____` in `dinou/core/client.jsx`, `dinou/core/client-webpack.jsx`, `dinou/core/handler.js`)**:
