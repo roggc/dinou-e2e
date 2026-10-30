@@ -102,46 +102,66 @@ When a PPR route is pre-rendered at build time (`generate-static.js`), during IS
 
 When the browser requests `/____rsc_page____` on a PPR route (e.g. during `router.refresh()` or client-side soft navigation):
 
-```mermaid
-sequenceDiagram
-    participant Browser as Browser (router.refresh / Link)
-    participant Handler as Dinou Handler (/____rsc_page____)
-    participant Storage as Storage (shell.page.json & slots/)
-    participant Splicer as spliceDynamicHolesIntoShell
-
-    Browser->>Handler: GET /____rsc_page____/triple-sinergy-test?mode=live-query
-    Handler->>Storage: Read shell.page.json (Cached Page Static Shell)
-    Handler->>Storage: refreshNestedSlotsInTree(cachedShellTree)
-    Note over Handler,Storage: Any <DinouCacheSlot> in the static shell hits<br/>its cached slot.json (or re-renders if invalidated)
-    Handler->>Splicer: spliceDynamicHolesIntoShell(cachedShellTree, getLivePageJsx, startHoleIndex)
-    Note over Splicer: Replaces ONLY [data-ppr-hole="ppr-hole-N"] nodes<br/>with live <Suspense> subtrees from getLivePageJsx()
-    Splicer-->>Handler: Hybrid JSX Tree (Frozen Static Shell + Live <Suspense> Holes)
-    Handler-->>Browser: Stream RSC Payload (pipeRSC)
-    Note over Browser: Static shell (pageSeq) stays 100% immutable!<br/>Dynamic hole updates live with ?mode=live-query!
+```text
++-------------------+      GET /____rsc_page____/triple-sinergy-test?mode=live-query
+|      Browser      | -------------------------------------------------------------------> +-------------------------+
+| (router.refresh / |                                                                      |      Dinou Handler      |
+|   <Link> nav)     |                                                                      |  (dinou/core/handler.js)|
++-------------------+                                                                      +-------------------------+
+          ^                                                                                             |
+          |                                            1. Read shell.page.json (Cached Page Shell)      v
+          |                                           +-------------------------------------------------+
+          |                                           |
+          |                                           v
+          |                                 +-------------------------------------------------------------------+
+          |                                 | Storage (.dinou/dist2 or KV):                                     |
+          |                                 |   - deserializeJSX(shellPageJson) -> cachedShellTree              |
+          |                                 |   - refreshNestedSlotsInTree(cachedShellTree)                     |
+          |                                 |     (static-shell <DinouCacheSlot>s hit slots/<id>/slot.json)     |
+          |                                 +-------------------------------------------------------------------+
+          |                                           |
+          |                                           | 2. Splices live <Suspense> holes into cachedShellTree
+          |                                           v
+          |                                 +-------------------------------------------------------------------+
+          |                                 | spliceDynamicHolesIntoShell(cachedShellTree, getLivePageJsx, idx) |
+          |                                 |   - Keeps outer page shell (pageSeq = 100) 100% frozen            |
+          |                                 |   - Replaces ONLY [data-ppr-hole="ppr-hole-N"] placeholders       |
+          |                                 |     with live <Suspense> subtrees evaluated with ?mode=live-query |
+          |                                 +-------------------------------------------------------------------+
+          |                                           |
+          |     3. Stream Hybrid RSC Payload (pipeRSC)|
+          +-------------------------------------------+
 ```
 
 ---
 
 ### 3.3. PPR-Aware `revalidatePage`, Surgical `{ onlyRefreshSlots: true }`, and Lazy Layout Re-Composition Across PPR & Static Routes (`cache-revalidate.js`, `handler.js`)
 
-```mermaid
-sequenceDiagram
-    participant Action as Server Action
-    participant Reval as cache-revalidate.js
-    participant Storage as Storage (.dinou/dist2 or KV)
-    participant Handler as handler.js (GET /triple-sinergy-test)
-    participant Browser as Browser
+```text
+[Server Action: revalidateTag("ts-layout-shell-slot-tag")]
+   |
+   +--> 1. Delete invalidated slot cache first:
+   |       storage.delete("slots/ts-layout-shell-slot/slot.json" & "slot.metadata.json")
+   |
+   +--> 2. Match "ts-layout-shell-slot-tag" in layout.metadata.json (slotTags):
+           revalidateLayout("/triple-sinergy-test")
+             - Re-renders layout.rsc with fresh layout slot (seq = 102)
+             - Updates layout.metadata.json (generatedAt = T2)
+             - Child pages (ppr-a, ppr-b, static-a, static-b) are NOT re-executed!
 
-    Action->>Reval: revalidateTag("ts-layout-shell-slot-tag")
-    Reval->>Storage: 1. Delete slots/ts-layout-shell-slot/slot.json
-    Reval->>Reval: 2. Match slotTags in layout.metadata.json -> revalidateLayout("/triple-sinergy-test")
-    Note over Reval,Storage: Re-renders layout.rsc with fresh layout slot (102)<br/>and updates layout.metadata.json (generatedAt = T2).<br/>Child pages (ppr-a, static-b) are NOT re-executed!
-
-    Browser->>Handler: GET /triple-sinergy-test (PPR Child)
-    Handler->>Storage: Detect leafLayout.generatedAt (T2) > metadata.generatedAt (T1)
-    Handler->>Storage: Read fresh layout.rsc (T2) + cached shell.rsc (T1)
-    Handler->>Handler: Re-compose shell.html & index.html (with __DINOU_PPR__ = true)
-    Handler-->>Browser: Flush updated shellPrelude (layoutSlot = 102, pageShell = 103)<br/>+ stream live <template id="ppr-content-ppr-hole-1">
+[Next Browser Request: GET /triple-sinergy-test (PPR Child Route)]
+   |
+   +--> 3. Handler checks activeLayoutChain timestamps:
+   |       Detects leafLayout.generatedAt (T2) > page metadata.generatedAt (T1)
+   |
+   +--> 4. Lazy HTML Re-Composition (no page.tsx execution!):
+   |       Reads fresh layout.rsc (T2) + existing cached shell.rsc (T1)
+   |       renderHtmlStream(layout.rsc [T2], { pageRscStream: shell.rsc [T1] })
+   |       Persists updated shell.html, index.html & metadata.json (generatedAt = T2)
+   |
+   +--> 5. PPR Streaming Resume (handlePprResume):
+           Immediately flushes updated shellPrelude (layoutSlot = 102, pageShell = 103)
+           Streams live dynamic hole: <template id="ppr-content-ppr-hole-1"> + <script>
 ```
 
 1. **Lazy Layout Re-Composition for Both Static and PPR Routes (`dinou/core/handler.js`)**:
