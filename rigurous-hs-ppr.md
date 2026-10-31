@@ -1,4 +1,4 @@
-# Pure Horizontal Segmentation + Partial Prerendering (PPR) Synergy in Dinou — Empirical TDD Bug Report, Core Handler Fixes, User Guide, and 10-Scenario E2E Reference
+# Pure Horizontal Segmentation + Partial Prerendering (PPR) Synergy in Dinou — Empirical TDD Bug Report, Core Handler Fixes, User Guide, and 11-Scenario E2E Reference
 
 This document provides a complete technical record and developer guide for the **Pure Horizontal Segmentation + Partial Prerendering (PPR) Synergy (without `<DinouCacheSlot>`)** in Dinou v9.0.3: how **Horizontal Segmentation** (`layout.rsc` / `shell.layout.json` vs. `shell.rsc` / `shell.page.json`, `@sidebar` parallel slots, multi-level nested layouts, `reset_layout` / `no_layout` boundaries, and surgical `revalidatePage` / `revalidateLayout` / `revalidateTag` invalidation) interacts with **Partial Prerendering (`ppr = true`)** (`shell.html`, pre-order `ppr-hole-N` indexing across layouts and pages, static vs. dynamic `<Suspense>` resolution, and `spliceDynamicHolesIntoShell` during soft navigation and `router.refresh`).
 
@@ -12,9 +12,9 @@ With the addition of this suite (`src/hs-ppr-test/` in `test-9.0.2`, mirrored to
 7. **HS + `<DinouCacheSlot>` + PPR (Triple Synergy)**: `/triple-sinergy-test` (`/t-rigurous-triple-sinergy`)
 
 Following a strict **Test-Driven Development (TDD)** methodology in `test-9.0.2`:
-1. **Phase 1 (Test Suite Creation & Empirical Failure Confirmation)**: We designed and implemented the 10-scenario **Horizontal Segmentation + PPR (No-CacheSlot)** stress suite in `src/hs-ppr-test/` and executed it against the unmodified engine (`build:node:esbuild` + `start:node:esbuild`). On the first run, **7 of 10 scenarios passed (`7/10 PASSED, 3/10 FAILED`)**, exposing a critical architectural gap in `/____rsc_layout____` handling on PPR routes.
-2. **Phase 2 (Surgical Core Fix in `dinou/core/handler.js`)**: We traced why `router.refresh({ layout: true })` leaked unrevalidated layout state on PPR routes and why PPR TTL expiration bypassed segmented layout caching, and implemented surgical fixes in `dinou/core/handler.js`.
-3. **Phase 3 (Full Verification & Port to `dinou-e2e`)**: After rebuilding, `/hs-ppr-test` passed **10/10 in green (`0` failed, `0` hydration mismatches)**, all **8 rigorous suites** in `test-9.0.2` passed 100%, and the suite was ported to `dinou-e2e/src/t-rigurous-hs-ppr/` alongside its Playwright E2E specification in `dinou-e2e/e2e/example.spec.ts`.
+1. **Phase 1 (Test Suite Creation & Empirical Failure Confirmation)**: We designed and implemented the 11-scenario **Horizontal Segmentation + PPR (No-CacheSlot)** stress suite in `src/hs-ppr-test/` and executed it against the unmodified engine (`build:node:esbuild` + `start:node:esbuild`). First, Scenarios 1–10 exposed a critical architectural gap in `/____rsc_layout____` handling on PPR routes (`7/10 PASSED, 3/10 FAILED`). Next, adding Scenario 11 (clock-based layout TTL expiration `revalidate: 1` combined with a long-lived PPR child page `revalidate: 3600`) exposed a second architectural gap (`10/11 PASSED, 1/11 FAILED`) where layout clock TTLs were ignored during active layout chain inspection and where `combinedRevalidate` overwrote the child page's own `pageRevalidate` TTL.
+2. **Phase 2 (Surgical Core Fixes in `dinou/core/handler.js` & `dinou/core/cache-revalidate.js`)**: We implemented surgical fixes in `dinou/core/handler.js` and `dinou/core/cache-revalidate.js` to splice `shell.layout.json` on `/____rsc_layout____`, evaluate per-layout clock TTLs along `activeLayoutChain`, and track `pageGeneratedAt` + `pageRevalidate` independently from `combinedRevalidate`.
+3. **Phase 3 (Full Verification & Port to `dinou-e2e`)**: After rebuilding, `/hs-ppr-test` passed **11/11 in green (`0` failed, `0` hydration mismatches)**, all **8 rigorous suites** in `test-9.0.2` passed 100%, and the suite was ported to `dinou-e2e/src/t-rigurous-hs-ppr/` alongside its Playwright E2E specification in `dinou-e2e/e2e/example.spec.ts`.
 
 ---
 
@@ -66,11 +66,22 @@ HS + PPR SUITE SUMMARY: DONE: 7/10 PASSED, 3 FAILED
   4. For `/____rsc_layout____/hs-ppr-test`, `handler.js` skipped the static `layout.rsc` cache file because `isRoutePpr` was `true` (since the layout has dynamic `<Suspense>` holes that must be evaluated per-request). However, the `shell.*.json` + `spliceDynamicHolesIntoShell` block at line 1694 only checked `if (isPageReq && isRoutePpr && !isDev && !isFresh)`—it **did not include `isLayoutReq`**!
   5. Consequently, `/____rsc_layout____/hs-ppr-test` fell all the way through to the dynamic fallback `getJSX(reqPath, query, { segment: "layout" })`, which re-executed `layout.tsx`, `layout_functions.ts` (`getProps`), and `@sidebar/page.tsx` from scratch, leaking the unrevalidated `101` state into the DOM (and overwriting the client's L1 layout state, which cascaded into Test 3 and Test 4).
 
-### Root Cause of Bug #2: PPR Route TTL Expiration (`isExpired`) Bypassed Segmented Layout Caching
+### Root Cause of Bug #2 (Exposed by Scenario 11): Clock-Based Layout TTL Expiration (`revalidate: N` in `layout_functions.ts`) Was Ignored Along `activeLayoutChain`, While `combinedRevalidate` Triggered Premature Child Page Regeneration
 
-- **Where**: `dinou/core/handler.js` (lines 1456–1466).
-- **What Happened**:
-  - When a PPR route's `metadata.json` had a finite `revalidate` TTL that expired (`isExpired === true`), the `shell.html` branch in `handler.js` simply skipped serving `shell.html` and fell through to a full dynamic render (`getJSX` for the entire route)—re-executing both the layout and the page even if the layout's own `layout.metadata.json` TTL was still valid.
+When we added **Scenario 11** (`/hs-ppr-test/ttl-ppr`, where `layout_functions.ts` exports `revalidate = () => 1` second and `page_functions.ts` exports `revalidate = () => 3600` seconds), the suite failed before our second core fix in two distinct stages:
+
+1. **First Empirical Failure**:
+   ```text
+   [FAILED] Test 11: Expected expired TTL layout (revalidate=1s) to update to 501 in shell.html, got seq=100, props=100
+   ```
+   - **Cause**: In `dinou/core/handler.js`, when checking `activeLayoutChain` on both `/____rsc_layout____` and HTML requests, Dinou read each layout's `layout.metadata.json` (`generatedAt`) to detect whether an ancestor layout was newer than a leaf layout, **but never checked whether `Date.now() > entry.generatedAt + entry.revalidate * 1000`**! Meanwhile, the route's `metadata.json` stored `revalidate: combinedRevalidate` (`Math.min(layoutRevalidate, pageRevalidate) = 1`), so when 1 second elapsed, `isExpired` fired `revalidatePage("/hs-ppr-test/ttl-ppr")`—which re-executed the child page and composed it with the **still-stale `layout.rsc` (`100`)**!
+2. **Second Empirical Failure (After Adding Layout TTL Check)**:
+   ```text
+   [FAILED] Test 11: Layout TTL expiry re-executed long-lived PPR child page (revalidate=3600s)! Got pageShell=999 (expected 100, not 999)
+   ```
+   - **Cause**: Even after `activeLayoutChain` regenerated the expired `layout.rsc` (`501`) and lazily recomposed `shell.html` (`updatedMeta.generatedAt = leafLayout.generatedAt`), two subtle bugs caused `isExpired` to still think the child page's own TTL had expired:
+     - Lazy `shell.html` re-composition updated `metadata.generatedAt` to `leafLayout.generatedAt` without preserving `pageGeneratedAt` and `pageRevalidate` separately from `combinedRevalidate`.
+     - In `dinou/core/cache-revalidate.js` (`resolveRouteConfigForRevalidate`), `let revalidate = existingMeta?.revalidate` read the route's `combinedRevalidate` (`1`) and overwrote `currentMeta.pageRevalidate` (`3600`) with `1` during `revalidatePage`!
 
 ---
 
@@ -107,11 +118,17 @@ In `dinou/core/handler.js` (lines 1694–1739), we extended the PPR shell-splici
 - **Hole Offset Calculation**: Uses `holeOffset = 0` for `isLayoutReq` (since layout `<Suspense>` holes always start at `ppr-hole-1`) and `holeOffset = routeMeta?.layoutPprHoles?.length ?? 0` for `isPageReq`.
 - **Result**: Calling `router.refresh({ layout: true })` on a PPR route now refreshes all dynamic `<Suspense>` holes inside the layout and `@sidebar` with live request context (cookies, headers, query params) while strictly preserving the layout's frozen static shell until `revalidateLayout`, `revalidateTag`, or `revalidatePath` is invoked (or `<Link fresh>` is used).
 
-### 3.2. Surgical Page Revalidation on PPR TTL Expiration
+### 3.2. Independent Clock-Based Layout TTL vs. Page TTL Expiration & Lazy `shell.html` Re-Composition
 
-In `dinou/core/handler.js` (lines 1456–1466), when `isExpired` is detected on a PPR route's `metadata.json`:
-- Instead of falling through to an unsegmented full-route render, `handler.js` now invokes `await revalidatePage(reqPath)` and reloads `shell.html` and `metadata.json` from the newly regenerated static cache.
-- Because `revalidatePage(reqPath)` composes the freshly rendered page shell with the existing cached `layout.rsc` (unless the layout itself is expired), the layout's static shell is never unnecessarily re-executed when only the page's TTL expires.
+In `dinou/core/handler.js` and `dinou/core/cache-revalidate.js`:
+1. **Per-Layout Clock TTL Check Along `activeLayoutChain`**:
+   - In both the `/____rsc_layout____` endpoint and the HTML lazy re-composition block in `dinou/core/handler.js`, each layout entry in `activeLayoutChain` now reads `entry.revalidate` from `layout.metadata.json`.
+   - Whenever `typeof entry.revalidate === "number" && entry.revalidate >= 1 && Date.now() > entry.generatedAt + entry.revalidate * 1000`, Dinou automatically invokes `await revalidateLayout(entry.layoutRoutePath)` (from outer to inner layout) and refreshes `entry.generatedAt`.
+   - Because `leafLayout.generatedAt` is now newer than the child route's `metadata.generatedAt`, Dinou immediately triggers **lazy `shell.html` re-composition**—combining the freshly regenerated `layout.rsc` with the child route's existing frozen `shell.rsc` / `page.rsc` without re-executing the child page!
+2. **Independent `pageRevalidate` & `pageGeneratedAt` Tracking**:
+   - `metadata.json` now persists both `pageRevalidate` (the page's own `revalidate` export from `page_functions.ts`, or `null` if the page has no clock TTL) and `pageGeneratedAt` (updated only when the page itself is generated or revalidated via `revalidatePage`).
+   - `resolveRouteConfigForRevalidate` in `dinou/core/cache-revalidate.js` resolves `pageRevalidate` strictly from `existingMeta?.pageRevalidate` or `pfMod.revalidate` (never from `existingMeta?.revalidate`, which is `combinedRevalidate`).
+   - Route-level `isExpired` in `dinou/core/handler.js` evaluates `pageOwnRevalidate` against `pageOwnGeneratedAt`, ensuring that a short-lived layout TTL (`revalidate = 1s`) never forces a long-lived child page (`revalidate = 3600s`) to re-execute.
 
 ---
 
@@ -232,7 +249,7 @@ When a parent layout has `ppr = true`, child pages inherit PPR by default, or ca
 
 ---
 
-## 5. Phase 3: The 10-Scenario Pure Horizontal Segmentation + PPR Test Suite (`dinou-e2e/src/t-rigurous-hs-ppr/` & `test-9.0.2/src/hs-ppr-test/`)
+## 5. Phase 3: The 11-Scenario Pure Horizontal Segmentation + PPR Test Suite (`dinou-e2e/src/t-rigurous-hs-ppr/` & `test-9.0.2/src/hs-ppr-test/`)
 
 ### 5.1. Route Hierarchy Created in `dinou-e2e/src/t-rigurous-hs-ppr/` (and `test-9.0.2/src/hs-ppr-test/`)
 
@@ -250,11 +267,12 @@ When a parent layout has `ppr = true`, child pages inherit PPR by default, or ca
 | `src/t-rigurous-hs-ppr/reset-ppr/reset_layout`, `layout.tsx`, `layout_functions.ts`, `page.tsx` & `page_functions.ts` | **Isolated `reset_layout` + PPR Route (`/t-rigurous-hs-ppr/reset-ppr`)** detaching from L1 Layout and streaming its own standalone `ppr-hole-1`. |
 | `src/t-rigurous-hs-ppr/no-layout-ppr/no_layout`, `page.tsx` & `page_functions.ts` | **Standalone `no_layout` + PPR Route (`/t-rigurous-hs-ppr/no-layout-ppr`)** rendering with zero layouts and streaming `ppr-hole-1`. |
 | `src/t-rigurous-hs-ppr/team/[team]/layout.tsx`, `layout_functions.ts`, `page.tsx` & `not_found.tsx` | **Dynamic Parameter Guarded PPR Layout (`/t-rigurous-hs-ppr/team/[team]`)** with `ppr = true`, `getStaticPaths() -> [{ team: "alpha" }]`, `validateParams` (`alpha` or `beta`), and `allowISG = false`. |
-| `e2e/example.spec.ts` | Playwright E2E test suite (`Dinou Core: Rigorous HS + PPR Synergy (/t-rigurous-hs-ppr)`) verifying direct SSR on `no-layout-ppr` and `reset-ppr`, all 10 automated scenarios, and hard-reload (`F5`) lazy `shell.html` re-composition with zero hydration errors. |
+| `src/t-rigurous-hs-ppr/ttl-ppr/layout.tsx`, `layout_functions.ts`, `page.tsx` & `page_functions.ts` | **Clock-Based Layout TTL + Long-Lived PPR Child Page (`/t-rigurous-hs-ppr/ttl-ppr`)** where `layout_functions.ts` exports `ppr = true` and `revalidate = () => 1` (1-second TTL), while `page_functions.ts` exports `ppr = true` and `revalidate = () => 3600` (1-hour TTL). |
+| `e2e/example.spec.ts` | Playwright E2E test suite (`Dinou Core: Rigorous HS + PPR Synergy (/t-rigurous-hs-ppr)`) verifying direct SSR on `no-layout-ppr` and `reset-ppr`, all 11 automated scenarios, and hard-reload (`F5`) lazy `shell.html` re-composition with zero hydration errors. |
 
 ---
 
-### 5.2. Summary of the 10 Automated Verification Scenarios (`10/10 PASSED`)
+### 5.2. Summary of the 11 Automated Verification Scenarios (`11/11 PASSED`)
 
 | # | Scenario Name | What It Verifies & Asserts | Status |
 | :--- | :--- | :--- | :--- |
@@ -268,6 +286,7 @@ When a parent layout has `ppr = true`, child pages inherit PPR by default, or ca
 | **8** | **Full-Segment `revalidatePath('/t-rigurous-hs-ppr/nested')` Simultaneous Layout Shell + Page Shell Regeneration Preserving Client State** | Bumps both L2 Layout and Nested Page counters to `401`, calls `revalidatePath("/t-rigurous-hs-ppr/nested")`, and triggers `router.refresh({ layout: true })`. Verifies both L2 Layout shell (`401`), Nested Page shell (`401`), and their dynamic holes (`401`) update in the DOM while preserving both L1 and L2 client `mountId`s and `useState` counters. | **PASSED** |
 | **9** | **Standalone PPR Boundaries: `reset_layout` (`/reset-ppr`) & `no_layout` (`/no-layout-ppr`) Wire Split & Hydration** | Fetches `/t-rigurous-hs-ppr/reset-ppr?rmode=reset-wire` and `/t-rigurous-hs-ppr/no-layout-ppr?nlmode=nl-wire`. Verifies neither route includes the ancestor `#hsppr-l1-layout`, both pre-render their own isolated static shells (`100`) in `shell.html`, and both stream their own `ppr-hole-1` with live query parameters (`reset-wire` and `nl-wire`). | **PASSED** |
 | **10** | **Dynamic Layout Parameter Validation (`validateParams` + `getStaticPaths` + `allowISG = false`) on PPR Routes (`/team/[team]`)** | Verifies pre-rendered `/t-rigurous-hs-ppr/team/alpha?tmode=alpha-wire` returns `200` with `Team Shell: alpha` in `shell.html` and `alpha-wire` in the streamed `<template>` chunk, while `/team/beta` (`allowISG = false`) and `/team/gamma` (`validateParams() === false`) return `404` on both HTML and `/____rsc_layout____` endpoints. | **PASSED** |
+| **11** | **Clock-Based Layout TTL Expiration (`revalidate = 1s` in `layout_functions.ts`) + Lazy `shell.html` Re-Composition Preserving Long-Lived PPR Child Page (`revalidate = 3600s`)** | Soft-navigates to `/t-rigurous-hs-ppr/ttl-ppr`, increments client state in the TTL layout, mutates TTL layout counters to `501`, and poisons the child PPR page's in-memory shell counter to `999` **without** calling any `revalidate*` function. Waits `1.3s` for the layout's 1-second TTL to expire by clock and fetches `/t-rigurous-hs-ppr/ttl-ppr?ttlmode=ttl-verified`. Verifies `layout.rsc` and `shell.layout.json` regenerate automatically to `501` and lazily recompose `shell.html` (`501`), while the child PPR page (`revalidate = 3600s`) remains frozen at `100` (not `999`), and `router.refresh({ layout: true })` updates the DOM to `501` while preserving client state. | **PASSED** |
 
 ---
 
@@ -283,5 +302,5 @@ With `/hs-ppr-test` completed, all **8 rigorous test suites** in `test-9.0.2` (c
 | **4** | `/horizontal-segmentation-test` (`/t-rigurous-hs`) | **Horizontal Segmentation (HS) Only** | 12 Automated Scenarios | **12 / 12 PASSED** |
 | **5** | `/ppr-cache-slot-test` (`/t-rigorous-sinergy`) | **Pairwise #1: PPR + `<DinouCacheSlot>`** | 2 Automated Blocks | **2 / 2 PASSED** |
 | **6** | `/hs-cache-slot-test` (`/t-rigurous-hs-cache-slot`) | **Pairwise #2: HS + `<DinouCacheSlot>` (Non-PPR)** | 10 Automated Scenarios | **10 / 10 PASSED** |
-| **7** | `/hs-ppr-test` (`/t-rigurous-hs-ppr`) | **Pairwise #3: HS + PPR (No-CacheSlot)** | 10 Automated Scenarios | **10 / 10 PASSED** |
+| **7** | `/hs-ppr-test` (`/t-rigurous-hs-ppr`) | **Pairwise #3: HS + PPR (No-CacheSlot)** | 11 Automated Scenarios | **11 / 11 PASSED** |
 | **8** | `/triple-sinergy-test` (`/t-rigurous-triple-sinergy`) | **Triple Synergy: HS + `<DinouCacheSlot>` + PPR** | 12 Automated Scenarios | **12 / 12 PASSED** |

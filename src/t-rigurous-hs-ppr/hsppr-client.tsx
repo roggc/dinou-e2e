@@ -152,6 +152,12 @@ const INITIAL_TESTS: HsPprTestResult[] = [
     status: "pending",
     detail: "Waiting...",
   },
+  {
+    id: 11,
+    name: "11. Clock-Based Layout TTL Expiration (revalidate=1s in layout_functions.ts) + Lazy shell.html Re-Composition Preserving Long-Lived PPR Child Page (revalidate=3600s)",
+    status: "pending",
+    detail: "Waiting...",
+  },
 ];
 
 function getGlobalSuiteState(): HsPprSuiteGlobalState {
@@ -933,6 +939,122 @@ export function HsPprAutomatedSuiteRunner() {
         );
       }
 
+      return "/team/alpha streamed 200 PPR shell+hole; /team/beta (allowISG=false) & /team/gamma (validateParams=false) returned 404 on HTML & RSC";
+    });
+
+    // TEST 11: Clock-Based Layout TTL Expiration (revalidate=1s in layout_functions.ts) + Lazy shell.html Re-Composition Preserving Long-Lived PPR Child Page (revalidate=3600s)
+    await runStep(10, async () => {
+      const l1MountBefore = readText("hsppr-l1-mount-id");
+
+      clickEl("hsppr-link-ttl-ppr");
+      await waitForCondition(
+        () =>
+          window.location.pathname === "/t-rigurous-hs-ppr/ttl-ppr" &&
+          readText("hsppr-ttl-layout-seq") === "100" &&
+          readText("hsppr-ttl-page-shell-seq") === "100" &&
+          readText("hsppr-ttl-layout-mount-id") !== "" &&
+          readText("hsppr-ttl-layout-mount-id") !== "ssr",
+        10000,
+        "soft nav to /t-rigurous-hs-ppr/ttl-ppr"
+      );
+
+      clickEl("hsppr-ttl-layout-client-inc");
+      await waitForCondition(
+        () => readText("hsppr-ttl-layout-client-count") === "1",
+        5000,
+        "ttl layout client counter = 1"
+      );
+      const ttlLayoutMountBefore = readText("hsppr-ttl-layout-mount-id");
+
+      // Mutate TTL layout state to 501 AND poison child PPR page static shell to 999 WITHOUT calling revalidate*
+      await hspprMutateState({
+        ttlLayoutShellSeq: 501,
+        ttlLayoutPropsSeq: 501,
+        ttlLayoutHoleSeq: 501,
+        ttlPageShellSeq: 999,
+        ttlPagePropsSeq: 999,
+        ttlPageHoleSeq: 501,
+      });
+
+      // Wait 1.3s for the layout's revalidate=1s clock TTL to expire (while child page revalidate=3600s is still valid!)
+      await new Promise((r) => setTimeout(r, 1300));
+
+      // First request after TTL expiry triggers layout regeneration & lazy shell.html re-composition
+      await fetch("/t-rigurous-hs-ppr/ttl-ppr?ttlmode=ttl-trigger", {
+        headers: { Accept: "text/html" },
+        credentials: "same-origin",
+      });
+      await new Promise((r) => setTimeout(r, 300));
+
+      const wireRes = await fetch("/t-rigurous-hs-ppr/ttl-ppr?ttlmode=ttl-verified", {
+        headers: { Accept: "text/html" },
+        credentials: "same-origin",
+      });
+      const { shell, stream } = splitPprWire(await wireRes.text());
+      if (
+        extractIdText(shell, "hsppr-ttl-layout-seq") !== "501" ||
+        extractIdText(shell, "hsppr-ttl-layout-props-seq") !== "501"
+      ) {
+        throw new Error(
+          `Expected expired TTL layout (revalidate=1s) to update to 501 in shell.html, got seq=${extractIdText(
+            shell,
+            "hsppr-ttl-layout-seq"
+          )}, props=${extractIdText(shell, "hsppr-ttl-layout-props-seq")}`
+        );
+      }
+      if (
+        extractIdText(shell, "hsppr-ttl-page-shell-seq") !== "100" ||
+        extractIdText(shell, "hsppr-ttl-page-props-seq") !== "100"
+      ) {
+        throw new Error(
+          `Layout TTL expiry re-executed long-lived PPR child page (revalidate=3600s)! Got pageShell=${extractIdText(
+            shell,
+            "hsppr-ttl-page-shell-seq"
+          )} (expected 100, not 999)`
+        );
+      }
+      if (
+        extractIdText(stream, "hsppr-ttl-layout-hole-seq") !== "501" ||
+        extractIdText(stream, "hsppr-ttl-page-hole-seq") !== "501" ||
+        extractIdText(stream, "hsppr-ttl-page-hole-query") !== "ttl-verified"
+      ) {
+        throw new Error("Streamed dynamic holes on /ttl-ppr did not emit 501 / ttl-verified");
+      }
+
+      // Verify router.refresh({ layout: true }) serves updated layout shell (501) + frozen page shell (100)
+      router.refresh({ layout: true });
+      await waitForCondition(
+        () =>
+          readText("hsppr-ttl-layout-seq") === "501" &&
+          readText("hsppr-ttl-layout-props-seq") === "501" &&
+          readText("hsppr-ttl-layout-hole-seq") === "501" &&
+          readText("hsppr-ttl-page-hole-seq") === "501",
+        10000,
+        "DOM updated to TTL layout=501 after router.refresh({ layout: true })"
+      );
+      if (
+        readText("hsppr-ttl-page-shell-seq") !== "100" ||
+        readText("hsppr-ttl-page-props-seq") !== "100"
+      ) {
+        throw new Error(
+          `router.refresh({ layout: true }) after layout TTL expiry leaked page shell ${readText(
+            "hsppr-ttl-page-shell-seq"
+          )} (expected 100)`
+        );
+      }
+      if (
+        readText("hsppr-l1-mount-id") !== l1MountBefore ||
+        readText("hsppr-ttl-layout-mount-id") !== ttlLayoutMountBefore ||
+        readText("hsppr-ttl-layout-client-count") !== "1"
+      ) {
+        throw new Error("Client state lost during TTL layout refresh");
+      }
+
+      await hspprMutateState({
+        ttlPageShellSeq: 100,
+        ttlPagePropsSeq: 100,
+      });
+
       // Return to /t-rigurous-hs-ppr index
       clickEl("hsppr-link-page-a");
       await waitForCondition(
@@ -941,7 +1063,7 @@ export function HsPprAutomatedSuiteRunner() {
         "return to /t-rigurous-hs-ppr"
       );
 
-      return "/team/alpha streamed 200 PPR shell+hole; /team/beta (allowISG=false) & /team/gamma (validateParams=false) returned 404 on HTML & RSC";
+      return "Layout TTL (1s) expired by clock -> regenerated layout.rsc & shell.layout.json (501) + lazily recomposed shell.html while preserving child PPR page shell (100, not 999)";
     });
 
     sync(false, true);
@@ -955,7 +1077,7 @@ export function HsPprAutomatedSuiteRunner() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <span className="font-bold text-indigo-300">
-            Automated HS + PPR (No-CacheSlot) E2E Verification Suite (10 Tests)
+            Automated HS + PPR (No-CacheSlot) E2E Verification Suite (11 Tests)
           </span>
           <span id="hsppr-suite-summary" className="ml-3 font-mono text-slate-300">
             {suiteState.finished
@@ -972,7 +1094,7 @@ export function HsPprAutomatedSuiteRunner() {
           onClick={runSuite}
           className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold cursor-pointer"
         >
-          {suiteState.running ? "Running Suite..." : "Run Full 10-Test HS+PPR Suite"}
+          {suiteState.running ? "Running Suite..." : "Run Full 11-Test HS+PPR Suite"}
         </button>
       </div>
 

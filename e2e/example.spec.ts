@@ -6827,7 +6827,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         timeout: 60000,
       });
 
-      for (let i = 1; i <= 10; i++) {
+      for (let i = 1; i <= 11; i++) {
         await expect(page.locator(`#hscs-test-status-${i}`)).toHaveText("passed");
       }
 
@@ -6868,7 +6868,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("#hsppr-page-a")).toBeVisible();
     });
 
-    test("Full 10-Scenario HS + PPR (No-CacheSlot) Stress Suite passes end-to-end and F5 reload has zero hydration mismatch", async ({
+    test("Full 11-Scenario HS + PPR (No-CacheSlot) Stress Suite passes end-to-end and F5 reload has zero hydration mismatch", async ({
       page,
     }) => {
       const hydrationErrors: string[] = [];
@@ -6887,7 +6887,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
 
       await page.click("#hsppr-run-all-btn");
-      await expect(page.locator("#hsppr-suite-summary")).toHaveText("DONE: 10/10 PASSED, 0 FAILED", {
+      await expect(page.locator("#hsppr-suite-summary")).toHaveText("DONE: 11/11 PASSED, 0 FAILED", {
         timeout: 60000,
       });
 

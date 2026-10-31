@@ -128,6 +128,13 @@ export default function HsPprL1Layout({
           >
             Team Alpha (Validated PPR)
           </Link>
+          <Link
+            id="hsppr-link-ttl-ppr"
+            href="/t-rigurous-hs-ppr/ttl-ppr"
+            className="underline text-orange-300"
+          >
+            TTL Layout (2s) + PPR Child
+          </Link>
         </nav>
 
         <HsPprManualControls />

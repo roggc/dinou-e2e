@@ -49,6 +49,14 @@ export interface HsPprServerState {
   teamLayoutShellSeq: number;
   teamPageShellSeq: number;
   teamPageHoleSeq: number;
+
+  // Clock-based Layout TTL + PPR child route (/t-rigurous-hs-ppr/ttl-ppr)
+  ttlLayoutShellSeq: number;
+  ttlLayoutPropsSeq: number;
+  ttlLayoutHoleSeq: number;
+  ttlPageShellSeq: number;
+  ttlPagePropsSeq: number;
+  ttlPageHoleSeq: number;
 }
 
 export const DEFAULT_HSPPR_STATE: HsPprServerState = {
@@ -88,6 +96,13 @@ export const DEFAULT_HSPPR_STATE: HsPprServerState = {
   teamLayoutShellSeq: 100,
   teamPageShellSeq: 100,
   teamPageHoleSeq: 100,
+
+  ttlLayoutShellSeq: 100,
+  ttlLayoutPropsSeq: 100,
+  ttlLayoutHoleSeq: 100,
+  ttlPageShellSeq: 100,
+  ttlPagePropsSeq: 100,
+  ttlPageHoleSeq: 100,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {

@@ -72,6 +72,7 @@ async function resolveRouteConfigForRevalidate(pagePath, reqSegments, existingMe
     typeof existingMeta?.ppr === "boolean" ? existingMeta.ppr : null;
   let tags = Array.isArray(existingMeta?.tags) ? existingMeta.tags : null;
   let revalidate = existingMeta?.revalidate;
+  let pageRevalidate = existingMeta?.pageRevalidate;
 
   let pfMod = null;
   let dParams = {};
@@ -150,24 +151,34 @@ async function resolveRouteConfigForRevalidate(pagePath, reqSegments, existingMe
     } catch (e) {}
   }
 
-  if (revalidate === undefined && pfMod) {
+  if ((revalidate === undefined || pageRevalidate === undefined) && pfMod) {
     try {
       const defaultExport = pfMod.default?.default
         ? pfMod.default.default
         : pfMod.default;
-      revalidate =
+      const pfRevalidate =
         typeof pfMod.revalidate === "function"
           ? await pfMod.revalidate()
           : typeof defaultExport?.revalidate === "function"
           ? await defaultExport.revalidate()
           : pfMod.revalidate ?? defaultExport?.revalidate;
+      if (revalidate === undefined) {
+        revalidate = pfRevalidate;
+      }
+      if (pageRevalidate === undefined) {
+        pageRevalidate = pfRevalidate !== undefined ? pfRevalidate : null;
+      }
     } catch (e) {}
+  }
+  if (pageRevalidate === undefined) {
+    pageRevalidate = null;
   }
 
   return {
     isRoutePpr: Boolean(isRoutePpr),
     tags: Array.isArray(tags) ? tags : [],
     revalidate,
+    pageRevalidate,
   };
 }
 
@@ -285,6 +296,9 @@ async function revalidatePage(reqPath, internalOptions = {}) {
     if (currentMeta.revalidate === undefined && routeCfg.revalidate !== undefined) {
       currentMeta.revalidate = routeCfg.revalidate;
     }
+    if (currentMeta.pageRevalidate === undefined && routeCfg.pageRevalidate !== undefined) {
+      currentMeta.pageRevalidate = routeCfg.pageRevalidate;
+    }
     if (currentMeta.status === undefined) {
       currentMeta.status = 200;
     }
@@ -350,6 +364,7 @@ async function revalidatePage(reqPath, internalOptions = {}) {
     const now = Date.now();
     const newGenTime = nextMonotonicGenTime(prevGenTime);
     currentMeta.generatedAt = newGenTime;
+    currentMeta.pageGeneratedAt = newGenTime;
 
     let newHtml = cached ? cached.content : "";
     let renderedRsc = "";

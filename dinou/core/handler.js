@@ -1388,12 +1388,44 @@ async function handleRequest(request, platformContext = {}) {
             const lMeta = await readMetaFromStorage(storage, lMetaKey, lRscKey, platformContext, request.url);
             entry.generatedAt = Number(lMeta?.generatedAt || 0);
             entry.suspenseCount = Number(lMeta?.suspenseCount || 0);
+            entry.revalidate = lMeta?.revalidate;
           }
-          if (!platformContext?.isSSG && isLayoutReq && !isOld && !dynamicState.value && activeChain.length > 1) {
-            const maxAncestorGen = Math.max(0, ...activeChain.slice(1).map((l) => l.generatedAt || 0));
-            if (activeChain[0].generatedAt > 0 && maxAncestorGen > activeChain[0].generatedAt) {
-              const { revalidateLayout } = await import("./cache-revalidate.js");
-              await revalidateLayout(activeChain[0].layoutRoutePath);
+          if (!platformContext?.isSSG && !isOld && !dynamicState.value) {
+            for (let i = activeChain.length - 1; i >= 0; i--) {
+              const entry = activeChain[i];
+              const isLayoutTtlExpired =
+                typeof entry.revalidate === "number" &&
+                entry.revalidate >= 1 &&
+                entry.generatedAt > 0 &&
+                Date.now() > entry.generatedAt + entry.revalidate * 1000;
+              const maxAncestorGen =
+                i < activeChain.length - 1
+                  ? Math.max(0, ...activeChain.slice(i + 1).map((l) => l.generatedAt || 0))
+                  : 0;
+              const isAncestorNewer = entry.generatedAt > 0 && maxAncestorGen > entry.generatedAt;
+              if (isLayoutTtlExpired || (isLayoutReq && isAncestorNewer)) {
+                const { revalidateLayout } = await import("./cache-revalidate.js");
+                await revalidateLayout(entry.layoutRoutePath);
+                const lMetaKey = entry.cleanLayoutKey
+                  ? `${entry.cleanLayoutKey}/layout.metadata.json`
+                  : "layout.metadata.json";
+                const lRscKey = entry.cleanLayoutKey
+                  ? `${entry.cleanLayoutKey}/layout.rsc`
+                  : "layout.rsc";
+                const refreshedMeta = await readMetaFromStorage(
+                  storage,
+                  lMetaKey,
+                  lRscKey,
+                  platformContext,
+                  request.url
+                );
+                if (refreshedMeta?.generatedAt) {
+                  entry.generatedAt = Number(refreshedMeta.generatedAt);
+                }
+                if (refreshedMeta?.suspenseCount !== undefined) {
+                  entry.suspenseCount = Number(refreshedMeta.suspenseCount || 0);
+                }
+              }
             }
           }
           leafLayoutSuspenseCount = Number(activeChain[0]?.suspenseCount || 0);
@@ -1996,32 +2028,44 @@ async function handleRequest(request, platformContext = {}) {
               request.url
             );
             entry.generatedAt = Number(lMeta?.generatedAt || 0);
+            entry.revalidate = lMeta?.revalidate;
           }
-          const leafLayout = activeLayoutChain[0];
-          if (activeLayoutChain.length > 1) {
-            const maxAncestorGen = Math.max(
-              0,
-              ...activeLayoutChain.slice(1).map((l) => l.generatedAt || 0)
-            );
-            if (leafLayout.generatedAt > 0 && maxAncestorGen > leafLayout.generatedAt) {
+          for (let i = activeLayoutChain.length - 1; i >= 0; i--) {
+            const entry = activeLayoutChain[i];
+            const isLayoutTtlExpired =
+              typeof entry.revalidate === "number" &&
+              entry.revalidate >= 1 &&
+              entry.generatedAt > 0 &&
+              Date.now() > entry.generatedAt + entry.revalidate * 1000;
+            const maxAncestorGen =
+              i < activeLayoutChain.length - 1
+                ? Math.max(
+                    0,
+                    ...activeLayoutChain.slice(i + 1).map((l) => l.generatedAt || 0)
+                  )
+                : 0;
+            const isAncestorNewer =
+              entry.generatedAt > 0 && maxAncestorGen > entry.generatedAt;
+            if (isLayoutTtlExpired || isAncestorNewer) {
               const { revalidateLayout } = await import("./cache-revalidate.js");
-              await revalidateLayout(leafLayout.layoutRoutePath);
+              await revalidateLayout(entry.layoutRoutePath);
               const refreshedMeta = await readMetaFromStorage(
                 storage,
-                leafLayout.cleanLayoutKey
-                  ? `${leafLayout.cleanLayoutKey}/layout.metadata.json`
+                entry.cleanLayoutKey
+                  ? `${entry.cleanLayoutKey}/layout.metadata.json`
                   : "layout.metadata.json",
-                leafLayout.cleanLayoutKey
-                  ? `${leafLayout.cleanLayoutKey}/layout.rsc`
+                entry.cleanLayoutKey
+                  ? `${entry.cleanLayoutKey}/layout.rsc`
                   : "layout.rsc",
                 platformContext,
                 request.url
               );
               if (refreshedMeta?.generatedAt) {
-                leafLayout.generatedAt = Number(refreshedMeta.generatedAt);
+                entry.generatedAt = Number(refreshedMeta.generatedAt);
               }
             }
           }
+          const leafLayout = activeLayoutChain[0];
           const pageGeneratedAt = Number(cachedItem.metadata?.generatedAt || 0);
           if ((leafLayout.generatedAt || 0) > pageGeneratedAt && platformContext?.renderHtmlStream) {
             const leafRscKey = leafLayout.cleanLayoutKey
@@ -2075,6 +2119,9 @@ async function handleRequest(request, platformContext = {}) {
               if (recomposedHtml) {
                 const updatedMeta = {
                   ...(cachedItem.metadata || {}),
+                  pageGeneratedAt:
+                    cachedItem.metadata?.pageGeneratedAt ||
+                    cachedItem.metadata?.generatedAt,
                   generatedAt: leafLayout.generatedAt,
                 };
                 cachedItem = {
@@ -2098,11 +2145,16 @@ async function handleRequest(request, platformContext = {}) {
         console.warn(`⚠️ [Dinou] Error during lazy HTML re-composition for ${reqPath}:`, lazyErr?.message || lazyErr);
       }
       const metadata = cachedItem.metadata || {};
-      const { revalidate, generatedAt } = metadata;
+      const { generatedAt } = metadata;
+      const pageOwnRevalidate =
+        metadata.pageRevalidate !== undefined
+          ? metadata.pageRevalidate
+          : revalidate;
+      const pageOwnGeneratedAt = metadata.pageGeneratedAt || generatedAt;
       const isExpired =
-        typeof revalidate === "number" &&
-        revalidate >= 1 &&
-        Date.now() > (generatedAt || 0) + revalidate * 1000;
+        typeof pageOwnRevalidate === "number" &&
+        pageOwnRevalidate >= 1 &&
+        Date.now() > (pageOwnGeneratedAt || 0) + pageOwnRevalidate * 1000;
 
       if (isExpired) {
         // Trigger background revalidation on Edge!
@@ -2330,10 +2382,13 @@ async function handleRequest(request, platformContext = {}) {
           }
         }
 
+        const nowGen = Date.now();
         const genMeta = {
           status: isError ? 500 : isNotFound.value ? 404 : 200,
-          generatedAt: Date.now(),
+          generatedAt: nowGen,
+          pageGeneratedAt: nowGen,
           revalidate: combinedRevalidate,
+          pageRevalidate: revalidate !== undefined ? revalidate : null,
           tags: tags || [],
           ppr: Boolean(isPprConfig),
           holes: pprHoles,

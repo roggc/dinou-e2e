@@ -35,6 +35,7 @@ export async function hspprResetAll() {
   await revalidateLayout("/t-rigurous-hs-ppr/nested");
   await revalidateLayout("/t-rigurous-hs-ppr/reset-ppr");
   await revalidateLayout("/t-rigurous-hs-ppr/team/alpha");
+  await revalidateLayout("/t-rigurous-hs-ppr/ttl-ppr");
   await revalidatePage("/t-rigurous-hs-ppr");
   await revalidatePage("/t-rigurous-hs-ppr/ppr-b");
   await revalidatePage("/t-rigurous-hs-ppr/static-optout");
@@ -42,6 +43,7 @@ export async function hspprResetAll() {
   await revalidatePage("/t-rigurous-hs-ppr/reset-ppr");
   await revalidatePage("/t-rigurous-hs-ppr/no-layout-ppr");
   await revalidatePage("/t-rigurous-hs-ppr/team/alpha");
+  await revalidatePage("/t-rigurous-hs-ppr/ttl-ppr");
   return state;
 }
 

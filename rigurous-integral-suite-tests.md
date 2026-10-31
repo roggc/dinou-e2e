@@ -1,4 +1,4 @@
-# Dinou v9.0.3 — Rigorous Integral Verification Suite Reference (`8 Suites / 86+ End-to-End Scenarios`)
+# Dinou v9.0.3 — Rigorous Integral Verification Suite Reference (`8 Suites / 87+ End-to-End Scenarios`)
 
 This document is the master technical reference for the **8 integral verification suites** created in `test-9.0.2` (and ported to `dinou-e2e`) to stress-test every React 19 architecture primitive introduced and refined in **Dinou v9.0.3**—covering Server Functions and **all 7 non-empty combinations ($2^3 - 1 = 7$)** of **Horizontal Segmentation (HS)**, **Vertical Segmentation (`<DinouCacheSlot>`)**, and **Partial Prerendering (PPR)** (3 individual suites, 3 pairwise synergy suites, and 1 full three-way synergy suite)—verified **100% in green with `0` React hydration errors**.
 
@@ -47,7 +47,7 @@ This document is the master technical reference for the **8 integral verificatio
 |                                   (slotOverrideCache) & Unmounted Slot Refresh (knownClientSlots) |
 |                                                                                                   |
 |  [Suite 8: /hs-ppr-test]          Pairwise Synergy #3 (Horizontal + PPR Without DinouCacheSlot):  |
-|  (10 Automated Scenarios)         Frozen shell.layout.json & shell.page.json + Live Spliced       |
+|  (11 Automated Scenarios)         Frozen shell.layout.json & shell.page.json + Live Spliced       |
 |                                   <Suspense> Holes Across L1 + @sidebar + L2 + Page, Surgical     |
 |                                   Layout/Page Revalidation, Lazy shell.html Re-Composition,       |
 |                                   reset_layout / no_layout PPR & Dynamic [team] Guardrails        |
@@ -65,7 +65,7 @@ This document is the master technical reference for the **8 integral verificatio
 | **5** | `/horizontal-segmentation-test` | `/t-rigurous-hs` | **12 / 12** automated scenarios | **100% PASS** | `0` |
 | **6** | `/triple-sinergy-test` | `/t-rigurous-triple-sinergy` | **12 / 12** automated scenarios (+ F5 & Direct SSR) | **100% PASS** | `0` |
 | **7** | `/hs-cache-slot-test` | `/t-rigurous-hs-cache-slot` | **10 / 10** automated scenarios (+ F5 reload) | **100% PASS** | `0` |
-| **8** | `/hs-ppr-test` | `/t-rigurous-hs-ppr` | **10 / 10** automated scenarios (+ F5 & Direct SSR) | **100% PASS** | `0` |
+| **8** | `/hs-ppr-test` | `/t-rigurous-hs-ppr` | **11 / 11** automated scenarios (+ F5 & Direct SSR) | **100% PASS** | `0` |
 
 ---
 
@@ -246,7 +246,7 @@ Tests the interaction between **Horizontal Segmentation** (`layout.rsc` vs. `pag
 ### 9.1. Purpose & Scope
 Tests the pure interaction between **Horizontal Segmentation** (`layout.rsc` / `shell.layout.json` vs. `shell.rsc` / `shell.page.json`, `@sidebar` parallel route slots, multi-level nested layouts, `reset_layout` / `no_layout` boundaries, and dynamic `[team]` layout parameter validation) and **Partial Prerendering (`ppr = true`)** (`shell.html`, pre-order `ppr-hole-N` indexing across layouts and pages, static `<Suspense>` vs. dynamic `<Suspense>` resolution, and `spliceDynamicHolesIntoShell` on both `/____rsc_layout____` and `/____rsc_page____`) without `<DinouCacheSlot>`. Detailed architectural diagrams, empirical TDD bug root-cause analyses, and a developer usage guide are recorded in `rigurous-hs-ppr.md`.
 
-### 9.2. The 10 Automated Scenarios (`10 / 10 PASSED`)
+### 9.2. The 11 Automated Scenarios (`11 / 11 PASSED`)
 
 | # | Scenario | What It Verifies & Asserts | Status |
 | :--- | :--- | :--- | :--- |
@@ -260,3 +260,4 @@ Tests the pure interaction between **Horizontal Segmentation** (`layout.rsc` / `
 | **8** | **Full-Segment `revalidatePath('/hs-ppr-test/nested')` Simultaneous Layout Shell + Page Shell Regeneration Preserving Client State** | Bumps both L2 Layout and Nested Page counters to `401`, calls `revalidatePath("/hs-ppr-test/nested")`, and triggers `router.refresh({ layout: true })`, verifying both L2 Layout shell (`401`), Nested Page shell (`401`), and dynamic holes (`401`) update in the DOM while preserving L1 and L2 client `mountId`s and `useState` counters. | **PASSED** |
 | **9** | **Standalone PPR Boundaries: `reset_layout` (`/reset-ppr`) & `no_layout` (`/no-layout-ppr`) Wire Split & Hydration** | Fetches `/hs-ppr-test/reset-ppr?rmode=reset-wire` and `/hs-ppr-test/no-layout-ppr?nlmode=nl-wire`, verifying neither route includes ancestor `#hsppr-l1-layout`, both pre-render isolated static shells (`100`) in `shell.html`, and both stream `ppr-hole-1` with live query parameters (`reset-wire` and `nl-wire`). | **PASSED** |
 | **10** | **Dynamic Layout Parameter Validation (`validateParams` + `getStaticPaths` + `allowISG = false`) on PPR Routes (`/team/[team]`)** | Verifies pre-rendered `/hs-ppr-test/team/alpha?tmode=alpha-wire` returns `200` with `Team Shell: alpha` in `shell.html` and `alpha-wire` in the streamed `<template>`, while `/team/beta` (`allowISG = false`) and `/team/gamma` (`validateParams() === false`) return `404` on both HTML and `/____rsc_layout____`. | **PASSED** |
+| **11** | **Clock-Based Layout TTL Expiration (`revalidate = 1s` in `layout_functions.ts`) + Lazy `shell.html` Re-Composition Preserving Long-Lived PPR Child Page (`revalidate = 3600s`)** | Soft-navigates to `/hs-ppr-test/ttl-ppr`, increments client state in the TTL layout, mutates TTL layout counters to `501`, and poisons the child PPR page's in-memory shell counter to `999` without calling any `revalidate*` function. Waits `1.3s` for the layout's 1-second TTL to expire by clock and fetches `/hs-ppr-test/ttl-ppr?ttlmode=ttl-verified`. Verifies `layout.rsc` and `shell.layout.json` regenerate automatically to `501` and lazily recompose `shell.html` (`501`), while the child PPR page (`revalidate = 3600s`) remains frozen at `100` (not `999`), and `router.refresh({ layout: true })` updates the DOM to `501` while preserving client state. | **PASSED** |
