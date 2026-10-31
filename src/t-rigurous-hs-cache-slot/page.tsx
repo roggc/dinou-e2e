@@ -45,6 +45,11 @@ export default function HsCacheSlotPageA({
         >
           {async () => {
             const s = getHsCsState();
+            const capturedSeq = s.pageASlotSeq;
+            const delayMs = s.pageASlotDelayMs || 0;
+            if (delayMs > 0) {
+              await new Promise((r) => setTimeout(r, delayMs));
+            }
             return (
               <div
                 id="hscs-page-a-slot-box"
@@ -57,7 +62,7 @@ export default function HsCacheSlotPageA({
                       id="hscs-page-a-slot-seq"
                       className="text-purple-300"
                     >
-                      {s.pageASlotSeq}
+                      {capturedSeq}
                     </strong>
                   </span>
                   <HsCsSlotActionButton actionFn={hscsSlotServerAction} />
@@ -198,4 +203,3 @@ export default function HsCacheSlotPageA({
     </div>
   );
 }
-

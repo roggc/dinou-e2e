@@ -21,6 +21,7 @@ export interface HsCsServerState {
   pageASeq: number;
   pageAPropsSeq: number;
   pageASlotSeq: number;
+  pageASlotDelayMs: number;
   pageASharedSlotSeq: number;
   pageAOuterSlotSeq: number;
   pageAInnerSlotSeq: number;
@@ -54,6 +55,7 @@ export const DEFAULT_HSCS_STATE: HsCsServerState = {
   pageASeq: 100,
   pageAPropsSeq: 100,
   pageASlotSeq: 100,
+  pageASlotDelayMs: 0,
   pageASharedSlotSeq: 100,
   pageAOuterSlotSeq: 100,
   pageAInnerSlotSeq: 100,

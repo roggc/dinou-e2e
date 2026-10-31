@@ -6872,7 +6872,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
   });
 
   test.describe.serial("Dinou Core: Rigorous HS + DinouCacheSlot Synergy (/t-rigurous-hs-cache-slot)", () => {
-    test("Full 11-Scenario HS + DinouCacheSlot (Non-PPR) Stress Suite passes end-to-end and F5 reload has zero hydration mismatch", async ({
+    test("Full 12-Scenario HS + DinouCacheSlot (Non-PPR) Stress Suite passes end-to-end and F5 reload has zero hydration mismatch", async ({
       page,
     }) => {
       const hydrationErrors: string[] = [];
@@ -6891,11 +6891,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
 
       await page.click("#hscs-run-automated-suite");
-      await expect(page.locator("#hscs-suite-summary-badge")).toHaveText("11/11 PASSED", {
+      await expect(page.locator("#hscs-suite-summary-badge")).toHaveText("12/12 PASSED", {
         timeout: 90000,
       });
 
-      for (let i = 1; i <= 11; i++) {
+      for (let i = 1; i <= 12; i++) {
         await expect(page.locator(`#hscs-test-status-${i}`)).toHaveText("passed");
       }
 

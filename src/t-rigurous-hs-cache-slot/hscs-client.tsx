@@ -160,6 +160,12 @@ const INITIAL_TESTS: HsCsTestResult[] = [
     status: "pending",
     detail: "Waiting...",
   },
+  {
+    id: 12,
+    name: "12. Out-of-Order Concurrent refreshSlot() Race Protection (Mounted & Unmounted Last-Write-Wins)",
+    status: "pending",
+    detail: "Waiting...",
+  },
 ];
 
 function getGlobalSuiteState(): HsCsSuiteGlobalState {
@@ -868,6 +874,62 @@ export function HsCsAutomatedSuiteRunner() {
 
         return "1s TTL slots in L1 Layout & Page A expired by clock -> updated to 301 in DOM & static index.html while keeping host L1=101, PageA=101 & 3600s slots frozen";
       });
+
+      // SCENARIO 12: Out-of-Order Concurrent refreshSlot() Race Protection (Mounted & Unmounted Last-Write-Wins)
+      await runStep(12, async () => {
+        // 12a. Mounted slot race: Request #1 is slow (seq=401, 350ms), Request #2 is fast (seq=402, 0ms)
+        await hscsMutateState({
+          pageASlotSeq: 401,
+          pageASlotDelayMs: 350,
+        });
+        refreshSlot("hscs-page-a-slot", { fresh: true });
+        await new Promise((r) => setTimeout(r, 60));
+
+        await hscsMutateState({
+          pageASlotSeq: 402,
+          pageASlotDelayMs: 0,
+        });
+        refreshSlot("hscs-page-a-slot", { fresh: true });
+
+        // Wait until fast Request #2 (402) and slow Request #1 (401) have both finished
+        await new Promise((r) => setTimeout(r, 450));
+        const mountedFinalSeq = getText("hscs-page-a-slot-seq");
+        if (mountedFinalSeq !== "402") {
+          throw new Error(
+            `Mounted slot race condition: expected latest seq "402", but slow stale refresh overwrote DOM with "${mountedFinalSeq}"!`
+          );
+        }
+
+        // 12b. Unmounted slot race: navigate to Page B, fire slow Request #1 (seq=403, 350ms) then fast Request #2 (seq=404, 0ms)
+        clickEl("hscs-nav-page-b");
+        await waitForEl("hscs-page-b");
+
+        await hscsMutateState({
+          pageASlotSeq: 403,
+          pageASlotDelayMs: 350,
+        });
+        refreshSlot("hscs-page-a-slot", { fresh: true });
+        await new Promise((r) => setTimeout(r, 60));
+
+        await hscsMutateState({
+          pageASlotSeq: 404,
+          pageASlotDelayMs: 0,
+        });
+        refreshSlot("hscs-page-a-slot", { fresh: true });
+
+        await new Promise((r) => setTimeout(r, 450));
+        clickEl("hscs-nav-page-a");
+        await waitForEl("hscs-page-a");
+
+        const unmountedFinalSeq = getText("hscs-page-a-slot-seq");
+        if (unmountedFinalSeq !== "404") {
+          throw new Error(
+            `Unmounted slot race condition: expected latest seq "404" upon remount, got "${unmountedFinalSeq}"!`
+          );
+        }
+
+        return "Out-of-order refreshSlot race prevented: mounted (401@350ms vs 402@0ms -> 402) & unmounted (403@350ms vs 404@0ms -> 404)";
+      });
     } finally {
       window.fetch = origFetch;
       state.running = false;
@@ -886,7 +948,7 @@ export function HsCsAutomatedSuiteRunner() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-sm font-bold text-teal-300">
-            Automated HS + &lt;DinouCacheSlot&gt; E2E Stress Runner (10 Scenarios, No-PPR)
+            Automated HS + &lt;DinouCacheSlot&gt; E2E Stress Runner (12 Scenarios, No-PPR)
           </h2>
           <p className="text-slate-400">
             Tests 2x2 surgical invalidation, shared cross-axis tags, nested slots,{" "}
@@ -915,7 +977,7 @@ export function HsCsAutomatedSuiteRunner() {
           >
             {suiteState.running
               ? "Running HS+CacheSlot Suite..."
-              : "▶ Run All 10 HS + CacheSlot Tests"}
+              : "▶ Run All 12 HS + CacheSlot Tests"}
           </button>
         </div>
       </div>

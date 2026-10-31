@@ -312,9 +312,10 @@ if (
           const baseRef = entry.baseChildren;
           promise.then(
             (resolved) => {
-              if (entry.pendingPromise === promise) {
-                entry.pendingPromise = null;
+              if (entry.pendingPromise !== promise) {
+                return;
               }
+              entry.pendingPromise = null;
               slotOverrideCache.set(slotId, {
                 baseChildren: baseRef,
                 content: resolved,
@@ -405,6 +406,12 @@ export function DinouCacheSlotBoundary({ id, tags, children }) {
         const pending = knownEntry.pendingPromise;
         pending.then(
           (resolved) => {
+            if (knownEntry.pendingPromise && knownEntry.pendingPromise !== pending) {
+              return;
+            }
+            if (knownEntry.pendingPromise === pending) {
+              knownEntry.pendingPromise = null;
+            }
             applyResolved(resolved, childrenRef.current);
           },
           () => {}
@@ -433,17 +440,33 @@ export function DinouCacheSlotBoundary({ id, tags, children }) {
           typeof window !== "undefined" &&
           typeof window.__DINOU_FETCH_SLOT__ === "function"
         ) {
+          const curEntry = knownClientSlots.get(id);
           const promise = window.__DINOU_FETCH_SLOT__(id, e.detail?.options);
           if (promise && typeof promise.then === "function") {
+            if (curEntry) {
+              curEntry.pendingPromise = promise;
+            }
             promise.then(
               (resolved) => {
+                if (curEntry && curEntry.pendingPromise !== promise) {
+                  return;
+                }
+                if (curEntry && curEntry.pendingPromise === promise) {
+                  curEntry.pendingPromise = null;
+                }
                 applyResolved(resolved, childrenRef.current);
               },
               (err) => {
+                if (curEntry && curEntry.pendingPromise === promise) {
+                  curEntry.pendingPromise = null;
+                }
                 console.error(`[Dinou] Failed to refresh slot "${id}":`, err);
               }
             );
           } else if (promise) {
+            if (curEntry) {
+              curEntry.pendingPromise = null;
+            }
             applyResolved(promise, childrenRef.current);
           }
         }

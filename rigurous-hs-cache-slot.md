@@ -1,11 +1,11 @@
-# Pure Horizontal Segmentation + Vertical Segmentation (`<DinouCacheSlot>`) Synergy in Dinou — Empirical TDD Bug Report, Client & RSC Fixes, and 11-Scenario E2E Reference
+# Pure Horizontal Segmentation + Vertical Segmentation (`<DinouCacheSlot>`) Synergy in Dinou — Empirical TDD Bug Report, Client & RSC Fixes, and 12-Scenario E2E Reference
 
 This document provides a complete technical record of the **Pure Horizontal Segmentation + Vertical Segmentation (`<DinouCacheSlot>`) Synergy (Non-PPR)** investigation and implementation in Dinou v9.0.3: how **Horizontal Segmentation** (`layout.rsc` vs. `page.rsc`, `@sidebar` parallel slots, multi-level nested layouts, client `pageCache` / `layoutCache`, and soft navigation) interacts with **Vertical Segmentation** (`<DinouCacheSlot>`, `refreshSlot`, `revalidateTag`, nested slots, and `revalidate={0}` dynamic bypass) on standard static/ISG and dynamic routes (`ppr = false`).
 
 Following a strict **Test-Driven Development (TDD)** methodology in `test-9.0.2`:
 1. **Phase 1**: We designed and implemented a dedicated 10-scenario pure Horizontal + Vertical Segmentation stress suite (`src/hs-cache-slot-test/` in `test-9.0.2`, mirrored to `src/t-rigurous-hs-cache-slot/` in `dinou-e2e`) and ran it against `dev:esbuild` and `start:node:esbuild` (`build:node:esbuild`).
 2. **Phase 2**: While 8 of the 10 scenarios (all server-side surgical revalidation, cross-axis shared tags, `@sidebar` parallel slot caching, nested `<DinouCacheSlot>` Outer/Inner isolation, and `revalidate={0}` bypass) passed immediately thanks to the server-side foundations established in `rigurous-triple-sinergy.md`, **Scenarios 7 and 8 failed (`8/10 PASSED, 2/10 FAILED`)** and `dev:esbuild` surfaced a React 19 development key-validation warning inside `<DinouCacheSlotBoundary>`. We engineered surgical fixes across `dinou/core/slot.js`, `dinou/core/client.jsx`, `dinou/core/client-webpack.jsx`, `dinou/core/render-jsx-to-client-jsx.js`, and `dinou/core/cache-slot.js`.
-3. **Phase 3**: We verified that `/hs-cache-slot-test` passes **10/10 in green with `0` warnings** across both `dev:esbuild` and `start:node:esbuild`, and then ran the entire **7-suite verification matrix** in `test-9.0.2` (`sf-test`, `ppr-test`, `cache-slot-test`, `ppr-cache-slot-test`, `horizontal-segmentation-test`, `triple-sinergy-test`, and `hs-cache-slot-test`), passing **100% in green with `0` hydration errors**.
+3. **Phase 3**: We verified that `/hs-cache-slot-test` passes **10/10 in green with `0` warnings** across both `dev:esbuild` and `start:node:esbuild`, extended the suite with **Scenario 11 (Clock-Based `<DinouCacheSlot revalidate={1}>` TTL Expiration)** and **Scenario 12 (Out-of-Order Concurrent `refreshSlot()` Race Protection — Mounted & Unmounted Last-Write-Wins)** (`12/12 PASSED`), and ran the entire **8-suite verification matrix** in `test-9.0.2`, passing **100% in green with `0` hydration errors**.
 
 ---
 
@@ -126,7 +126,18 @@ Scenario 8 Flow: Refreshing Page A's Slot While Viewing Sibling Route Page B
 
 ---
 
-## 4. Phase 3: The 11-Scenario Pure Horizontal + Vertical Segmentation Test Suite (`dinou-e2e/src/t-rigurous-hs-cache-slot/` & `test-9.0.2/src/hs-cache-slot-test/`)
+### 3.3. Client & Server Out-of-Order Concurrent `refreshSlot()` Race Protection (Last-Write-Wins) (`dinou/core/slot.js` & `dinou/core/cache-slot.js`)
+
+1. **Client-Side Last-Write-Wins (`dinou/core/slot.js`)**:
+   - In `DinouCacheSlotBoundary`'s mounted `"dinou:refresh-slot"` handler (`handleRefresh`), each new `window.__DINOU_REFRESH_SLOT__` promise is recorded in `knownClientSlots.get(id).pendingPromise = promise`. When `promise.then(...)` resolves, if `curEntry.pendingPromise !== promise`, a newer `refreshSlot()` was dispatched while the earlier slow request was in flight, so the stale response is discarded without overwriting `slotOverrideCache` or calling `setSlotOverride`.
+   - In the global unmounted `"dinou:refresh-slot"` listener and the remount `useEffect` inside `DinouCacheSlotBoundary`, `if (entry.pendingPromise !== promise) return;` ensures an older slow background slot refresh never overwrites a newer resolved or in-flight slot refresh in `slotOverrideCache`.
+2. **Server-Side Fresh Slot Un-Coalescing & Monotonic Render Generation Guard (`dinou/core/cache-slot.js`)**:
+   - Keyed `inflightSlotRenders` by `options.fresh ? stampedeKey : storageKey` so distinct client `refreshSlot(id, { fresh: true })` calls (which carry unique `?t=${Date.now()}-${slotSeq}&fresh=1` URLs in `stampedeKey`) are not coalesced onto an older slow in-flight render, while identical concurrent requests (same URL / `stampedeKey`) remain 100% deduplicated against thundering-herd stampedes.
+   - Added a monotonic generation counter per `storageKey` (`globalThis[Symbol.for("dinou.slot.render.generation")]`). When a slot render finishes, `isLatestGen()` verifies `slotRenderGenerations.get(storageKey) === currentRenderGen` before writing to `storage.set(storageKey, ...)` or triggering host `revalidatePage` / `revalidateLayout`, preventing a slower earlier render from overwriting newer cached slot state on disk/KV.
+
+---
+
+## 4. Phase 3: The 12-Scenario Pure Horizontal + Vertical Segmentation Test Suite (`dinou-e2e/src/t-rigurous-hs-cache-slot/` & `test-9.0.2/src/hs-cache-slot-test/`)
 
 ### 4.1. Route Hierarchy Created in `dinou-e2e/src/t-rigurous-hs-cache-slot/` (and `test-9.0.2/src/hs-cache-slot-test/`)
 
@@ -134,17 +145,17 @@ Scenario 8 Flow: Refreshing Page A's Slot While Viewing Sibling Route Page B
 | :--- | :--- |
 | `src/t-rigurous-hs-cache-slot/hscs-state.ts` | Cross-runtime deterministic state store (`globalThis[Symbol.for("dinou.hs_cache_slot.state")]` + `.dinou/dist2/hscs-test-state.json` on Node/Bun) with independent sequence counters (`100` / `200` / `300` / `400` / `500` baselines) for L1 layout, L1 layout slot, L1 shared-tag slot, L1 nested outer/inner slots, `@sidebar` host, `@sidebar` slot, Page A host, Page A slot, Page A shared-tag slot, Page A nested outer/inner slots, Page A dynamic `revalidate={0}` slot, Page B host, Page B slot, L2 nested layout host, L2 nested layout slot, and Nested Page host/slot. |
 | `src/t-rigurous-hs-cache-slot/hscs-actions.ts` | `"use server"` actions: `hscsGetState`, `hscsBumpCounters`, `hscsResetAllAndRevalidate`, `hscsRevalidateTag`, `hscsRevalidatePage`, `hscsRevalidateLayout`, `hscsRevalidatePath`, and `hscsSlotServerAction` (passed as a prop into `<DinouCacheSlot>` Client Components). |
-| `src/t-rigurous-hs-cache-slot/hscs-client.tsx` | Client state trackers (`HscsClientStateTracker`), interactive slot widget (`HscsSlotWidget` testing local `useState` preservation and prop-passed `"use server"` action invocation across live `refreshSlot` updates), manual toolbar (`HscsManualControls`), and the 10-scenario automated runner (`HscsAutomatedRunner`). |
+| `src/t-rigurous-hs-cache-slot/hscs-client.tsx` | Client state trackers (`HscsClientStateTracker`), interactive slot widget (`HscsSlotWidget` testing local `useState` preservation and prop-passed `"use server"` action invocation across live `refreshSlot` updates), manual toolbar (`HscsManualControls`), and the 12-scenario automated runner (`HscsAutomatedRunner`). |
 | `src/t-rigurous-hs-cache-slot/layout.tsx` & `layout_functions.ts` | **Level-1 Layout** (`revalidate = 3600`, `getCacheTags() -> ["hscs-l1-layout-tag"]`, no PPR) rendering: L1 client state tracker, `<DinouCacheSlot id="hscs-l1-slot">`, cross-axis `<DinouCacheSlot id="hscs-l1-shared-slot" tags={["hscs-shared-tag", "hscs-l1-shared-only"]}>`, nested `<DinouCacheSlot id="hscs-l1-outer-slot">` → `<DinouCacheSlot id="hscs-l1-inner-slot">`, the `@sidebar` parallel route slot, and `<DinouPageSlot />`. |
 | `src/t-rigurous-hs-cache-slot/@sidebar/page.tsx` | **Parallel Route `@sidebar`** rendered inside L1 layout, hosting its own client state tracker and `<DinouCacheSlot id="hscs-sidebar-slot" tags={["hscs-sidebar-slot-tag"]}>` with a prop-passed `"use server"` action (`hscsSlotServerAction`). |
 | `src/t-rigurous-hs-cache-slot/page.tsx` & `page_functions.ts` | **Page A (`/hs-cache-slot-test`)** (`revalidate = 3600`, `getCacheTags() -> ["hscs-page-a-tag"]`, no PPR) hosting: Page A client state tracker, `<DinouCacheSlot id="hscs-page-a-slot">`, cross-axis `<DinouCacheSlot id="hscs-page-a-shared-slot" tags={["hscs-shared-tag", "hscs-page-a-shared-only"]}>`, nested `<DinouCacheSlot id="hscs-page-a-outer-slot">` → `<DinouCacheSlot id="hscs-page-a-inner-slot">`, and a dynamic `<DinouCacheSlot id="hscs-page-a-dyn-slot" revalidate={0}>` (without `<Suspense>`). |
 | `src/t-rigurous-hs-cache-slot/page-b/page.tsx` & `page_functions.ts` | **Sibling Page B (`/hs-cache-slot-test/page-b`)** sharing the L1 layout and `@sidebar`, hosting its own client state tracker and `<DinouCacheSlot id="hscs-page-b-slot" tags={["hscs-page-b-slot-tag"]}>`. |
 | `src/t-rigurous-hs-cache-slot/nested/layout.tsx`, `layout_functions.ts`, `page.tsx` & `page_functions.ts` | **Level-2 Nested Layout & Page (`/hs-cache-slot-test/nested`)** with `<DinouCacheSlot id="hscs-l2-slot">` in the L2 layout and `<DinouCacheSlot id="hscs-nested-page-slot">` in the nested page. |
-| `e2e/example.spec.ts` | Playwright E2E test block (`Dinou Core: Rigorous Horizontal Segmentation + <DinouCacheSlot> Synergy (/t-rigurous-hs-cache-slot)`) verifying all 11 scenarios + F5 hard reload with zero hydration/console errors. |
+| `e2e/example.spec.ts` | Playwright E2E test block (`Dinou Core: Rigorous Horizontal Segmentation + <DinouCacheSlot> Synergy (/t-rigurous-hs-cache-slot)`) verifying all 12 scenarios + F5 hard reload with zero hydration/console errors. |
 
 ---
 
-### 4.2. Summary of the 11 Automated Verification Scenarios (`11/11 PASSED`)
+### 4.2. Summary of the 12 Automated Verification Scenarios (`12/12 PASSED`)
 
 | # | Scenario Name | What It Verifies & Asserts | Status |
 | :--- | :--- | :--- | :--- |
@@ -159,6 +170,7 @@ Scenario 8 Flow: Refreshing Page A's Slot While Viewing Sibling Route Page B
 | **9** | **Multi-Level Nested Layout (`/nested`) Slot Refresh & Round-Trip (`/nested -> /page-b -> /nested`)** | Soft-navigates to `/hs-cache-slot-test/nested` (`0` L1 layout fetches), increments L2 Layout and L2 Slot client `useState`, surgically refreshes L2 Layout Slot (`400 -> 401`) and Nested Page Slot (`500 -> 501`) while preserving L2 Layout host (`400`) and Nested Page host (`500`), and performs a round-trip soft navigation (`/nested -> /page-b -> /nested`) verifying `slotOverrideCache` preserves both `401` and `501` with `0` `/____rsc_page____` fetches. | **PASSED** |
 | **10** | **Host Segment Revalidation (`revalidatePage` & `revalidateLayout`) Coexistence with Cached Slots** | Bumps `pageASeq` (`200 -> 205`) and `l1LayoutSeq` (`100 -> 105`) while bumping `pageASlotSeq` and `l1SlotSeq` to `299`/`199` **without** invalidating the slot tags. Calls `revalidatePage("/hs-cache-slot-test")` + `router.refresh()`, then `revalidateLayout("/hs-cache-slot-test")` + `router.refresh({ layout: true })`. Verifies the host Page A (`205`) and host L1 Layout (`105`) update while reusing their cached `<DinouCacheSlot>` entries (`204` and `101`) from `slots/<id>/slot.json` and preserving L1 Layout & `@sidebar` client `mountId`s. | **PASSED** |
 | **11** | **Clock-Based `<DinouCacheSlot revalidate={1}>` TTL Expiration in Static L1 Layout & Static Page A** | Bumps 1s-TTL slots in L1 Layout (`hscs-l1-ttl-slot`) and Page A (`hscs-page-a-ttl-slot`) to `501` while poisoning L1 Layout host, Page A host, and `3600s` sibling slots to `999` **without** calling `revalidateTag`. Waits `1.25s` for the 1s clock TTL to expire, calls `refreshSlot("hscs-l1-ttl-slot")` and `refreshSlot("hscs-page-a-ttl-slot")` without `{ fresh: true }`, and verifies that the live DOM, raw SSR `index.html`, and `/____rsc_layout____` all update to `501` while L1 Layout host (`105`), Page A host (`205`), and `3600s` slots (`101`, `204`) remain 100% preserved. | **PASSED** |
+| **12** | **Out-of-Order Concurrent `refreshSlot()` Race Protection (Mounted & Unmounted Last-Write-Wins)** | **12a (Mounted Slot Race)**: Dispatches a slow `refreshSlot("hscs-page-a-slot", true)` (`seq = 401`, `350ms` server delay) followed `40ms` later by a fast `refreshSlot("hscs-page-a-slot", true)` (`seq = 402`, `0ms` delay); waits `450ms` for the slow request to settle and asserts the DOM and client cache retain `402` while preserving Client Component `mountId`. **12b (Unmounted Slot Race)**: Soft-navigates to `/page-b` (unmounting `hscs-page-a-slot`), dispatches slow `refreshSlot` (`seq = 403`, `350ms`) followed by fast `refreshSlot` (`seq = 404`, `0ms`), waits `450ms`, soft-navigates back to Page A, and verifies `slotOverrideCache` renders `404`. | **PASSED** |
 
 ---
 
@@ -174,6 +186,5 @@ All **8 rigorous test suites** in `test-9.0.2` (and `dinou-e2e`) pass end-to-end
 | **4** | `/ppr-cache-slot-test` | `/t-rigorous-sinergy` | 3 Automated PPR + `<DinouCacheSlot>` Synergy Blocks (incl. Clock TTL) | **3 / 3 PASSED** |
 | **5** | `/horizontal-segmentation-test` | `/t-rigurous-hs` | 13 Automated Horizontal Segmentation Scenarios (incl. Clock TTL) | **13 / 13 PASSED** |
 | **6** | `/triple-sinergy-test` | `/t-rigurous-triple-sinergy` | 13 Automated Triple Synergy (Horizontal + Vertical + PPR) Scenarios | **13 / 13 PASSED** |
-| **7** | `/hs-cache-slot-test` | `/t-rigurous-hs-cache-slot` | 11 Automated Pure Horizontal + `<DinouCacheSlot>` (Non-PPR) Scenarios | **11 / 11 PASSED** |
+| **7** | `/hs-cache-slot-test` | `/t-rigurous-hs-cache-slot` | 12 Automated Pure Horizontal + `<DinouCacheSlot>` (Non-PPR) Scenarios | **12 / 12 PASSED** |
 | **8** | `/hs-ppr-test` | `/t-rigurous-hs-ppr` | 12 Automated Pure Horizontal + PPR (No `<DinouCacheSlot>`) Scenarios | **12 / 12 PASSED** |
-
