@@ -16,38 +16,38 @@ This document is the master technical reference for the **8 integral verificatio
 |                                   Tree-Shaking, RSC Flight Streaming & Live HMR Sync              |
 |                                                                                                   |
 |  [Suite 2: /ppr-test]             Partial Prerendering (PPR): 0ms Static Shell (shell.html /      |
-|  (16 Automated Audit Checks)      shell.rsc), Concurrent <Suspense> Holes, Tri-State Cascading    |
-|                                   Config, React.memo, Nested Holes, Unwrapped Bailout & XSS Guard |
+|  (17 Automated Audit Checks)      shell.rsc), Concurrent <Suspense> Holes, Tri-State Cascading    |
+|                                   Config, React.memo, Nested Holes, Unwrapped Bailout & Clock TTL |
 |                                                                                                   |
 |  [Suite 3: /cache-slot-test]      Vertical Segmentation (<DinouCacheSlot> & refreshSlot):         |
-|  (3 Multi-Stage E2E Blocks)       Cold-Start Discovery, Static/Dynamic Hosts, revalidate={0},     |
-|                                   Shared Multi-Tag Invalidation, Server Action Serialization      |
-|                                   & Nested Slot (Outer -> Inner) Isolation                        |
+|  (4 Multi-Stage E2E Blocks)       Cold-Start Discovery, Static/Dynamic Hosts, revalidate={0},     |
+|                                   Shared Multi-Tag Invalidation, Server Action Serialization,     |
+|                                   Nested Slot Isolation & Clock-Based Slot TTL Expiration         |
 |                                                                                                   |
 |  [Suite 4: /ppr-cache-slot-test]  Pairwise Synergy #1 (PPR + Vertical Segmentation):              |
-|  (2 Multi-Stage E2E Blocks /      <DinouCacheSlot> in PPR Static Shell, Static <Suspense>         |
-|   6 Architectural Scenarios)      Permutations, Micro-ISR Slots Inside Streamed Dynamic Holes,    |
-|                                   Pre-Bailout Slot Persistence & Deadlock-Free Live refreshSlot   |
+|  (3 Multi-Stage E2E Blocks /      <DinouCacheSlot> in PPR Static Shell, Static <Suspense>         |
+|   7 Architectural Scenarios)      Permutations, Micro-ISR Slots Inside Streamed Dynamic Holes,    |
+|                                   Pre-Bailout Slot Persistence, Live refreshSlot & Clock TTL      |
 |                                                                                                   |
 |  [Suite 5: /horizontal-           Horizontal Segmentation (layout.rsc vs. page.rsc):              |
 |   segmentation-test]              Sibling Soft Navigation (0 Layout Fetches), pageCache vs.       |
-|  (12 Automated Scenarios)         <Link fresh>, Nested Layouts + @slot, Dynamic [deptId] Params,  |
+|  (13 Automated Scenarios)         <Link fresh>, Nested Layouts + @slot, Dynamic [deptId] Params,  |
 |                                   validateParams, allowISG: false, router.refresh({ layout }),    |
-|                                   error.tsx Isolation, reset_layout, no_layout & Surgical ISR     |
+|                                   error.tsx, reset_layout, no_layout, Surgical & Clock-TTL ISR    |
 |                                                                                                   |
 |  [Suite 6: /triple-sinergy-test]  Full Triple Synergy (Horizontal + Vertical + PPR):              |
-|  (12 Automated Scenarios)         L1 & L2 PPR Layouts with Layout Slots + Sibling PPR & Static    |
+|  (13 Automated Scenarios)         L1 & L2 PPR Layouts with Layout Slots + Sibling PPR & Static    |
 |                                   (ppr=false) Pages + Shell Slots + Dynamic Holes with Nested     |
-|                                   Slots + Cross-Mode Soft Nav + Lazy HTML Re-Composition          |
+|                                   Slots + Cross-Mode Soft Nav + Lazy HTML + Clock-TTL Slot Sync   |
 |                                                                                                   |
 |  [Suite 7: /hs-cache-slot-test]   Pairwise Synergy #2 (Horizontal + Vertical Without PPR):        |
-|  (10 Automated Scenarios)         L1/L2 Layouts + @sidebar Parallel Slot + Page A/B Slots,        |
+|  (11 Automated Scenarios)         L1/L2 Layouts + @sidebar Parallel Slot + Page A/B Slots,        |
 |                                   Cross-Axis Shared Tags, Nested Slots in Layout & Page,          |
 |                                   revalidate={0} in Static Page, Round-Trip Soft Nav              |
-|                                   (slotOverrideCache) & Unmounted Slot Refresh (knownClientSlots) |
+|                                   (slotOverrideCache), Unmounted Slot Refresh & Clock-TTL Slots   |
 |                                                                                                   |
 |  [Suite 8: /hs-ppr-test]          Pairwise Synergy #3 (Horizontal + PPR Without DinouCacheSlot):  |
-|  (11 Automated Scenarios)         Frozen shell.layout.json & shell.page.json + Live Spliced       |
+|  (12 Automated Scenarios)         Frozen shell.layout.json & shell.page.json + Live Spliced       |
 |                                   <Suspense> Holes Across L1 + @sidebar + L2 + Page, Surgical     |
 |                                   Layout/Page Revalidation, Lazy shell.html Re-Composition,       |
 |                                   reset_layout / no_layout PPR & Dynamic [team] Guardrails        |

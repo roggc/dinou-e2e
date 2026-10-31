@@ -152,6 +152,10 @@ To avoid a breaking semver change in `v9.0.3`:
 7. **Collision-Proof Internal RSC Query Parameters (`____build_id____` & `____v____` in `dinou/core/client.jsx`, `dinou/core/client-webpack.jsx`, `dinou/core/handler.js`)**:
    - Renamed the internal hydration build ID and refresh version query parameters sent to `/____rsc_page*` and `/____rsc_layout*` from `buildId` / `v` to `____build_id____` / `____v____`, and stripped both keys from `queryObj` upon request entry in `handler.js`.
    - This ensures user application routes can freely use `?buildId=...` or `?v=...` query parameters without colliding with Dinou's internal RSC hydration/refresh mechanics or polluting `query` in `getProps({ query })` and `page.tsx`.
+8. **Independent Clock-Based Layout TTL vs. Page TTL Tracking & Hydration Build-ID Ordering Guard (`dinou/core/handler.js`, `dinou/core/cache-revalidate.js`, `dinou/core/generate-static.js`)**:
+   - Persisted `pageRevalidate` and `pageGeneratedAt` in `metadata.json` separately from `layout.metadata.json` so that when lazy `index.html` re-composition updates `metadata.generatedAt` after a layout revalidation, the leaf page's own clock TTL (`pageRevalidate`, `pageGeneratedAt`) is never overwritten by the parent layout's TTL.
+   - Added clock-based TTL checks on both HTML GET requests and `/____rsc_layout____` / `/____rsc_page____` requests (gated behind `!internalBuildId` so initial browser hydration requests carrying `?____build_id____=...` never re-trigger `revalidatePage` mid-hydration).
+   - Refined the `_old.rsc` hydration guard in `handler.js` from `internalBuildId !== String(currentGeneratedAt)` to `Number(internalBuildId) < Number(currentGeneratedAt)`. When only a child page or slot revalidates (`T_page > T_layout`), `index.html` receives `__DINOU_BUILD_ID__ = T_page` while `layout.metadata.json` stays at `T_layout`; checking `Number(internalBuildId) < Number(currentGeneratedAt)` ensures `/____rsc_layout____` serves the current `layout.rsc` (`T_layout`) rather than falling back to a stale `layout._old.rsc` from an earlier layout build (`T_old < T_layout`).
 
 ---
 
@@ -367,13 +371,13 @@ export async function updateByTagAction(tag: string) {
 
 ## 5. Rigorous E2E Test Suites Developed in `dinou-e2e`
 
-### 5.1. `/t-rigurous-hs` — 12-Scenario Horizontal Segmentation Stress Lab
+### 5.1. `/t-rigurous-hs` — 13-Scenario Horizontal Segmentation Stress Lab
 
 The route tree under `src/t-rigurous-hs/` is a self-contained horizontal segmentation stress lab compatible across Node.js, Bun, Deno, and Cloudflare Workers:
 
 - `src/t-rigurous-hs/hs-state.ts`: Cross-runtime state store backed by `globalThis[Symbol.for("dinou.e2e.rigorous.hs.state")]` and `.dinou/dist2/hs-test-state.json`.
 - `src/t-rigurous-hs/hs-actions.ts`: `"use server"` actions invoking `revalidatePage`, `revalidateLayout`, `revalidatePath`, and `revalidateTag`.
-- `src/t-rigurous-hs/hs-client.tsx`: Client state probes (`<HsLayoutClientState />`), refresh controls (`<HsRefreshControls />`), revalidation controls (`<HsRevalidationLabControls />`), and the 12-scenario in-browser automated test runner (`<HsAutomatedSuiteRunner />`).
+- `src/t-rigurous-hs/hs-client.tsx`: Client state probes (`<HsLayoutClientState />`), refresh controls (`<HsRefreshControls />`), revalidation controls (`<HsRevalidationLabControls />`), and the 13-scenario in-browser automated test runner (`<HsAutomatedSuiteRunner />`).
 - `src/t-rigurous-hs/layout.tsx` & `layout_functions.ts`: Section layout shell (`#hs-section-layout`) tagged with `"hs-section-layout-tag"`.
 - `src/t-rigurous-hs/page.tsx` & `page_functions.ts`: Section index page (`#hs-index-page`) tagged with `"hs-index-page-tag"`.
 - `src/t-rigurous-hs/sibling-a/` & `sibling-b/`: Static sibling routes sharing `#hs-section-layout`.
@@ -384,8 +388,10 @@ The route tree under `src/t-rigurous-hs/` is a self-contained horizontal segment
 - `src/t-rigurous-hs/error-isolation/`: Contains `error.tsx`, `healthy/page.tsx`, and `broken/page.tsx` (throws during render to verify `<DinouPageSlot />` error containment).
 - `src/t-rigurous-hs/reset-branch/`: Exports `reset_layout() -> true` with its own `<html><body>` shell and a `/sub` child route.
 - `src/t-rigurous-hs/no-layout-page/`: Exports `no_layout() -> true` in `page_functions.ts` and renders a standalone `<html><body>` document.
+- `src/t-rigurous-hs/ttl-isr/`: Nested layout with `export const revalidate = 1` (1-second clock TTL) wrapping a child page with `export const revalidate = 3600` (1-hour clock TTL).
+- `src/t-rigurous-hs/ttl-page-only/`: Child page with `export const revalidate = 1` (1-second clock TTL) under the parent `/t-rigurous-hs` section layout (`revalidate = 3600`).
 
-#### The 12 Automated Stress Scenarios Verified in `/t-rigurous-hs` (`e2e/example.spec.ts`)
+#### The 13 Automated Stress Scenarios Verified in `/t-rigurous-hs` (`e2e/example.spec.ts`)
 1. **Scenario 1 — Layout Manifest (`window.__DINOU_LAYOUTS__`) & Independent Props**:
    - Verifies that `window.__DINOU_LAYOUTS__` contains all static, dynamic (`dept/[deptId]`, `locked/[code]`), `reset_layout` (`reset-branch`), and `!no_layout` (`!t-rigurous-hs/no-layout-page`) entries, and that `layout_functions.ts` and `page_functions.ts` supply props independently without colliding on `page` props.
 2. **Scenario 2 — Sibling Soft Navigation & Zero Layout Re-Fetches**:
@@ -411,6 +417,9 @@ The route tree under `src/t-rigurous-hs/` is a self-contained horizontal segment
 12. **Scenario 12 — Surgical On-Demand Revalidation & Lazy `index.html` Re-Composition**:
     - Exercises `revalidatePage("/t-rigurous-hs")` (updates only `pageSeq`), `revalidateLayout("/t-rigurous-hs")` (updates only `layoutSeq`), and `revalidateTag("hs-section-layout-tag")` (updates only `layoutSeq`).
     - Performs raw HTML GET fetches (`Accept: text/html`) on `/t-rigurous-hs` and unvisited child `/t-rigurous-hs/sibling-b`, asserting that both SSR HTML documents lazily re-compose with the latest `layoutSeq` while preserving their respective `page.rsc` sequences (`pageSeq1` on index, initial `100` on `sibling-b`).
+13. **Scenario 13 — Clock-Based Layout TTL (`revalidate = 1s`) vs. Page TTL (`revalidate = 1s`) Surgical Expiration**:
+    - **Part A (`/t-rigurous-hs/ttl-isr`, Layout TTL = 1s, Page TTL = 3600s)**: Soft-navigates to `/ttl-isr`, increments client state in the TTL layout, bumps `ttlLayoutSeq` to `501`, and poisons `ttlPageSeq` to `999` without calling any `revalidate*` API. Waits `1.25s` for the layout's 1s clock TTL to expire, triggers background layout ISR and lazy `index.html` re-composition, and verifies both raw HTML and `router.refresh({ layout: true })` update the layout to `501` while the `3600s` child page remains frozen at `100` (not `999`) with client state preserved.
+    - **Part B (`/t-rigurous-hs/ttl-page-only`, Page TTL = 1s, Parent Layout TTL = 3600s)**: Soft-navigates to `/ttl-page-only`, bumps `ttlPageOnlySeq` to `601`, and poisons the parent section layout's `layoutRenderSeq` to `999` without calling any `revalidate*` API. Waits `1.25s` for the child page's 1s clock TTL to expire, triggers background page ISR, and verifies both raw HTML and `router.refresh()` update the child page to `601` while the parent section layout stays cached at its pre-existing sequence (never `999`).
     - Finally, the Playwright spec performs a full browser `page.reload()` (`F5`) and asserts **zero React hydration warnings or errors**.
 
 ---

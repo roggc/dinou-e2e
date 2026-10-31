@@ -114,6 +114,13 @@ During rigorous auditing of Dinou's PPR implementation (`src/t-ppr-rigorous` and
 - **Solution**:
   - Skipped redundant initial RSC page/layout fetches when hydrating PPR pages (`window.__DINOU_PPR__`) so streamed dynamic holes never flash back to `<Suspense>` fallbacks, and forwarded `window.location.search` on client-side RSC refreshes so dynamic holes reading `req.query` retain their query parameters.
 
+### 3.8. Clock-Based PPR Static Shell TTL Expiration (`revalidate > 0`) via `revalidatePage`
+- **Files Modified**: `dinou/core/handler.js`, `dinou/core/cache-revalidate.js`
+- **Problem**:
+  - When a PPR route configured a time-based ISR TTL (`export const revalidate = 1` in `page_functions.ts`), `handlePprResume` in `handler.js` served `shell.html` indefinitely without checking whether `Date.now() > pageGeneratedAt + pageRevalidate * 1000`.
+- **Solution**:
+  - `handler.js` now checks `pageRevalidate > 0 && Date.now() > pageGeneratedAt + pageRevalidate * 1000` before serving a cached PPR shell. When the clock TTL has expired, it serves the current `shell.html` immediately with live streamed holes (Stale-While-Revalidate) while triggering a deduplicated background `revalidatePage(reqPathWithSlash)` inside `backgroundRevalidations` (`ctx.waitUntil`) that regenerates `shell.html`, `shell.rsc`, `shell.page.json`, and `metadata.json` (`generatedAt`, `ppr: true`, `holes`) while composing with the cached `layout.rsc`.
+
 ---
 
 ## 4. Supported PPR Patterns & Casuistics
@@ -220,13 +227,19 @@ Verifies all 8 `<Suspense>` boundary casuistics on `/t-ppr-rigorous` in a real h
 - Sends a request to `/t-ppr-rigorous?throw_err=%3C%2Ftemplate%3E%3Cscript%3Ewindow.__PPR_ERR_XSS__%3D1%3C%2Fscript%3E`, causing `EdgeCasePayloadHole` to throw `new Error("SimulatedHoleError: </template><script>window.__PPR_ERR_XSS__=1</script>")` during `streamDynamicHoles`.
 - Verifies that the streamed `[PPR Error: ...]` fallback block in `ppr-runtime.js` HTML-escapes the error message (`escapeHtml`), preventing `</template><script>` from breaking out of the `<template>` tag in the raw HTTP stream.
 
+#### Test 6 — Clock-Based TTL Expiration on PPR Static Shell (`/t-ppr-rigorous/ttl-shell`, `revalidate = 1`)
+- Requests `/t-ppr-rigorous/ttl-shell?q=TtlUser1` (`export const ppr = true` and `export const revalidate = 1` in `src/t-ppr-rigorous/ttl-shell/page_functions.ts`) and records `ppr-ttl-shell-token` (`shellToken1`) while verifying the dynamic hole streams `ppr-ttl-hole-q === "TtlUser1"`.
+- Waits `1200ms` for the 1-second static shell TTL to expire by clock, sends a trigger request (`?q=TtlUser2`, verifying the dynamic hole immediately streams `"TtlUser2"` while triggering background ISR `revalidatePage`), and then polls `?q=TtlUser3` to verify that `ppr-ttl-shell-token` updates to a fresh `shellToken3 !== shellToken1` while `ppr-ttl-hole-q` streams `"TtlUser3"`.
+
 ---
 
 ### 5.4. PPR + `<DinouCacheSlot>` (Micro-ISR) Synergy Suite (`/t-rigorous-sinergy`)
-- **Source Files**: `src/t-rigorous-sinergy/` (`page.tsx`, `layout.tsx`, `page_functions.ts`, `layout_functions.ts`, `synergy-client.tsx`, `actions.ts`)
+- **Source Files**: `src/t-rigorous-sinergy/` (`page.tsx`, `layout.tsx`, `page_functions.ts`, `layout_functions.ts`, `synergy-client.tsx`, `actions.ts`, `static-host/`)
 - **Playwright Spec**: `e2e/example.spec.ts` → `test.describe.serial("PPR + DinouCacheSlot Synergy: Rigorous Casuistics (/t-rigorous-sinergy)", ...)`
-- **Detailed Reference**: See [`rigurous-sinergy.md`](./rigurous-sinergy.md) for the complete breakdown of the 4 synergy tests covering:
+- **Detailed Reference**: See [`rigurous-sinergy.md`](./rigurous-sinergy.md) for the complete breakdown of the 6 synergy tests covering:
   1. Static-shell `<DinouCacheSlot>`s, static `<Suspense>` + `<DinouCacheSlot>` combinations (`__clientJsxAlreadyRendered` preventing `ppr-hole-N` drift), transactional `<Suspense>` slot effects (`pushPprSuspenseEffects` / `popPprSuspenseEffects`), per-request dynamic PPR holes containing cached, `revalidate={0}`, and nested `<DinouCacheSlot>`s, and build-time cache-poisoning prevention when reading cookies directly inside a `<DinouCacheSlot>`.
   2. Surgical `revalidateTag` differentiation between dynamic-hole slots (`inStaticShell: false`, keeping `shell.html` intact) and static-shell slots (`inStaticShell: true`, triggering background `shell.html` regeneration).
   3. Live `refreshSlot` (by ID, by tag, via `useRouter().refreshSlot`, and wildcard `'*'`) across static-shell slots, layout hole slots, and nested dynamic-hole slots while preserving 3 levels of Client Component `useState` and `"use server"` Server Action prop bindings.
   4. Direct `/____rsc_slot____` cold-start recovery and 6-way concurrent `?fresh=1` stampede deduplication for slots inside PPR holes.
+  5. Clock-based `<DinouCacheSlot revalidate={1}>` TTL expiration in both the PPR Static Shell (`ppr-syn-ttl-shell-slot`) and a Dynamic PPR Hole (`ppr-syn-ttl-hole-slot`).
+  6. Standalone non-PPR static host page (`/t-rigorous-sinergy/static-host`) clock-based page TTL (`revalidate = 1`) vs. slot TTL (`revalidate = 1` vs. `revalidate = 3600`) isolation.

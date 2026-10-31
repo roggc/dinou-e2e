@@ -129,6 +129,15 @@ During rigorous auditing (`src/cache-slot-test` in `test-9.0.2` and `src/t-rigor
   - When `getSlotJSX` refreshes a static-shell slot (`inStaticShell: true`) with `{ fresh: true }` and `options.currentPath`, it also invalidates the host route's `index.html`, `shell.html`, `metadata.json`, `shell.rsc`, and `rsc.rsc` so subsequent full-page requests stay synchronized with `slots/<id>/slot.json`.
   - Checked `inflightSlotRenders` and sliding-window `recentFreshSlotRenders` (`500ms` sliding burst window keyed by `${storageKey}::${queryKey}`, updated both before and after `storage.set`) at the top of `getSlotJSX` before issuing KV/SQLite storage reads, paired with monotonic `?t=${Date.now()}-${slotSeq}` in `dinou/core/client.jsx` and `dinou/core/client-webpack.jsx` so queued waves of identical concurrent `?fresh=1` requests coalesce cleanly across `wrangler dev`, Deno, and Node.
 
+### 3.9. Synchronous Clock-TTL Re-Evaluation in `getSlotJSX` & Static Host Page Slot TTL Re-Composition (`dinou/core/cache-slot.js`, `dinou/core/handler.js`)
+- **Files Modified**: `dinou/core/cache-slot.js`, `dinou/core/handler.js`
+- **Problem**:
+  1. When a `<DinouCacheSlot revalidate={1}>` expired by clock (`Date.now() > generatedAt + revalidate * 1000`) and a client called `refreshSlot("slot-id")` **without** `{ fresh: true }` (or when `revalidatePage(..., { onlyRefreshSlots: true })` / `revalidateLayout` called `refreshNestedSlotsInTree` -> `getSlotJSX`), `getSlotJSX` treated `isExpired` as a background SWR trigger and returned the stale `slot.json` payload instead of returning the newly rendered slot JSX.
+  2. When a static host page (`index.html` or PPR `shell.html`) had a long TTL (e.g., `revalidate = 3600` or infinite) but embedded a static-shell `<DinouCacheSlot revalidate={1}>` with a short clock TTL, `handler.js` only checked the host page's `metadata.revalidate` and did not check whether any static-shell slot in `metadata.slotTags` had expired by clock.
+- **Solution**:
+  - Updated `getSlotJSX` in `dinou/core/cache-slot.js` so that whenever `isExpired` is `true` on `/____rsc_slot____/:id`, it synchronously re-renders and persists the fresh `slot.json` (and synchronizes the host static shell via `revalidatePage(..., { onlyRefreshSlots: true })` / `revalidateLayout`) before returning the fresh JSX to the caller.
+  - Added a static-shell slot TTL check in `dinou/core/handler.js` that inspects `slot.metadata.json` for slots matching `cachedItem.metadata.slotTags` (and layout `slotTags`). When any static-shell slot has expired by clock (`slotReval > 0 && Date.now() > slotGen + slotReval * 1000`), `handler.js` triggers a deduplicated background `revalidatePage(reqPathWithSlash, { onlyRefreshSlots: true })` (or `revalidateLayout`) so the static host page's `index.html` / `shell.html` and `page.rsc` are updated with the fresh slot without re-executing the host page's `getProps` or `page.tsx`.
+
 ---
 
 ## 4. Complete API Reference & Usage Patterns for `dinou-docs`
@@ -443,3 +452,11 @@ Vertical Segmentation (`<DinouCacheSlot>` & `refreshSlot`) is verified across tw
   - Verifies that `alpha` hits its per-slug slot cache on the second request (`tokenAlpha1 === tokenAlpha2`), `beta` has its own isolated slot cache (`tokenAlpha1 !== tokenBeta1`), and `/____rsc_slot____/rig-slot-param-alpha?fresh=1` with `x-dinou-current-path: /t-rigorous-cache-slot/dynamic-route/alpha` resolves dynamic route `params` (`slug = "alpha"`) and returns HTTP `200` with `"param-alpha-..."`.
 - **5d. `/____rsc_slot____` Endpoint Security**:
   - Verifies that path traversal attempts (`/____rsc_slot____/..%2F..%2Fpackage.json`) are rejected with HTTP `400`/`404` (`[/\\]|\.\.` guard in `handler.js`), and non-existent slot IDs (`/____rsc_slot____/non-existent-rig-slot-999`) return HTTP `404`.
+
+#### Test 6: Clock-Based `<DinouCacheSlot revalidate={1}>` TTL Expiration on Dynamic Host & Static Host (`/t-rigorous-cache-slot` & `/t-rigorous-cache-slot/static-host`)
+- **6a. Dynamic Host Page (`/t-rigorous-cache-slot?ttl_probe=...`)**:
+  - Requests `/t-rigorous-cache-slot?ttl_probe=1` and records `slot-ttl-fast-token` (`revalidate={1}`) and `slot-alpha-token` (`revalidate={3600}`).
+  - Waits `1250ms` for the 1-second slot TTL to expire by clock (without calling `revalidateTag`), triggers SWR (`?ttl_probe=2`), and verifies on `?ttl_probe=3` that `slot-ttl-fast-token` regenerates to a new token while `slot-alpha-token` remains cached.
+- **6b. Static Host Page (`/t-rigorous-cache-slot/static-host`)**:
+  - Requests `/t-rigorous-cache-slot/static-host` and records `static-host-ttl-slot-token` (`revalidate={1}`), `slot-static-host-token` (`revalidate={3600}`), and `static-page-time` (host static page).
+  - Waits `1250ms` for `static-host-ttl-slot-token` to expire by clock, sends a trigger request (which fires background `revalidatePage(..., { onlyRefreshSlots: true })`), and verifies that `static-host-ttl-slot-token` updates in `index.html` while both the `3600s` sibling slot (`slot-static-host-token`) and the host static page timestamp (`static-page-time`) remain 100% preserved.

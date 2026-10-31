@@ -1,4 +1,4 @@
-# Pure Horizontal Segmentation + Vertical Segmentation (`<DinouCacheSlot>`) Synergy in Dinou — Empirical TDD Bug Report, Client & RSC Fixes, and 10-Scenario E2E Reference
+# Pure Horizontal Segmentation + Vertical Segmentation (`<DinouCacheSlot>`) Synergy in Dinou — Empirical TDD Bug Report, Client & RSC Fixes, and 11-Scenario E2E Reference
 
 This document provides a complete technical record of the **Pure Horizontal Segmentation + Vertical Segmentation (`<DinouCacheSlot>`) Synergy (Non-PPR)** investigation and implementation in Dinou v9.0.3: how **Horizontal Segmentation** (`layout.rsc` vs. `page.rsc`, `@sidebar` parallel slots, multi-level nested layouts, client `pageCache` / `layoutCache`, and soft navigation) interacts with **Vertical Segmentation** (`<DinouCacheSlot>`, `refreshSlot`, `revalidateTag`, nested slots, and `revalidate={0}` dynamic bypass) on standard static/ISG and dynamic routes (`ppr = false`).
 
@@ -126,7 +126,7 @@ Scenario 8 Flow: Refreshing Page A's Slot While Viewing Sibling Route Page B
 
 ---
 
-## 4. Phase 3: The 10-Scenario Pure Horizontal + Vertical Segmentation Test Suite (`dinou-e2e/src/t-rigurous-hs-cache-slot/` & `test-9.0.2/src/hs-cache-slot-test/`)
+## 4. Phase 3: The 11-Scenario Pure Horizontal + Vertical Segmentation Test Suite (`dinou-e2e/src/t-rigurous-hs-cache-slot/` & `test-9.0.2/src/hs-cache-slot-test/`)
 
 ### 4.1. Route Hierarchy Created in `dinou-e2e/src/t-rigurous-hs-cache-slot/` (and `test-9.0.2/src/hs-cache-slot-test/`)
 
@@ -140,11 +140,11 @@ Scenario 8 Flow: Refreshing Page A's Slot While Viewing Sibling Route Page B
 | `src/t-rigurous-hs-cache-slot/page.tsx` & `page_functions.ts` | **Page A (`/hs-cache-slot-test`)** (`revalidate = 3600`, `getCacheTags() -> ["hscs-page-a-tag"]`, no PPR) hosting: Page A client state tracker, `<DinouCacheSlot id="hscs-page-a-slot">`, cross-axis `<DinouCacheSlot id="hscs-page-a-shared-slot" tags={["hscs-shared-tag", "hscs-page-a-shared-only"]}>`, nested `<DinouCacheSlot id="hscs-page-a-outer-slot">` → `<DinouCacheSlot id="hscs-page-a-inner-slot">`, and a dynamic `<DinouCacheSlot id="hscs-page-a-dyn-slot" revalidate={0}>` (without `<Suspense>`). |
 | `src/t-rigurous-hs-cache-slot/page-b/page.tsx` & `page_functions.ts` | **Sibling Page B (`/hs-cache-slot-test/page-b`)** sharing the L1 layout and `@sidebar`, hosting its own client state tracker and `<DinouCacheSlot id="hscs-page-b-slot" tags={["hscs-page-b-slot-tag"]}>`. |
 | `src/t-rigurous-hs-cache-slot/nested/layout.tsx`, `layout_functions.ts`, `page.tsx` & `page_functions.ts` | **Level-2 Nested Layout & Page (`/hs-cache-slot-test/nested`)** with `<DinouCacheSlot id="hscs-l2-slot">` in the L2 layout and `<DinouCacheSlot id="hscs-nested-page-slot">` in the nested page. |
-| `e2e/example.spec.ts` | Playwright E2E test block (`Dinou Core: Rigorous Horizontal Segmentation + <DinouCacheSlot> Synergy (/t-rigurous-hs-cache-slot)`) verifying all 10 scenarios + zero hydration/console errors. |
+| `e2e/example.spec.ts` | Playwright E2E test block (`Dinou Core: Rigorous Horizontal Segmentation + <DinouCacheSlot> Synergy (/t-rigurous-hs-cache-slot)`) verifying all 11 scenarios + F5 hard reload with zero hydration/console errors. |
 
 ---
 
-### 4.2. Summary of the 10 Automated Verification Scenarios (`10/10 PASSED`)
+### 4.2. Summary of the 11 Automated Verification Scenarios (`11/11 PASSED`)
 
 | # | Scenario Name | What It Verifies & Asserts | Status |
 | :--- | :--- | :--- | :--- |
@@ -158,20 +158,22 @@ Scenario 8 Flow: Refreshing Page A's Slot While Viewing Sibling Route Page B
 | **8** | **Unmounted Slot Refresh on Sibling Route (`Refresh Page A Slot While on Page B -> Return to Page A`)** | Navigates to `/hs-cache-slot-test/page-b` (unmounting Page A). While on Page B, bumps `pageASlotSeq` to `204`, calls `revalidateTag("hscs-page-a-slot-tag")`, and calls `refreshSlot("hscs-page-a-slot-tag")` while `hscs-page-a-slot` is **unmounted**, then immediately soft-navigates back to Page A. Verifies `knownClientSlots` + `slotOverrideCache` refreshes the unmounted slot in the background and renders `204` on Page A. | **PASSED** |
 | **9** | **Multi-Level Nested Layout (`/nested`) Slot Refresh & Round-Trip (`/nested -> /page-b -> /nested`)** | Soft-navigates to `/hs-cache-slot-test/nested` (`0` L1 layout fetches), increments L2 Layout and L2 Slot client `useState`, surgically refreshes L2 Layout Slot (`400 -> 401`) and Nested Page Slot (`500 -> 501`) while preserving L2 Layout host (`400`) and Nested Page host (`500`), and performs a round-trip soft navigation (`/nested -> /page-b -> /nested`) verifying `slotOverrideCache` preserves both `401` and `501` with `0` `/____rsc_page____` fetches. | **PASSED** |
 | **10** | **Host Segment Revalidation (`revalidatePage` & `revalidateLayout`) Coexistence with Cached Slots** | Bumps `pageASeq` (`200 -> 205`) and `l1LayoutSeq` (`100 -> 105`) while bumping `pageASlotSeq` and `l1SlotSeq` to `299`/`199` **without** invalidating the slot tags. Calls `revalidatePage("/hs-cache-slot-test")` + `router.refresh()`, then `revalidateLayout("/hs-cache-slot-test")` + `router.refresh({ layout: true })`. Verifies the host Page A (`205`) and host L1 Layout (`105`) update while reusing their cached `<DinouCacheSlot>` entries (`204` and `101`) from `slots/<id>/slot.json` and preserving L1 Layout & `@sidebar` client `mountId`s. | **PASSED** |
+| **11** | **Clock-Based `<DinouCacheSlot revalidate={1}>` TTL Expiration in Static L1 Layout & Static Page A** | Bumps 1s-TTL slots in L1 Layout (`hscs-l1-ttl-slot`) and Page A (`hscs-page-a-ttl-slot`) to `501` while poisoning L1 Layout host, Page A host, and `3600s` sibling slots to `999` **without** calling `revalidateTag`. Waits `1.25s` for the 1s clock TTL to expire, calls `refreshSlot("hscs-l1-ttl-slot")` and `refreshSlot("hscs-page-a-ttl-slot")` without `{ fresh: true }`, and verifies that the live DOM, raw SSR `index.html`, and `/____rsc_layout____` all update to `501` while L1 Layout host (`105`), Page A host (`205`), and `3600s` slots (`101`, `204`) remain 100% preserved. | **PASSED** |
 
 ---
 
-## 5. Complete 7-Suite Verification Matrix in `test-9.0.2`
+## 5. Complete 8-Suite Verification Matrix in `test-9.0.2`
 
-Following the completion of `/hs-cache-slot-test`, all **7 rigorous test suites** in `test-9.0.2` were executed end-to-end against the production Node.js Esbuild build (`build:node:esbuild` + `start:node:esbuild`):
+All **8 rigorous test suites** in `test-9.0.2` (and `dinou-e2e`) pass end-to-end against production builds with `0` hydration errors:
 
-| # | Suite Route | Scenarios / Checks | Result |
-| :--- | :--- | :--- | :--- |
-| **1** | `/sf-test` | 13 Automated Server Function RPC Scenarios | **13 / 13 PASSED** |
-| **2** | `/ppr-test` | 16 Automated Partial Prerendering Checks | **16 / 16 PASSED** |
-| **3** | `/cache-slot-test` | 3 Automated Vertical Segmentation (`<DinouCacheSlot>`) Blocks | **3 / 3 PASSED** |
-| **4** | `/ppr-cache-slot-test` | 2 Automated PPR + `<DinouCacheSlot>` Synergy Blocks | **2 / 2 PASSED** |
-| **5** | `/horizontal-segmentation-test` | 12 Automated Horizontal Segmentation Scenarios | **12 / 12 PASSED** |
-| **6** | `/triple-sinergy-test` | 12 Automated Triple Synergy (Horizontal + Vertical + PPR) Scenarios | **12 / 12 PASSED** |
-| **7** | `/hs-cache-slot-test` | 10 Automated Pure Horizontal + `<DinouCacheSlot>` (Non-PPR) Scenarios | **10 / 10 PASSED** |
+| # | Suite Route (`test-9.0.2`) | Companion Route (`dinou-e2e`) | Scenarios / Checks | Result |
+| :--- | :--- | :--- | :--- | :--- |
+| **1** | `/sf-test` | `/t-sf-body` | 13 Automated Server Function RPC Scenarios | **13 / 13 PASSED** |
+| **2** | `/ppr-test` | `/t-ppr-rigorous` | 17 Automated Partial Prerendering Checks (incl. Clock TTL) | **17 / 17 PASSED** |
+| **3** | `/cache-slot-test` | `/t-rigorous-cache-slot` | 4 Automated Vertical Segmentation (`<DinouCacheSlot>`) Blocks (incl. Clock TTL) | **4 / 4 PASSED** |
+| **4** | `/ppr-cache-slot-test` | `/t-rigorous-sinergy` | 3 Automated PPR + `<DinouCacheSlot>` Synergy Blocks (incl. Clock TTL) | **3 / 3 PASSED** |
+| **5** | `/horizontal-segmentation-test` | `/t-rigurous-hs` | 13 Automated Horizontal Segmentation Scenarios (incl. Clock TTL) | **13 / 13 PASSED** |
+| **6** | `/triple-sinergy-test` | `/t-rigurous-triple-sinergy` | 13 Automated Triple Synergy (Horizontal + Vertical + PPR) Scenarios | **13 / 13 PASSED** |
+| **7** | `/hs-cache-slot-test` | `/t-rigurous-hs-cache-slot` | 11 Automated Pure Horizontal + `<DinouCacheSlot>` (Non-PPR) Scenarios | **11 / 11 PASSED** |
+| **8** | `/hs-ppr-test` | `/t-rigurous-hs-ppr` | 12 Automated Pure Horizontal + PPR (No `<DinouCacheSlot>`) Scenarios | **12 / 12 PASSED** |
 

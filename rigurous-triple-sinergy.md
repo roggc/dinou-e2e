@@ -1,4 +1,4 @@
-# Triple Synergy (`Horizontal Segmentation + Vertical Segmentation + PPR`) in Dinou — Empirical TDD Bug Report, Architecture Fixes & 12-Scenario E2E Reference
+# Triple Synergy (`Horizontal Segmentation + Vertical Segmentation + PPR`) in Dinou — Empirical TDD Bug Report, Architecture Fixes & 13-Scenario E2E Reference
 
 This document provides a complete technical record of the **Triple Synergy** investigation and implementation in Dinou v9.0.3: how **Horizontal Segmentation** (`layout.rsc` vs. `page.rsc`), **Vertical Segmentation** (`<DinouCacheSlot>` & `refreshSlot`), and **Partial Prerendering (PPR)** (`shell.html`, `shell.rsc`, `shell.page.json`, and streamed `<Suspense>` holes) interact at build time and runtime.
 
@@ -180,10 +180,14 @@ When the browser requests `/____rsc_page____` on a PPR route (e.g. during `route
 5. **Non-Destructive, Deadlock-Free Static-Shell Synchronization in `getSlotJSX` (`dinou/core/cache-slot.js`)**:
    - When `getSlotJSX(slotId, { fresh: true, currentPath })` refreshes a slot with `inStaticShell: true`, instead of deleting `index.html`, `shell.html`, and `metadata.json` (which previously erased `slotTags` and forced a cold SSG rebuild), it persists the new `slots/<id>/slot.json` inside `renderPromise`, releases `inflightSlotRenders.delete(storageKey)` in `finally`, and **only after releasing the in-flight lock** calls `await revalidatePage("/" + cleanRouteKey, { onlyRefreshSlots: true })` (if the slot belongs to the page) or `await revalidateLayout(...)` (if the slot belongs to an active layout).
    - Executing the shell update **after** `inflightSlotRenders.delete(storageKey)` prevents a self-await promise cycle deadlock where `revalidatePage(..., { onlyRefreshSlots: true })` → `refreshNestedSlotsInTree` → `getSlotJSX(targetId)` would otherwise `await inflightSlotRenders.get(storageKey)` on the outer `renderPromise` while immediately reusing the freshly persisted `slot.json` from storage without re-executing `entry.render()`.
+6. **Hydration Build-ID Ordering Guard for `_old.rsc` After Page-Only or Slot-Only Revalidation (`dinou/core/handler.js`)**:
+   - When a page-level `<DinouCacheSlot>` (or `revalidatePage(..., { onlyRefreshSlots: true })`) updates `shell.html` and `metadata.json` on a PPR route (`T_page > T_layout`), `window.__DINOU_BUILD_ID__` in `shell.html` is updated to `T_page`, whereas `layout.metadata.json` remains at `T_layout` (and `layout._old.rsc` holds an even older layout snapshot `T_old < T_layout`).
+   - Previously, `handler.js` checked `const useOld = internalBuildId && currentGeneratedAt && internalBuildId !== String(currentGeneratedAt);`, which evaluated to `true` whenever `T_page > T_layout` and served the stale `layout._old.rsc` on a subsequent `F5` hard reload!
+   - Changing the guard to `const useOld = internalBuildId && currentGeneratedAt && Number(internalBuildId) < Number(currentGeneratedAt);` guarantees that `_old.rsc` is only served when an older HTML document (`internalBuildId < currentGeneratedAt`) hydrates after a newer background revalidation, never when `T_page > T_layout`.
 
 ---
 
-## 4. Phase 3: The 12-Scenario Triple Synergy Test Suite (`dinou-e2e/src/t-rigurous-triple-sinergy/` & `test-9.0.2/src/triple-sinergy-test/`)
+## 4. Phase 3: The 13-Scenario Triple Synergy Test Suite (`dinou-e2e/src/t-rigurous-triple-sinergy/` & `test-9.0.2/src/triple-sinergy-test/`)
 
 ### 4.1. Route Hierarchy Created in `dinou-e2e/src/t-rigurous-triple-sinergy/` (and `test-9.0.2/src/triple-sinergy-test/`)
 
@@ -201,7 +205,7 @@ When the browser requests `/____rsc_page____` on a PPR route (e.g. during `route
 | `src/t-rigurous-triple-sinergy/no-layout-ppr/page.tsx`, `page_functions.ts` & `no_layout` | Standalone `no_layout` + `export const ppr = true` + `<DinouCacheSlot>` + dynamic `<Suspense>` hole route. |
 | `e2e/example.spec.ts` | Playwright E2E test suite (`Dinou Core: Rigorous Triple Synergy — Horizontal + Vertical + PPR (/t-rigurous-triple-sinergy)`) running across GitHub Actions (`esbuild`, `rollup`, `webpack` × `node`, `bun`, `deno`, `cloudflare`). |
 
-### 4.2. Summary of the 12 Automated Verification Scenarios (`12/12 PASSED`)
+### 4.2. Summary of the 13 Automated Verification Scenarios (`13/13 PASSED`)
 
 | # | Scenario Name | What It Verifies & Asserts | Status |
 | :--- | :--- | :--- | :--- |
@@ -217,5 +221,6 @@ When the browser requests `/____rsc_page____` on a PPR route (e.g. during `route
 | **10** | **`revalidateLayout("/triple-sinergy-test")` & `revalidateTag("ts-layout-tag")` Across All PPR & Static Children** | Bumps `layoutSeq` (`100 → 105 → 106`) with all child page counters set to `999` (unrevalidated). Verifies PPR A, PPR B, Static A, and Static B all lazily re-compose their HTML with `layoutSeq = 105/106` while keeping their cached page shells (`103, 100, 100, 101`) and PPR hole streaming intact. | **PASSED** |
 | **11** | **Multi-Level Nested Layout (`L1 + L2`) Soft Navigation & Ancestor `revalidateLayout` Cascade** | Navigates to `/triple-sinergy-test/nested` (PPR) and `/triple-sinergy-test/nested/static-child` (`ppr = false`) with 0 layout fetches and preserved L1 + L2 client state; then revalidates ancestor L1 layout (`layoutSeq = 107`) and verifies automatic cascade to L2 `layout.rsc` and lazy HTML re-composition on both nested PPR and nested Static children. | **PASSED** |
 | **12** | **`router.refresh()` vs. `router.refresh({ layout: true })` with Query Params (`?mode=live-query`) + `no_layout` PPR Boundary** | Navigates to `/triple-sinergy-test?mode=live-query`, verifies `router.refresh()` makes 0 `/____rsc_layout____` requests while forwarding `?mode=live-query` to the dynamic PPR hole, verifies `router.refresh({ layout: true })` fetches both layout and page while preserving layout client state, and soft-navigates to `/triple-sinergy-test/no-layout-ppr` and back. | **PASSED** |
-| **+F5 & Direct SSR** | **Post-Suite Hard Reload (`F5`) on PPR Route & Direct SSR of `no_layout` PPR Route** | Reloads `/triple-sinergy-test` after layout revalidation and directly loads `/triple-sinergy-test/no-layout-ppr?mode=direct-ssr`, asserting exact state parity and **`0` React hydration errors**. | **PASSED** |
+| **13** | **Clock-Based `<DinouCacheSlot revalidate={1}>` TTL Expiration in PPR Static Shell & Dynamic Hole** | Mutates 1s-TTL slots in the PPR Static Shell (`ts-ppr-a-ttl-shell-slot`) and Dynamic PPR Hole (`ts-ppr-a-ttl-hole-slot`) to `501` while poisoning `layoutSeq` and `pprAPageSeq` to `999` **without** calling `revalidateTag`. Waits `1.25s` for the 1s clock TTL to expire, calls `refreshSlot("ts-ppr-a-ttl-shell-slot")` without `{ fresh: true }` and `router.refresh()`, and verifies both the static-shell slot (live DOM + raw `shellPart` of `shell.html`) and the dynamic-hole slot update to `501` while `layoutSeq` (`107`) and `pprAPageSeq` (`103`) remain frozen (never `999`). | **PASSED** |
+| **+F5 & Direct SSR** | **Post-Suite Hard Reload (`F5`) on PPR Route & Direct SSR of `no_layout` PPR Route** | Reloads `/triple-sinergy-test` after Scenario 13 (`T_page > T_layout`) and directly loads `/triple-sinergy-test/no-layout-ppr?mode=direct-ssr`, asserting `layoutSeq >= 107`, exact state parity, and **`0` React hydration errors**. | **PASSED** |
 

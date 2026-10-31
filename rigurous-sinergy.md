@@ -26,7 +26,7 @@ When combined on the **same route**, Dinou unlocks a **3-Tier Hybrid Rendering A
 
 ## 2. Architectural Fixes Implemented in Dinou (v9.0.3)
 
-Combining build-time two-pass PPR shell extraction with per-component `<DinouCacheSlot>` serialization and live client-side `/____rsc_slot____` re-fetching exposed several subtle lifecycle interactions. The following 6 core fixes were implemented in Dinou:
+Combining build-time two-pass PPR shell extraction with per-component `<DinouCacheSlot>` serialization and live client-side `/____rsc_slot____` re-fetching exposed several subtle lifecycle interactions. The following 7 core fixes were implemented in Dinou:
 
 ### 2.1. Transactional Deferred Side-Effects for `<DinouCacheSlot>` Inside `<Suspense>` During PPR Phase 1
 - **Files Modified**: `dinou/core/ppr-context.js`, `dinou/core/render-jsx-to-client-jsx.js`, `dinou/core/cache-slot.js`
@@ -115,6 +115,15 @@ Combining build-time two-pass PPR shell extraction with per-component `<DinouCac
   - Changing the wrapper element hierarchy on the first refresh caused React to unmount and remount any Client Component rendered **inside** the `<DinouCacheSlot>`, resetting its local `useState` hooks.
 - **Solution**:
   - `DinouCacheSlotBoundary` now resolves the `window.__DINOU_FETCH_SLOT__` promise and updates `slotContent` inside `React.startTransition(() => setSlotContent(resolved))`, returning `slotContent !== null ? slotContent : children`. Because the Fiber tree depth remains identical before and after `refreshSlot`, Client Components inside the slot update their props (`slotToken`) in place while preserving all local `useState` state.
+
+### 2.7. Clock-Based `<DinouCacheSlot revalidate={1}>` TTL Expiration in PPR Static Shells, Streamed Dynamic Holes & Standalone Static Host Pages
+- **Files Modified**: `dinou/core/handler.js`, `dinou/core/cache-slot.js`, `dinou/core/cache-revalidate.js`
+- **Problem**:
+  - When a `<DinouCacheSlot revalidate={1}>` was placed inside the **PPR Static Shell** (`inStaticShell: true`), its clock expiration needed to lazily update `shell.html`, `shell.rsc`, and `shell.page.json` via `revalidatePage(..., { onlyRefreshSlots: true })` without re-executing the outer PPR page shell (`getProps` / `page.tsx`) or `3600s` sibling shell slots.
+  - Conversely, when a `<DinouCacheSlot revalidate={1}>` was placed inside a **Dynamic PPR `<Suspense>` Hole** (`inStaticShell: false`), its clock expiration needed to regenerate `slots/<id>/slot.json` via SWR during `streamDynamicHoles` without touching `shell.html`.
+- **Solution**:
+  - `handler.js` inspects `slot.metadata.json` for static-shell `slotTags` on PPR routes as well as classic static routes: when a static-shell slot's TTL expires by clock, it triggers background `revalidatePage(reqPathWithSlash, { onlyRefreshSlots: true })`, updating the slot inside `shell.html` and `shell.page.json` while keeping the outer PPR shell and `3600s` sibling slots frozen.
+  - Inside streamed dynamic holes, `DinouCacheSlot` detects `now > generatedAt + revalidate * 1000` during `streamDynamicHoles` and triggers background slot revalidation while keeping `shell.html` 100% untouched.
 
 ---
 
@@ -268,3 +277,5 @@ The complete PPR + `<DinouCacheSlot>` synergy is continuously verified in GitHub
   2. **Surgical `revalidateTag` on Dynamic-Hole Slots vs. Static-Shell Slots**: Verifies that invalidating inner hole slots (`tag-syn-hole-slot-a`, `tag-syn-nested-inner`) updates only those slots on the next request while keeping `ppr-syn-nested-outer` and `shell.html` intact, and that invalidating `tag-syn-shell-slot` regenerates `shell.html` with a fresh shell slot token.
   3. **Live `refreshSlot` Across All 3 Hierarchy Levels**: Verifies live client-side slot refreshes by ID, by tag, via `useRouter().refreshSlot` on a nested inner slot, on a static-shell slot, and via wildcard `refreshSlot("*", { fresh: true })`, while preserving React client state in the static shell (`#syn-shell-client-counter`), inside PPR Hole #1 (`#syn-hole-outer-counter`), and inside the slot's own Client Component (`#syn-slot-widget-clicks`), as well as verifying direct and prop-passed `"use server"` actions before and after live slot refresh.
   4. **Direct `/____rsc_slot____` Endpoint & Concurrency Stampede Deduplication**: Verifies that 6 simultaneous `?fresh=1` requests to a slot inside a PPR route are deduplicated via `inflightSlotRenders` and return identical RSC Flight payloads.
+  5. **Clock-Based `<DinouCacheSlot revalidate={1}>` TTL Expiration in PPR Static Shell & Dynamic Hole (`/t-rigorous-sinergy`)**: Verifies that after waiting `1250ms` without calling `revalidateTag`, both the 1s-TTL slot in the PPR static shell (`syn-ttl-shell-slot-token`) and the 1s-TTL slot inside a streamed dynamic PPR hole (`syn-ttl-hole-slot-token`) regenerate automatically by clock while `3600s` sibling slots (`syn-shell-slot-token`, `syn-hole-slot-a-token`) remain cached.
+  6. **Standalone Non-PPR Static Host Page + `<DinouCacheSlot>` Clock-Based TTL Expiration (`/t-rigorous-sinergy/static-host`)**: Verifies on a non-PPR static host page (`export const ppr = false`, `export const revalidate = 1`) that the 1s-TTL host page (`syn-static-host-page-token`) and 1s-TTL slot (`syn-static-host-fast-slot-token`) regenerate after `1250ms` while the `3600s` cached slot (`syn-static-host-cached-slot-token`) stays preserved across page ISR rebuilds.
