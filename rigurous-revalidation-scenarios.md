@@ -60,3 +60,385 @@ Dinou provides five on-demand invalidation primitives—four server-side (`reval
 3. **Deterministic Concurrency (No Race Conditions)**: Concurrent host re-compositions are serialized through `enqueueRevalidation` with monotonic timestamps (`nextMonotonicGenTime`), and out-of-order concurrent `refreshSlot()` calls are guarded by client-side `pendingPromise` verification and server-side `slotRenderGenerations`.
 4. **Full Cross-Runtime Parity**: Verified across **Node.js** (`FileSystemStorage`), **Bun** (`FileSystemStorage`), **Deno** (`DenoKVStorage` with atomic chunking and build-time KV seeding), and **Cloudflare Workers** (`CloudflareKVStorage` / `MemoryStorage` + `env.ASSETS` fallback).
 
+
+---
+
+## 4. Minimal Reproduction Recipes & Code Snippets (Benchmarking Guide for Dinou v9.0.3)
+
+This section provides the **minimal, self-contained code recipes** needed in a Dinou v9.0.3 application to reproduce and benchmark every Clock-Based TTL Expiration scenario (Table 1: `1.1–1.10`) and every On-Demand Revalidation scenario (Table 2: `2.1–2.8`).
+
+---
+
+### 4.0. Shared Deterministic State Helper (`src/bench-state.ts`)
+
+Use a lightweight in-memory counter store so each benchmark scenario can independently mutate layout, page, and slot counters and assert which segment re-executed vs. remained cached:
+
+```ts
+// src/bench-state.ts
+const KEY = Symbol.for("dinou.bench.state");
+export const state: Record<string, number> = ((globalThis as any)[KEY] ??= {
+  layoutSeq: 1,
+  pageSeq: 1,
+  slotSeq: 1,
+  innerSlotSeq: 1,
+  delayMs: 0,
+});
+```
+
+---
+
+### 4.1. Reproducing Clock-Based TTL Expiration Scenarios (Table 1)
+
+#### Scenario 1.1 — Layout Clock TTL (`revalidate = 1s`) + Static Child Page (`revalidate = 3600s`)
+```ts
+// src/bench-ttl-layout/layout_functions.ts
+export function revalidate() {
+  return 1; // Layout expires after 1 second
+}
+```
+```tsx
+// src/bench-ttl-layout/layout.tsx
+import { DinouPageSlot } from "dinou";
+import { state } from "../bench-state";
+
+export default async function Layout() {
+  return (
+    <div>
+      <span id="layout-seq">{state.layoutSeq}</span>
+      <DinouPageSlot />
+    </div>
+  );
+}
+```
+```ts
+// src/bench-ttl-layout/page_functions.ts
+export function revalidate() {
+  return 3600; // Child page stays cached for 1 hour
+}
+```
+```tsx
+// src/bench-ttl-layout/page.tsx
+import { state } from "../bench-state";
+
+export default async function Page() {
+  return <span id="page-seq">{state.pageSeq}</span>;
+}
+```
+- **How to reproduce**:
+  1. `GET /bench-ttl-layout` → `#layout-seq = 1`, `#page-seq = 1`.
+  2. Mutate `state.layoutSeq = 2` and `state.pageSeq = 999` (without calling any `revalidate*` API).
+  3. Wait `1.2s` and `GET /bench-ttl-layout` (or fetch `/____rsc_layout____/bench-ttl-layout`).
+  4. **Expected**: `#layout-seq` updates to `2` (and `index.html` lazily re-composes), while `#page-seq` remains `1` (never `999`).
+
+---
+
+#### Scenario 1.2 — Layout Clock TTL (`revalidate = 1s`) + PPR Child Page (`ppr = true`, `revalidate = 3600s`)
+```ts
+// src/bench-ttl-layout-ppr/layout_functions.ts
+export const ppr = true;
+export function revalidate() {
+  return 1; // PPR Layout shell expires after 1 second
+}
+```
+```ts
+// src/bench-ttl-layout-ppr/page_functions.ts
+export const ppr = true;
+export function revalidate() {
+  return 3600; // PPR Child page shell stays cached for 1 hour
+}
+```
+```tsx
+// src/bench-ttl-layout-ppr/page.tsx
+import { Suspense } from "react";
+import { getContext } from "dinou";
+import { state } from "../bench-state";
+
+async function DynamicHole() {
+  const ctx = getContext();
+  return <span id="hole-query">{String(ctx?.req?.query?.q ?? "none")}</span>;
+}
+
+export default async function Page() {
+  return (
+    <div>
+      <span id="ppr-page-shell-seq">{state.pageSeq}</span>
+      <Suspense fallback={<span>Loading...</span>}>
+        <DynamicHole />
+      </Suspense>
+    </div>
+  );
+}
+```
+- **How to reproduce**: Mutate `state.layoutSeq = 2` and `state.pageSeq = 999`, wait `1.2s`, and `GET /bench-ttl-layout-ppr?q=live`. `#layout-seq` updates to `2` in `shell.html`, `#ppr-page-shell-seq` stays frozen at `1`, and `#hole-query` streams `"live"`.
+
+---
+
+#### Scenario 1.3 — Dynamic Layout (`revalidate = 0`) + Cached Child Page (`revalidate = 3600s`)
+```ts
+// src/bench-dyn-layout/layout_functions.ts
+export function revalidate() {
+  return 0; // Always dynamic on every GET and /____rsc_layout____
+}
+```
+```ts
+// src/bench-dyn-layout/page_functions.ts
+export function revalidate() {
+  return 3600; // Child page remains statically cached
+}
+```
+- **How to reproduce**: Increment `state.layoutSeq = 2` and `state.pageSeq = 999`. Every `GET /bench-dyn-layout` or `router.refresh({ layout: true })` renders `#layout-seq = 2` while reusing cached `#page-seq = 1`.
+
+---
+
+#### Scenario 1.4 — Static Page Clock TTL (`revalidate = 1s`) + Long-Lived Parent Layout (`revalidate = 3600s`)
+```ts
+// src/bench-ttl-page/layout_functions.ts
+export function revalidate() {
+  return 3600; // Parent layout cached for 1 hour
+}
+```
+```ts
+// src/bench-ttl-page/page_functions.ts
+export function revalidate() {
+  return 1; // Child page expires after 1 second
+}
+```
+- **How to reproduce**:
+  1. `GET /bench-ttl-page` → `#layout-seq = 1`, `#page-seq = 1`.
+  2. Mutate `state.pageSeq = 2` and `state.layoutSeq = 999`.
+  3. Wait `1.2s`, trigger `GET /bench-ttl-page` (background ISR delegates to `revalidatePage`), then `GET /bench-ttl-page` again.
+  4. **Expected**: `#page-seq` updates to `2` while `#layout-seq` remains `1` (parent `layout.tsx` is not re-executed).
+
+---
+
+#### Scenario 1.5 — PPR Page Clock TTL (`revalidate = 1s`) + Long-Lived Parent Layout (`revalidate = 3600s`)
+```ts
+// src/bench-ttl-ppr-page/layout_functions.ts
+export const ppr = true;
+export function revalidate() {
+  return 3600;
+}
+```
+```ts
+// src/bench-ttl-ppr-page/page_functions.ts
+export const ppr = true;
+export function revalidate() {
+  return 1; // PPR Page static shell expires after 1 second
+}
+```
+- **How to reproduce**: Mutate `state.pageSeq = 2` and `state.layoutSeq = 999`, wait `1.2s`, trigger `GET /bench-ttl-ppr-page` (`regeneratePprShell(..., { skipLayoutPersistence: true })`), and fetch again: `#ppr-page-shell-seq` updates to `2` in `shell.html` while `#layout-seq` stays `1` and `<Suspense>` holes continue streaming per request.
+
+---
+
+#### Scenario 1.6 — Dynamic Page (`revalidate = 0`) + Long-Lived Parent Layout (`revalidate = 3600s`)
+```ts
+// src/bench-dyn-page/layout_functions.ts
+export function revalidate() {
+  return 3600;
+}
+```
+```ts
+// src/bench-dyn-page/page_functions.ts
+export function revalidate() {
+  return 0; // Page evaluates per request; parent layout stays cached
+}
+```
+
+---
+
+#### Scenarios 1.7, 1.8, 1.9 & 1.10 — `<DinouCacheSlot>` Clock TTL (`revalidate={1}`) & Cache Bypass (`revalidate={0}`) Across Layout, Static Page & PPR (Shell vs. Dynamic Hole)
+```tsx
+// Inside layout.tsx, static page.tsx, or PPR page.tsx
+import { Suspense } from "react";
+import { DinouCacheSlot, getContext } from "dinou";
+import { state } from "../bench-state";
+
+export default async function Page() {
+  return (
+    <div>
+      <span id="host-page-seq">{state.pageSeq}</span>
+
+      {/* Scenario 1.7 / 1.8 / 1.9a: 1-second Clock-TTL Slot in Static Page, Layout, or PPR Shell */}
+      <DinouCacheSlot id="bench-ttl-slot" revalidate={1}>
+        <span id="ttl-slot-seq">{state.slotSeq}</span>
+      </DinouCacheSlot>
+
+      {/* Scenario 1.10: Dynamic Bypass Slot (0 = never cached on disk/KV) */}
+      <DinouCacheSlot id="bench-nocache-slot" revalidate={0}>
+        <span id="nocache-slot-seq">{state.slotSeq}</span>
+      </DinouCacheSlot>
+
+      {/* Scenario 1.9b (PPR routes only): 1-second Clock-TTL Slot inside a Dynamic <Suspense> Hole */}
+      <Suspense fallback={<span>Loading hole...</span>}>
+        <DynamicHoleWithSlot />
+      </Suspense>
+    </div>
+  );
+}
+
+async function DynamicHoleWithSlot() {
+  const ctx = getContext();
+  void ctx?.req?.cookies?.session; // Marks enclosing <Suspense> as a dynamic PPR hole
+  return (
+    <DinouCacheSlot id="bench-hole-ttl-slot" revalidate={1}>
+      <span id="hole-ttl-slot-seq">{state.slotSeq}</span>
+    </DinouCacheSlot>
+  );
+}
+```
+- **How to reproduce**:
+  - Mutate `state.slotSeq = 2` and `state.pageSeq = 999` (without calling `revalidateTag`).
+  - Immediately (`< 1s`): `#nocache-slot-seq` is already `2` on refresh, while `#ttl-slot-seq` and `#hole-ttl-slot-seq` remain `1`.
+  - After waiting `1.2s`: calling `refreshSlot("bench-ttl-slot")` (without `{ fresh: true }`) or `GET`ting the route updates `#ttl-slot-seq` and `#hole-ttl-slot-seq` to `2` and surgically re-composes `index.html` / `shell.html` (`{ onlyRefreshSlots: true }`) while `#host-page-seq` stays `1` (never `999`).
+
+---
+
+### 4.2. Reproducing On-Demand Surgical Revalidation Scenarios (Table 2)
+
+#### Shared Metadata Tags Setup (`layout_functions.ts` & `page_functions.ts`)
+```ts
+// src/bench-ondemand/layout_functions.ts
+export function revalidate() {
+  return 3600;
+}
+export function getCacheTags() {
+  return ["bench-layout-tag"];
+}
+```
+```ts
+// src/bench-ondemand/page_functions.ts
+export function revalidate() {
+  return 3600;
+}
+export function getCacheTags() {
+  return ["bench-page-tag"];
+}
+```
+
+#### Shared Server Actions for All On-Demand Scenarios (`src/bench-actions.ts`)
+```ts
+"use server";
+import {
+  revalidatePage,
+  revalidateLayout,
+  revalidatePath,
+  revalidateTag,
+} from "dinou";
+
+// Scenario 2.1: Surgical Page-Only Revalidation
+export async function triggerRevalidatePage() {
+  await revalidatePage("/bench-ondemand");
+}
+
+// Scenario 2.2: Surgical Layout-Only Revalidation (+ Lazy Child HTML Re-Composition)
+export async function triggerRevalidateLayout() {
+  await revalidateLayout("/bench-ondemand");
+}
+
+// Scenario 2.3: Full-Hierarchy Path Revalidation (Layout + Page)
+export async function triggerRevalidatePath() {
+  await revalidatePath("/bench-ondemand");
+}
+
+// Scenarios 2.4, 2.5, 2.6 & 2.7: Tag-Based Surgical Revalidation
+// - tag = "bench-layout-tag"      -> Scenario 2.4 (Layout Tag)
+// - tag = "bench-page-tag"        -> Scenario 2.5 (Page Tag)
+// - tag = "bench-slot-tag"        -> Scenario 2.6 / 2.7a (Static/Layout/PPR-Shell Slot Tag: { onlyRefreshSlots: true })
+// - tag = "bench-hole-slot-tag"   -> Scenario 2.7b (PPR Dynamic-Hole Slot Tag: evicts slots/<id> only, 0ms TTFB kept)
+// - tag = "bench-shared-tag"      -> Cross-Axis Tag (updates Layout Slot + Page Slot simultaneously)
+// - tag = "bench-inner-slot-tag"  -> Nested Inner Slot Tag (updates Inner Slot while keeping Outer Slot cached)
+export async function triggerRevalidateTag(tag: string) {
+  await revalidateTag(tag);
+}
+```
+
+#### Layout & Page Hosting Tagged, Cross-Axis, and Nested `<DinouCacheSlot>` Boundaries
+```tsx
+// src/bench-ondemand/layout.tsx
+import { DinouPageSlot, DinouCacheSlot } from "dinou";
+import { state } from "../bench-state";
+
+export default async function Layout() {
+  return (
+    <div>
+      <span id="layout-host-seq">{state.layoutSeq}</span>
+      <DinouCacheSlot id="layout-shared-slot" tags={["bench-shared-tag"]}>
+        <span id="layout-slot-seq">{state.slotSeq}</span>
+      </DinouCacheSlot>
+      <DinouPageSlot />
+    </div>
+  );
+}
+```
+```tsx
+// src/bench-ondemand/page.tsx
+import { DinouCacheSlot } from "dinou";
+import { state } from "../bench-state";
+
+export default async function Page() {
+  return (
+    <div>
+      <span id="page-host-seq">{state.pageSeq}</span>
+
+      {/* Standalone Page Slot + Cross-Axis Shared Tag */}
+      <DinouCacheSlot
+        id="page-slot"
+        tags={["bench-slot-tag", "bench-shared-tag"]}
+      >
+        {async () => {
+          const captured = state.slotSeq;
+          if (state.delayMs > 0) {
+            await new Promise((r) => setTimeout(r, state.delayMs));
+          }
+          return <span id="page-slot-seq">{captured}</span>;
+        }}
+      </DinouCacheSlot>
+
+      {/* Nested Slots: Outer -> Inner */}
+      <DinouCacheSlot id="outer-slot" tags={["bench-outer-slot-tag"]}>
+        <div>
+          <span id="outer-slot-seq">{state.slotSeq}</span>
+          <DinouCacheSlot id="inner-slot" tags={["bench-inner-slot-tag"]}>
+            <span id="inner-slot-seq">{state.innerSlotSeq}</span>
+          </DinouCacheSlot>
+        </div>
+      </DinouCacheSlot>
+    </div>
+  );
+}
+```
+
+#### Scenario 2.8 — Client Live `refreshSlot` (In-Place Update, Round-Trip `pageCache` Persistence, Unmounted Sibling Refresh & Out-of-Order LWW Race Protection)
+```tsx
+// src/bench-ondemand/bench-client.tsx
+"use client";
+import { useRouter, refreshSlot } from "dinou";
+
+export function BenchClientControls() {
+  const router = useRouter();
+
+  return (
+    <div>
+      {/* 1. Refresh only page.rsc vs. layout.rsc + page.rsc */}
+      <button onClick={() => router.refresh()}>Refresh Page Segment</button>
+      <button onClick={() => router.refresh({ layout: true })}>
+        Refresh Layout + Page
+      </button>
+
+      {/* 2. Live refreshSlot by ID or Tag (preserves client useState & survives Page A -> B -> A soft nav) */}
+      <button onClick={() => refreshSlot("page-slot", { fresh: true })}>
+        Force Refresh Slot by ID
+      </button>
+      <button onClick={() => refreshSlot("bench-shared-tag")}>
+        Refresh Layout + Page Slots by Shared Tag
+      </button>
+
+      {/* 3. Out-of-Order Concurrent refreshSlot() Race Benchmark (Last-Write-Wins)
+          - Request #1: state.slotSeq = 401, state.delayMs = 350 -> refreshSlot("page-slot", { fresh: true })
+          - Request #2 (40ms later): state.slotSeq = 402, state.delayMs = 0 -> refreshSlot("page-slot", { fresh: true })
+          - Expected after 450ms: #page-slot-seq === "402" (both when mounted on /bench-ondemand and when unmounted on /bench-ondemand/sibling)
+      */}
+    </div>
+  );
+}
+```
