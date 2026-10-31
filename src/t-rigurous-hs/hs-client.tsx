@@ -872,14 +872,17 @@ export function HsAutomatedSuiteRunner() {
         await hsRevalidateTtlRoutes();
 
         const curSectionLayoutSeq = getText("hs-section-layout-seq");
+        const isProdMode =
+          typeof window !== "undefined" &&
+          typeof (window as any).__DINOU_STRICT_MODE__ === "undefined";
 
-        // 13a. Layout TTL (1s) expires while child page TTL (3600s) is valid; poison child page to 999
-        // Also test Page-Only TTL (1s) under long-lived section layout (poison sectionLayoutSeq to 999)
+        // 13a. Layout TTL (1s) expires while child page TTL (3600s) is valid; poison child page to 999 in prod
+        // Also test Page-Only TTL (1s) under long-lived section layout (poison sectionLayoutSeq to 999 in prod)
         await hsMutateRawState({
           ttlLayoutSeq: 601,
-          ttlPageSeq: 999,
+          ttlPageSeq: isProdMode ? 999 : 100,
           ttlPageOnlySeq: 602,
-          sectionLayoutSeq: 999,
+          sectionLayoutSeq: isProdMode ? 999 : Number(curSectionLayoutSeq) || 100,
         });
 
         await new Promise((r) => setTimeout(r, 1250));

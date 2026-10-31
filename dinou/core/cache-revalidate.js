@@ -386,20 +386,31 @@ async function revalidatePage(reqPath, internalOptions = {}) {
         host: "localhost",
         "x-forwarded-proto": "http",
       };
+      const markRevalDynamic = () => {
+        revalDynamicState.value = true;
+      };
       const revalContext = {
         req: {
-          query: createBailoutProxy({}, revalDynamicState, "req.query"),
-          cookies: createBailoutProxy({}, revalDynamicState, "req.cookies"),
-          headers: createBailoutProxy(rawHeaders, revalDynamicState, "req.headers"),
+          query: createBailoutProxy({}, "req.query", markRevalDynamic),
+          cookies: createBailoutProxy({}, "req.cookies", markRevalDynamic),
+          headers: createBailoutProxy(rawHeaders, "req.headers", markRevalDynamic),
           path: reqPathWithSlash,
           method: "GET",
         },
         res: {
           status() {},
-          setHeader() {},
-          cookie() {},
-          clearCookie() {},
-          redirect() {},
+          setHeader() {
+            markRevalDynamic();
+          },
+          cookie() {
+            markRevalDynamic();
+          },
+          clearCookie() {
+            markRevalDynamic();
+          },
+          redirect() {
+            markRevalDynamic();
+          },
         },
       };
       const clientManifest =
@@ -859,20 +870,31 @@ async function revalidateLayout(cleanPath, internalOptions = {}) {
           host: "localhost",
           "x-forwarded-proto": "http",
         };
+        const markRevalDynamic = () => {
+          revalDynamicState.value = true;
+        };
         const revalContext = {
           req: {
-            query: createBailoutProxy({}, revalDynamicState, "req.query"),
-            cookies: createBailoutProxy({}, revalDynamicState, "req.cookies"),
-            headers: createBailoutProxy(rawHeaders, revalDynamicState, "req.headers"),
+            query: createBailoutProxy({}, "req.query", markRevalDynamic),
+            cookies: createBailoutProxy({}, "req.cookies", markRevalDynamic),
+            headers: createBailoutProxy(rawHeaders, "req.headers", markRevalDynamic),
             path: reqPathWithSlash,
             method: "GET",
           },
           res: {
             status() {},
-            setHeader() {},
-            cookie() {},
-            clearCookie() {},
-            redirect() {},
+            setHeader() {
+              markRevalDynamic();
+            },
+            cookie() {
+              markRevalDynamic();
+            },
+            clearCookie() {
+              markRevalDynamic();
+            },
+            redirect() {
+              markRevalDynamic();
+            },
           },
         };
         const clientManifest =

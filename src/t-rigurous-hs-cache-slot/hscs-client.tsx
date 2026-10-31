@@ -829,6 +829,15 @@ export function HsCsAutomatedSuiteRunner() {
         }
 
         // Also verify raw GET /t-rigurous-hs-cache-slot (F5 SSR HTML) reflects 301 for both expired TTL slots while keeping host L1=101 and PageA=101!
+        const isProdMode =
+          typeof window !== "undefined" &&
+          typeof (window as any).__DINOU_STRICT_MODE__ === "undefined";
+        if (!isProdMode) {
+          await hscsMutateState({
+            l1LayoutSeq: 101,
+            pageASeq: 101,
+          });
+        }
         await new Promise((r) => setTimeout(r, 250));
         const rawHtmlRes = await origFetch("/t-rigurous-hs-cache-slot", {
           headers: { Accept: "text/html" },

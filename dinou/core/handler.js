@@ -1350,7 +1350,6 @@ async function handleRequest(request, platformContext = {}) {
       layoutConfig = await resolveLayoutFunctionsConfig(layoutPath, layoutParams);
       if (layoutConfig.isDynamic) {
         dynamicState.value = true;
-        hasStaticDynamicConfig = true;
       }
     } else if (isPageReq) {
       pageConfig = await resolvePageFunctionsConfig(
@@ -1652,7 +1651,7 @@ async function handleRequest(request, platformContext = {}) {
       if (layouts && Array.isArray(layouts)) {
         for (const [lPath, lParams] of layouts) {
           const lConfig = await resolveLayoutFunctionsConfig(lPath, lParams);
-          if (!isDevelopment && lConfig.allowISG === false) {
+          if (lConfig.allowISG === false) {
             let isPathAllowed = false;
             if (lConfig.staticPathsSet) {
               const sortedEntries = Object.entries(lParams || {})
@@ -1667,6 +1666,10 @@ async function handleRequest(request, platformContext = {}) {
               isPathAllowed = lConfig.staticPathsSet.has(serializedQuery) || lConfig.staticPathsSet.has(singleValStr);
             }
             if (!isPathAllowed) {
+              if (isDevelopment) {
+                isPathBlocked = true;
+                break;
+              }
               const cleanReq = reqPath.replace(/^\//, "").replace(/\/$/, "");
               const rscPath = path.join(process.cwd(), ".dinou/dist2", cleanReq, "layout.rsc");
               if (!existsSync(rscPath)) {
@@ -1687,7 +1690,7 @@ async function handleRequest(request, platformContext = {}) {
         if (!layoutConfig) {
           layoutConfig = await resolveLayoutFunctionsConfig(layoutPath, layoutParams);
         }
-        if (!isDevelopment && layoutConfig.allowISG === false) {
+        if (layoutConfig.allowISG === false) {
           let isPathAllowed = false;
           if (layoutConfig.staticPathsSet) {
             const sortedEntries = Object.entries(layoutParams || {})
@@ -1702,10 +1705,14 @@ async function handleRequest(request, platformContext = {}) {
             isPathAllowed = layoutConfig.staticPathsSet.has(serializedQuery) || layoutConfig.staticPathsSet.has(singleValStr);
           }
           if (!isPathAllowed) {
-            const cleanReq = reqPath.replace(/^\//, "").replace(/\/$/, "");
-            const rscPath = path.join(process.cwd(), ".dinou/dist2", cleanReq, "layout.rsc");
-            if (!existsSync(rscPath)) {
+            if (isDevelopment) {
               isPathBlocked = true;
+            } else {
+              const cleanReq = reqPath.replace(/^\//, "").replace(/\/$/, "");
+              const rscPath = path.join(process.cwd(), ".dinou/dist2", cleanReq, "layout.rsc");
+              if (!existsSync(rscPath)) {
+                isPathBlocked = true;
+              }
             }
           }
         }
@@ -1913,6 +1920,7 @@ async function handleRequest(request, platformContext = {}) {
 
       if (layoutConfig.isDynamic) {
         dynamicState.value = true;
+        hasStaticDynamicConfig = true;
       }
 
       if (layoutConfig.allowISG === false) {
@@ -2528,10 +2536,14 @@ async function handleRequest(request, platformContext = {}) {
           bootstrapScriptContent += `window.__DINOU_LAYOUTS__ = ${JSON.stringify(knownLayouts)};\n`;
           if (shouldCacheISG && !isPprConfig) {
             bootstrapScriptContent += "window.__DINOU_USE_STATIC__ = true;\n";
+            bootstrapScriptContent += `window.__DINOU_BUILD_ID__ = "${nowGen}";\n`;
           } else {
             bootstrapScriptContent += "window.__DINOU_USE_STATIC__ = false;\n";
             if (isPprConfig) {
               bootstrapScriptContent += "window.__DINOU_PPR__ = true;\n";
+              if (shouldCacheISG) {
+                bootstrapScriptContent += `window.__DINOU_BUILD_ID__ = "${nowGen}";\n`;
+              }
             }
           }
           if (isDevelopment) {
@@ -2735,6 +2747,12 @@ async function handleRequest(request, platformContext = {}) {
             if (fullHtml) {
               if (!dynamicState.value || (platformContext.isSSG === true && !ssgPprUnwrappedBailout)) {
                 if (platformContext.isSSG === true && !ssgPprUnwrappedBailout) dynamicState.value = false;
+                for (const k of [reqPath, cleanPath, cleanPath ? `/${cleanPath}` : "/"]) {
+                  if (!k) continue;
+                  if (isDynamic.has(k)) {
+                    isDynamic.get(k).value = false;
+                  }
+                }
                 const pageSlotTags =
                   layouts && layouts.length > 0
                     ? context._pageSlotTags
@@ -2793,6 +2811,10 @@ async function handleRequest(request, platformContext = {}) {
                   console.error("[Edge ISG] Error caching to KV:", cacheErr);
                 }
               } else {
+                fullHtml = fullHtml.replace(
+                  "window.__DINOU_USE_STATIC__ = true;",
+                  "window.__DINOU_USE_STATIC__ = false;"
+                );
                 if (!platformContext?.isSSG || process.env.DINOU_DEBUG) {
                   console.log(`ℹ️ [Edge ISG] Dynamic bailout detected during render for ${reqPath}, skipping KV cache`);
                 }

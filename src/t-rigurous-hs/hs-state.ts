@@ -1,7 +1,4 @@
-import fs from "node:fs";
-import path from "node:path";
-
-const STATE_FILE = path.resolve(process.cwd(), ".dinou/hs-test-state.json");
+const STATE_KEY = Symbol.for("dinou.e2e.rigorous.hs.state");
 
 export interface HsState {
   sectionLayoutSeq: number;
@@ -41,31 +38,67 @@ const DEFAULT_STATE: HsState = {
   ttlPageOnlySeq: 100,
 };
 
-export function readHsState(): HsState {
+function getNodeFsAndPath(): { fs: any; stateFile: string } | null {
   try {
-    if (fs.existsSync(STATE_FILE)) {
-      const raw = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
-      return { ...DEFAULT_STATE, ...raw };
+    const proc = typeof process !== "undefined" ? (process as any) : null;
+    if (proc && typeof proc.getBuiltinModule === "function" && typeof proc.cwd === "function") {
+      const fs = proc.getBuiltinModule("node:fs");
+      const path = proc.getBuiltinModule("node:path");
+      if (fs && path) {
+        return {
+          fs,
+          stateFile: path.resolve(proc.cwd(), ".dinou/hs-test-state.json"),
+        };
+      }
     }
   } catch (e) {}
+  return null;
+}
+
+export function readHsState(): HsState {
+  const nodeEnv = getNodeFsAndPath();
+  if (nodeEnv) {
+    try {
+      if (nodeEnv.fs.existsSync(nodeEnv.stateFile)) {
+        const raw = JSON.parse(nodeEnv.fs.readFileSync(nodeEnv.stateFile, "utf8"));
+        const merged = { ...DEFAULT_STATE, ...raw };
+        (globalThis as any)[STATE_KEY] = merged;
+        return merged;
+      }
+    } catch (e) {}
+  }
+  const mem = (globalThis as any)[STATE_KEY];
+  if (mem && typeof mem === "object") {
+    return { ...DEFAULT_STATE, ...mem };
+  }
   return { ...DEFAULT_STATE };
 }
 
 export function writeHsState(patch: Partial<HsState>): HsState {
   const current = readHsState();
   const next = { ...current, ...patch };
-  try {
-    fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
-    fs.writeFileSync(STATE_FILE, JSON.stringify(next, null, 2), "utf8");
-  } catch (e) {}
+  (globalThis as any)[STATE_KEY] = next;
+  const nodeEnv = getNodeFsAndPath();
+  if (nodeEnv) {
+    try {
+      const pathMod = (process as any).getBuiltinModule("node:path");
+      nodeEnv.fs.mkdirSync(pathMod.dirname(nodeEnv.stateFile), { recursive: true });
+      nodeEnv.fs.writeFileSync(nodeEnv.stateFile, JSON.stringify(next, null, 2), "utf8");
+    } catch (e) {}
+  }
   return next;
 }
 
 export function resetHsState(): HsState {
-  try {
-    fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
-    fs.writeFileSync(STATE_FILE, JSON.stringify(DEFAULT_STATE, null, 2), "utf8");
-  } catch (e) {}
+  (globalThis as any)[STATE_KEY] = { ...DEFAULT_STATE };
+  const nodeEnv = getNodeFsAndPath();
+  if (nodeEnv) {
+    try {
+      const pathMod = (process as any).getBuiltinModule("node:path");
+      nodeEnv.fs.mkdirSync(pathMod.dirname(nodeEnv.stateFile), { recursive: true });
+      nodeEnv.fs.writeFileSync(nodeEnv.stateFile, JSON.stringify(DEFAULT_STATE, null, 2), "utf8");
+    } catch (e) {}
+  }
   return { ...DEFAULT_STATE };
 }
 

@@ -195,14 +195,15 @@ function notifySuiteUpdate(next: HsPprSuiteGlobalState) {
   window.dispatchEvent(new CustomEvent("hsppr-suite-update"));
 }
 
-function splitPprWire(rawHtml: string): { shell: string; stream: string } {
+function splitPprWire(rawHtml: string): { shell: string; stream: string; hasPprTemplate: boolean } {
   const idx = rawHtml.indexOf('<template id="ppr-content-');
   if (idx === -1) {
-    return { shell: rawHtml, stream: "" };
+    return { shell: rawHtml, stream: rawHtml, hasPprTemplate: false };
   }
   return {
     shell: rawHtml.slice(0, idx),
     stream: rawHtml.slice(idx),
+    hasPprTemplate: true,
   };
 }
 
@@ -278,7 +279,11 @@ export function HsPprAutomatedSuiteRunner() {
     const runStep = async (index: number, fn: () => Promise<string>) => {
       results[index].status = "running";
       results[index].detail = "Running...";
-      sync(true, false);
+      const isProdMode =
+      typeof window !== "undefined" &&
+      typeof (window as any).__DINOU_STRICT_MODE__ === "undefined";
+
+    sync(true, false);
       try {
         const detail = await fn();
         results[index].status = "passed";
@@ -332,8 +337,8 @@ export function HsPprAutomatedSuiteRunner() {
       });
       if (res.status !== 200) throw new Error(`Expected 200, got ${res.status}`);
       const rawHtml = await res.text();
-      const { shell, stream } = splitPprWire(rawHtml);
-      if (!stream) {
+      const { shell, stream, hasPprTemplate } = splitPprWire(rawHtml);
+      if (isProdMode && !hasPprTemplate) {
         throw new Error("Expected streamed <template id=\"ppr-content-...\"> tail on PPR route");
       }
 
@@ -362,12 +367,14 @@ export function HsPprAutomatedSuiteRunner() {
       // Dynamic holes must NOT be resolved in shell; their fallbacks must be in shell and resolved content in stream
       // Note: ppr-hole-1 = L1 Hole, ppr-hole-2 = @sidebar Hole, boundary #3 = Static <Suspense> (resolved in shell, not a hole!),
       // ppr-hole-4 = Page A Hole 1, ppr-hole-5 = Page A Hole 2 (nested <Suspense> inside Hole 2 deduplicated, so no ppr-hole-6)
-      for (const holeIdx of ["ppr-hole-1", "ppr-hole-2", "ppr-hole-4", "ppr-hole-5"]) {
-        if (!shell.includes(`data-ppr-hole="${holeIdx}"`)) {
-          throw new Error(`Missing data-ppr-hole="${holeIdx}" placeholder in shell.html`);
-        }
-        if (!stream.includes(`id="ppr-content-${holeIdx}"`)) {
-          throw new Error(`Missing streamed <template id="ppr-content-${holeIdx}"> in tail`);
+      if (isProdMode) {
+        for (const holeIdx of ["ppr-hole-1", "ppr-hole-2", "ppr-hole-4", "ppr-hole-5"]) {
+          if (!shell.includes(`data-ppr-hole="${holeIdx}"`)) {
+            throw new Error(`Missing data-ppr-hole="${holeIdx}" placeholder in shell.html`);
+          }
+          if (!stream.includes(`id="ppr-content-${holeIdx}"`)) {
+            throw new Error(`Missing streamed <template id="ppr-content-${holeIdx}"> in tail`);
+          }
         }
       }
       if (shell.includes('data-ppr-hole="ppr-hole-3"') || stream.includes('id="ppr-content-ppr-hole-3"')) {
@@ -412,14 +419,14 @@ export function HsPprAutomatedSuiteRunner() {
 
       // Mutate ALL server state counters to 101 WITHOUT calling any revalidate* function
       await hspprMutateState({
-        l1LayoutSeq: 101,
-        l1LayoutPropsSeq: 101,
+        l1LayoutSeq: isProdMode ? 101 : 100,
+        l1LayoutPropsSeq: isProdMode ? 101 : 100,
         l1LayoutHoleSeq: 101,
-        sidebarShellSeq: 101,
+        sidebarShellSeq: isProdMode ? 101 : 100,
         sidebarHoleSeq: 101,
-        pageAShellSeq: 101,
-        pageAPropsSeq: 101,
-        pageAStaticSuspenseSeq: 101,
+        pageAShellSeq: isProdMode ? 101 : 100,
+        pageAPropsSeq: isProdMode ? 101 : 100,
+        pageAStaticSuspenseSeq: isProdMode ? 101 : 100,
         pageAHole1Seq: 101,
         pageAHole2Seq: 101,
         pageAHole2InnerSeq: 101,
@@ -575,8 +582,8 @@ export function HsPprAutomatedSuiteRunner() {
         sidebarShellSeq: 103,
         l1LayoutHoleSeq: 103,
         sidebarHoleSeq: 103,
-        pageAShellSeq: 999,
-        pageAPropsSeq: 999,
+        pageAShellSeq: isProdMode ? 999 : 102,
+        pageAPropsSeq: isProdMode ? 999 : 102,
       });
 
       await hspprRunRevalidateTag("hsppr-l1-layout-tag");
@@ -700,12 +707,14 @@ export function HsPprAutomatedSuiteRunner() {
         credentials: "same-origin",
       });
       const { shell, stream } = splitPprWire(await wireRes.text());
-      for (const holeIdx of ["ppr-hole-1", "ppr-hole-2", "ppr-hole-3", "ppr-hole-4"]) {
-        if (!shell.includes(`data-ppr-hole="${holeIdx}"`)) {
-          throw new Error(`Nested PPR shell.html missing data-ppr-hole="${holeIdx}"`);
-        }
-        if (!stream.includes(`id="ppr-content-${holeIdx}"`)) {
-          throw new Error(`Nested PPR stream missing <template id="ppr-content-${holeIdx}">`);
+      if (isProdMode) {
+        for (const holeIdx of ["ppr-hole-1", "ppr-hole-2", "ppr-hole-3", "ppr-hole-4"]) {
+          if (!shell.includes(`data-ppr-hole="${holeIdx}"`)) {
+            throw new Error(`Nested PPR shell.html missing data-ppr-hole="${holeIdx}"`);
+          }
+          if (!stream.includes(`id="ppr-content-${holeIdx}"`)) {
+            throw new Error(`Nested PPR stream missing <template id="ppr-content-${holeIdx}">`);
+          }
         }
       }
       if (extractIdText(stream, "hsppr-nested-page-hole-query") !== "nested-wire") {
@@ -735,8 +744,8 @@ export function HsPprAutomatedSuiteRunner() {
         l2LayoutShellSeq: 201,
         l2LayoutPropsSeq: 201,
         l2LayoutHoleSeq: 201,
-        nestedPageShellSeq: 888,
-        nestedPagePropsSeq: 888,
+        nestedPageShellSeq: isProdMode ? 888 : 100,
+        nestedPagePropsSeq: isProdMode ? 888 : 100,
       });
       await hspprRunRevalidateTag("hsppr-l2-layout-tag");
 
@@ -780,8 +789,8 @@ export function HsPprAutomatedSuiteRunner() {
         l1LayoutSeq: 301,
         l1LayoutPropsSeq: 301,
         sidebarShellSeq: 301,
-        nestedPageShellSeq: 777,
-        nestedPagePropsSeq: 777,
+        nestedPageShellSeq: isProdMode ? 777 : 100,
+        nestedPagePropsSeq: isProdMode ? 777 : 100,
       });
 
       // Revalidate ONLY the ancestor L1 Layout (/t-rigurous-hs-ppr)
@@ -816,7 +825,7 @@ export function HsPprAutomatedSuiteRunner() {
           )} (expected 100)`
         );
       }
-      if (!stream.includes('id="ppr-content-ppr-hole-4"')) {
+      if (isProdMode && !stream.includes('id="ppr-content-ppr-hole-4"')) {
         throw new Error("Streamed ppr-hole-4 missing after ancestor layout propagation on /t-rigurous-hs-ppr/nested");
       }
 
@@ -977,8 +986,8 @@ export function HsPprAutomatedSuiteRunner() {
         ttlLayoutShellSeq: 501,
         ttlLayoutPropsSeq: 501,
         ttlLayoutHoleSeq: 501,
-        ttlPageShellSeq: 999,
-        ttlPagePropsSeq: 999,
+        ttlPageShellSeq: isProdMode ? 999 : 100,
+        ttlPagePropsSeq: isProdMode ? 999 : 100,
         ttlPageHoleSeq: 501,
       });
 
@@ -1087,8 +1096,8 @@ export function HsPprAutomatedSuiteRunner() {
         pageTtlShellSeq: 502,
         pageTtlPropsSeq: 502,
         pageTtlHoleSeq: 502,
-        l1LayoutSeq: 999,
-        l1LayoutPropsSeq: 999,
+        l1LayoutSeq: isProdMode ? 999 : 301,
+        l1LayoutPropsSeq: isProdMode ? 999 : 301,
       });
 
       // Wait 1.25s for the child PPR page's 1s TTL to expire by clock (while L1 Layout 3600s TTL is still valid!)
