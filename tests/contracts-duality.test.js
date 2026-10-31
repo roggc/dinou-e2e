@@ -5,12 +5,15 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Core framework modules
-import { resolveLayoutFunctionsConfig } from "../dinou/core/layout-functions.js";
-import { resolvePageFunctionsConfig } from "../dinou/core/handler.js";
-import { resolveModulePpr } from "../dinou/core/resolve-module-ppr.js";
-import parseExports from "../dinou/core/parse-exports.js";
-import { isDynamicRoute } from "../dinou/core/build-static-pages.js";
-import importModule from "../dinou/core/import-module.js";
+const dinouCoreBase = fs.existsSync(new URL("../dinou/core/handler.js", import.meta.url))
+  ? "../dinou/core"
+  : "../node_modules/dinou/core";
+const { resolveLayoutFunctionsConfig } = await import(`${dinouCoreBase}/layout-functions.js`);
+const { resolvePageFunctionsConfig } = await import(`${dinouCoreBase}/handler.js`);
+const { resolveModulePpr } = await import(`${dinouCoreBase}/resolve-module-ppr.js`);
+const { default: parseExports } = await import(`${dinouCoreBase}/parse-exports.js`);
+const { isDynamicRoute } = await import(`${dinouCoreBase}/build-static-pages.js`);
+const { default: importModule } = await import(`${dinouCoreBase}/import-module.js`);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixturesDir = path.join(__dirname, "fixtures-duality");
