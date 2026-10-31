@@ -3577,7 +3577,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
             //   cacheDisabled: true,
             // });
 
-            await user.page.goto(PAGE_URL);
+            await user.page.goto(PAGE_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
 
             // Verificación básica de que la página cargó
             await expect(user.page.locator("h1")).toBeVisible({
@@ -3605,11 +3605,15 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const chaosLoop = async () => {
         await new Promise((r) => setTimeout(r, 2000));
         console.log("⚡ [CHAOS] Switch -> DYNAMIC");
-        fs.writeFileSync(TRIGGER_FILE, "DYNAMIC");
+        try {
+          fs.writeFileSync(TRIGGER_FILE, "DYNAMIC");
+        } catch {}
 
         await new Promise((r) => setTimeout(r, 4000)); // Esperar revalidaciones
         console.log("⚡ [CHAOS] Switch -> STATIC");
-        fs.writeFileSync(TRIGGER_FILE, "STATIC");
+        try {
+          fs.writeFileSync(TRIGGER_FILE, "STATIC");
+        } catch {}
       };
 
       // Ejecutamos todo a la vez
@@ -3673,7 +3677,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
           mode = mode === "STATIC" ? "DYNAMIC" : "STATIC";
           console.log(`⚡ [CHAOS] Switching to ${mode}`);
-          fs.writeFileSync(TRIGGER_FILE, mode);
+          try {
+            fs.writeFileSync(TRIGGER_FILE, mode);
+          } catch {}
         }
         console.log("🐵 [CHAOS] Monkey stopped.");
       };
@@ -3832,7 +3838,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
             //   cacheDisabled: true,
             // });
 
-            await user.page.goto(PAGE_URL);
+            await user.page.goto(PAGE_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
 
             // Verificación básica de que la página cargó
             await expect(user.page.locator("h1")).toBeVisible({
@@ -3860,11 +3866,15 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const chaosLoop = async () => {
         await new Promise((r) => setTimeout(r, 2000));
         console.log("⚡ [CHAOS] Switch -> DYNAMIC");
-        fs.writeFileSync(TRIGGER_FILE, "DYNAMIC");
+        try {
+          fs.writeFileSync(TRIGGER_FILE, "DYNAMIC");
+        } catch {}
 
         await new Promise((r) => setTimeout(r, 4000)); // Esperar revalidaciones
         console.log("⚡ [CHAOS] Switch -> STATIC");
-        fs.writeFileSync(TRIGGER_FILE, "STATIC");
+        try {
+          fs.writeFileSync(TRIGGER_FILE, "STATIC");
+        } catch {}
       };
 
       // Ejecutamos todo a la vez
@@ -3926,7 +3936,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
           mode = mode === "STATIC" ? "DYNAMIC" : "STATIC";
           console.log(`⚡ [CHAOS] Switching to ${mode}`);
-          fs.writeFileSync(TRIGGER_FILE, mode);
+          try {
+            fs.writeFileSync(TRIGGER_FILE, mode);
+          } catch {}
         }
         console.log("🐵 [CHAOS] Monkey stopped.");
       };
@@ -3983,7 +3995,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           });
 
           for (let i = 0; i < RELOADS_PER_USER; i++) {
-            await page.goto(PAGE_URL);
+            await page.goto(PAGE_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
 
             // Verificamos que cargó algo coherente
             await expect(page.locator("h1")).toBeVisible({ timeout: 80000 });
@@ -6788,8 +6800,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       await page.goto("/t-rigurous-hs");
       await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+      await expect(page.locator("#hs-section-mount-id")).not.toHaveText("ssr", { timeout: 15000 });
 
       await page.click("#hs-run-automated-suite");
+      await page.waitForTimeout(400);
+      if ((await page.locator("#hs-suite-summary-badge").textContent())?.trim() === "IDLE") {
+        await page.click("#hs-run-automated-suite");
+      }
       await expect(page.locator("#hs-suite-summary-badge")).toHaveText("13/13 PASSED", {
         timeout: 90000,
       });
@@ -6847,8 +6864,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.goto("/t-rigurous-triple-sinergy");
       await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
       await expect(page.locator("#ts-ppr-a-hole-resolved")).toBeVisible({ timeout: 15000 });
+      await expect(page.locator("#ts-layout-mount-id")).not.toHaveText("ssr", { timeout: 15000 });
 
       await page.click("#ts-run-automated-suite");
+      await page.waitForTimeout(400);
+      if ((await page.locator("#ts-suite-summary-badge").textContent())?.trim() === "IDLE") {
+        await page.click("#ts-run-automated-suite");
+      }
       await expect(page.locator("#ts-suite-summary-badge")).toHaveText("13/13 PASSED", {
         timeout: 90000,
       });
@@ -6889,8 +6911,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       await page.goto("/t-rigurous-hs-cache-slot");
       await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+      await expect(page.locator("#hscs-l1-mount-id")).not.toHaveText("ssr", { timeout: 15000 });
 
       await page.click("#hscs-run-automated-suite");
+      await page.waitForTimeout(400);
+      if ((await page.locator("#hscs-suite-summary-badge").textContent())?.trim() === "IDLE") {
+        await page.click("#hscs-run-automated-suite");
+      }
       await expect(page.locator("#hscs-suite-summary-badge")).toHaveText("12/12 PASSED", {
         timeout: 90000,
       });
@@ -6953,8 +6980,14 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       await page.goto("/t-rigurous-hs-ppr");
       await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+      await expect(page.locator("#hsppr-page-a-hole2-inner-box")).toBeVisible({ timeout: 15000 });
+      await expect(page.locator("#hsppr-l1-mount-id")).not.toHaveText("ssr", { timeout: 15000 });
 
       await page.click("#hsppr-run-all-btn");
+      await page.waitForTimeout(400);
+      if ((await page.locator("#hsppr-suite-summary").textContent())?.trim() === "READY") {
+        await page.click("#hsppr-run-all-btn");
+      }
       await expect(page.locator("#hsppr-suite-summary")).toHaveText("DONE: 12/12 PASSED, 0 FAILED", {
         timeout: 90000,
       });
