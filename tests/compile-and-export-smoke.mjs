@@ -26,7 +26,7 @@ async function probeBinary(binaryPath, port, label) {
   console.log(`\n🚀 [Smoke] Spawning ${label} binary (${binaryPath}) on port ${port}...`);
   const child = spawn(binaryPath, [], {
     cwd: projectRoot,
-    env: { ...process.env, NODE_ENV: "production", PORT: String(port) },
+    env: { ...process.env, NODE_ENV: "production", PORT: String(port), HOST: "127.0.0.1" },
     stdio: "inherit",
   });
 
