@@ -276,14 +276,14 @@ export function HsPprAutomatedSuiteRunner() {
       });
     };
 
-    const runStep = async (index: number, fn: () => Promise<string>) => {
-      results[index].status = "running";
-      results[index].detail = "Running...";
-      const isProdMode =
+    const isProdMode =
       typeof window !== "undefined" &&
       typeof (window as any).__DINOU_STRICT_MODE__ === "undefined";
 
-    sync(true, false);
+    const runStep = async (index: number, fn: () => Promise<string>) => {
+      results[index].status = "running";
+      results[index].detail = "Running...";
+      sync(true, false);
       try {
         const detail = await fn();
         results[index].status = "passed";
