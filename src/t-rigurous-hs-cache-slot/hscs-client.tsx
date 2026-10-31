@@ -891,7 +891,8 @@ export function HsCsAutomatedSuiteRunner() {
         });
         refreshSlot("hscs-page-a-slot", { fresh: true });
 
-        // Wait until fast Request #2 (402) and slow Request #1 (401) have both finished
+        // Wait until fast Request #2 (402) renders and slow Request #1 (401) has also finished
+        await waitForText("hscs-page-a-slot-seq", "402");
         await new Promise((r) => setTimeout(r, 450));
         const mountedFinalSeq = getText("hscs-page-a-slot-seq");
         if (mountedFinalSeq !== "402") {
@@ -901,7 +902,7 @@ export function HsCsAutomatedSuiteRunner() {
         }
 
         // 12b. Unmounted slot race: navigate to Page B, fire slow Request #1 (seq=403, 350ms) then fast Request #2 (seq=404, 0ms)
-        clickEl("hscs-nav-page-b");
+        clickEl("hscs-link-page-b");
         await waitForEl("hscs-page-b");
 
         await hscsMutateState({
@@ -918,9 +919,10 @@ export function HsCsAutomatedSuiteRunner() {
         refreshSlot("hscs-page-a-slot", { fresh: true });
 
         await new Promise((r) => setTimeout(r, 450));
-        clickEl("hscs-nav-page-a");
+        clickEl("hscs-link-page-a");
         await waitForEl("hscs-page-a");
 
+        await waitForText("hscs-page-a-slot-seq", "404");
         const unmountedFinalSeq = getText("hscs-page-a-slot-seq");
         if (unmountedFinalSeq !== "404") {
           throw new Error(

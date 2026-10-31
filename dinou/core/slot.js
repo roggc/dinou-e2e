@@ -308,14 +308,19 @@ if (
         };
         const promise = window.__DINOU_FETCH_SLOT__(slotId, fetchOpts);
         if (promise && typeof promise.then === "function") {
+          const reqId = (entry.latestReqId || 0) + 1;
+          entry.latestReqId = reqId;
           entry.pendingPromise = promise;
+          entry.pendingReqId = reqId;
           const baseRef = entry.baseChildren;
           promise.then(
             (resolved) => {
-              if (entry.pendingPromise !== promise) {
+              if (entry.latestReqId !== reqId) {
                 return;
               }
-              entry.pendingPromise = null;
+              if (entry.pendingPromise === promise) {
+                entry.pendingPromise = null;
+              }
               slotOverrideCache.set(slotId, {
                 baseChildren: baseRef,
                 content: resolved,
@@ -364,6 +369,8 @@ export function DinouCacheSlotBoundary({ id, tags, children }) {
         baseChildren: children,
         routePath: window.location.pathname,
         pendingPromise: existingKnown?.pendingPromise || null,
+        pendingReqId: existingKnown?.pendingReqId || 0,
+        latestReqId: existingKnown?.latestReqId || 0,
         notifyMounted: existingKnown?.notifyMounted || null,
       });
     } else if (Array.isArray(tags)) {
@@ -404,9 +411,10 @@ export function DinouCacheSlotBoundary({ id, tags, children }) {
       }
       if (knownEntry.pendingPromise) {
         const pending = knownEntry.pendingPromise;
+        const pendingReqId = knownEntry.pendingReqId;
         pending.then(
           (resolved) => {
-            if (knownEntry.pendingPromise && knownEntry.pendingPromise !== pending) {
+            if (knownEntry.latestReqId !== pendingReqId) {
               return;
             }
             if (knownEntry.pendingPromise === pending) {
@@ -442,13 +450,18 @@ export function DinouCacheSlotBoundary({ id, tags, children }) {
         ) {
           const curEntry = knownClientSlots.get(id);
           const promise = window.__DINOU_FETCH_SLOT__(id, e.detail?.options);
+          const reqId = curEntry ? (curEntry.latestReqId || 0) + 1 : 0;
+          if (curEntry) {
+            curEntry.latestReqId = reqId;
+          }
           if (promise && typeof promise.then === "function") {
             if (curEntry) {
               curEntry.pendingPromise = promise;
+              curEntry.pendingReqId = reqId;
             }
             promise.then(
               (resolved) => {
-                if (curEntry && curEntry.pendingPromise !== promise) {
+                if (curEntry && curEntry.latestReqId !== reqId) {
                   return;
                 }
                 if (curEntry && curEntry.pendingPromise === promise) {
