@@ -1,6 +1,6 @@
-# Dinou v9.0.3 — Rigorous Integral Verification Suite Reference (`7 Suites / 76+ End-to-End Scenarios`)
+# Dinou v9.0.3 — Rigorous Integral Verification Suite Reference (`8 Suites / 86+ End-to-End Scenarios`)
 
-This document is the master technical reference for the **7 integral verification suites** created in `test-9.0.2` (and ported to `dinou-e2e`) to stress-test every React 19 architecture primitive introduced and refined in **Dinou v9.0.3**—individually, in pairwise combinations, and in full three-way synergy—verified **100% in green with `0` React hydration errors**.
+This document is the master technical reference for the **8 integral verification suites** created in `test-9.0.2` (and ported to `dinou-e2e`) to stress-test every React 19 architecture primitive introduced and refined in **Dinou v9.0.3**—covering Server Functions and **all 7 non-empty combinations ($2^3 - 1 = 7$)** of **Horizontal Segmentation (HS)**, **Vertical Segmentation (`<DinouCacheSlot>`)**, and **Partial Prerendering (PPR)** (3 individual suites, 3 pairwise synergy suites, and 1 full three-way synergy suite)—verified **100% in green with `0` React hydration errors**.
 
 ---
 
@@ -45,6 +45,12 @@ This document is the master technical reference for the **7 integral verificatio
 |                                   Cross-Axis Shared Tags, Nested Slots in Layout & Page,          |
 |                                   revalidate={0} in Static Page, Round-Trip Soft Nav              |
 |                                   (slotOverrideCache) & Unmounted Slot Refresh (knownClientSlots) |
+|                                                                                                   |
+|  [Suite 8: /hs-ppr-test]          Pairwise Synergy #3 (Horizontal + PPR Without DinouCacheSlot):  |
+|  (10 Automated Scenarios)         Frozen shell.layout.json & shell.page.json + Live Spliced       |
+|                                   <Suspense> Holes Across L1 + @sidebar + L2 + Page, Surgical     |
+|                                   Layout/Page Revalidation, Lazy shell.html Re-Composition,       |
+|                                   reset_layout / no_layout PPR & Dynamic [team] Guardrails        |
 +---------------------------------------------------------------------------------------------------+
 ```
 
@@ -55,10 +61,11 @@ This document is the master technical reference for the **7 integral verificatio
 | **1** | `/sf-test` | `/t-sf-body` | **13 / 13** RPC & HMR checks | **100% PASS** | `0` |
 | **2** | `/ppr-test` | `/t-ppr` | **16 / 16** PPR audit checks | **100% PASS** | `0` |
 | **3** | `/cache-slot-test` (+ `/static-host`) | `/t-cache-slot` | **3 / 3** E2E blocks (11 assertions) | **100% PASS** | `0` |
-| **4** | `/ppr-cache-slot-test` | `/t-ppr-cache-slot` | **2 / 2** E2E blocks (6 scenarios) | **100% PASS** | `0` |
+| **4** | `/ppr-cache-slot-test` | `/t-ppr-cache-slot` (`/t-rigorous-sinergy`) | **2 / 2** E2E blocks (6 scenarios) | **100% PASS** | `0` |
 | **5** | `/horizontal-segmentation-test` | `/t-rigurous-hs` | **12 / 12** automated scenarios | **100% PASS** | `0` |
 | **6** | `/triple-sinergy-test` | `/t-rigurous-triple-sinergy` | **12 / 12** automated scenarios (+ F5 & Direct SSR) | **100% PASS** | `0` |
-| **7** | `/hs-cache-slot-test` | `/t-rigurous-hs-cache-slot` | **10 / 10** automated scenarios | **100% PASS** | `0` |
+| **7** | `/hs-cache-slot-test` | `/t-rigurous-hs-cache-slot` | **10 / 10** automated scenarios (+ F5 reload) | **100% PASS** | `0` |
+| **8** | `/hs-ppr-test` | `/t-rigurous-hs-ppr` | **10 / 10** automated scenarios (+ F5 & Direct SSR) | **100% PASS** | `0` |
 
 ---
 
@@ -231,3 +238,25 @@ Tests the interaction between **Horizontal Segmentation** (`layout.rsc` vs. `pag
 | **8** | **Unmounted Slot Refresh on Sibling Route (`Refresh Page A Slot While on Page B -> Return to Page A`)** | Navigates to `/hs-cache-slot-test/page-b` (unmounting Page A), bumps `pageASlotSeq` to `204`, calls `revalidateTag("hscs-page-a-slot-tag")` + `refreshSlot("hscs-page-a-slot-tag")` while `hscs-page-a-slot` is **unmounted**, and immediately soft-navigates back to Page A. Verifies `knownClientSlots` + `slotOverrideCache` refreshes the unmounted slot in the background and renders `204` on Page A. | **PASSED** |
 | **9** | **Multi-Level Nested Layout (`/nested`) Slot Refresh & Round-Trip (`/nested -> /page-b -> /nested`)** | Soft-navigates to `/hs-cache-slot-test/nested` (`0` L1 layout fetches), increments L2 Layout and L2 Slot client `useState`, surgically refreshes L2 Layout Slot (`400 -> 401`) and Nested Page Slot (`500 -> 501`), and performs a round-trip soft navigation (`/nested -> /page-b -> /nested`) verifying `slotOverrideCache` preserves both `401` and `501` with `0` `/____rsc_page____` fetches. | **PASSED** |
 | **10** | **Host Segment Revalidation (`revalidatePage` & `revalidateLayout`) Coexistence with Cached Slots** | Revalidates host Page A (`200 -> 205`) and host L1 Layout (`100 -> 105`) without invalidating slot tags, verifying both hosts update while reusing their cached `<DinouCacheSlot>` entries (`204` and `101`) from `slots/<id>/slot.json` and preserving L1 Layout & `@sidebar` client `mountId`s. | **PASSED** |
+
+---
+
+## 9. Suite 8: Pairwise Synergy #3 — Pure Horizontal Segmentation + PPR Without `<DinouCacheSlot>` (`/hs-ppr-test` / `/t-rigurous-hs-ppr`)
+
+### 9.1. Purpose & Scope
+Tests the pure interaction between **Horizontal Segmentation** (`layout.rsc` / `shell.layout.json` vs. `shell.rsc` / `shell.page.json`, `@sidebar` parallel route slots, multi-level nested layouts, `reset_layout` / `no_layout` boundaries, and dynamic `[team]` layout parameter validation) and **Partial Prerendering (`ppr = true`)** (`shell.html`, pre-order `ppr-hole-N` indexing across layouts and pages, static `<Suspense>` vs. dynamic `<Suspense>` resolution, and `spliceDynamicHolesIntoShell` on both `/____rsc_layout____` and `/____rsc_page____`) without `<DinouCacheSlot>`. Detailed architectural diagrams, empirical TDD bug root-cause analyses, and a developer usage guide are recorded in `rigurous-hs-ppr.md`.
+
+### 9.2. The 10 Automated Scenarios (`10 / 10 PASSED`)
+
+| # | Scenario | What It Verifies & Asserts | Status |
+| :--- | :--- | :--- | :--- |
+| **1** | **Raw Wire PPR Stream Split Across Segmented Layout + `@sidebar` + Page A (`shell.html` vs. `<template>`) & Static `<Suspense>` + Opt-Out** | Fetches `/hs-ppr-test?mode=wire-check&lmode=l-wire` and splits wire HTML at `<template id="ppr-content-`. Asserts `shell.html` contains the static L1 shell (`100`), `@sidebar` shell (`100`), Page A shell (`100`), and resolved Static `<Suspense>` (`100`), plus `data-ppr-hole` placeholders for `ppr-hole-1`, `ppr-hole-2`, `ppr-hole-4`, and `ppr-hole-5` (skipping Static `<Suspense>` #3 and deduplicating nested `<Suspense>` inside Hole 2). Also verifies `/hs-ppr-test/static-optout` (`ppr = false`) emits zero PPR scripts/templates. | **PASSED** |
+| **2** | **Unrevalidated Mutation: Frozen Layout & Page Static Shells (`shell.layout.json` & `shell.page.json`) vs. Live Dynamic Holes on `router.refresh()` & `router.refresh({ layout: true })`** | Increments client `useState` counters in L1 Layout and Page A (`count = 1`), then mutates all server counters to `101` without revalidating. Verifies `router.refresh()` keeps Page A's static shell frozen at `100` (`shell.page.json`) while updating Page A's dynamic holes to `101`, and `router.refresh({ layout: true })` keeps L1 Layout & `@sidebar` static shells frozen at `100` (`shell.layout.json` + `spliceDynamicHolesIntoShell`) while updating L1 & `@sidebar` dynamic holes to `101`, with `0` client remounts. | **PASSED** |
+| **3** | **Surgical Page Revalidation (`revalidateTag('hsppr-page-a-tag')`) Composing With Cached `layout.rsc` Without Re-Executing L1 Layout** | Mutates Page A counters to `102` (while L1 Layout in-memory counter is `101` unrevalidated) and calls `revalidateTag("hsppr-page-a-tag")`. Verifies `revalidatePage` regenerates Page A (`102`) and composes `shell.html` with cached `layout.rsc` (`100`, not `101`), and `router.refresh()` updates Page A's DOM shell to `102` while L1 Layout stays `100`. | **PASSED** |
+| **4** | **Surgical Layout Revalidation (`revalidateTag('hsppr-l1-layout-tag')`) + Lazy `shell.html` Re-Composition Preserving Frozen Page A Shell** | Bumps L1 Layout counters to `103` and poisons Page A's in-memory shell counter to `999` (without revalidating Page A), then calls `revalidateTag("hsppr-l1-layout-tag")`. Verifies lazy `shell.html` re-composition combines fresh `layout.rsc` (`103`) with Page A's frozen `shell.rsc` (`102`, not `999`), and `router.refresh({ layout: true })` updates L1 DOM shell to `103`. | **PASSED** |
+| **5** | **Cross-Mode Horizontal Soft Navigation (`PPR Page A -> PPR Page B -> Static Opt-Out -> PPR Page A ?mode=nav-query`: `0` Layout Remounts)** | Soft-navigates across `/hs-ppr-test` (`ppr = true`) → `/hs-ppr-test/ppr-b` (`ppr = true`) → `/hs-ppr-test/static-optout` (`ppr = false`) → `/hs-ppr-test?mode=nav-query`, verifying L1 Layout's `mountId` and client `count` (`1`) are preserved without remounting and query parameters reach Page A's dynamic holes. | **PASSED** |
+| **6** | **Multi-Level Nested PPR Hierarchy (`/nested`: L1 Hole #1 + `@sidebar` Hole #2 + L2 Hole #3 + Nested Page Hole #4) & Surgical L2 Revalidation** | Verifies raw wire on `/hs-ppr-test/nested?nmode=nested-wire` contains `ppr-hole-1..4` in `shell.html` and streams all 4 `<template>` chunks. Soft-navigates to `/nested`, poisons Nested Page in-memory shell to `888`, calls `revalidateTag("hsppr-l2-layout-tag")` (`201`), and verifies lazy `shell.html` re-composition updates L2 Layout shell to `201` while keeping Nested Page frozen at `100`. | **PASSED** |
+| **7** | **Ancestor Layout Revalidation Propagation (`revalidateLayout('/hs-ppr-test')` -> Lazy Leaf `layout.rsc` & `shell.html` Re-Composition on `/nested`)** | Bumps ancestor L1 Layout to `301`, poisons Nested Page in-memory shell to `777`, and calls `revalidateLayout("/hs-ppr-test")`. Requests `/hs-ppr-test/nested` and verifies `handler.js` detects `maxAncestorGen > leafLayout.generatedAt`, regenerates `/nested`'s leaf `layout.rsc` (L1=`301`, L2=`201`), and recomposes `/nested`'s `shell.html` while keeping Nested Page frozen at `100`. | **PASSED** |
+| **8** | **Full-Segment `revalidatePath('/hs-ppr-test/nested')` Simultaneous Layout Shell + Page Shell Regeneration Preserving Client State** | Bumps both L2 Layout and Nested Page counters to `401`, calls `revalidatePath("/hs-ppr-test/nested")`, and triggers `router.refresh({ layout: true })`, verifying both L2 Layout shell (`401`), Nested Page shell (`401`), and dynamic holes (`401`) update in the DOM while preserving L1 and L2 client `mountId`s and `useState` counters. | **PASSED** |
+| **9** | **Standalone PPR Boundaries: `reset_layout` (`/reset-ppr`) & `no_layout` (`/no-layout-ppr`) Wire Split & Hydration** | Fetches `/hs-ppr-test/reset-ppr?rmode=reset-wire` and `/hs-ppr-test/no-layout-ppr?nlmode=nl-wire`, verifying neither route includes ancestor `#hsppr-l1-layout`, both pre-render isolated static shells (`100`) in `shell.html`, and both stream `ppr-hole-1` with live query parameters (`reset-wire` and `nl-wire`). | **PASSED** |
+| **10** | **Dynamic Layout Parameter Validation (`validateParams` + `getStaticPaths` + `allowISG = false`) on PPR Routes (`/team/[team]`)** | Verifies pre-rendered `/hs-ppr-test/team/alpha?tmode=alpha-wire` returns `200` with `Team Shell: alpha` in `shell.html` and `alpha-wire` in the streamed `<template>`, while `/team/beta` (`allowISG = false`) and `/team/gamma` (`validateParams() === false`) return `404` on both HTML and `/____rsc_layout____`. | **PASSED** |
