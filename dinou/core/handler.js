@@ -1691,23 +1691,33 @@ async function handleRequest(request, platformContext = {}) {
             }
             return rendered;
           });
-        } else if (!isDevelopment && isPageReq && isRoutePpr && isEdgeRuntime(platformContext)) {
+        } else if (!isDevelopment && (isPageReq || isLayoutReq) && isRoutePpr && isEdgeRuntime(platformContext)) {
           const storage = getStorageAdapter();
           const cleanRel = cleanPath.replace(/^\/+/, "").replace(/\/+$/, "");
-          const shellPageKey = cleanRel ? `${cleanRel}/shell.page.json` : "shell.page.json";
-          const shellPageJson = await readRscFromStorage(
+          const shellKey = isLayoutReq
+            ? cleanRel
+              ? `${cleanRel}/shell.layout.json`
+              : "shell.layout.json"
+            : cleanRel
+            ? `${cleanRel}/shell.page.json`
+            : "shell.page.json";
+          const shellJson = await readRscFromStorage(
             storage,
-            shellPageKey,
+            shellKey,
             platformContext,
             request.url
           );
-          if (shellPageJson) {
+          if (shellJson) {
             try {
-              let cachedShellTree = deserializeJSX(shellPageJson);
-              cachedShellTree = await refreshNestedSlotsInTree(
-                cachedShellTree,
-                "__ppr_shell__",
-                { currentPath: reqPath }
+              let cachedShellTree = deserializeJSX(shellJson);
+              const runSeg = isLayoutReq ? runInLayoutSegment : runInPageSegment;
+              const slotScope = isLayoutReq ? "__layout_shell__" : "__ppr_shell__";
+              cachedShellTree = await runSeg(() =>
+                refreshNestedSlotsInTree(
+                  cachedShellTree,
+                  slotScope,
+                  { currentPath: reqPath }
+                )
               );
               jsx = await spliceDynamicHolesIntoShell(
                 cachedShellTree,
@@ -1715,7 +1725,7 @@ async function handleRequest(request, platformContext = {}) {
                   getJSX(reqPath, queryObj, isNotFound, isDevelopment, isPathBlocked, {
                     segment,
                   }),
-                leafLayoutSuspenseCount
+                isLayoutReq ? 0 : leafLayoutSuspenseCount
               );
             } catch (spliceErr) {
               console.warn(`[Dinou PPR] Error splicing dynamic holes for ${reqPath}:`, spliceErr);
@@ -2101,6 +2111,11 @@ async function handleRequest(request, platformContext = {}) {
           regenerating.add(reqPath);
           try {
             console.log(`[Edge ISR] Starting regeneration for ${reqPath}...`);
+            if (metadata.ppr || isPprConfig) {
+              const { revalidatePage } = await import("./cache-revalidate.js");
+              await revalidatePage(reqPath);
+              return;
+            }
             const revalBridge = new WebResponseBridge();
             const context = createRequestContext(simReq, revalBridge, platformContext);
             const isNotFound = {};

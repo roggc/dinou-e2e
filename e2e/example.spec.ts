@@ -6847,6 +6847,67 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
   });
 
+  test.describe.serial("Dinou Core: Rigorous HS + PPR Synergy (/t-rigurous-hs-ppr)", () => {
+    test("Direct SSR of /t-rigurous-hs-ppr/no-layout-ppr and /t-rigurous-hs-ppr/reset-ppr isolates layout trees, streams dynamic holes, and soft-navigates back into /t-rigurous-hs-ppr", async ({
+      page,
+    }) => {
+      await page.goto("/t-rigurous-hs-ppr/no-layout-ppr?nlmode=direct-ssr");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+      await expect(page.locator("#hsppr-no-layout-page")).toBeVisible();
+      await expect(page.locator("#hsppr-l1-layout")).toHaveCount(0);
+      await expect(page.locator("#hsppr-no-layout-hole-query")).toHaveText("direct-ssr");
+
+      await page.goto("/t-rigurous-hs-ppr/reset-ppr?rmode=direct-ssr");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+      await expect(page.locator("#hsppr-reset-layout")).toBeVisible();
+      await expect(page.locator("#hsppr-l1-layout")).toHaveCount(0);
+      await expect(page.locator("#hsppr-reset-page-hole-query")).toHaveText("direct-ssr");
+
+      await page.click("#hsppr-reset-back-link");
+      await expect(page.locator("#hsppr-l1-layout")).toBeVisible({ timeout: 15000 });
+      await expect(page.locator("#hsppr-page-a")).toBeVisible();
+    });
+
+    test("Full 10-Scenario HS + PPR (No-CacheSlot) Stress Suite passes end-to-end and F5 reload has zero hydration mismatch", async ({
+      page,
+    }) => {
+      const hydrationErrors: string[] = [];
+      page.on("console", (msg) => {
+        if (msg.type() === "error" && /hydration|didn't match/i.test(msg.text())) {
+          hydrationErrors.push(msg.text());
+        }
+      });
+      page.on("pageerror", (err) => {
+        if (/hydration|didn't match/i.test(err.message)) {
+          hydrationErrors.push(err.message);
+        }
+      });
+
+      await page.goto("/t-rigurous-hs-ppr");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+
+      await page.click("#hsppr-run-all-btn");
+      await expect(page.locator("#hsppr-suite-summary")).toHaveText("DONE: 10/10 PASSED, 0 FAILED", {
+        timeout: 60000,
+      });
+
+      for (let i = 1; i <= 10; i++) {
+        await expect(page.locator(`#hsppr-test-status-${i}`)).toHaveText("PASSED");
+      }
+
+      // Hard reload (F5) after revalidateLayout & revalidatePage to verify lazy shell.html re-composition & zero hydration mismatch
+      const layoutSeqBeforeReload = Number(await page.locator("#hsppr-l1-layout-seq").textContent());
+      const pageSeqBeforeReload = Number(await page.locator("#hsppr-page-a-shell-seq").textContent());
+      await page.reload();
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+      const layoutSeqAfterReload = Number(await page.locator("#hsppr-l1-layout-seq").textContent());
+      const pageSeqAfterReload = Number(await page.locator("#hsppr-page-a-shell-seq").textContent());
+      expect(layoutSeqAfterReload).toBeGreaterThanOrEqual(layoutSeqBeforeReload);
+      expect(pageSeqAfterReload).toBeGreaterThanOrEqual(pageSeqBeforeReload);
+      expect(hydrationErrors).toEqual([]);
+    });
+  });
+
   test.describe("HMR & Fast Refresh automated verification", () => {
     // Run tests in serial mode so they do not collide on the same files on disk
     test.describe.configure({ mode: "serial" });
