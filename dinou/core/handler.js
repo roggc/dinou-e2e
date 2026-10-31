@@ -150,7 +150,11 @@ const botGarbagePatterns = [
   /\.log$/i,
 ];
 
-const isDynamic = new Map();
+const IS_DYNAMIC_MAP_KEY = Symbol.for("dinou.isDynamic.map");
+if (!globalThis[IS_DYNAMIC_MAP_KEY]) {
+  globalThis[IS_DYNAMIC_MAP_KEY] = new Map();
+}
+const isDynamic = globalThis[IS_DYNAMIC_MAP_KEY];
 const pageFunctionsConfigCache = new Map();
 
 async function resolvePprForRoute(pagePath, pageFunctionsModule, reqSegments, queryObj) {
@@ -1346,6 +1350,7 @@ async function handleRequest(request, platformContext = {}) {
       layoutConfig = await resolveLayoutFunctionsConfig(layoutPath, layoutParams);
       if (layoutConfig.isDynamic) {
         dynamicState.value = true;
+        hasStaticDynamicConfig = true;
       }
     } else if (isPageReq) {
       pageConfig = await resolvePageFunctionsConfig(
@@ -1504,7 +1509,7 @@ async function handleRequest(request, platformContext = {}) {
         (!internalRefreshVersion &&
           internalBuildId &&
           currentGeneratedAt &&
-          internalBuildId !== String(currentGeneratedAt));
+          Number(internalBuildId) < Number(currentGeneratedAt));
 
       const actualFileName = useOld
         ? isLayoutReq
@@ -1556,7 +1561,7 @@ async function handleRequest(request, platformContext = {}) {
               if (typeof revalidate === "number" && revalidate >= 1 && Date.now() > (generatedAt || 0) + revalidate * 1000) {
                 isExpired = true;
               }
-            } else if (!isLayoutReq && !useOld) {
+            } else if (!isLayoutReq && !useOld && !internalBuildId) {
               const pMetaKey = cleanRel ? `${cleanRel}/metadata.json` : "metadata.json";
               const pRscBaseKey = cleanRel ? `${cleanRel}/page.rsc` : "page.rsc";
               const pMeta =
@@ -1578,10 +1583,14 @@ async function handleRequest(request, platformContext = {}) {
                   cleanPath,
                   isSlotOnlyExpired && !isExpired ? { onlyRefreshSlots: true } : {}
                 );
-                const refreshedCached = await storage.get(rscKey);
-                if (refreshedCached && refreshedCached.content) {
-                  cached = refreshedCached;
-                  isExpired = false;
+                if (!dynamicState.value) {
+                  const refreshedCached = await storage.get(rscKey);
+                  if (refreshedCached && refreshedCached.content) {
+                    cached = refreshedCached;
+                    isExpired = false;
+                  }
+                } else {
+                  isExpired = true;
                 }
               }
             }
@@ -1866,6 +1875,7 @@ async function handleRequest(request, platformContext = {}) {
     dynamicParams,
     reqPath,
   );
+  let hasStaticDynamicConfig = Boolean(isDynamicConfig);
   if (isDynamicConfig) {
     dynamicState.value = true;
   }
@@ -2389,6 +2399,9 @@ async function handleRequest(request, platformContext = {}) {
       isgPromise = (async () => {
         if (!platformContext?.isSSG || process.env.DINOU_DEBUG) {
           console.log(`[Edge ISG] Processing page for ${reqPath}...`);
+        }
+        if (!hasStaticDynamicConfig) {
+          dynamicState.value = false;
         }
         const context = createRequestContext(simReq, bridge, platformContext, dynamicState);
         copyCustomContextProperties(rootContext, context);

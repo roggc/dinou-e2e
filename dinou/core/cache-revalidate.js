@@ -49,6 +49,19 @@ if (!globalThis[REVAL_STATE_KEY]) {
 }
 const revalState = globalThis[REVAL_STATE_KEY];
 
+function markRouteDynamicInMap(reqPathWithSlash, cleanPath, isDyn) {
+  const map = typeof globalThis !== "undefined" ? globalThis[Symbol.for("dinou.isDynamic.map")] : null;
+  if (!map) return;
+  for (const key of [reqPathWithSlash, cleanPath]) {
+    if (!key) continue;
+    if (!map.has(key)) {
+      map.set(key, { value: Boolean(isDyn) });
+    } else {
+      map.get(key).value = Boolean(isDyn);
+    }
+  }
+}
+
 function nextMonotonicGenTime(prevGenTime = 0) {
   const now = Date.now();
   const next = Math.max(now, Number(prevGenTime || 0) + 1, revalState.lastGenTime + 1);
@@ -269,14 +282,9 @@ async function revalidatePage(reqPath, internalOptions = {}) {
       }
     } catch (e) {}
 
+    let existingPageRsc = null;
     try {
-      if (cached && cached.content) {
-        await storage.set(oldHtmlKey, cached.content);
-      }
-      const existingPageRsc = await storage.get(rscKey);
-      if (existingPageRsc && existingPageRsc.content) {
-        await storage.set(oldRscKey, existingPageRsc.content);
-      }
+      existingPageRsc = await storage.get(rscKey);
     } catch (e) {}
 
     const reqPathWithSlash = cleanPath.endsWith("/") ? cleanPath : cleanPath + "/";
@@ -468,10 +476,16 @@ async function revalidatePage(reqPath, internalOptions = {}) {
                   segment: "page",
                 }
               );
+              if (revalDynamicState.value) {
+                return;
+              }
               if (rawPageJsx && !isNotFound.value) {
                 resolvedPageJsx = await runInPageSegment(() =>
                   asyncRenderJSXToClientJSX(rawPageJsx)
                 );
+                if (revalDynamicState.value) {
+                  return;
+                }
                 if (resolvedPageJsx) {
                   try {
                     await storage.set(shellPageKey, serializeJSX(resolvedPageJsx));
@@ -553,6 +567,9 @@ async function revalidatePage(reqPath, internalOptions = {}) {
               });
             } else {
               fullJsx = await getJSX(reqPathWithSlash, {}, isNotFound, false, false);
+              if (revalDynamicState.value) {
+                return;
+              }
             }
             if (fullJsx && !isNotFound.value) {
               const fullRscStream = renderRSCStream(fullJsx, clientManifest, { runtime: "edge" });
@@ -580,7 +597,22 @@ async function revalidatePage(reqPath, internalOptions = {}) {
       } catch (e) {
         console.warn(`⚠️ [Edge Revalidate] Render fallback for ${cleanPath}:`, e?.message || e);
       }
+      if (revalDynamicState.value && !isRoutePpr) {
+        markRouteDynamicInMap(reqPathWithSlash, cleanPath, true);
+        console.log(`[ISR] Bailout detected for ${cleanPath}. Switching to Dynamic.`);
+        return;
+      }
+      markRouteDynamicInMap(reqPathWithSlash, cleanPath, false);
     }
+
+    try {
+      if (cached && cached.content) {
+        await storage.set(oldHtmlKey, cached.content);
+      }
+      if (existingPageRsc && existingPageRsc.content) {
+        await storage.set(oldRscKey, existingPageRsc.content);
+      }
+    } catch (e) {}
 
     if (newHtml && ((!renderedFullRsc && !composedFromCachedLayout) || now <= prevGenTime)) {
       newHtml = newHtml.replace(

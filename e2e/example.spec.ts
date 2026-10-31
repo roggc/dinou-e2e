@@ -6050,29 +6050,23 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     test("6. Clock-Based TTL Expiration on PPR Static Shell (/t-ppr-rigorous/ttl-shell, revalidate = 1)", async ({
       request,
     }) => {
-      const r1 = await request.get("/t-ppr-rigorous/ttl-shell", {
-        headers: { Cookie: "ppr_user=TtlUser1" },
-      });
+      const r1 = await request.get("/t-ppr-rigorous/ttl-shell?q=TtlUser1");
       const h1 = await r1.text();
-      const shellToken1 = extractTestIdText(h1, "ttl-shell-token");
+      const shellToken1 = extractTestIdText(h1, "ppr-ttl-shell-token");
       expect(shellToken1).toBeTruthy();
-      expect(extractTestIdText(h1, "ttl-hole-user")).toBe("TtlUser1");
+      expect(extractTestIdText(h1, "ppr-ttl-hole-q")).toBe("TtlUser1");
 
       await new Promise((r) => setTimeout(r, 1200));
 
-      const r2 = await request.get("/t-ppr-rigorous/ttl-shell", {
-        headers: { Cookie: "ppr_user=TtlUser2" },
-      });
+      const r2 = await request.get("/t-ppr-rigorous/ttl-shell?q=TtlUser2");
       const h2 = await r2.text();
-      expect(extractTestIdText(h2, "ttl-hole-user")).toBe("TtlUser2");
+      expect(extractTestIdText(h2, "ppr-ttl-hole-q")).toBe("TtlUser2");
 
       await expect
         .poll(
           async () => {
-            const r3 = await request.get("/t-ppr-rigorous/ttl-shell", {
-              headers: { Cookie: "ppr_user=TtlUser3" },
-            });
-            return extractTestIdText(await r3.text(), "ttl-shell-token");
+            const r3 = await request.get("/t-ppr-rigorous/ttl-shell?q=TtlUser3");
+            return extractTestIdText(await r3.text(), "ppr-ttl-shell-token");
           },
           { timeout: 6000 }
         )

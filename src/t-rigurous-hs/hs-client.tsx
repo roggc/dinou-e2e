@@ -478,13 +478,13 @@ export function HsAutomatedSuiteRunner() {
             : l.replace(/^\/+/, "")
         );
         const required = [
-          "horizontal-segmentation-test",
-          "horizontal-segmentation-test/nested",
-          "horizontal-segmentation-test/reset-branch",
-          "horizontal-segmentation-test/dept/[deptId]",
-          "horizontal-segmentation-test/locked/[code]",
-          "horizontal-segmentation-test/refresh-lab",
-          "!horizontal-segmentation-test/no-layout-page",
+          "t-rigurous-hs",
+          "t-rigurous-hs/nested",
+          "t-rigurous-hs/reset-branch",
+          "t-rigurous-hs/dept/[deptId]",
+          "t-rigurous-hs/locked/[code]",
+          "t-rigurous-hs/refresh-lab",
+          "!t-rigurous-hs/no-layout-page",
         ];
         for (const req of required) {
           if (!normLayouts.includes(req)) {
@@ -889,12 +889,23 @@ export function HsAutomatedSuiteRunner() {
           origFetch("/t-rigurous-hs/ttl-isr", { headers: { Accept: "text/html" } }),
           origFetch("/t-rigurous-hs/ttl-page-only", { headers: { Accept: "text/html" } }),
         ]);
-        await new Promise((r) => setTimeout(r, 300));
 
-        const [ttlIsrHtml, ttlPageOnlyHtml] = await Promise.all([
-          origFetch("/t-rigurous-hs/ttl-isr", { headers: { Accept: "text/html" } }).then((r) => r.text()),
-          origFetch("/t-rigurous-hs/ttl-page-only", { headers: { Accept: "text/html" } }).then((r) => r.text()),
-        ]);
+        let ttlIsrHtml = "";
+        let ttlPageOnlyHtml = "";
+        const pollStart = Date.now();
+        while (Date.now() - pollStart < 4000) {
+          await new Promise((r) => setTimeout(r, 150));
+          [ttlIsrHtml, ttlPageOnlyHtml] = await Promise.all([
+            origFetch("/t-rigurous-hs/ttl-isr", { headers: { Accept: "text/html" } }).then((r) => r.text()),
+            origFetch("/t-rigurous-hs/ttl-page-only", { headers: { Accept: "text/html" } }).then((r) => r.text()),
+          ]);
+          if (
+            ttlIsrHtml.includes('id="hs-ttl-layout-seq">601<') &&
+            ttlPageOnlyHtml.includes('id="hs-ttl-page-only-seq">602<')
+          ) {
+            break;
+          }
+        }
 
         await hsMutateRawState({
           ttlPageSeq: 100,
