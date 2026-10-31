@@ -835,16 +835,18 @@ async function revalidateLayout(cleanPath, internalOptions = {}) {
           srcFolder,
           "layout",
           true,
-          true,
+          false,
           undefined,
-          reqSegments.length
+          0
         );
         if (layoutPath) {
           const layoutCfg = await resolveLayoutFunctionsConfig(layoutPath, layoutParams || {});
-          if (!Array.isArray(currentMeta.tags) || currentMeta.tags.length === 0) {
-            currentMeta.tags = layoutCfg.tags || [];
+          if (Array.isArray(layoutCfg.tags) && layoutCfg.tags.length > 0) {
+            currentMeta.tags = layoutCfg.tags;
+          } else if (!Array.isArray(currentMeta.tags)) {
+            currentMeta.tags = [];
           }
-          if (currentMeta.revalidate === undefined && layoutCfg.revalidate !== undefined) {
+          if (layoutCfg.revalidate !== undefined) {
             currentMeta.revalidate = layoutCfg.revalidate;
           }
           if (layoutCfg.ppr !== null && layoutCfg.ppr !== undefined) {
