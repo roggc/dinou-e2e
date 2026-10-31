@@ -66,7 +66,7 @@ async function processDir(dir, relPrefix = "") {
 
     if (entry.isDirectory()) {
       await processDir(fullPath, cleanRelPath);
-    } else if (entry.name === "index.html") {
+    } else if (entry.name === "index.html" || entry.name === "shell.html") {
       const html = fs.readFileSync(fullPath, "utf8");
       let metadata = null;
       const metaPath = path.join(dir, "metadata.json");
@@ -82,11 +82,13 @@ async function processDir(dir, relPrefix = "") {
         console.log(`   ✅ Cached HTML: ${cleanRelPath}`);
       }
 
-      if (cleanRelPath.endsWith("/index.html")) {
-        const folderKey = cleanRelPath.slice(0, -11);
-        await setKvCache(kv, folderKey, html, metadata);
-      } else if (cleanRelPath === "index.html") {
-        await setKvCache(kv, "", html, metadata);
+      if (entry.name === "index.html") {
+        if (cleanRelPath.endsWith("/index.html")) {
+          const folderKey = cleanRelPath.slice(0, -11);
+          await setKvCache(kv, folderKey, html, metadata);
+        } else if (cleanRelPath === "index.html") {
+          await setKvCache(kv, "", html, metadata);
+        }
       }
     } else if (entry.name.endsWith("metadata.json")) {
       const metaContent = fs.readFileSync(fullPath, "utf8");
@@ -113,9 +115,25 @@ async function processDir(dir, relPrefix = "") {
       if (process.env.DINOU_DEBUG) {
         console.log(`   ✅ Cached Slot: ${cleanRelPath}`);
       }
-    } else if (entry.name.endsWith(".rsc") || entry.name === "shell.page.json" || entry.name === "shell.html") {
+    } else if (
+      entry.name.endsWith(".rsc") ||
+      entry.name === "shell.page.json" ||
+      entry.name === "shell.layout.json"
+    ) {
       const rsc = fs.readFileSync(fullPath, "utf8");
-      await setKvCache(kv, cleanRelPath, rsc, null);
+      if (entry.name.endsWith(".rsc") && rsc.trim().length === 0) {
+        continue;
+      }
+      let metadata = null;
+      if (entry.name === "layout.rsc") {
+        const lMetaPath = path.join(dir, "layout.metadata.json");
+        if (fs.existsSync(lMetaPath)) {
+          try {
+            metadata = JSON.parse(fs.readFileSync(lMetaPath, "utf8"));
+          } catch (e) { }
+        }
+      }
+      await setKvCache(kv, cleanRelPath, rsc, metadata);
       seededCount++;
       if (process.env.DINOU_DEBUG) {
         console.log(`   ✅ Cached RSC:  ${cleanRelPath}`);

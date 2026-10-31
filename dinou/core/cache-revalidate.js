@@ -1,6 +1,7 @@
 import path from "node:path";
 import fs from "node:fs/promises";
 import { existsSync, copyFileSync } from "node:fs";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { getContext, requestStorage } from "./request-context.js";
 import { resolveRelativeUrl } from "./url-resolver.js";
 import { getStorageAdapter } from "./storage-adapter.js";
@@ -32,6 +33,38 @@ if (!globalThis[INFLIGHT_LAYOUT_REVAL_KEY]) {
   globalThis[INFLIGHT_LAYOUT_REVAL_KEY] = new Map();
 }
 const inflightLayoutRevalidations = globalThis[INFLIGHT_LAYOUT_REVAL_KEY];
+
+const REVAL_QUEUE_STORAGE_KEY = Symbol.for("dinou.reval.queue.storage");
+if (!globalThis[REVAL_QUEUE_STORAGE_KEY]) {
+  globalThis[REVAL_QUEUE_STORAGE_KEY] = new AsyncLocalStorage();
+}
+const revalQueueStorage = globalThis[REVAL_QUEUE_STORAGE_KEY];
+
+const REVAL_STATE_KEY = Symbol.for("dinou.reval.queue.state");
+if (!globalThis[REVAL_STATE_KEY]) {
+  globalThis[REVAL_STATE_KEY] = {
+    queue: Promise.resolve(),
+    lastGenTime: 0,
+  };
+}
+const revalState = globalThis[REVAL_STATE_KEY];
+
+function nextMonotonicGenTime(prevGenTime = 0) {
+  const now = Date.now();
+  const next = Math.max(now, Number(prevGenTime || 0) + 1, revalState.lastGenTime + 1);
+  revalState.lastGenTime = next;
+  return next;
+}
+
+function enqueueRevalidation(fn) {
+  if (revalQueueStorage.getStore()) {
+    return fn();
+  }
+  const run = () => revalQueueStorage.run(true, fn);
+  const nextPromise = revalState.queue.then(run, run);
+  revalState.queue = nextPromise.catch(() => {});
+  return nextPromise;
+}
 
 async function resolveRouteConfigForRevalidate(pagePath, reqSegments, existingMeta = {}) {
   const srcFolder = path.resolve(process.cwd(), "src");
@@ -196,7 +229,7 @@ function normalizeRevalidatePath(reqPath) {
 async function revalidatePage(reqPath, internalOptions = {}) {
   const cleanPath = normalizeRevalidatePath(reqPath);
   const onlyRefreshSlots = Boolean(internalOptions?.onlyRefreshSlots);
-
+  return enqueueRevalidation(async () => {
   if (isEdgeRuntime()) {
     const storage = getStorageAdapter();
     const cleanPathKey = cleanPath.replace(/^\/+/, "").replace(/\/+$/, "");
@@ -315,7 +348,7 @@ async function revalidatePage(reqPath, internalOptions = {}) {
 
     const prevGenTime = Math.max((currentMeta && currentMeta.generatedAt) || 0, maxActiveLayoutGenTime);
     const now = Date.now();
-    const newGenTime = now <= prevGenTime ? prevGenTime + 100 : now;
+    const newGenTime = nextMonotonicGenTime(prevGenTime);
     currentMeta.generatedAt = newGenTime;
 
     let newHtml = cached ? cached.content : "";
@@ -652,6 +685,7 @@ async function revalidatePage(reqPath, internalOptions = {}) {
   } catch (e) {
     console.warn(`⚠️ [Revalidate] Failed to revalidate page ${cleanPath}:`, e.message || e);
   }
+  });
 }
 
 async function revalidatePath(reqPath, options) {
@@ -710,7 +744,7 @@ async function revalidateLayout(cleanPath, internalOptions = {}) {
     return inflightLayoutRevalidations.get(inFlightKey);
   }
 
-  const revalPromise = (async () => {
+  const revalPromise = enqueueRevalidation(async () => {
     if (isEdgeRuntime()) {
       const storage = getStorageAdapter();
       const cleanPathKey = targetPath.replace(/^\/+/, "").replace(/\/+$/, "");
@@ -763,7 +797,7 @@ async function revalidateLayout(cleanPath, internalOptions = {}) {
 
       const prevGenTime = (currentMeta && currentMeta.generatedAt) || 0;
       const now = Date.now();
-      const newGenTime = now <= prevGenTime ? prevGenTime + 100 : now;
+      const newGenTime = nextMonotonicGenTime(prevGenTime);
       currentMeta.generatedAt = newGenTime;
       if (currentMeta.status === undefined) {
         currentMeta.status = 200;
@@ -891,7 +925,7 @@ async function revalidateLayout(cleanPath, internalOptions = {}) {
       console.warn(`⚠️ [Revalidate] Failed to revalidate layout ${targetPath}:`, err.message || err);
     }
     return false;
-  })();
+  });
 
   inflightLayoutRevalidations.set(inFlightKey, revalPromise);
   try {

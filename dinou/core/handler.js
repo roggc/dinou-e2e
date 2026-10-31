@@ -1536,7 +1536,12 @@ async function handleRequest(request, platformContext = {}) {
             if (assetRes && assetRes.status === 200) {
               const contentType = assetRes.headers.get("content-type") || "";
               const rscContent = await assetRes.text();
-              if (!contentType.includes("text/html") && !rscContent.trimStart().startsWith("<")) {
+              if (
+                rscContent &&
+                rscContent.trim().length > 0 &&
+                !contentType.includes("text/html") &&
+                !rscContent.trimStart().startsWith("<")
+              ) {
                 await storage.set(rscKey, rscContent);
                 bridge.setHeader("Content-Type", "text/x-component");
                 bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
@@ -1547,12 +1552,14 @@ async function handleRequest(request, platformContext = {}) {
           } catch (e) {}
         }
       } else if (existsSync(payloadPath)) {
-        bridge.setHeader("Content-Type", "application/octet-stream");
-        bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
         try {
           const buffer = readFileSync(payloadPath);
-          bridge.end(buffer);
-          return bridge.toResponse();
+          if (buffer && buffer.length > 0) {
+            bridge.setHeader("Content-Type", "application/octet-stream");
+            bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+            bridge.end(buffer);
+            return bridge.toResponse();
+          }
         } catch (err) {
           console.error("[Dinou] Error reading RSC file:", err);
           return new Response("Internal Server Error", { status: 500 });
