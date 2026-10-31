@@ -158,6 +158,12 @@ const INITIAL_TESTS: HsPprTestResult[] = [
     status: "pending",
     detail: "Waiting...",
   },
+  {
+    id: 12,
+    name: "12. Inverse Clock-Based PPR Child Page TTL Expiration (revalidate=1s in page_functions.ts) Composing With Cached Long-Lived L1 Layout (revalidate=3600s)",
+    status: "pending",
+    detail: "Waiting...",
+  },
 ];
 
 function getGlobalSuiteState(): HsPprSuiteGlobalState {
@@ -1064,6 +1070,78 @@ export function HsPprAutomatedSuiteRunner() {
       );
 
       return "Layout TTL (1s) expired by clock -> regenerated layout.rsc & shell.layout.json (501) + lazily recomposed shell.html while preserving child PPR page shell (100, not 999)";
+    });
+
+    // TEST 12: Inverse Clock-Based PPR Child Page TTL Expiration (revalidate=1s in page_functions.ts) Composing With Cached Long-Lived L1 Layout (revalidate=3600s)
+    await runStep(11, async () => {
+      // Re-anchor /t-rigurous-hs-ppr/page-ttl-ppr to 100 and start a fresh 1s clock window
+      await hspprMutateState({
+        pageTtlShellSeq: 100,
+        pageTtlPropsSeq: 100,
+        pageTtlHoleSeq: 100,
+      });
+      await hspprRunRevalidatePage("/t-rigurous-hs-ppr/page-ttl-ppr");
+
+      // Mutate child page to 502 AND poison L1 Layout in-memory counters to 999 WITHOUT calling revalidate*
+      await hspprMutateState({
+        pageTtlShellSeq: 502,
+        pageTtlPropsSeq: 502,
+        pageTtlHoleSeq: 502,
+        l1LayoutSeq: 999,
+        l1LayoutPropsSeq: 999,
+      });
+
+      // Wait 1.25s for the child PPR page's 1s TTL to expire by clock (while L1 Layout 3600s TTL is still valid!)
+      await new Promise((r) => setTimeout(r, 1250));
+
+      // First request after TTL expiry triggers background/on-expiry revalidatePage('/t-rigurous-hs-ppr/page-ttl-ppr')
+      await fetch("/t-rigurous-hs-ppr/page-ttl-ppr?ptmode=pt-trigger", {
+        headers: { Accept: "text/html" },
+        credentials: "same-origin",
+      });
+      await new Promise((r) => setTimeout(r, 300));
+
+      const wireRes = await fetch("/t-rigurous-hs-ppr/page-ttl-ppr?ptmode=pt-verified", {
+        headers: { Accept: "text/html" },
+        credentials: "same-origin",
+      });
+      const { shell, stream } = splitPprWire(await wireRes.text());
+
+      await hspprMutateState({
+        l1LayoutSeq: 301,
+        l1LayoutPropsSeq: 301,
+      });
+
+      if (
+        extractIdText(shell, "hsppr-page-ttl-shell-seq") !== "502" ||
+        extractIdText(shell, "hsppr-page-ttl-props-seq") !== "502"
+      ) {
+        throw new Error(
+          `Expected expired PPR child page (revalidate=1s) to update to 502 in shell.html, got seq=${extractIdText(
+            shell,
+            "hsppr-page-ttl-shell-seq"
+          )}`
+        );
+      }
+      if (
+        extractIdText(shell, "hsppr-l1-layout-seq") !== "301" ||
+        extractIdText(shell, "hsppr-l1-props-seq") !== "301"
+      ) {
+        throw new Error(
+          `PPR child page TTL expiry re-executed long-lived L1 Layout (3600s)! Got l1=${extractIdText(
+            shell,
+            "hsppr-l1-layout-seq"
+          )} (expected 301, not 999)`
+        );
+      }
+      if (
+        extractIdText(stream, "hsppr-page-ttl-hole-seq") !== "502" ||
+        extractIdText(stream, "hsppr-page-ttl-hole-query") !== "pt-verified"
+      ) {
+        throw new Error("Streamed dynamic hole on /page-ttl-ppr did not emit 502 / pt-verified");
+      }
+
+      return "PPR Child Page TTL (1s) expired by clock -> regenerated shell.page.json & shell.html (502) composing with cached L1 layout.rsc (301, not 999)";
     });
 
     sync(false, true);

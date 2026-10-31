@@ -24,6 +24,23 @@ async function StaticHostSlotBody() {
   );
 }
 
+async function StaticFastSlotBody() {
+  await new Promise((r) => setTimeout(r, 10));
+  const now = Date.now();
+  const token = `static-fast-${now}-${Math.random().toString(36).slice(2, 7)}`;
+  return (
+    <div id="slot-static-fast-box" data-testid="slot-static-fast-box">
+      <h3>Fast TTL Slot Inside Pre-Rendered Static Page (revalidate=1s)</h3>
+      <div>
+        Fast Slot Token:{" "}
+        <span id="slot-static-fast-token" data-testid="slot-static-fast-token">
+          {token}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export default async function StaticHostPage() {
   const staticPageBuildTime = Date.now();
   return (
@@ -42,8 +59,14 @@ export default async function StaticHostPage() {
       >
         <StaticHostSlotBody />
       </DinouCacheSlot>
+      <DinouCacheSlot
+        id="rig-slot-static-fast"
+        tag="rig-tag-static-fast-slot"
+        revalidate={1}
+      >
+        <StaticFastSlotBody />
+      </DinouCacheSlot>
       <StaticHostSlotClient />
     </section>
   );
 }
-

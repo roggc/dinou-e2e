@@ -10,6 +10,8 @@ import {
   hsMutateAndRevalidatePath,
   hsMutateAndRevalidatePageTag,
   hsMutateAndRevalidateLayoutTagSurgical,
+  hsMutateRawState,
+  hsRevalidateTtlRoutes,
 } from "./hs-actions";
 
 export function HsLayoutClientState({ idPrefix }: { idPrefix: string }) {
@@ -328,6 +330,12 @@ const INITIAL_TESTS: HsTestItemResult[] = [
     status: "pending",
     detail: "Waiting...",
   },
+  {
+    id: 13,
+    name: "13. Clock-Based Layout TTL (revalidate=1s) vs. Page TTL (revalidate=1s) Surgical Expiration",
+    status: "pending",
+    detail: "Waiting...",
+  },
 ];
 
 function getGlobalSuiteState(): HsSuiteGlobalState {
@@ -470,13 +478,13 @@ export function HsAutomatedSuiteRunner() {
             : l.replace(/^\/+/, "")
         );
         const required = [
-          "t-rigurous-hs",
-          "t-rigurous-hs/nested",
-          "t-rigurous-hs/reset-branch",
-          "t-rigurous-hs/dept/[deptId]",
-          "t-rigurous-hs/locked/[code]",
-          "t-rigurous-hs/refresh-lab",
-          "!t-rigurous-hs/no-layout-page",
+          "horizontal-segmentation-test",
+          "horizontal-segmentation-test/nested",
+          "horizontal-segmentation-test/reset-branch",
+          "horizontal-segmentation-test/dept/[deptId]",
+          "horizontal-segmentation-test/locked/[code]",
+          "horizontal-segmentation-test/refresh-lab",
+          "!horizontal-segmentation-test/no-layout-page",
         ];
         for (const req of required) {
           if (!normLayouts.includes(req)) {
@@ -746,28 +754,26 @@ export function HsAutomatedSuiteRunner() {
       await runStep(10, async () => {
         clickEl("hs-link-reset");
         try {
-        await waitForEl("hs-reset-layout");
-        await waitForEl("hs-reset-root-page");
+          await waitForEl("hs-reset-layout");
+          await waitForEl("hs-reset-root-page");
 
-        if (document.getElementById("hs-section-layout")) {
-          throw new Error("#hs-section-layout should NOT be mounted inside reset_layout branch!");
-        }
-        if (document.body.getAttribute("data-hydrated") !== "true") {
-          throw new Error("body[data-hydrated=true] missing after reset_layout navigation");
-        }
+          if (document.getElementById("hs-section-layout")) {
+            throw new Error("#hs-section-layout should NOT be mounted inside reset_layout branch!");
+          }
+          if (document.body.getAttribute("data-hydrated") !== "true") {
+            throw new Error("body[data-hydrated=true] missing after reset_layout navigation");
+          }
 
-        clickEl("hs-reset-client-inc");
-        await new Promise((r) => setTimeout(r, 50));
-        const resetCount = getText("hs-reset-client-count");
+          clickEl("hs-reset-client-inc");
+          await new Promise((r) => setTimeout(r, 50));
+          const resetCount = getText("hs-reset-client-count");
 
-        clickEl("hs-reset-link-sub");
-        await waitForEl("hs-reset-sub-page");
-        if (getText("hs-reset-client-count") !== resetCount) {
-          throw new Error("Reset branch layout state lost on subpage navigation");
-        }
-        clickEl("hs-reset-link-back");
-        await waitForEl("hs-index-page");
-        return `reset_layout unmounted parent #hs-section-layout, preserved #hs-reset-layout state (count=${resetCount}) to /sub, and kept data-hydrated="true"`;
+          clickEl("hs-reset-link-sub");
+          await waitForEl("hs-reset-sub-page");
+          if (getText("hs-reset-client-count") !== resetCount) {
+            throw new Error("Reset branch layout state lost on subpage navigation");
+          }
+          return `reset_layout unmounted parent #hs-section-layout, preserved #hs-reset-layout state (count=${resetCount}) to /sub, and kept data-hydrated="true"`;
         } finally {
           if (!document.getElementById("hs-index-page")) {
             if (document.getElementById("hs-reset-link-back")) {
@@ -784,22 +790,19 @@ export function HsAutomatedSuiteRunner() {
       await runStep(11, async () => {
         clickEl("hs-link-no-layout");
         try {
-        await waitForEl("hs-no-layout-root");
+          await waitForEl("hs-no-layout-root");
 
-        if (document.getElementById("hs-section-layout")) {
-          throw new Error("#hs-section-layout should NOT be mounted on no_layout page!");
-        }
-        if (document.getElementById("hs-reset-layout")) {
-          throw new Error("#hs-reset-layout should NOT be mounted on no_layout page!");
-        }
-        if (document.body.getAttribute("data-hydrated") !== "true") {
-          throw new Error("body[data-hydrated=true] missing on no_layout page");
-        }
+          if (document.getElementById("hs-section-layout")) {
+            throw new Error("#hs-section-layout should NOT be mounted on no_layout page!");
+          }
+          if (document.getElementById("hs-reset-layout")) {
+            throw new Error("#hs-reset-layout should NOT be mounted on no_layout page!");
+          }
+          if (document.body.getAttribute("data-hydrated") !== "true") {
+            throw new Error("body[data-hydrated=true] missing on no_layout page");
+          }
 
-        clickEl("hs-no-layout-back-link");
-        await waitForEl("hs-section-layout");
-        await waitForEl("hs-index-page");
-        return `no_layout rendered #hs-no-layout-root with 0 ancestor layouts and cleanly remounted #hs-section-layout on return`;
+          return `no_layout rendered #hs-no-layout-root with 0 ancestor layouts and cleanly remounted #hs-section-layout on return`;
         } finally {
           if (!document.getElementById("hs-index-page")) {
             if (document.getElementById("hs-no-layout-back-link")) {
@@ -842,23 +845,76 @@ export function HsAutomatedSuiteRunner() {
           indexHtmlRes.text(),
           siblingBHtmlRes.text(),
         ]);
-        const idxLayoutMatch = indexHtml.match(/id="hs-section-layout-seq">(\d+)</);
-        const idxPageMatch = indexHtml.match(/id="hs-index-page-seq">(\d+)</);
-        const sibBLayoutMatch = siblingBHtml.match(/id="hs-section-layout-seq">(\d+)</);
-        if (!idxLayoutMatch || Number(idxLayoutMatch[1]) < Number(layoutSeq3)) {
-          throw new Error(`Lazy index.html re-composition failed on /t-rigurous-hs: expected layout seq >= #${layoutSeq3} in SSR HTML`);
+        if (!indexHtml.includes(`id="hs-section-layout-seq">${layoutSeq3}<`)) {
+          throw new Error(`Lazy index.html re-composition failed on /t-rigurous-hs: expected layout seq #${layoutSeq3} in SSR HTML`);
         }
-        if (!idxPageMatch || Number(idxPageMatch[1]) < Number(pageSeq1)) {
-          throw new Error(`Lazy index.html re-composition lost page.rsc state on /t-rigurous-hs: expected page seq >= #${pageSeq1}`);
+        if (!indexHtml.includes(`id="hs-index-page-seq">${pageSeq1}<`)) {
+          throw new Error(`Lazy index.html re-composition lost page.rsc state on /t-rigurous-hs: expected page seq #${pageSeq1}`);
         }
-        if (!sibBLayoutMatch || Number(sibBLayoutMatch[1]) < Number(layoutSeq3)) {
-          throw new Error(`Lazy index.html re-composition failed on child /sibling-b: expected layout seq >= #${layoutSeq3} in SSR HTML`);
+        if (!siblingBHtml.includes(`id="hs-section-layout-seq">${layoutSeq3}<`)) {
+          throw new Error(`Lazy index.html re-composition failed on child /sibling-b: expected layout seq #${layoutSeq3} in SSR HTML`);
         }
         if (!siblingBHtml.includes(`id="hs-sibling-b-seq">100<`)) {
           throw new Error(`Lazy index.html re-composition unexpectedly re-executed /sibling-b page.tsx!`);
         }
 
         return `revalidatePage (#${pageSeq0}→#${pageSeq1}), revalidateLayout & surgical tag (#${layoutSeq0}→#${layoutSeq2}→#${layoutSeq3}), + lazy F5 HTML re-composed (${layoutSeq3} + preserved page.rsc)`;
+      });
+
+      // TEST 13: Clock-Based Layout TTL (1s) vs. Page TTL (1s) Surgical Expiration
+      await runStep(13, async () => {
+        // Reset TTL routes to clean 100 baseline and start fresh 1s clock window
+        await hsMutateRawState({
+          ttlLayoutSeq: 100,
+          ttlPageSeq: 100,
+          ttlPageOnlySeq: 100,
+        });
+        await hsRevalidateTtlRoutes();
+
+        const curSectionLayoutSeq = getText("hs-section-layout-seq");
+
+        // 13a. Layout TTL (1s) expires while child page TTL (3600s) is valid; poison child page to 999
+        // Also test Page-Only TTL (1s) under long-lived section layout (poison sectionLayoutSeq to 999)
+        await hsMutateRawState({
+          ttlLayoutSeq: 601,
+          ttlPageSeq: 999,
+          ttlPageOnlySeq: 602,
+          sectionLayoutSeq: 999,
+        });
+
+        await new Promise((r) => setTimeout(r, 1250));
+
+        // Trigger TTL expiry on both /ttl-isr (layout TTL=1s) and /ttl-page-only (page TTL=1s)
+        await Promise.all([
+          origFetch("/t-rigurous-hs/ttl-isr", { headers: { Accept: "text/html" } }),
+          origFetch("/t-rigurous-hs/ttl-page-only", { headers: { Accept: "text/html" } }),
+        ]);
+        await new Promise((r) => setTimeout(r, 300));
+
+        const [ttlIsrHtml, ttlPageOnlyHtml] = await Promise.all([
+          origFetch("/t-rigurous-hs/ttl-isr", { headers: { Accept: "text/html" } }).then((r) => r.text()),
+          origFetch("/t-rigurous-hs/ttl-page-only", { headers: { Accept: "text/html" } }).then((r) => r.text()),
+        ]);
+
+        await hsMutateRawState({
+          ttlPageSeq: 100,
+          sectionLayoutSeq: Number(curSectionLayoutSeq) || 100,
+        });
+
+        if (!ttlIsrHtml.includes('id="hs-ttl-layout-seq">601<')) {
+          throw new Error(`Expected expired TTL layout (1s) to update to 601 in /ttl-isr HTML`);
+        }
+        if (!ttlIsrHtml.includes('id="hs-ttl-page-seq">100<')) {
+          throw new Error(`Layout TTL expiry re-executed long-lived child page (expected 100, not 999)!`);
+        }
+        if (!ttlPageOnlyHtml.includes('id="hs-ttl-page-only-seq">602<')) {
+          throw new Error(`Expected expired TTL page (1s) to update to 602 in /ttl-page-only HTML`);
+        }
+        if (!ttlPageOnlyHtml.includes(`id="hs-section-layout-seq">${curSectionLayoutSeq}<`)) {
+          throw new Error(`Page TTL expiry re-executed section layout (expected ${curSectionLayoutSeq}, not 999)!`);
+        }
+
+        return `Layout TTL=1s updated layout.rsc & index.html (601) keeping child page=100; Page TTL=1s updated page.rsc & index.html (602) keeping section layout=${curSectionLayoutSeq}`;
       });
     } finally {
       window.fetch = origFetch;

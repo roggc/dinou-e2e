@@ -30,7 +30,7 @@ export default function StaticHostSlotClient() {
           setStatus("invalidated");
         }}
       >
-        Invalidate Slot on Static Host
+        Invalidate Tag Only on Static Host
       </button>
       <button
         id="btn-static-host-inv-and-refresh"
@@ -53,7 +53,15 @@ export default function StaticHostSlotClient() {
       >
         Force Fresh Slot on Static Host
       </button>
+      <button
+        id="btn-static-fast-refresh-no-force"
+        onClick={() => {
+          refreshSlot("rig-slot-static-fast");
+          setStatus("fast-ttl-refresh-requested");
+        }}
+      >
+        Refresh Fast TTL Slot (No Force)
+      </button>
     </div>
   );
 }
-

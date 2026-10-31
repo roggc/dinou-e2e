@@ -95,6 +95,28 @@ async function PprADynamicHole({ query }: { query?: Record<string, string> }) {
           );
         }}
       </DinouCacheSlot>
+
+      {/* Fast Clock-TTL DinouCacheSlot (revalidate=1s) inside the dynamic PPR hole */}
+      <DinouCacheSlot
+        id="ts-ppr-a-ttl-hole-slot"
+        tag="ts-ppr-a-ttl-hole-slot-tag"
+        revalidate={1}
+      >
+        {async () => {
+          const ttlHoleSt = readTsState();
+          return (
+            <div
+              id="ts-ppr-a-ttl-hole-slot-box"
+              className="p-2 rounded bg-slate-950 border border-orange-500/50"
+            >
+              Hole Fast-TTL (1s) CacheSlot Seq:{" "}
+              <strong id="ts-ppr-a-ttl-hole-slot-seq" className="text-orange-300">
+                {ttlHoleSt.pprATtlHoleSlotSeq}
+              </strong>
+            </div>
+          );
+        }}
+      </DinouCacheSlot>
     </div>
   );
 }
@@ -153,6 +175,28 @@ export default async function TripleSynergyPprAPage({
                 </strong>
               </div>
               <TsClientStateBox idPrefix="ts-ppr-a-shell-slot" />
+            </div>
+          );
+        }}
+      </DinouCacheSlot>
+
+      {/* Fast Clock-TTL DinouCacheSlot (revalidate=1s) in the PPR Page Static Shell */}
+      <DinouCacheSlot
+        id="ts-ppr-a-ttl-shell-slot"
+        tag="ts-ppr-a-ttl-shell-slot-tag"
+        revalidate={1}
+      >
+        {async () => {
+          const st = readTsState();
+          return (
+            <div
+              id="ts-ppr-a-ttl-shell-slot-box"
+              className="p-2.5 rounded bg-slate-950 border border-orange-500/60 text-xs"
+            >
+              PPR A Static Shell Fast-TTL (1s) CacheSlot Seq:{" "}
+              <strong id="ts-ppr-a-ttl-shell-slot-seq" className="text-orange-300">
+                {st.pprATtlShellSlotSeq}
+              </strong>
             </div>
           );
         }}

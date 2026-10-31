@@ -6046,6 +6046,38 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const html = await res.text();
       expect(html).not.toContain(`[PPR Error: SimulatedHoleError: ${xssPayload}]`);
     });
+
+    test("6. Clock-Based TTL Expiration on PPR Static Shell (/t-ppr-rigorous/ttl-shell, revalidate = 1)", async ({
+      request,
+    }) => {
+      const r1 = await request.get("/t-ppr-rigorous/ttl-shell", {
+        headers: { Cookie: "ppr_user=TtlUser1" },
+      });
+      const h1 = await r1.text();
+      const shellToken1 = extractTestIdText(h1, "ttl-shell-token");
+      expect(shellToken1).toBeTruthy();
+      expect(extractTestIdText(h1, "ttl-hole-user")).toBe("TtlUser1");
+
+      await new Promise((r) => setTimeout(r, 1200));
+
+      const r2 = await request.get("/t-ppr-rigorous/ttl-shell", {
+        headers: { Cookie: "ppr_user=TtlUser2" },
+      });
+      const h2 = await r2.text();
+      expect(extractTestIdText(h2, "ttl-hole-user")).toBe("TtlUser2");
+
+      await expect
+        .poll(
+          async () => {
+            const r3 = await request.get("/t-ppr-rigorous/ttl-shell", {
+              headers: { Cookie: "ppr_user=TtlUser3" },
+            });
+            return extractTestIdText(await r3.text(), "ttl-shell-token");
+          },
+          { timeout: 6000 }
+        )
+        .not.toBe(shellToken1);
+    });
   });
 
   test.describe.serial("DinouCacheSlot: Rigorous Vertical Segmentation & Micro-ISR Casuistics", () => {
@@ -6101,6 +6133,22 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         timeout: 10000,
       });
       expect(await page.locator("#static-page-time").innerText()).toBe(staticPageTimeBeforeLive);
+
+      // 1d. Clock-Based TTL Expiration (revalidate=1s) on Static Host Slot (rig-slot-static-fast)
+      const fastToken1 = await page.locator("#slot-static-fast-token").innerText();
+      const slowTokenBeforeTtl = await page.locator("#slot-static-host-token").innerText();
+      await new Promise((r) => setTimeout(r, 1200));
+      await page.reload();
+      await expect(page.locator("#static-host-controls")).toHaveAttribute("data-hydrated", "true");
+      await expect(page.locator("#slot-static-fast-token")).not.toHaveText(fastToken1);
+      await expect(page.locator("#slot-static-host-token")).toHaveText(slowTokenBeforeTtl);
+
+      const fastToken2 = await page.locator("#slot-static-fast-token").innerText();
+      await new Promise((r) => setTimeout(r, 1200));
+      await page.click("#btn-static-fast-refresh-no-force");
+      await expect(page.locator("#slot-static-fast-token")).not.toHaveText(fastToken2, {
+        timeout: 10000,
+      });
     });
 
     test("2. Vertical Cache Isolation, revalidate={0} No-Cache, Function Child, Tag-Only Slot & Multi-Tag Shared Invalidation (/t-rigorous-cache-slot)", async ({
@@ -6516,6 +6564,32 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(extractSynIdText(shellB, "syn-layout-shell-slot-token")).toBe(layoutShellBefore);
       expect(extractSynIdText(streamB, "syn-hole-slot-a-token")).toBe(holeSlotAAfter);
       expect(extractSynIdText(streamB, "syn-nested-inner-token")).toBe(nestedInnerAfter);
+
+      // 2c. Clock-Based TTL Expiration (revalidate=1s) on PPR Shell Fast Slot & Dynamic Hole Fast Slot
+      const fastShellSlotBefore = extractSynIdText(shellB, "syn-shell-fast-slot-token");
+      const fastHoleSlotBefore = extractSynIdText(streamB, "syn-hole-fast-slot-token");
+      expect(fastShellSlotBefore).toBeTruthy();
+      expect(fastHoleSlotBefore).toBeTruthy();
+
+      await new Promise((r) => setTimeout(r, 1200));
+
+      const resAfterTtl = await request.get("/t-rigorous-sinergy?mode=zeta-mode");
+      const htmlAfterTtl = await resAfterTtl.text();
+      const { streamPart: rawStreamTtl } = splitPprWireHtml(htmlAfterTtl);
+      const streamTtl = isProd ? rawStreamTtl : htmlAfterTtl;
+      expect(extractSynIdText(streamTtl, "syn-hole-fast-slot-token")).not.toBe(fastHoleSlotBefore);
+      expect(extractSynIdText(streamTtl, "syn-hole-slot-a-token")).toBe(holeSlotAAfter);
+
+      await expect
+        .poll(
+          async () => {
+            const res = await request.get("/t-rigorous-sinergy?mode=eta-mode");
+            const { shellPart } = splitPprWireHtml(await res.text());
+            return extractSynIdText(shellPart, "syn-shell-fast-slot-token");
+          },
+          { timeout: 6000 }
+        )
+        .not.toBe(fastShellSlotBefore);
     });
 
     test("3. Live refreshSlot (By ID, By Tag, Nested Inner via useRouter, Static Shell Slot & Wildcard *) Preserving Sibling Client State & Embedded Server Actions (/t-rigorous-sinergy)", async ({
@@ -6703,7 +6777,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("#hs-section-layout")).toHaveCount(0);
     });
 
-    test("2. Full 12-Scenario Horizontal Segmentation Stress Suite passes end-to-end and F5 reload after revalidateLayout has zero hydration mismatch", async ({
+    test("2. Full 13-Scenario Horizontal Segmentation Stress Suite passes end-to-end and F5 reload after revalidateLayout has zero hydration mismatch", async ({
       page,
     }) => {
       const hydrationErrors: string[] = [];
@@ -6722,11 +6796,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
 
       await page.click("#hs-run-automated-suite");
-      await expect(page.locator("#hs-suite-summary-badge")).toHaveText("12/12 PASSED", {
-        timeout: 60000,
+      await expect(page.locator("#hs-suite-summary-badge")).toHaveText("13/13 PASSED", {
+        timeout: 90000,
       });
 
-      for (let i = 1; i <= 12; i++) {
+      for (let i = 1; i <= 13; i++) {
         await expect(page.locator(`#hs-test-status-${i}`)).toHaveText("passed");
       }
 
@@ -6761,7 +6835,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("#ts-ppr-a-hole-resolved")).toBeVisible({ timeout: 20000 });
     });
 
-    test("2. Full 12-Scenario Triple Synergy Stress Suite passes end-to-end and F5 reload after revalidateLayout on PPR route has zero hydration mismatch", async ({
+    test("2. Full 13-Scenario Triple Synergy Stress Suite passes end-to-end and F5 reload after revalidateLayout on PPR route has zero hydration mismatch", async ({
       page,
     }) => {
       const hydrationErrors: string[] = [];
@@ -6781,11 +6855,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("#ts-ppr-a-hole-resolved")).toBeVisible({ timeout: 15000 });
 
       await page.click("#ts-run-automated-suite");
-      await expect(page.locator("#ts-suite-summary-badge")).toHaveText("12/12 PASSED", {
-        timeout: 60000,
+      await expect(page.locator("#ts-suite-summary-badge")).toHaveText("13/13 PASSED", {
+        timeout: 90000,
       });
 
-      for (let i = 1; i <= 12; i++) {
+      for (let i = 1; i <= 13; i++) {
         await expect(page.locator(`#ts-test-status-${i}`)).toHaveText("passed");
       }
 
@@ -6804,7 +6878,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
   });
 
   test.describe.serial("Dinou Core: Rigorous HS + DinouCacheSlot Synergy (/t-rigurous-hs-cache-slot)", () => {
-    test("Full 10-Scenario HS + DinouCacheSlot (Non-PPR) Stress Suite passes end-to-end and F5 reload has zero hydration mismatch", async ({
+    test("Full 11-Scenario HS + DinouCacheSlot (Non-PPR) Stress Suite passes end-to-end and F5 reload has zero hydration mismatch", async ({
       page,
     }) => {
       const hydrationErrors: string[] = [];
@@ -6823,8 +6897,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
 
       await page.click("#hscs-run-automated-suite");
-      await expect(page.locator("#hscs-suite-summary-badge")).toHaveText("10/10 PASSED", {
-        timeout: 60000,
+      await expect(page.locator("#hscs-suite-summary-badge")).toHaveText("11/11 PASSED", {
+        timeout: 90000,
       });
 
       for (let i = 1; i <= 11; i++) {
@@ -6868,7 +6942,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("#hsppr-page-a")).toBeVisible();
     });
 
-    test("Full 11-Scenario HS + PPR (No-CacheSlot) Stress Suite passes end-to-end and F5 reload has zero hydration mismatch", async ({
+    test("Full 12-Scenario HS + PPR (No-CacheSlot) Stress Suite passes end-to-end and F5 reload has zero hydration mismatch", async ({
       page,
     }) => {
       const hydrationErrors: string[] = [];
@@ -6887,11 +6961,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
 
       await page.click("#hsppr-run-all-btn");
-      await expect(page.locator("#hsppr-suite-summary")).toHaveText("DONE: 11/11 PASSED, 0 FAILED", {
-        timeout: 60000,
+      await expect(page.locator("#hsppr-suite-summary")).toHaveText("DONE: 12/12 PASSED, 0 FAILED", {
+        timeout: 90000,
       });
 
-      for (let i = 1; i <= 10; i++) {
+      for (let i = 1; i <= 12; i++) {
         await expect(page.locator(`#hsppr-test-status-${i}`)).toHaveText("PASSED");
       }
 

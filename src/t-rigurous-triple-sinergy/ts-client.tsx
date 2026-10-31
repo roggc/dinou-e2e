@@ -282,6 +282,12 @@ const INITIAL_TS_TESTS: TsTestItemResult[] = [
     status: "pending",
     detail: "Waiting...",
   },
+  {
+    id: 13,
+    name: "13. Clock-Based <DinouCacheSlot revalidate={1}> TTL Expiration in PPR Static Shell & Dynamic Hole Preserving Segmented Layout & Page",
+    status: "pending",
+    detail: "Waiting...",
+  },
 ];
 
 function getGlobalTsSuiteState(): TsSuiteGlobalState {
@@ -313,7 +319,7 @@ function notifyTsSuiteUpdate(next: TsSuiteGlobalState) {
   window.dispatchEvent(new CustomEvent("ts-suite-update"));
 }
 
-async function waitForEl(id: string, timeoutMs = 15000): Promise<HTMLElement> {
+async function waitForEl(id: string, timeoutMs = 12000): Promise<HTMLElement> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const el = document.getElementById(id);
@@ -326,7 +332,7 @@ async function waitForEl(id: string, timeoutMs = 15000): Promise<HTMLElement> {
 async function waitForText(
   id: string,
   expected: string,
-  timeoutMs = 15000
+  timeoutMs = 12000
 ): Promise<string> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -370,8 +376,6 @@ export function TsAutomatedSuiteRunner() {
   }, []);
 
   const startAutomatedSuite = async () => {
-    const isDevMode = typeof (window as any).__DINOU_STRICT_MODE__ !== "undefined";
-
     const state: TsSuiteGlobalState = {
       running: true,
       finished: false,
@@ -449,13 +453,13 @@ export function TsAutomatedSuiteRunner() {
         ]);
 
         const splitIdx = pprHtml.indexOf('<template id="ppr-content-');
-        if (!isDevMode && splitIdx === -1) {
+        if (splitIdx === -1) {
           throw new Error(
             'Expected PPR HTML response on /t-rigurous-triple-sinergy to contain streamed <template id="ppr-content-...">'
           );
         }
-        const shellPart = splitIdx !== -1 ? pprHtml.slice(0, splitIdx) : pprHtml;
-        const streamPart = splitIdx !== -1 ? pprHtml.slice(splitIdx) : pprHtml;
+        const shellPart = pprHtml.slice(0, splitIdx);
+        const streamPart = pprHtml.slice(splitIdx);
 
         if (extractIdValueFromHtml(shellPart, "ts-layout-seq") !== "100") {
           throw new Error("Layout seq (#ts-layout-seq=100) missing from static shell prelude");
@@ -469,10 +473,10 @@ export function TsAutomatedSuiteRunner() {
         if (extractIdValueFromHtml(shellPart, "ts-ppr-a-shell-slot-seq") !== "100") {
           throw new Error("PPR A shell slot (#ts-ppr-a-shell-slot-seq=100) missing from static shell prelude");
         }
-        if (!isDevMode && !shellPart.includes('id="ts-ppr-a-hole-fallback"')) {
+        if (!shellPart.includes('id="ts-ppr-a-hole-fallback"')) {
           throw new Error("PPR A Suspense fallback (#ts-ppr-a-hole-fallback) missing from static shell prelude");
         }
-        if (!isDevMode && shellPart.includes('id="ts-ppr-a-hole-resolved"')) {
+        if (shellPart.includes('id="ts-ppr-a-hole-resolved"')) {
           throw new Error("Dynamic hole (#ts-ppr-a-hole-resolved) leaked into static shell prelude!");
         }
         if (!streamPart.includes('id="ts-ppr-a-hole-resolved"')) {
@@ -507,8 +511,8 @@ export function TsAutomatedSuiteRunner() {
       await runStep(2, async () => {
         // Mutate layoutSeq (100->101), pprAPageSeq (100->101), and pprAHoleSeq (100->101) WITHOUT revalidating!
         await tsMutateOnly({
-          layoutSeq: isDevMode ? 100 : 101,
-          pprAPageSeq: isDevMode ? 100 : 101,
+          layoutSeq: 101,
+          pprAPageSeq: 101,
           pprAHoleSeq: 101,
         });
 
@@ -732,8 +736,8 @@ export function TsAutomatedSuiteRunner() {
       await runStep(6, async () => {
         // Bump hole slot seq (101->102), and also temporarily bump pprAPageSeq & layoutSeq in DB
         await tsMutateOnly({
-          layoutSeq: isDevMode ? 100 : 999,
-          pprAPageSeq: isDevMode ? 100 : 999,
+          layoutSeq: 999,
+          pprAPageSeq: 999,
           pprAHoleSlotSeq: 102,
         });
         try {
@@ -771,8 +775,8 @@ export function TsAutomatedSuiteRunner() {
         // Mutate layoutSeq (999) and pprAPageSeq (999) WITHOUT revalidating layout or page,
         // and bump pprAShellSlotSeq to 102, then revalidateTag("ts-ppr-a-shell-slot-tag")
         await tsMutateOnly({
-          layoutSeq: isDevMode ? 100 : 999,
-          pprAPageSeq: isDevMode ? 100 : 999,
+          layoutSeq: 999,
+          pprAPageSeq: 999,
           pprAShellSlotSeq: 102,
         });
         try {
@@ -783,7 +787,7 @@ export function TsAutomatedSuiteRunner() {
           });
           const html = await htmlRes.text();
 
-          if (!isDevMode && !html.includes('<template id="ppr-content-')) {
+          if (!html.includes('<template id="ppr-content-')) {
             throw new Error(
               "After revalidateTag('ts-ppr-a-shell-slot-tag'), /t-rigurous-triple-sinergy lost its PPR dynamic hole streaming!"
             );
@@ -822,7 +826,7 @@ export function TsAutomatedSuiteRunner() {
       await runStep(8, async () => {
         // Put layoutSeq=999 and pprAShellSlotSeq=999 (unrevalidated!) while bumping pprAPageSeq to 102
         await tsMutateOnly({
-          layoutSeq: isDevMode ? 100 : 999,
+          layoutSeq: 999,
           pprAShellSlotSeq: 999,
           pprAPageSeq: 102,
           pprAPageNote: "ppr-a-reval-page",
@@ -834,7 +838,7 @@ export function TsAutomatedSuiteRunner() {
             headers: { Accept: "text/html" },
           });
           const html1 = await htmlRes1.text();
-          if (!isDevMode && !html1.includes('<template id="ppr-content-')) {
+          if (!html1.includes('<template id="ppr-content-')) {
             throw new Error(
               "revalidatePage('/t-rigurous-triple-sinergy') destroyed PPR [data-ppr-hole] streaming placeholders in shell.html!"
             );
@@ -878,22 +882,22 @@ export function TsAutomatedSuiteRunner() {
       });
 
       // =========================================================================
-      // SCENARIO 9: Surgical revalidateTag("ts-layout-shell-slot-tag") & Static Page Slot Tag Across Static & PPR Children
+      // SCENARIO 9: Surgical revalidateTag("ts-layout-shell-slot-tag") Across Static & PPR Children
       // =========================================================================
       await runStep(9, async () => {
         // First revalidate static-b as a page so its metadata.json only has static-b's page slotTags
         await tsMutateOnly({ staticBPageSeq: 101 });
         await tsRunRevalidatePage("/t-rigurous-triple-sinergy/static-b");
 
-        // Now bump layoutSlotSeq to 102 and staticASlotSeq to 101 (while setting layoutSeq, staticAPageSeq, staticBPageSeq and pprAPageSeq to 999 unrevalidated!)
-        // and invalidate ONLY "ts-layout-shell-slot-tag" and "ts-static-a-slot-tag"
+        // Now bump layoutSlotSeq to 102 (while setting layoutSeq=999, staticBPageSeq=999 and pprAPageSeq=999 unrevalidated!)
+        // and invalidate ONLY "ts-layout-shell-slot-tag"
         await tsMutateOnly({
-          layoutSeq: isDevMode ? 100 : 999,
+          layoutSeq: 999,
           layoutSlotSeq: 102,
-          staticAPageSeq: isDevMode ? 100 : 999,
+          staticAPageSeq: 999,
           staticASlotSeq: 101,
-          staticBPageSeq: isDevMode ? 101 : 999,
-          pprAPageSeq: isDevMode ? 103 : 999,
+          staticBPageSeq: 999,
+          pprAPageSeq: 999,
         });
         try {
           await tsRunRevalidateTag("ts-layout-shell-slot-tag");
@@ -962,10 +966,10 @@ export function TsAutomatedSuiteRunner() {
         await tsMutateOnly({
           layoutSeq: 105,
           layoutNote: "ts-layout-reval",
-          pprAPageSeq: isDevMode ? 103 : 999,
-          pprBPageSeq: isDevMode ? 100 : 999,
-          staticAPageSeq: isDevMode ? 100 : 999,
-          staticBPageSeq: isDevMode ? 101 : 999,
+          pprAPageSeq: 999,
+          pprBPageSeq: 999,
+          staticAPageSeq: 999,
+          staticBPageSeq: 999,
         });
         try {
           await tsRunRevalidateLayout("/t-rigurous-triple-sinergy");
@@ -992,7 +996,7 @@ export function TsAutomatedSuiteRunner() {
           }
 
           // Verify PPR A & PPR B still streamed their dynamic holes and kept their cached page shells (103 and 100)
-          if (!isDevMode && (!pprAHtml.includes('<template id="ppr-content-') || !pprBHtml.includes('<template id="ppr-content-'))) {
+          if (!pprAHtml.includes('<template id="ppr-content-') || !pprBHtml.includes('<template id="ppr-content-')) {
             throw new Error("Lazy layout re-composition on PPR routes lost <template> hole streaming!");
           }
           if (extractIdValueFromHtml(pprAHtml, "ts-ppr-a-page-seq") !== "103") {
@@ -1136,6 +1140,89 @@ export function TsAutomatedSuiteRunner() {
 
         return `router.refresh() preserved ?mode=live-query & layout state with 0 layout fetches; no_layout PPR boundary isolated & restored #ts-section-layout cleanly`;
       });
+
+      // =========================================================================
+      // SCENARIO 13: Clock-Based <DinouCacheSlot revalidate={1}> TTL Expiration in PPR Static Shell & Dynamic Hole
+      // =========================================================================
+      await runStep(13, async () => {
+        // Re-anchor 1s TTL slots to 100 and start a fresh 1s clock window
+        await tsMutateOnly({
+          pprATtlShellSlotSeq: 100,
+          pprATtlHoleSlotSeq: 100,
+        });
+        await tsRunRevalidateTag("ts-ppr-a-ttl-shell-slot-tag");
+        await tsRunRevalidateTag("ts-ppr-a-ttl-hole-slot-tag");
+
+        const curLayoutSeq = getText("ts-layout-seq");
+        const curPageSeq = getText("ts-ppr-a-page-seq");
+        const curShellSlotSeq = getText("ts-ppr-a-shell-slot-seq");
+        const curHoleSlotSeq = getText("ts-ppr-a-hole-slot-seq");
+
+        // Mutate 1s TTL slots to 501 AND poison host L1 Layout, PPR Page A, and 3600s slots to 999 WITHOUT calling revalidateTag or fresh:true
+        await tsMutateOnly({
+          pprATtlShellSlotSeq: 501,
+          pprATtlHoleSlotSeq: 501,
+          layoutSeq: 999,
+          pprAPageSeq: 999,
+          pprAShellSlotSeq: 999,
+          pprAHoleSlotSeq: 999,
+        });
+
+        // Wait 1.25s for the 1s TTL of both slots to expire by clock
+        await new Promise((r) => setTimeout(r, 1250));
+
+        // Call refreshSlot WITHOUT { fresh: true } on both the PPR Shell 1s-TTL slot and PPR Hole 1s-TTL slot
+        refreshSlot("ts-ppr-a-ttl-shell-slot");
+        refreshSlot("ts-ppr-a-ttl-hole-slot");
+        await waitForText("ts-ppr-a-ttl-shell-slot-seq", "501");
+        await waitForText("ts-ppr-a-ttl-hole-slot-seq", "501");
+
+        // Also verify raw wire GET /t-rigurous-triple-sinergy?mode=ttl-wire reflects 501 in both shellPart and streamPart while preserving frozen host layout/page and 3600s slots!
+        await new Promise((r) => setTimeout(r, 250));
+        const wireRes = await origFetch("/t-rigurous-triple-sinergy?mode=ttl-wire", {
+          headers: { Accept: "text/html" },
+        });
+        const wireHtml = await wireRes.text();
+        const wireSplitIdx = wireHtml.indexOf('<template id="ppr-content-');
+        const shellPart = wireSplitIdx === -1 ? wireHtml : wireHtml.slice(0, wireSplitIdx);
+        const streamPart = wireSplitIdx === -1 ? "" : wireHtml.slice(wireSplitIdx);
+
+        await tsMutateOnly({
+          layoutSeq: Number(curLayoutSeq) || 107,
+          pprAPageSeq: Number(curPageSeq) || 103,
+          pprAShellSlotSeq: Number(curShellSlotSeq) || 102,
+          pprAHoleSlotSeq: Number(curHoleSlotSeq) || 102,
+        });
+
+        if (extractIdValueFromHtml(shellPart, "ts-ppr-a-ttl-shell-slot-seq") !== "501") {
+          throw new Error(
+            `Expected expired 1s-TTL shell slot to update to 501 in PPR shell.html, got ${extractIdValueFromHtml(
+              shellPart,
+              "ts-ppr-a-ttl-shell-slot-seq"
+            )}`
+          );
+        }
+        if (extractIdValueFromHtml(streamPart, "ts-ppr-a-ttl-hole-slot-seq") !== "501") {
+          throw new Error(
+            `Expected expired 1s-TTL hole slot to update to 501 in PPR streamPart, got ${extractIdValueFromHtml(
+              streamPart,
+              "ts-ppr-a-ttl-hole-slot-seq"
+            )}`
+          );
+        }
+        if (
+          extractIdValueFromHtml(shellPart, "ts-layout-seq") !== curLayoutSeq ||
+          extractIdValueFromHtml(shellPart, "ts-ppr-a-page-seq") !== curPageSeq ||
+          extractIdValueFromHtml(shellPart, "ts-ppr-a-shell-slot-seq") !== curShellSlotSeq ||
+          extractIdValueFromHtml(streamPart, "ts-ppr-a-hole-slot-seq") !== curHoleSlotSeq
+        ) {
+          throw new Error(
+            "Clock-TTL slot refresh leaked poisoned host layout/page or 3600s slot state!"
+          );
+        }
+
+        return `1s TTL slots in PPR Static Shell & Dynamic Hole expired by clock -> updated to 501 in DOM & wire while preserving L1=${curLayoutSeq}, PageA=${curPageSeq} & 3600s slots`;
+      });
     } finally {
       window.fetch = origFetch;
       state.running = false;
@@ -1225,3 +1312,4 @@ export function TsAutomatedSuiteRunner() {
     </div>
   );
 }
+

@@ -53,6 +53,8 @@ export async function hscsResetAll() {
     "hscs-page-b-slot-tag",
     "hscs-l2-slot-tag",
     "hscs-nested-page-slot-tag",
+    "hscs-l1-ttl-slot-tag",
+    "hscs-page-a-ttl-slot-tag",
   ];
   for (const t of allSlotTags) {
     await revalidateTag(t);

@@ -44,6 +44,7 @@ export async function hspprResetAll() {
   await revalidatePage("/t-rigurous-hs-ppr/no-layout-ppr");
   await revalidatePage("/t-rigurous-hs-ppr/team/alpha");
   await revalidatePage("/t-rigurous-hs-ppr/ttl-ppr");
+  await revalidatePage("/t-rigurous-hs-ppr/page-ttl-ppr");
   return state;
 }
 

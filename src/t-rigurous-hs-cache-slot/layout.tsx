@@ -144,6 +144,30 @@ export default function HsCacheSlotLayout({
               );
             }}
           </DinouCacheSlot>
+
+          {/* 4. Fast Clock-TTL CacheSlot (revalidate={1}) inside Static L1 Layout */}
+          <DinouCacheSlot
+            id="hscs-l1-ttl-slot"
+            tag="hscs-l1-ttl-slot-tag"
+            revalidate={1}
+          >
+            {async () => {
+              const s = getHsCsState();
+              return (
+                <div
+                  id="hscs-l1-ttl-slot-box"
+                  className="p-2.5 rounded-lg bg-slate-900 border border-orange-500/60"
+                >
+                  <div>
+                    L1 Fast-TTL (1s) Slot Seq:{" "}
+                    <strong id="hscs-l1-ttl-slot-seq" className="text-orange-300">
+                      {s.l1TtlSlotSeq}
+                    </strong>
+                  </div>
+                </div>
+              );
+            }}
+          </DinouCacheSlot>
         </div>
 
         {/* Parallel Route @sidebar */}

@@ -57,6 +57,11 @@ export interface HsPprServerState {
   ttlPageShellSeq: number;
   ttlPagePropsSeq: number;
   ttlPageHoleSeq: number;
+
+  // Inverse Clock-based Page TTL (1s) under long-lived L1 Layout (3600s) (/t-rigurous-hs-ppr/page-ttl-ppr)
+  pageTtlShellSeq: number;
+  pageTtlPropsSeq: number;
+  pageTtlHoleSeq: number;
 }
 
 export const DEFAULT_HSPPR_STATE: HsPprServerState = {
@@ -103,6 +108,10 @@ export const DEFAULT_HSPPR_STATE: HsPprServerState = {
   ttlPageShellSeq: 100,
   ttlPagePropsSeq: 100,
   ttlPageHoleSeq: 100,
+
+  pageTtlShellSeq: 100,
+  pageTtlPropsSeq: 100,
+  pageTtlHoleSeq: 100,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {

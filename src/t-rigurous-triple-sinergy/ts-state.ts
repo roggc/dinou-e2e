@@ -13,6 +13,8 @@ export interface TsState {
   pprAShellSlotSeq: number;
   pprAHoleSeq: number;
   pprAHoleSlotSeq: number;
+  pprATtlShellSlotSeq: number;
+  pprATtlHoleSlotSeq: number;
   holeNestedOuterSeq: number;
   holeNestedInnerSeq: number;
 
@@ -45,6 +47,8 @@ export const DEFAULT_TS_STATE: TsState = {
   pprAShellSlotSeq: 100,
   pprAHoleSeq: 100,
   pprAHoleSlotSeq: 100,
+  pprATtlShellSlotSeq: 100,
+  pprATtlHoleSlotSeq: 100,
   holeNestedOuterSeq: 100,
   holeNestedInnerSeq: 100,
 
@@ -128,4 +132,3 @@ export function resetTsState(): TsState {
   }
   return next;
 }
-

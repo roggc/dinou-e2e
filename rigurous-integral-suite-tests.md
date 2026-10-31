@@ -1,4 +1,4 @@
-# Dinou v9.0.3 — Rigorous Integral Verification Suite Reference (`8 Suites / 87+ End-to-End Scenarios`)
+# Dinou v9.0.3 — Rigorous Integral Verification Suite Reference (`8 Suites / 94+ End-to-End Scenarios`)
 
 This document is the master technical reference for the **8 integral verification suites** created in `test-9.0.2` (and ported to `dinou-e2e`) to stress-test every React 19 architecture primitive introduced and refined in **Dinou v9.0.3**—covering Server Functions and **all 7 non-empty combinations ($2^3 - 1 = 7$)** of **Horizontal Segmentation (HS)**, **Vertical Segmentation (`<DinouCacheSlot>`)**, and **Partial Prerendering (PPR)** (3 individual suites, 3 pairwise synergy suites, and 1 full three-way synergy suite)—verified **100% in green with `0` React hydration errors**.
 
@@ -59,13 +59,13 @@ This document is the master technical reference for the **8 integral verificatio
 | # | Suite Route (`test-9.0.2`) | Companion Route (`dinou-e2e`) | Automated Checks / Scenarios | Result | Hydration Errors |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **1** | `/sf-test` | `/t-sf-body` | **13 / 13** RPC & HMR checks | **100% PASS** | `0` |
-| **2** | `/ppr-test` | `/t-ppr` | **16 / 16** PPR audit checks | **100% PASS** | `0` |
-| **3** | `/cache-slot-test` (+ `/static-host`) | `/t-cache-slot` | **3 / 3** E2E blocks (11 assertions) | **100% PASS** | `0` |
-| **4** | `/ppr-cache-slot-test` | `/t-ppr-cache-slot` (`/t-rigorous-sinergy`) | **2 / 2** E2E blocks (6 scenarios) | **100% PASS** | `0` |
-| **5** | `/horizontal-segmentation-test` | `/t-rigurous-hs` | **12 / 12** automated scenarios | **100% PASS** | `0` |
-| **6** | `/triple-sinergy-test` | `/t-rigurous-triple-sinergy` | **12 / 12** automated scenarios (+ F5 & Direct SSR) | **100% PASS** | `0` |
-| **7** | `/hs-cache-slot-test` | `/t-rigurous-hs-cache-slot` | **10 / 10** automated scenarios (+ F5 reload) | **100% PASS** | `0` |
-| **8** | `/hs-ppr-test` | `/t-rigurous-hs-ppr` | **11 / 11** automated scenarios (+ F5 & Direct SSR) | **100% PASS** | `0` |
+| **2** | `/ppr-test` | `/t-ppr-rigorous` | **17 / 17** PPR audit checks (incl. Clock TTL) | **100% PASS** | `0` |
+| **3** | `/cache-slot-test` (+ `/static-host`) | `/t-rigorous-cache-slot` | **4 / 4** E2E blocks (incl. Clock TTL on dynamic & static hosts) | **100% PASS** | `0` |
+| **4** | `/ppr-cache-slot-test` | `/t-rigorous-sinergy` | **3 / 3** E2E blocks (incl. Clock TTL in PPR Shell & Hole) | **100% PASS** | `0` |
+| **5** | `/horizontal-segmentation-test` | `/t-rigurous-hs` | **13 / 13** automated scenarios (incl. Layout vs. Page Clock TTL) | **100% PASS** | `0` |
+| **6** | `/triple-sinergy-test` | `/t-rigurous-triple-sinergy` | **13 / 13** automated scenarios (+ Clock TTL, F5 & Direct SSR) | **100% PASS** | `0` |
+| **7** | `/hs-cache-slot-test` | `/t-rigurous-hs-cache-slot` | **11 / 11** automated scenarios (+ Clock TTL & F5 reload) | **100% PASS** | `0` |
+| **8** | `/hs-ppr-test` | `/t-rigurous-hs-ppr` | **12 / 12** automated scenarios (+ Layout & Page Clock TTL, F5 & Direct SSR) | **100% PASS** | `0` |
 
 ---
 
@@ -105,7 +105,7 @@ Verifies the AST compiler pass (`transformServerFunctions`), client bundler plug
 ### 3.1. Purpose & Scope
 Audits Dinou's Dual-Bundle Partial Prerendering engine end-to-end: build-time static shell extraction (`shell.html`, `shell.rsc`, `shell.page.json`, `metadata.json`), pre-order `1`-based `ppr-hole-N` indexing across layouts and pages, static `<Suspense>` vs. dynamic `<Suspense>` separation, tri-state `ppr` config inheritance and opt-out (`resolveModulePpr`), runtime streaming via `handlePprResume` (`<template id="ppr-content-...">` + inline DOM replacement `<script>`), `React.memo` and nested `<Suspense>` holes, unwrapped dynamic bailout detection (`ssgPprUnwrappedBailout`), and XSS protection when escaping `</template>` in streamed holes.
 
-### 3.2. The 16 Automated Audit Checks (`16 / 16 Passed`)
+### 3.2. The 17 Automated Audit Checks (`17 / 17 Passed`)
 
 | # | Check ID | Audit Check | What It Verifies & Asserts | Status |
 | :--- | :--- | :--- | :--- | :--- |
@@ -125,6 +125,7 @@ Audits Dinou's Dual-Bundle Partial Prerendering engine end-to-end: build-time st
 | **14** | `check-14` | **Layout + Page `<Suspense>` Hole Alignment (`/ppr-test/inherited`)** | Verifies that when both `layout.tsx` (`ppr-hole-1`) and `page.tsx` (`ppr-hole-2`) contain dynamic `<Suspense>` holes, build-time and runtime hole IDs stay aligned (`B:0` and `B:1`). | **PASS** |
 | **15** | `check-15` | **Unwrapped Dynamic Access in PPR Route (`/ppr-test/unwrapped-bailout`)** | Verifies that reading `req.cookies` outside `<Suspense>` on a PPR route skips static shell persistence (`ssgPprUnwrappedBailout`) and renders fresh per request. | **PASS** |
 | **16** | `check-16` | **Security: `</template>` Breakout & Error Message XSS Guard** | Verifies that throwing `SimulatedHoleError: </template><script>window.__PPR_ERR_XSS__=1</script>` inside a dynamic hole is HTML-escaped and never breaks out of the `<template>` tag. | **PASS** |
+| **17** | `check-17` | **Clock-Based PPR Static Shell TTL Expiration (`/ppr-test/ttl-shell`, `revalidate = 1s`)** | Verifies that a PPR route with `export const revalidate = 1` serves its cached `shell.html` within the 1s window while streaming live dynamic holes, and after `> 1s` clock expiration regenerates `shell.html` in the background via ISR while preserving `<Suspense>` hole streaming. | **PASS** |
 
 ---
 
@@ -133,7 +134,7 @@ Audits Dinou's Dual-Bundle Partial Prerendering engine end-to-end: build-time st
 ### 4.1. Purpose & Scope
 Verifies `<DinouCacheSlot>` and `refreshSlot` / `useRouter().refreshSlot` across static and dynamic host pages: cold-start slot discovery on `/____rsc_slot____/:id`, vertical cache isolation on dynamic pages, `revalidate={0}` bypass, multi-tag shared invalidation (`revalidateTag`), in-place client reconciliation preserving `useState`, `"use server"` reference serialization inside cached slot JSON, and nested `<DinouCacheSlot>` (Outer → Inner) invalidation via `refreshNestedSlotsInTree`.
 
-### 4.2. The 3 Multi-Stage Verification Blocks (`ALL PASSED`)
+### 4.2. The 4 Multi-Stage Verification Blocks (`ALL PASSED`)
 
 1. **Block 2.1 — Static Host Page & Cold-Start Slot Endpoints (`/cache-slot-test/static-host`)**:
    - Directly queries `GET /____rsc_slot____/slot-static-host?fresh=1` and `GET /____rsc_slot____/slot-layout-banner?fresh=1` with `x-dinou-current-path: /cache-slot-test/static-host` on a freshly booted server (`slotRegistry` empty), confirming cold-start route pre-evaluation inside `runWithPprContext({ isPpr: true })` and fallback layout discovery.
@@ -144,6 +145,9 @@ Verifies `<DinouCacheSlot>` and `refreshSlot` / `useRouter().refreshSlot` across
 3. **Block 2.3 — Live `refreshSlot` by Tag, Server Action Props Inside Cached Slot & Nested Slot Isolation**:
    - Increments `#page-client-counter` (`100 → 102`), invokes both a direct `"use server"` import (`#btn-slot-client-ping`) and a prop-passed `"use server"` action (`#btn-slot-client-prop-ping`) inside a cached `<DinouCacheSlot>`, and calls `refreshSlot("tag-alpha", { fresh: true })`, verifying `slot-alpha` updates in place while `#page-client-counter` stays `102`.
    - Invalidates only `tag-inner` on the nested `<DinouCacheSlot id="slot-nested-inner">` inside `<DinouCacheSlot id="slot-nested-outer">`: verifies `#slot-nested-inner-token` updates while `#slot-nested-outer-token` stays cached both on reload (`refreshNestedSlotsInTree`) and on live `refreshSlot("slot-nested-inner", { fresh: true })`.
+4. **Block 2.4 — Clock-Based TTL Expiration (`revalidate = N`) on Dynamic & Static Hosts**:
+   - Waits `2.3s` on `/cache-slot-test` and reloads: asserts `#slot-fast-token` (`revalidate={2}`) regenerates by clock while `#slot-alpha-token` (`revalidate={60}`) stays cached.
+   - Waits `1.4s` on `/cache-slot-test/static-host` and calls `refreshSlot("slot-static-fast")` **without** `{ fresh: true }` followed by `F5` reload: asserts `#slot-static-fast-token` (`revalidate={1}`) expires by clock and surgically recomposes `index.html` (`onlyRefreshSlots: true`) while preserving `#static-page-time` and the `60s` slot (`#slot-static-host-token`).
 
 ---
 
@@ -159,7 +163,7 @@ Tests the interaction between **Partial Prerendering** and **Vertical Segmentati
 - **Scenario 5 (Dynamic Hole #3 — `ppr-hole-6`)**: Renders `<DinouCacheSlot id="ppr-syn-client-slot">` (containing `<PprSlotInnerClientWidget onServerEcho={echoFromPprSlotAction} />`) **before** `<DynamicSiblingBailoutReader />` triggers PPR postpone (testing `deferPprSuspenseEffect` so build-time slot writes are discarded when a later sibling bails out).
 - **Scenario 6 (Dynamic Hole #4 — `ppr-hole-7`)**: Reads `req.cookies.syn_direct_cookie` **directly inside** `<DinouCacheSlot id="ppr-syn-direct-dynamic-slot">`.
 
-### 5.2. The 2 Multi-Stage Verification Blocks (`ALL PASSED`)
+### 5.2. The 3 Multi-Stage Verification Blocks (`ALL PASSED`)
 
 1. **Block 3.1 — Raw Wire Streaming Protocol & Slot Caching Inside Dynamic Holes**:
    - Sends two raw HTTP requests to `/ppr-cache-slot-test` with different cookies, headers, and query params (`alice`/`probe-1`/`alpha-mode` vs. `bob`/`probe-2`/`beta-mode`) and splits the wire HTML at `<template id="ppr-content-`.
@@ -168,6 +172,9 @@ Tests the interaction between **Partial Prerendering** and **Vertical Segmentati
 2. **Block 3.2 — Live `refreshSlot` Across Shell, Dynamic Hole & Nested Slots Preserving Client State**:
    - Hydrates `/ppr-cache-slot-test?mode=live-mode`, increments client state in the shell (`500 → 501`), in the hole (`50 → 51`), and inside the slot widget (`0 → 1`).
    - Calls `refreshSlot("ppr-syn-hole-slot-a", { fresh: true })`, `router.refreshSlot("ppr-syn-nested-inner", { fresh: true })` (verifying `#syn-nested-outer-token` stays unchanged), and `refreshSlot("ppr-syn-shell-slot", { fresh: true })` (verifying deadlock-free `revalidatePage(..., { onlyRefreshSlots: true })` shell update after releasing `inflightSlotRenders`), while all three client counters (`501`, `51`, `1`) remain intact.
+3. **Block 3.3 — Clock-Based TTL Expiration (`revalidate = 1s`) Inside PPR Static Shell & Dynamic Hole**:
+   - Sends an initial `GET /ppr-cache-slot-test?mode=ttl-1`, waits `1.4s` for the 1-second TTL slots to expire by clock without calling any `revalidate*` or `refreshSlot` API, and sends `GET /ppr-cache-slot-test?mode=ttl-2`.
+   - Verifies that `#syn-shell-fast-slot-token` (`revalidate={1}` in the PPR Static Shell) and `#syn-hole-fast-slot-token` (`revalidate={1}` in Dynamic Hole #1) both regenerate and recompose `shell.html` via `hasExpiredSlots` + `revalidatePage(..., { onlyRefreshSlots: true })`, while `#syn-shell-token` (host PPR shell) and the `60s` slots remain cached.
 
 ---
 
@@ -176,7 +183,7 @@ Tests the interaction between **Partial Prerendering** and **Vertical Segmentati
 ### 6.1. Purpose & Scope
 Tests Dinou's **Horizontal Segmentation** architecture (`layout.rsc` vs. `page.rsc` separation, `layout_functions.ts` independent lifecycle, client `layoutCache` & `pageCache`, dynamic layout parameters, layout-level access control, error boundary isolation inside `<DinouPageSlot />`, `reset_layout` / `no_layout` boundaries, and surgical `revalidatePage` vs. `revalidateLayout` re-composition).
 
-### 6.2. The 12 Automated Scenarios (`12 / 12 PASSED`)
+### 6.2. The 13 Automated Scenarios (`13 / 13 PASSED`)
 
 | # | Scenario | What It Verifies & Asserts | Status |
 | :--- | :--- | :--- | :--- |
@@ -192,6 +199,7 @@ Tests Dinou's **Horizontal Segmentation** architecture (`layout.rsc` vs. `page.r
 | **10** | **`reset_layout` Boundary (`/reset-branch` & `/reset-branch/sub`)** | Navigates to `/reset-branch` and `/reset-branch/sub`, verifying the ancestor section layout unmounts and the branch's own layout mounts cleanly. | **PASSED** |
 | **11** | **`no_layout` Boundary (`/no-layout-page`)** | Navigates to `/no-layout-page` (`no_layout`), verifying standalone page rendering without any ancestor layout and clean layout remount upon returning. | **PASSED** |
 | **12** | **Surgical On-Demand Revalidation (`revalidatePage` vs. `revalidateLayout` vs. `revalidateTag`)** | Verifies `revalidatePage` updates only `page.rsc` + `index.html` (reusing cached `layout.rsc` without re-executing `layout.tsx`), and `revalidateLayout` / `revalidateTag("hs-section-layout-tag")` updates `layout.rsc` and lazily re-composes child `index.html` on the next `GET` without re-executing child `page.tsx`. | **PASSED** |
+| **13** | **Clock-Based Layout TTL (`revalidate = 1s`) vs. Page TTL (`revalidate = 1s`) Surgical Expiration** | On `/ttl-isr` (Layout TTL `1s`, Page TTL `3600s`), waits `1.25s` and verifies the layout expires by clock and lazily recomposes `index.html` (`301`) while keeping the child page frozen (`100`). On `/ttl-page-only` (Page TTL `1s`, Section Layout TTL `3600s`), waits `1.25s` and verifies background ISR delegates to `revalidatePage`, updating the page to `302` while composing with cached `layout.rsc` (`110`) without re-executing `layout.tsx`. | **PASSED** |
 
 ---
 
@@ -200,7 +208,7 @@ Tests Dinou's **Horizontal Segmentation** architecture (`layout.rsc` vs. `page.r
 ### 7.1. Purpose & Scope
 Combines **Horizontal Segmentation**, **Vertical Segmentation (`<DinouCacheSlot>`)**, and **Partial Prerendering (PPR)** simultaneously in a single multi-level route hierarchy (`src/triple-sinergy-test/` in `test-9.0.2` and `src/t-rigurous-triple-sinergy/` in `dinou-e2e`). Detailed architectural diagrams and bug root-cause analyses are also recorded in `rigurous-triple-sinergy.md`.
 
-### 7.2. The 12 Automated Scenarios (`12 / 12 PASSED`)
+### 7.2. The 13 Automated Scenarios (`13 / 13 PASSED`)
 
 | # | Scenario | What It Verifies & Asserts | Status |
 | :--- | :--- | :--- | :--- |
@@ -216,6 +224,7 @@ Combines **Horizontal Segmentation**, **Vertical Segmentation (`<DinouCacheSlot>
 | **10** | **`revalidateLayout("/triple-sinergy-test")` & `revalidateTag("ts-layout-tag")` Across All PPR & Static Children** | Revalidates the L1 layout (`100 → 105 → 106`) with all child page counters at `999`: asserts PPR A, PPR B, Static A, and Static B all lazily re-compose their `shell.html` / `index.html` with `layoutSeq = 105/106` while keeping their cached page shells (`103, 100, 100, 101`) and PPR hole streaming intact. | **PASSED** |
 | **11** | **Multi-Level Nested Layout (`L1 + L2`) Soft Navigation & Ancestor `revalidateLayout` Cascade** | Soft-navigates to `/triple-sinergy-test/nested` (PPR) and `/triple-sinergy-test/nested/static-child` (`ppr = false`) with 0 L1 layout fetches, then revalidates ancestor L1 layout (`107`) and verifies automatic cascade to L2 `layout.rsc` and lazy HTML re-composition on both nested PPR and nested Static children. | **PASSED** |
 | **12** | **`router.refresh()` vs. `router.refresh({ layout: true })` with Query Params (`?mode=live-query`) + `no_layout` PPR Boundary** | Verifies `router.refresh()` on `/triple-sinergy-test?mode=live-query` makes 0 `/____rsc_layout____` fetches while forwarding `?mode=live-query` to the dynamic PPR hole, `router.refresh({ layout: true })` refreshes both while preserving layout client state, and soft-navigation to `/triple-sinergy-test/no-layout-ppr` (`no_layout` + PPR + `<DinouCacheSlot>`) and back works with `0` hydration errors. | **PASSED** |
+| **13** | **Clock-Based `<DinouCacheSlot revalidate={1}>` TTL Expiration in PPR Static Shell & Dynamic Hole Preserving Segmented Layout & Page** | Mutates 1s-TTL slots in the PPR Static Shell and Dynamic Hole to `501` while poisoning L1 Layout, PPR Page A, and `3600s` slots to `999` without calling `revalidateTag`. Waits `1.25s` for the 1s clock TTL to expire, calls `refreshSlot` without `{ fresh: true }`, and verifies both DOM and raw wire (`shellPart` and `streamPart`) update to `501` while L1 Layout, PPR Page A, and `3600s` slots remain frozen. | **PASSED** |
 
 ---
 
@@ -224,7 +233,7 @@ Combines **Horizontal Segmentation**, **Vertical Segmentation (`<DinouCacheSlot>
 ### 8.1. Purpose & Scope
 Tests the interaction between **Horizontal Segmentation** (`layout.rsc` vs. `page.rsc`, `@sidebar` parallel route slots, multi-level nested layouts, and client `pageCache` / `layoutCache`) and **Vertical Segmentation** (`<DinouCacheSlot>`, `refreshSlot`, `revalidateTag`, nested slots, and `revalidate={0}`) on standard non-PPR routes (`ppr = false`). Detailed root-cause analyses of the client-side `slotOverrideCache` and `knownClientSlots` unmounted refresh architecture are recorded in `rigurous-hs-cache-slot.md`.
 
-### 8.2. The 10 Automated Scenarios (`10 / 10 PASSED`)
+### 8.2. The 11 Automated Scenarios (`11 / 11 PASSED`)
 
 | # | Scenario | What It Verifies & Asserts | Status |
 | :--- | :--- | :--- | :--- |
@@ -238,6 +247,7 @@ Tests the interaction between **Horizontal Segmentation** (`layout.rsc` vs. `pag
 | **8** | **Unmounted Slot Refresh on Sibling Route (`Refresh Page A Slot While on Page B -> Return to Page A`)** | Navigates to `/hs-cache-slot-test/page-b` (unmounting Page A), bumps `pageASlotSeq` to `204`, calls `revalidateTag("hscs-page-a-slot-tag")` + `refreshSlot("hscs-page-a-slot-tag")` while `hscs-page-a-slot` is **unmounted**, and immediately soft-navigates back to Page A. Verifies `knownClientSlots` + `slotOverrideCache` refreshes the unmounted slot in the background and renders `204` on Page A. | **PASSED** |
 | **9** | **Multi-Level Nested Layout (`/nested`) Slot Refresh & Round-Trip (`/nested -> /page-b -> /nested`)** | Soft-navigates to `/hs-cache-slot-test/nested` (`0` L1 layout fetches), increments L2 Layout and L2 Slot client `useState`, surgically refreshes L2 Layout Slot (`400 -> 401`) and Nested Page Slot (`500 -> 501`), and performs a round-trip soft navigation (`/nested -> /page-b -> /nested`) verifying `slotOverrideCache` preserves both `401` and `501` with `0` `/____rsc_page____` fetches. | **PASSED** |
 | **10** | **Host Segment Revalidation (`revalidatePage` & `revalidateLayout`) Coexistence with Cached Slots** | Revalidates host Page A (`200 -> 205`) and host L1 Layout (`100 -> 105`) without invalidating slot tags, verifying both hosts update while reusing their cached `<DinouCacheSlot>` entries (`204` and `101`) from `slots/<id>/slot.json` and preserving L1 Layout & `@sidebar` client `mountId`s. | **PASSED** |
+| **11** | **Clock-Based `<DinouCacheSlot revalidate={1}>` TTL Expiration in Static L1 Layout & Static Page A** | Mutates 1s-TTL slots in Static L1 Layout and Static Page A to `501` while poisoning L1 Layout, Page A, and `3600s` slots to `999` without calling `revalidateTag`. Waits `1.25s` for the 1s clock TTL to expire, calls `refreshSlot` without `{ fresh: true }`, and verifies DOM, raw `index.html`, and `/____rsc_layout____` update to `501` while preserving host Layout, host Page A, and `3600s` slots. | **PASSED** |
 
 ---
 
@@ -246,7 +256,7 @@ Tests the interaction between **Horizontal Segmentation** (`layout.rsc` vs. `pag
 ### 9.1. Purpose & Scope
 Tests the pure interaction between **Horizontal Segmentation** (`layout.rsc` / `shell.layout.json` vs. `shell.rsc` / `shell.page.json`, `@sidebar` parallel route slots, multi-level nested layouts, `reset_layout` / `no_layout` boundaries, and dynamic `[team]` layout parameter validation) and **Partial Prerendering (`ppr = true`)** (`shell.html`, pre-order `ppr-hole-N` indexing across layouts and pages, static `<Suspense>` vs. dynamic `<Suspense>` resolution, and `spliceDynamicHolesIntoShell` on both `/____rsc_layout____` and `/____rsc_page____`) without `<DinouCacheSlot>`. Detailed architectural diagrams, empirical TDD bug root-cause analyses, and a developer usage guide are recorded in `rigurous-hs-ppr.md`.
 
-### 9.2. The 11 Automated Scenarios (`11 / 11 PASSED`)
+### 9.2. The 12 Automated Scenarios (`12 / 12 PASSED`)
 
 | # | Scenario | What It Verifies & Asserts | Status |
 | :--- | :--- | :--- | :--- |
@@ -261,3 +271,4 @@ Tests the pure interaction between **Horizontal Segmentation** (`layout.rsc` / `
 | **9** | **Standalone PPR Boundaries: `reset_layout` (`/reset-ppr`) & `no_layout` (`/no-layout-ppr`) Wire Split & Hydration** | Fetches `/hs-ppr-test/reset-ppr?rmode=reset-wire` and `/hs-ppr-test/no-layout-ppr?nlmode=nl-wire`, verifying neither route includes ancestor `#hsppr-l1-layout`, both pre-render isolated static shells (`100`) in `shell.html`, and both stream `ppr-hole-1` with live query parameters (`reset-wire` and `nl-wire`). | **PASSED** |
 | **10** | **Dynamic Layout Parameter Validation (`validateParams` + `getStaticPaths` + `allowISG = false`) on PPR Routes (`/team/[team]`)** | Verifies pre-rendered `/hs-ppr-test/team/alpha?tmode=alpha-wire` returns `200` with `Team Shell: alpha` in `shell.html` and `alpha-wire` in the streamed `<template>`, while `/team/beta` (`allowISG = false`) and `/team/gamma` (`validateParams() === false`) return `404` on both HTML and `/____rsc_layout____`. | **PASSED** |
 | **11** | **Clock-Based Layout TTL Expiration (`revalidate = 1s` in `layout_functions.ts`) + Lazy `shell.html` Re-Composition Preserving Long-Lived PPR Child Page (`revalidate = 3600s`)** | Soft-navigates to `/hs-ppr-test/ttl-ppr`, increments client state in the TTL layout, mutates TTL layout counters to `501`, and poisons the child PPR page's in-memory shell counter to `999` without calling any `revalidate*` function. Waits `1.3s` for the layout's 1-second TTL to expire by clock and fetches `/hs-ppr-test/ttl-ppr?ttlmode=ttl-verified`. Verifies `layout.rsc` and `shell.layout.json` regenerate automatically to `501` and lazily recompose `shell.html` (`501`), while the child PPR page (`revalidate = 3600s`) remains frozen at `100` (not `999`), and `router.refresh({ layout: true })` updates the DOM to `501` while preserving client state. | **PASSED** |
+| **12** | **Inverse Clock-Based PPR Child Page TTL Expiration (`revalidate = 1s` in `page_functions.ts`) Composing With Cached Long-Lived L1 Layout (`revalidate = 3600s`)** | Soft-navigates to `/hs-ppr-test/page-ttl-ppr`, mutates the child PPR page counters to `601`, and poisons the parent L1 Layout in-memory shell counter to `999` without calling any `revalidate*` function. Waits `1.25s` for the child page's 1-second TTL to expire by clock, triggers background ISR (`GET /hs-ppr-test/page-ttl-ppr?pttl=trigger`), and verifies `GET /hs-ppr-test/page-ttl-ppr?pttl=verify` serves the regenerated child PPR page shell (`601`) composed with the cached L1 Layout (`301`, not `999`), and `router.refresh()` updates the DOM to `601` while preserving L1 Layout state. | **PASSED** |

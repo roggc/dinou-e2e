@@ -14,8 +14,20 @@ export async function hsResetAllState() {
   await Promise.all([
     revalidatePage("/t-rigurous-hs/sibling-a"),
     revalidatePage("/t-rigurous-hs/sibling-b"),
+    revalidatePath("/t-rigurous-hs/ttl-isr"),
+    revalidatePage("/t-rigurous-hs/ttl-page-only"),
   ]);
   return next;
+}
+
+export async function hsMutateRawState(patch: Record<string, any>) {
+  return writeHsState(patch);
+}
+
+export async function hsRevalidateTtlRoutes() {
+  await revalidatePath("/t-rigurous-hs/ttl-isr");
+  await revalidatePage("/t-rigurous-hs/ttl-page-only");
+  return readHsState();
 }
 
 export async function hsMutateSiblingAOnly(note: string) {

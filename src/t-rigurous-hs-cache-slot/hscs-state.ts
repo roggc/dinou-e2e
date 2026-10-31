@@ -11,6 +11,7 @@ export interface HsCsServerState {
   l1SharedSlotSeq: number;
   l1OuterSlotSeq: number;
   l1InnerSlotSeq: number;
+  l1TtlSlotSeq: number;
 
   // @sidebar parallel route & its slot
   sidebarOuterSeq: number;
@@ -24,6 +25,7 @@ export interface HsCsServerState {
   pageAOuterSlotSeq: number;
   pageAInnerSlotSeq: number;
   pageANoCacheSlotSeq: number;
+  pageATtlSlotSeq: number;
   slotActionCalls: number;
 
   // Page B (Sibling) & its slot
@@ -44,6 +46,7 @@ export const DEFAULT_HSCS_STATE: HsCsServerState = {
   l1SharedSlotSeq: 100,
   l1OuterSlotSeq: 100,
   l1InnerSlotSeq: 100,
+  l1TtlSlotSeq: 100,
 
   sidebarOuterSeq: 100,
   sidebarSlotSeq: 100,
@@ -55,6 +58,7 @@ export const DEFAULT_HSCS_STATE: HsCsServerState = {
   pageAOuterSlotSeq: 100,
   pageAInnerSlotSeq: 100,
   pageANoCacheSlotSeq: 100,
+  pageATtlSlotSeq: 100,
   slotActionCalls: 0,
 
   pageBSeq: 100,

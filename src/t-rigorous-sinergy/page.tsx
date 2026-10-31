@@ -148,6 +148,29 @@ async function DynamicHole1MicroIsrInsidePpr({
           );
         }}
       </DinouCacheSlot>
+
+      {/* Fast clock-TTL slot (revalidate=1s) inside the dynamic PPR hole */}
+      <DinouCacheSlot
+        id="ppr-syn-hole-fast-slot"
+        tag="tag-syn-hole-fast"
+        revalidate={1}
+      >
+        {async () => {
+          await new Promise((r) => setTimeout(r, 5));
+          const fastHoleToken = `hole1-fast-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+          return (
+            <div id="syn-hole-fast-slot-box" data-testid="syn-hole-fast-slot-box">
+              Hole 1 Fast TTL Slot Token:{" "}
+              <strong
+                id="syn-hole-fast-slot-token"
+                data-testid="syn-hole-fast-slot-token"
+              >
+                {fastHoleToken}
+              </strong>
+            </div>
+          );
+        }}
+      </DinouCacheSlot>
     </div>
   );
 }
@@ -366,6 +389,27 @@ export default async function PprCacheSlotSynergyPage({
           revalidate={3600}
         >
           <ShellSlotContent />
+        </DinouCacheSlot>
+        <DinouCacheSlot
+          id="ppr-syn-shell-fast-slot"
+          tag="tag-syn-shell-fast"
+          revalidate={1}
+        >
+          {async () => {
+            await new Promise((r) => setTimeout(r, 5));
+            const fastShellToken = `shell-fast-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+            return (
+              <div id="syn-shell-fast-slot-box" data-testid="syn-shell-fast-slot-box">
+                Shell Fast TTL Slot Token:{" "}
+                <strong
+                  id="syn-shell-fast-slot-token"
+                  data-testid="syn-shell-fast-slot-token"
+                >
+                  {fastShellToken}
+                </strong>
+              </div>
+            );
+          }}
         </DinouCacheSlot>
       </section>
 

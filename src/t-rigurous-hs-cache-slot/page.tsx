@@ -167,6 +167,33 @@ export default function HsCacheSlotPageA({
             );
           }}
         </DinouCacheSlot>
+
+        {/* 5. Fast Clock-TTL revalidate={1} Slot inside Static Page A */}
+        <DinouCacheSlot
+          id="hscs-page-a-ttl-slot"
+          tag="hscs-page-a-ttl-slot-tag"
+          revalidate={1}
+        >
+          {async () => {
+            const s = getHsCsState();
+            return (
+              <div
+                id="hscs-page-a-ttl-slot-box"
+                className="p-3 rounded-lg bg-slate-950 border border-orange-500/60 space-y-2"
+              >
+                <div>
+                  Page A Fast-TTL (1s) Slot Seq:{" "}
+                  <strong
+                    id="hscs-page-a-ttl-slot-seq"
+                    className="text-orange-300"
+                  >
+                    {s.pageATtlSlotSeq}
+                  </strong>
+                </div>
+              </div>
+            );
+          }}
+        </DinouCacheSlot>
       </div>
     </div>
   );

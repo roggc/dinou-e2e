@@ -34,6 +34,8 @@ export async function tsResetAllAndRevalidate() {
   await revalidateTag("ts-nested-layout-slot-tag");
   await revalidateTag("ts-ppr-a-shell-slot-tag");
   await revalidateTag("ts-ppr-a-hole-slot-tag");
+  await revalidateTag("ts-ppr-a-ttl-shell-slot-tag");
+  await revalidateTag("ts-ppr-a-ttl-hole-slot-tag");
   await revalidateTag("ts-hole-nested-outer-tag");
   await revalidateTag("ts-hole-nested-inner-tag");
   await revalidateTag("ts-ppr-b-shell-slot-tag");

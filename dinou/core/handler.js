@@ -46,6 +46,7 @@ import {
   serializeJSX,
   deserializeJSX,
   refreshNestedSlotsInTree,
+  hasExpiredSlots,
 } from "./cache-slot.js";
 import {
   runWithPprContext,
@@ -1389,6 +1390,7 @@ async function handleRequest(request, platformContext = {}) {
             entry.generatedAt = Number(lMeta?.generatedAt || 0);
             entry.suspenseCount = Number(lMeta?.suspenseCount || 0);
             entry.revalidate = lMeta?.revalidate;
+            entry.slotTags = Array.isArray(lMeta?.slotTags) ? lMeta.slotTags : [];
           }
           if (!platformContext?.isSSG && !isOld && !dynamicState.value) {
             for (let i = activeChain.length - 1; i >= 0; i--) {
@@ -1398,14 +1400,23 @@ async function handleRequest(request, platformContext = {}) {
                 entry.revalidate >= 1 &&
                 entry.generatedAt > 0 &&
                 Date.now() > entry.generatedAt + entry.revalidate * 1000;
+              const isLayoutSlotTtlExpired =
+                !isLayoutTtlExpired &&
+                entry.slotTags.length > 0 &&
+                (await hasExpiredSlots(entry.slotTags));
               const maxAncestorGen =
                 i < activeChain.length - 1
                   ? Math.max(0, ...activeChain.slice(i + 1).map((l) => l.generatedAt || 0))
                   : 0;
               const isAncestorNewer = entry.generatedAt > 0 && maxAncestorGen > entry.generatedAt;
-              if (isLayoutTtlExpired || (isLayoutReq && isAncestorNewer)) {
+              if (isLayoutTtlExpired || isLayoutSlotTtlExpired || (isLayoutReq && isAncestorNewer)) {
                 const { revalidateLayout } = await import("./cache-revalidate.js");
-                await revalidateLayout(entry.layoutRoutePath);
+                await revalidateLayout(
+                  entry.layoutRoutePath,
+                  isLayoutSlotTtlExpired && !isLayoutTtlExpired && !(isLayoutReq && isAncestorNewer)
+                    ? { onlyRefreshSlots: true }
+                    : {}
+                );
                 const lMetaKey = entry.cleanLayoutKey
                   ? `${entry.cleanLayoutKey}/layout.metadata.json`
                   : "layout.metadata.json";
@@ -1539,10 +1550,39 @@ async function handleRequest(request, platformContext = {}) {
           }
           if (cached && cached.content) {
             let isExpired = false;
+            let isSlotOnlyExpired = false;
             if (isLayoutReq && cached.metadata) {
               const { revalidate, generatedAt } = cached.metadata;
               if (typeof revalidate === "number" && revalidate >= 1 && Date.now() > (generatedAt || 0) + revalidate * 1000) {
                 isExpired = true;
+              }
+            } else if (!isLayoutReq && !useOld) {
+              const pMetaKey = cleanRel ? `${cleanRel}/metadata.json` : "metadata.json";
+              const pRscBaseKey = cleanRel ? `${cleanRel}/page.rsc` : "page.rsc";
+              const pMeta =
+                cached.metadata ||
+                (await readMetaFromStorage(storage, pMetaKey, pRscBaseKey, platformContext, request.url));
+              if (pMeta) {
+                const pReval =
+                  pMeta.pageRevalidate !== undefined ? pMeta.pageRevalidate : pMeta.revalidate;
+                const pGen = pMeta.pageGeneratedAt || pMeta.generatedAt || 0;
+                if (typeof pReval === "number" && pReval >= 1 && pGen > 0 && Date.now() > pGen + pReval * 1000) {
+                  isExpired = true;
+                } else if (Array.isArray(pMeta.slotTags) && pMeta.slotTags.length > 0) {
+                  isSlotOnlyExpired = await hasExpiredSlots(pMeta.slotTags);
+                }
+              }
+              if (isExpired || isSlotOnlyExpired) {
+                const { revalidatePage } = await import("./cache-revalidate.js");
+                await revalidatePage(
+                  cleanPath,
+                  isSlotOnlyExpired && !isExpired ? { onlyRefreshSlots: true } : {}
+                );
+                const refreshedCached = await storage.get(rscKey);
+                if (refreshedCached && refreshedCached.content) {
+                  cached = refreshedCached;
+                  isExpired = false;
+                }
               }
             }
             if (!isExpired) {
@@ -2029,6 +2069,7 @@ async function handleRequest(request, platformContext = {}) {
             );
             entry.generatedAt = Number(lMeta?.generatedAt || 0);
             entry.revalidate = lMeta?.revalidate;
+            entry.slotTags = Array.isArray(lMeta?.slotTags) ? lMeta.slotTags : [];
           }
           for (let i = activeLayoutChain.length - 1; i >= 0; i--) {
             const entry = activeLayoutChain[i];
@@ -2037,6 +2078,10 @@ async function handleRequest(request, platformContext = {}) {
               entry.revalidate >= 1 &&
               entry.generatedAt > 0 &&
               Date.now() > entry.generatedAt + entry.revalidate * 1000;
+            const isLayoutSlotTtlExpired =
+              !isLayoutTtlExpired &&
+              entry.slotTags.length > 0 &&
+              (await hasExpiredSlots(entry.slotTags));
             const maxAncestorGen =
               i < activeLayoutChain.length - 1
                 ? Math.max(
@@ -2046,9 +2091,14 @@ async function handleRequest(request, platformContext = {}) {
                 : 0;
             const isAncestorNewer =
               entry.generatedAt > 0 && maxAncestorGen > entry.generatedAt;
-            if (isLayoutTtlExpired || isAncestorNewer) {
+            if (isLayoutTtlExpired || isLayoutSlotTtlExpired || isAncestorNewer) {
               const { revalidateLayout } = await import("./cache-revalidate.js");
-              await revalidateLayout(entry.layoutRoutePath);
+              await revalidateLayout(
+                entry.layoutRoutePath,
+                isLayoutSlotTtlExpired && !isLayoutTtlExpired && !isAncestorNewer
+                  ? { onlyRefreshSlots: true }
+                  : {}
+              );
               const refreshedMeta = await readMetaFromStorage(
                 storage,
                 entry.cleanLayoutKey
@@ -2144,6 +2194,26 @@ async function handleRequest(request, platformContext = {}) {
       } catch (lazyErr) {
         console.warn(`⚠️ [Dinou] Error during lazy HTML re-composition for ${reqPath}:`, lazyErr?.message || lazyErr);
       }
+      if (Array.isArray(cachedItem.metadata?.slotTags) && cachedItem.metadata.slotTags.length > 0) {
+        try {
+          const isPageSlotTtlExpired = await hasExpiredSlots(cachedItem.metadata.slotTags);
+          if (isPageSlotTtlExpired) {
+            const { revalidatePage } = await import("./cache-revalidate.js");
+            await revalidatePage(reqPath, { onlyRefreshSlots: true });
+            let refreshedItem = await storage.get(htmlKey);
+            if (!refreshedItem && cleanPath) {
+              refreshedItem = await storage.get(cleanPath);
+            }
+            if (!refreshedItem && (cachedItem.metadata?.ppr || isPprConfig)) {
+              const shellHtmlKey = cleanPath ? `${cleanPath}/shell.html` : "shell.html";
+              refreshedItem = await storage.get(shellHtmlKey);
+            }
+            if (refreshedItem && refreshedItem.content) {
+              cachedItem = refreshedItem;
+            }
+          }
+        } catch (slotTtlErr) {}
+      }
       const metadata = cachedItem.metadata || {};
       const { generatedAt } = metadata;
       const pageOwnRevalidate =
@@ -2163,7 +2233,7 @@ async function handleRequest(request, platformContext = {}) {
           regenerating.add(reqPath);
           try {
             console.log(`[Edge ISR] Starting regeneration for ${reqPath}...`);
-            if (metadata.ppr || isPprConfig) {
+            if (metadata.ppr || isPprConfig || (platformContext && platformContext.renderHtmlStream)) {
               const { revalidatePage } = await import("./cache-revalidate.js");
               await revalidatePage(reqPath);
               return;

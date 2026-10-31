@@ -154,6 +154,12 @@ const INITIAL_TESTS: HsCsTestResult[] = [
     status: "pending",
     detail: "Waiting...",
   },
+  {
+    id: 11,
+    name: "11. Clock-Based <DinouCacheSlot revalidate={1}> TTL Expiration in Static L1 Layout & Static Page A",
+    status: "pending",
+    detail: "Waiting...",
+  },
 ];
 
 function getGlobalSuiteState(): HsCsSuiteGlobalState {
@@ -782,6 +788,76 @@ export function HsCsAutomatedSuiteRunner() {
         }
 
         return "revalidatePage updated Page A (100->101) reusing slot (102); revalidateLayout updated L1 (100->101) reusing slot (101) & keeping state=1";
+      });
+
+      // SCENARIO 11: Clock-Based <DinouCacheSlot revalidate={1}> TTL Expiration in Static L1 Layout & Static Page A
+      await runStep(11, async () => {
+        // Re-anchor 1s TTL slots to 100 and refresh their 1s window
+        await hscsMutateState({
+          l1TtlSlotSeq: 100,
+          pageATtlSlotSeq: 100,
+        });
+        await hscsRunRevalidateTag("hscs-l1-ttl-slot-tag");
+        await hscsRunRevalidateTag("hscs-page-a-ttl-slot-tag");
+
+        // Now mutate 1s TTL slots to 301 AND poison host L1 Layout, host Page A, and 3600s slots to 999 WITHOUT calling revalidateTag or fresh:true
+        await hscsMutateState({
+          l1TtlSlotSeq: 301,
+          pageATtlSlotSeq: 301,
+          l1LayoutSeq: 999,
+          pageASeq: 999,
+          l1SlotSeq: 999,
+          pageASlotSeq: 999,
+        });
+
+        // Wait 1.25s for the 1s TTL of hscs-l1-ttl-slot and hscs-page-a-ttl-slot to expire by clock
+        await new Promise((r) => setTimeout(r, 1250));
+
+        // Call refreshSlot WITHOUT { fresh: true } — must detect expired TTL, re-render slots to 301, AND update static layout.rsc & page.rsc / index.html!
+        refreshSlot("hscs-l1-ttl-slot");
+        refreshSlot("hscs-page-a-ttl-slot");
+        await waitForText("hscs-l1-ttl-slot-seq", "301");
+        await waitForText("hscs-page-a-ttl-slot-seq", "301");
+
+        if (
+          getText("hscs-l1-layout-seq") !== "101" ||
+          getText("hscs-page-a-seq") !== "101" ||
+          getText("hscs-l1-slot-seq") !== "101" ||
+          getText("hscs-page-a-slot-seq") !== "102"
+        ) {
+          throw new Error("Clock-TTL slot refresh leaked poisoned host or long-TTL slot state!");
+        }
+
+        // Also verify raw GET /t-rigurous-hs-cache-slot (F5 SSR HTML) reflects 301 for both expired TTL slots while keeping host L1=101 and PageA=101!
+        await new Promise((r) => setTimeout(r, 250));
+        const rawHtmlRes = await origFetch("/t-rigurous-hs-cache-slot", {
+          headers: { Accept: "text/html" },
+        });
+        const rawHtml = await rawHtmlRes.text();
+
+        await hscsMutateState({
+          l1LayoutSeq: 101,
+          pageASeq: 101,
+          l1SlotSeq: 101,
+          pageASlotSeq: 102,
+        });
+
+        if (
+          !rawHtml.includes('id="hscs-l1-ttl-slot-seq" class="text-orange-300">301<') ||
+          !rawHtml.includes('id="hscs-page-a-ttl-slot-seq" class="text-orange-300">301<')
+        ) {
+          throw new Error(
+            "Static index.html / layout.rsc was NOT updated when clock-TTL <DinouCacheSlot revalidate={1}> expired!"
+          );
+        }
+        if (
+          !rawHtml.includes('id="hscs-l1-layout-seq">101<') ||
+          !rawHtml.includes('id="hscs-page-a-seq">101<')
+        ) {
+          throw new Error("Clock-TTL slot update re-executed host L1 Layout or Page A!");
+        }
+
+        return "1s TTL slots in L1 Layout & Page A expired by clock -> updated to 301 in DOM & static index.html while keeping host L1=101, PageA=101 & 3600s slots frozen";
       });
     } finally {
       window.fetch = origFetch;
