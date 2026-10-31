@@ -1,4 +1,4 @@
-# Dinou v9.0.3 — Rigorous Integral Verification Suite Reference (`8 Suites / 94+ End-to-End Scenarios`)
+# Dinou v9.0.3 — Rigorous Integral Verification Suite Reference (`8 Suites / 95+ End-to-End Scenarios`)
 
 This document is the master technical reference for the **8 integral verification suites** created in `test-9.0.2` (and ported to `dinou-e2e`) to stress-test every React 19 architecture primitive introduced and refined in **Dinou v9.0.3**—covering Server Functions and **all 7 non-empty combinations ($2^3 - 1 = 7$)** of **Horizontal Segmentation (HS)**, **Vertical Segmentation (`<DinouCacheSlot>`)**, and **Partial Prerendering (PPR)** (3 individual suites, 3 pairwise synergy suites, and 1 full three-way synergy suite)—verified **100% in green with `0` React hydration errors**.
 
@@ -41,7 +41,7 @@ This document is the master technical reference for the **8 integral verificatio
 |                                   Slots + Cross-Mode Soft Nav + Lazy HTML + Clock-TTL Slot Sync   |
 |                                                                                                   |
 |  [Suite 7: /hs-cache-slot-test]   Pairwise Synergy #2 (Horizontal + Vertical Without PPR):        |
-|  (11 Automated Scenarios)         L1/L2 Layouts + @sidebar Parallel Slot + Page A/B Slots,        |
+|  (12 Automated Scenarios)         L1/L2 Layouts + @sidebar Parallel Slot + Page A/B Slots,        |
 |                                   Cross-Axis Shared Tags, Nested Slots in Layout & Page,          |
 |                                   revalidate={0} in Static Page, Round-Trip Soft Nav              |
 |                                   (slotOverrideCache), Unmounted Slot Refresh & Clock-TTL Slots   |
@@ -64,7 +64,7 @@ This document is the master technical reference for the **8 integral verificatio
 | **4** | `/ppr-cache-slot-test` | `/t-rigorous-sinergy` | **3 / 3** E2E blocks (incl. Clock TTL in PPR Shell & Hole) | **100% PASS** | `0` |
 | **5** | `/horizontal-segmentation-test` | `/t-rigurous-hs` | **13 / 13** automated scenarios (incl. Layout vs. Page Clock TTL) | **100% PASS** | `0` |
 | **6** | `/triple-sinergy-test` | `/t-rigurous-triple-sinergy` | **13 / 13** automated scenarios (+ Clock TTL, F5 & Direct SSR) | **100% PASS** | `0` |
-| **7** | `/hs-cache-slot-test` | `/t-rigurous-hs-cache-slot` | **11 / 11** automated scenarios (+ Clock TTL & F5 reload) | **100% PASS** | `0` |
+| **7** | `/hs-cache-slot-test` | `/t-rigurous-hs-cache-slot` | **12 / 12** automated scenarios (+ Clock TTL, LWW Race & F5 reload) | **100% PASS** | `0` |
 | **8** | `/hs-ppr-test` | `/t-rigurous-hs-ppr` | **12 / 12** automated scenarios (+ Layout & Page Clock TTL, F5 & Direct SSR) | **100% PASS** | `0` |
 
 ---
@@ -233,7 +233,7 @@ Combines **Horizontal Segmentation**, **Vertical Segmentation (`<DinouCacheSlot>
 ### 8.1. Purpose & Scope
 Tests the interaction between **Horizontal Segmentation** (`layout.rsc` vs. `page.rsc`, `@sidebar` parallel route slots, multi-level nested layouts, and client `pageCache` / `layoutCache`) and **Vertical Segmentation** (`<DinouCacheSlot>`, `refreshSlot`, `revalidateTag`, nested slots, and `revalidate={0}`) on standard non-PPR routes (`ppr = false`). Detailed root-cause analyses of the client-side `slotOverrideCache` and `knownClientSlots` unmounted refresh architecture are recorded in `rigurous-hs-cache-slot.md`.
 
-### 8.2. The 11 Automated Scenarios (`11 / 11 PASSED`)
+### 8.2. The 12 Automated Scenarios (`12 / 12 PASSED`)
 
 | # | Scenario | What It Verifies & Asserts | Status |
 | :--- | :--- | :--- | :--- |
@@ -248,6 +248,7 @@ Tests the interaction between **Horizontal Segmentation** (`layout.rsc` vs. `pag
 | **9** | **Multi-Level Nested Layout (`/nested`) Slot Refresh & Round-Trip (`/nested -> /page-b -> /nested`)** | Soft-navigates to `/hs-cache-slot-test/nested` (`0` L1 layout fetches), increments L2 Layout and L2 Slot client `useState`, surgically refreshes L2 Layout Slot (`400 -> 401`) and Nested Page Slot (`500 -> 501`), and performs a round-trip soft navigation (`/nested -> /page-b -> /nested`) verifying `slotOverrideCache` preserves both `401` and `501` with `0` `/____rsc_page____` fetches. | **PASSED** |
 | **10** | **Host Segment Revalidation (`revalidatePage` & `revalidateLayout`) Coexistence with Cached Slots** | Revalidates host Page A (`200 -> 205`) and host L1 Layout (`100 -> 105`) without invalidating slot tags, verifying both hosts update while reusing their cached `<DinouCacheSlot>` entries (`204` and `101`) from `slots/<id>/slot.json` and preserving L1 Layout & `@sidebar` client `mountId`s. | **PASSED** |
 | **11** | **Clock-Based `<DinouCacheSlot revalidate={1}>` TTL Expiration in Static L1 Layout & Static Page A** | Mutates 1s-TTL slots in Static L1 Layout and Static Page A to `501` while poisoning L1 Layout, Page A, and `3600s` slots to `999` without calling `revalidateTag`. Waits `1.25s` for the 1s clock TTL to expire, calls `refreshSlot` without `{ fresh: true }`, and verifies DOM, raw `index.html`, and `/____rsc_layout____` update to `501` while preserving host Layout, host Page A, and `3600s` slots. | **PASSED** |
+| **12** | **Out-of-Order Concurrent `refreshSlot()` Race Protection (Mounted & Unmounted Last-Write-Wins)** | **12a (Mounted Slot Race)**: Dispatches a slow `refreshSlot("hscs-page-a-slot", true)` (`seq = 401`, `350ms` delay) followed `40ms` later by a fast `refreshSlot("hscs-page-a-slot", true)` (`seq = 402`, `0ms` delay), waits `450ms` for the slow request to finish, and asserts the DOM and client cache retain `402` while preserving `mountId`. **12b (Unmounted Slot Race)**: Soft-navigates to `/page-b` (unmounting `hscs-page-a-slot`), dispatches slow `refreshSlot` (`seq = 403`, `350ms`) followed by fast `refreshSlot` (`seq = 404`, `0ms`), waits `450ms`, returns to Page A, and verifies `slotOverrideCache` renders `404`. | **PASSED** |
 
 ---
 

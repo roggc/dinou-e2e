@@ -307,6 +307,6 @@ With clock-based TTL expiration (`revalidate: N` with `N >= 1`) verified across 
 | **3** | `/cache-slot-test` (`/t-rigorous-cache-slot`) | **Vertical Segmentation (`<DinouCacheSlot>`) Only** | 4 Automated Blocks | **4 / 4 PASSED** |
 | **4** | `/horizontal-segmentation-test` (`/t-rigurous-hs`) | **Horizontal Segmentation (HS) Only** | 13 Automated Scenarios | **13 / 13 PASSED** |
 | **5** | `/ppr-cache-slot-test` (`/t-rigorous-sinergy`) | **Pairwise #1: PPR + `<DinouCacheSlot>`** | 3 Automated Blocks | **3 / 3 PASSED** |
-| **6** | `/hs-cache-slot-test` (`/t-rigurous-hs-cache-slot`) | **Pairwise #2: HS + `<DinouCacheSlot>` (Non-PPR)** | 11 Automated Scenarios | **11 / 11 PASSED** |
+| **6** | `/hs-cache-slot-test` (`/t-rigurous-hs-cache-slot`) | **Pairwise #2: HS + `<DinouCacheSlot>` (Non-PPR)** | 12 Automated Scenarios | **12 / 12 PASSED** |
 | **7** | `/hs-ppr-test` (`/t-rigurous-hs-ppr`) | **Pairwise #3: HS + PPR (No-CacheSlot)** | 12 Automated Scenarios | **12 / 12 PASSED** |
 | **8** | `/triple-sinergy-test` (`/t-rigurous-triple-sinergy`) | **Triple Synergy: HS + `<DinouCacheSlot>` + PPR** | 13 Automated Scenarios | **13 / 13 PASSED** |
