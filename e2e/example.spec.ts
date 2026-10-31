@@ -6980,7 +6980,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       await page.goto("/t-rigurous-hs-ppr");
       await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
-      await expect(page.locator("#hsppr-page-a-hole2-inner-box")).toBeVisible({ timeout: 15000 });
+      await expect(page.locator("#hsppr-page-a-hole2-inner-resolved")).toBeVisible({ timeout: 15000 });
       await expect(page.locator("#hsppr-l1-mount-id")).not.toHaveText("ssr", { timeout: 15000 });
 
       await page.click("#hsppr-run-all-btn");
