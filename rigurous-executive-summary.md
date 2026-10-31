@@ -26,6 +26,13 @@ Dinou is continuously verified across a **three-dimensional compatibility matrix
 2. **Firefox** (Gecko / SpiderMonkey)
 3. **WebKit** (Safari / JavaScriptCore)
 
+### 1.4. Standalone Compiled Executables & Static Export Smoke Verification
+In addition to the full Playwright browser matrix and the `-u` (unvendorized) Node AOT pipeline, CI continuously executes `tests/compile-and-export-smoke.mjs` (`compile-and-export-smoke` job) to verify:
+1. **Static Site Export (`export-static`)**: Generates the standalone `out/` directory from `.dinou/dist2` and `.dinou/dist3` and verifies static HTML and manifest integrity.
+2. **Compiled Node.js AOT Binary (`build:node:compile`)**: Packages `.dinou/node/server.mjs` via `bun build --compile`, spawns the native executable, and verifies HTTP `200 OK` responses across root and segmented routes.
+3. **Compiled Bun Binary (`build:bun:compile`)**: Packages `.dinou/bun/server.js` via `bun build --compile`, spawns the native executable, and verifies HTTP `200 OK` responses.
+4. **Compiled Deno Binary (`build:deno:compile`)**: Seeds Deno KV, packages `.dinou/deno/main.js` via `deno compile --unstable-kv`, spawns the native executable, and verifies HTTP `200 OK` responses.
+
 ---
 
 ## 2. Exhaustive Combinatorial Coverage in `e2e/example.spec.ts`

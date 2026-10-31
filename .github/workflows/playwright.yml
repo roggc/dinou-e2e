@@ -83,3 +83,33 @@ jobs:
           name: report-ubuntu-24.04-node-aot-unvendorized-esbuild
           path: playwright-report/
           retention-days: 30
+
+  compile-and-export-smoke:
+    name: Ubuntu - Compiled Binaries (Node, Bun, Deno) & Static Export Smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Compiled Binaries & Static Export Smoke Test
+        run: npm run test:smoke:compile

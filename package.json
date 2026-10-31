@@ -6,6 +6,7 @@
   "scripts": {
     "test:contracts": "node --test tests/contracts-duality.test.js",
     "test:hmr:ws": "node tests/hmr-websocket.test.mjs",
+    "test:smoke:compile": "node tests/compile-and-export-smoke.mjs",
     "dev": "node dinou/cli.js dev",
     "build": "node dinou/cli.js build",
     "start": "node dinou/cli.js start",
