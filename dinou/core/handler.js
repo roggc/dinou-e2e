@@ -1674,11 +1674,11 @@ async function handleRequest(request, platformContext = {}) {
             if (rscDynamicState.value) {
               bridge.setHeader("X-Dinou-Dynamic", "true");
             }
-            if (!isLayoutReq && isRoutePpr && rendered && isEdgeRuntime(platformContext)) {
+            if (rendered && isEdgeRuntime(platformContext)) {
               try {
                 const storage = getStorageAdapter();
                 const cleanRel = cleanPath.replace(/^\/+/, "").replace(/\/+$/, "");
-                const shellPageKey = cleanRel ? `${cleanRel}/shell.page.json` : "shell.page.json";
+                const shellPageKey = isLayoutReq ? (cleanRel ? `${cleanRel}/shell.layout.json` : "shell.layout.json") : (cleanRel ? `${cleanRel}/shell.page.json` : "shell.page.json");
                 await storage.set(shellPageKey, serializeJSX(rendered));
               } catch (e) {}
             }

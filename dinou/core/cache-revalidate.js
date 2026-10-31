@@ -410,18 +410,28 @@ async function revalidatePage(reqPath, internalOptions = {}) {
             }
           } else {
             if (!resolvedPageJsx) {
-              const pageJsx = await runInPageSegment(() =>
-                getJSX(reqPathWithSlash, {}, isNotFound, false, false, {
+              const rawPageJsx = await getJSX(
+                reqPathWithSlash,
+                {},
+                isNotFound,
+                false,
+                false,
+                {
                   segment: "page",
-                })
+                }
               );
-              if (pageJsx && !isNotFound.value) {
-                const pageStream = renderRSCStream(pageJsx, clientManifest, {
-                  runtime: "edge",
-                });
-                renderedRsc = await new Response(pageStream).text();
+              if (rawPageJsx && !isNotFound.value) {
+                resolvedPageJsx = await runInPageSegment(() =>
+                  asyncRenderJSXToClientJSX(rawPageJsx)
+                );
+                if (resolvedPageJsx) {
+                  try {
+                    await storage.set(shellPageKey, serializeJSX(resolvedPageJsx));
+                  } catch (e) {}
+                }
               }
-            } else {
+            }
+            if (resolvedPageJsx && !isNotFound.value) {
               const pageStream = renderRSCStream(resolvedPageJsx, clientManifest, {
                 runtime: "edge",
               });
@@ -685,7 +695,7 @@ async function revalidatePath(reqPath, options) {
   await revalidatePage(cleanPath);
 }
 
-async function revalidateLayout(cleanPath) {
+async function revalidateLayout(cleanPath, internalOptions = {}) {
   let targetPath = cleanPath;
   if (!targetPath.startsWith("/")) {
     targetPath = "/" + targetPath;
@@ -693,9 +703,11 @@ async function revalidateLayout(cleanPath) {
   if (targetPath !== "/" && targetPath.endsWith("/")) {
     targetPath = targetPath.slice(0, -1);
   }
+  const onlyRefreshSlots = Boolean(internalOptions?.onlyRefreshSlots);
+  const inFlightKey = `${targetPath}:${onlyRefreshSlots ? "slots" : "full"}`;
 
-  if (inflightLayoutRevalidations.has(targetPath)) {
-    return inflightLayoutRevalidations.get(targetPath);
+  if (inflightLayoutRevalidations.has(inFlightKey)) {
+    return inflightLayoutRevalidations.get(inFlightKey);
   }
 
   const revalPromise = (async () => {
@@ -705,6 +717,7 @@ async function revalidateLayout(cleanPath) {
       const layoutRscKey = cleanPathKey ? `${cleanPathKey}/layout.rsc` : "layout.rsc";
       const layoutOldRscKey = cleanPathKey ? `${cleanPathKey}/layout._old.rsc` : "layout._old.rsc";
       const layoutMetaKey = cleanPathKey ? `${cleanPathKey}/layout.metadata.json` : "layout.metadata.json";
+      const shellLayoutKey = cleanPathKey ? `${cleanPathKey}/shell.layout.json` : "shell.layout.json";
 
       let cached = await storage.get(layoutRscKey);
       let currentMeta = (cached && cached.metadata) || {};
@@ -784,27 +797,55 @@ async function revalidateLayout(cleanPath) {
         const clientManifest =
           (typeof globalThis !== "undefined" && globalThis.__DINOU_CLIENT_MANIFEST__) || {};
         await requestStorage.run(revalContext, async () => {
-          await runWithPprContext({ isPpr: true }, async () => {
-            const rawJsx = await getJSX(reqPathWithSlash, {}, {}, false, false, {
-              segment: "layout",
-            });
-            resetPprHoles(0);
-            const jsx = await runInLayoutSegment(() =>
-              asyncRenderJSXToClientJSX(rawJsx)
-            );
-            const layoutHoles = getRegisteredHoles();
-            if (layoutHoles.length > 0) {
-              currentMeta.holes = layoutHoles;
-            }
-            currentMeta.suspenseCount = getPprHoleCounter();
-            if (jsx) {
-              const stream = renderRSCStream(jsx, clientManifest, { runtime: "edge" });
-              const rendered = await new Response(stream).text();
-              if (rendered) {
-                newLayoutRsc = rendered;
+          let resolvedLayoutJsx = null;
+          if (onlyRefreshSlots) {
+            try {
+              const existingShellLayout = await storage.get(shellLayoutKey);
+              if (existingShellLayout && existingShellLayout.content) {
+                const deserialized = deserializeJSX(existingShellLayout.content);
+                resolvedLayoutJsx = await runInLayoutSegment(() =>
+                  refreshNestedSlotsInTree(deserialized, "__layout_shell__", {
+                    currentPath: reqPathWithSlash,
+                  })
+                );
+                if (resolvedLayoutJsx) {
+                  await storage.set(shellLayoutKey, serializeJSX(resolvedLayoutJsx));
+                }
               }
+            } catch (e) {
+              resolvedLayoutJsx = null;
             }
-          });
+          }
+          if (!resolvedLayoutJsx) {
+            await runWithPprContext({ isPpr: true }, async () => {
+              const rawJsx = await getJSX(reqPathWithSlash, {}, {}, false, false, {
+                segment: "layout",
+              });
+              resetPprHoles(0);
+              resolvedLayoutJsx = await runInLayoutSegment(() =>
+                asyncRenderJSXToClientJSX(rawJsx)
+              );
+              const layoutHoles = getRegisteredHoles();
+              if (layoutHoles.length > 0) {
+                currentMeta.holes = layoutHoles;
+              }
+              currentMeta.suspenseCount = getPprHoleCounter();
+              if (resolvedLayoutJsx) {
+                try {
+                  await storage.set(shellLayoutKey, serializeJSX(resolvedLayoutJsx));
+                } catch (e) {}
+              }
+            });
+          }
+          if (resolvedLayoutJsx) {
+            const stream = renderRSCStream(resolvedLayoutJsx, clientManifest, {
+              runtime: "edge",
+            });
+            const rendered = await new Response(stream).text();
+            if (rendered) {
+              newLayoutRsc = rendered;
+            }
+          }
           const layoutSlotTags = revalContext._layoutSlotTags || revalContext._slotTags;
           if (layoutSlotTags && layoutSlotTags.size > 0) {
             currentMeta.slotTags = Array.from(layoutSlotTags);
@@ -852,11 +893,11 @@ async function revalidateLayout(cleanPath) {
     return false;
   })();
 
-  inflightLayoutRevalidations.set(targetPath, revalPromise);
+  inflightLayoutRevalidations.set(inFlightKey, revalPromise);
   try {
     return await revalPromise;
   } finally {
-    inflightLayoutRevalidations.delete(targetPath);
+    inflightLayoutRevalidations.delete(inFlightKey);
   }
 }
 
@@ -873,7 +914,7 @@ async function revalidateTag(tag, options) {
     if (storage && typeof storage.keys === "function") {
       const allKeys = await storage.keys();
       const targetPaths = new Map();
-      const targetLayoutPaths = new Set();
+      const targetLayoutPaths = new Map();
       const targetSlotKeys = new Set();
       if (typeof storage.markTagInvalidated === "function") {
         storage.markTagInvalidated(tag);
@@ -925,7 +966,10 @@ async function revalidateTag(tag, options) {
                 .replace(/\/(?:layout\.metadata\.json|layout\.rsc)$/, "")
                 .replace(/^(?:layout\.metadata\.json|layout\.rsc)$/, "");
               const normPath = cleanKey ? (cleanKey.startsWith("/") ? cleanKey : "/" + cleanKey) : "/";
-              targetLayoutPaths.add(normPath);
+              const prev = targetLayoutPaths.get(normPath);
+              targetLayoutPaths.set(normPath, {
+                onlyRefreshSlots: prev ? prev.onlyRefreshSlots && !hasRouteTag : !hasRouteTag && hasSlotTag,
+              });
             }
           } catch (e) {}
         } else if (key.endsWith("metadata.json")) {
@@ -980,7 +1024,9 @@ async function revalidateTag(tag, options) {
       await Promise.all(Array.from(targetSlotKeys).map((k) => storage.delete(k)));
 
       // 2. Revalidate affected layouts first so any subsequent revalidatePage uses the updated layout.rsc
-      await Promise.all(Array.from(targetLayoutPaths).map((p) => revalidateLayout(p)));
+      await Promise.all(
+        Array.from(targetLayoutPaths.entries()).map(([p, opts]) => revalidateLayout(p, opts))
+      );
 
       // 3. Revalidate affected pages (without deleting metadata.json!)
       await Promise.all(
@@ -1014,7 +1060,10 @@ async function revalidateTag(tag, options) {
         } else if (path.basename(fileOfMeta) === "layout.metadata.json") {
           const relative = path.relative(dist2Folder, path.dirname(fileOfMeta));
           const reqPath = "/" + relative.replace(/\\/g, "/");
-          targetLayoutPaths.push(reqPath);
+          targetLayoutPaths.push({
+            reqPath,
+            onlyRefreshSlots: !hasRouteTag && hasSlotTag,
+          });
         } else {
           const relative = path.relative(dist2Folder, path.dirname(fileOfMeta));
           const reqPath = "/" + relative.replace(/\\/g, "/");
@@ -1030,7 +1079,11 @@ async function revalidateTag(tag, options) {
   }
 
   await Promise.all(slotPromises);
-  await Promise.all(targetLayoutPaths.map((p) => revalidateLayout(p)));
+  await Promise.all(
+    targetLayoutPaths.map(({ reqPath, onlyRefreshSlots }) =>
+      revalidateLayout(reqPath, { onlyRefreshSlots })
+    )
+  );
   await Promise.all(
     targetPagePaths.map(({ reqPath, onlyRefreshSlots }) =>
       revalidatePage(reqPath, { onlyRefreshSlots })

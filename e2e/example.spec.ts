@@ -6803,6 +6803,50 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
   });
 
+  test.describe.serial("Dinou Core: Rigorous HS + DinouCacheSlot Synergy (/t-rigurous-hs-cache-slot)", () => {
+    test("Full 10-Scenario HS + DinouCacheSlot (Non-PPR) Stress Suite passes end-to-end and F5 reload has zero hydration mismatch", async ({
+      page,
+    }) => {
+      const hydrationErrors: string[] = [];
+      page.on("console", (msg) => {
+        if (msg.type() === "error" && /hydration|didn't match/i.test(msg.text())) {
+          hydrationErrors.push(msg.text());
+        }
+      });
+      page.on("pageerror", (err) => {
+        if (/hydration|didn't match/i.test(err.message)) {
+          hydrationErrors.push(err.message);
+        }
+      });
+
+      await page.goto("/t-rigurous-hs-cache-slot");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+
+      await page.click("#hscs-run-automated-suite");
+      await expect(page.locator("#hscs-suite-summary-badge")).toHaveText("10/10 PASSED", {
+        timeout: 60000,
+      });
+
+      for (let i = 1; i <= 10; i++) {
+        await expect(page.locator(`#hscs-test-status-${i}`)).toHaveText("passed");
+      }
+
+      // Hard reload (F5) after revalidateLayout & revalidatePage to verify lazy index.html re-composition & zero hydration mismatch
+      const layoutSeqBeforeReload = Number(await page.locator("#hscs-l1-layout-seq").textContent());
+      const pageSeqBeforeReload = Number(await page.locator("#hscs-page-a-seq").textContent());
+      const slotSeqBeforeReload = Number(await page.locator("#hscs-page-a-slot-seq").textContent());
+      await page.reload();
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+      const layoutSeqAfterReload = Number(await page.locator("#hscs-l1-layout-seq").textContent());
+      const pageSeqAfterReload = Number(await page.locator("#hscs-page-a-seq").textContent());
+      const slotSeqAfterReload = Number(await page.locator("#hscs-page-a-slot-seq").textContent());
+      expect(layoutSeqAfterReload).toBeGreaterThanOrEqual(layoutSeqBeforeReload);
+      expect(pageSeqAfterReload).toBeGreaterThanOrEqual(pageSeqBeforeReload);
+      expect(slotSeqAfterReload).toBeGreaterThanOrEqual(slotSeqBeforeReload);
+      expect(hydrationErrors).toEqual([]);
+    });
+  });
+
   test.describe("HMR & Fast Refresh automated verification", () => {
     // Run tests in serial mode so they do not collide on the same files on disk
     test.describe.configure({ mode: "serial" });

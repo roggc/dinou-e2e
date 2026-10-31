@@ -250,11 +250,22 @@ function deserializeJSX(json) {
         props.key = node.key;
       }
       const children = props.children;
+      let elem;
       if (Array.isArray(children)) {
+        for (const ch of children) {
+          if (ch && typeof ch === "object" && ch._store) {
+            ch._store.validated = 1;
+          }
+        }
         delete props.children;
-        return React.createElement(type, props, ...children);
+        elem = React.createElement(type, props, ...children);
+      } else {
+        elem = React.createElement(type, props);
       }
-      return React.createElement(type, props);
+      if (elem && typeof elem === "object" && elem._store) {
+        elem._store.validated = 1;
+      }
+      return elem;
     }
     return node;
   }
@@ -536,7 +547,7 @@ async function DinouCacheSlot(props) {
   if (!storage || isNoCache) {
     const childElement = typeof children === "function" ? await children() : children;
     const directContent = await asyncRenderJSXToClientJSX(childElement);
-    commitSlotTags(allTags);
+    commitSlotTags(allTags.length > 0 ? allTags : [slotId]);
     return wrapWithBoundary(directContent, true);
   }
 
@@ -570,7 +581,7 @@ async function DinouCacheSlot(props) {
     if (revalidateSeconds === 0) {
       const childElement = typeof children === "function" ? await children() : children;
       const directContent = await asyncRenderJSXToClientJSX(childElement);
-      commitSlotTags(allTags);
+      commitSlotTags(allTags.length > 0 ? allTags : [slotId]);
       return wrapWithBoundary(directContent, true);
     }
 
@@ -583,7 +594,7 @@ async function DinouCacheSlot(props) {
       try {
         const restored = deserializeJSX(cached.content);
         const withRefreshedNested = await refreshNestedSlotsInTree(restored, slotId);
-        commitSlotTags(allTags);
+        commitSlotTags(allTags.length > 0 ? allTags : [slotId]);
         return wrapWithBoundary(withRefreshedNested, false);
       } catch (err) {}
     } else {
@@ -622,7 +633,7 @@ async function DinouCacheSlot(props) {
         }
 
         const withRefreshedNested = await refreshNestedSlotsInTree(staleJSX, slotId);
-        commitSlotTags(allTags);
+        commitSlotTags(allTags.length > 0 ? allTags : [slotId]);
         return wrapWithBoundary(withRefreshedNested, false);
       } catch (err) {}
     }
@@ -632,7 +643,7 @@ async function DinouCacheSlot(props) {
   if (inflightSlotRenders.has(storageKey)) {
     try {
       const deduped = await inflightSlotRenders.get(storageKey);
-      commitSlotTags(allTags);
+      commitSlotTags(allTags.length > 0 ? allTags : [slotId]);
       return wrapWithBoundary(deduped, true);
     } catch (e) {}
   }
@@ -675,7 +686,7 @@ async function DinouCacheSlot(props) {
   inflightSlotRenders.set(storageKey, renderPromise);
   try {
     const fresh = await renderPromise;
-    commitSlotTags(allTags);
+    commitSlotTags(allTags.length > 0 ? allTags : [slotId]);
     return wrapWithBoundary(fresh, true);
   } finally {
     inflightSlotRenders.delete(storageKey);
@@ -919,7 +930,7 @@ async function getSlotJSX(slotId, options = {}) {
         storage &&
         entry.revalidate !== 0 &&
         options.fresh &&
-        Boolean(cached?.metadata?.inStaticShell) &&
+        true &&
         options.currentPath
       ) {
         try {
@@ -970,7 +981,7 @@ async function getSlotJSX(slotId, options = {}) {
                 lMeta.slotTags.some((t) => slotTagsToMatch.has(t))
               ) {
                 const { revalidateLayout } = await import("./cache-revalidate.js");
-                await revalidateLayout(lKey ? "/" + lKey : "/");
+                await revalidateLayout(lKey ? "/" + lKey : "/", { onlyRefreshSlots: true });
               }
             }
           }

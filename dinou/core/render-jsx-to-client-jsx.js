@@ -24,7 +24,7 @@ function cloneWithDevProps(jsx, newProps, resolvedKey, overrideType) {
       configurable: false,
       enumerable: false,
       writable: true,
-      value: jsx._store.validated ?? 1,
+      value: jsx._store.validated || 1,
     });
   }
   for (const devProp of ["ref", "_debugInfo", "_debugStack", "_debugTask"]) {

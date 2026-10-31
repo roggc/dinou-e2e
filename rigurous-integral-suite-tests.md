@@ -1,6 +1,6 @@
-# Dinou v9.0.3 — Rigorous Integral Verification Suite Reference (`6 Suites / 66+ End-to-End Scenarios`)
+# Dinou v9.0.3 — Rigorous Integral Verification Suite Reference (`7 Suites / 76+ End-to-End Scenarios`)
 
-This document is the master technical reference for the **6 integral verification suites** created in `test-9.0.2` (and ported to `dinou-e2e`) to stress-test every React 19 architecture primitive introduced and refined in **Dinou v9.0.3**—individually, in pairwise combinations, and in full three-way synergy—verified **100% in green with `0` React hydration errors**.
+This document is the master technical reference for the **7 integral verification suites** created in `test-9.0.2` (and ported to `dinou-e2e`) to stress-test every React 19 architecture primitive introduced and refined in **Dinou v9.0.3**—individually, in pairwise combinations, and in full three-way synergy—verified **100% in green with `0` React hydration errors**.
 
 ---
 
@@ -24,7 +24,7 @@ This document is the master technical reference for the **6 integral verificatio
 |                                   Shared Multi-Tag Invalidation, Server Action Serialization      |
 |                                   & Nested Slot (Outer -> Inner) Isolation                        |
 |                                                                                                   |
-|  [Suite 4: /ppr-cache-slot-test]  Pairwise Synergy (PPR + Vertical Segmentation):                 |
+|  [Suite 4: /ppr-cache-slot-test]  Pairwise Synergy #1 (PPR + Vertical Segmentation):              |
 |  (2 Multi-Stage E2E Blocks /      <DinouCacheSlot> in PPR Static Shell, Static <Suspense>         |
 |   6 Architectural Scenarios)      Permutations, Micro-ISR Slots Inside Streamed Dynamic Holes,    |
 |                                   Pre-Bailout Slot Persistence & Deadlock-Free Live refreshSlot   |
@@ -39,6 +39,12 @@ This document is the master technical reference for the **6 integral verificatio
 |  (12 Automated Scenarios)         L1 & L2 PPR Layouts with Layout Slots + Sibling PPR & Static    |
 |                                   (ppr=false) Pages + Shell Slots + Dynamic Holes with Nested     |
 |                                   Slots + Cross-Mode Soft Nav + Lazy HTML Re-Composition          |
+|                                                                                                   |
+|  [Suite 7: /hs-cache-slot-test]   Pairwise Synergy #2 (Horizontal + Vertical Without PPR):        |
+|  (10 Automated Scenarios)         L1/L2 Layouts + @sidebar Parallel Slot + Page A/B Slots,        |
+|                                   Cross-Axis Shared Tags, Nested Slots in Layout & Page,          |
+|                                   revalidate={0} in Static Page, Round-Trip Soft Nav              |
+|                                   (slotOverrideCache) & Unmounted Slot Refresh (knownClientSlots) |
 +---------------------------------------------------------------------------------------------------+
 ```
 
@@ -52,6 +58,7 @@ This document is the master technical reference for the **6 integral verificatio
 | **4** | `/ppr-cache-slot-test` | `/t-ppr-cache-slot` | **2 / 2** E2E blocks (6 scenarios) | **100% PASS** | `0` |
 | **5** | `/horizontal-segmentation-test` | `/t-rigurous-hs` | **12 / 12** automated scenarios | **100% PASS** | `0` |
 | **6** | `/triple-sinergy-test` | `/t-rigurous-triple-sinergy` | **12 / 12** automated scenarios (+ F5 & Direct SSR) | **100% PASS** | `0` |
+| **7** | `/hs-cache-slot-test` | `/t-rigurous-hs-cache-slot` | **10 / 10** automated scenarios | **100% PASS** | `0` |
 
 ---
 
@@ -133,7 +140,7 @@ Verifies `<DinouCacheSlot>` and `refreshSlot` / `useRouter().refreshSlot` across
 
 ---
 
-## 5. Suite 4: Pairwise Synergy — PPR + `<DinouCacheSlot>` (`/ppr-cache-slot-test` / `/t-ppr-cache-slot`)
+## 5. Suite 4: Pairwise Synergy #1 — PPR + `<DinouCacheSlot>` (`/ppr-cache-slot-test` / `/t-ppr-cache-slot`)
 
 ### 5.1. Purpose & Scope
 Tests the interaction between **Partial Prerendering** and **Vertical Segmentation (`<DinouCacheSlot>`)** on a single route where `layout.tsx` and `page.tsx` both use PPR and host `<DinouCacheSlot>` boundaries in every possible structural position:
@@ -203,3 +210,24 @@ Combines **Horizontal Segmentation**, **Vertical Segmentation (`<DinouCacheSlot>
 | **11** | **Multi-Level Nested Layout (`L1 + L2`) Soft Navigation & Ancestor `revalidateLayout` Cascade** | Soft-navigates to `/triple-sinergy-test/nested` (PPR) and `/triple-sinergy-test/nested/static-child` (`ppr = false`) with 0 L1 layout fetches, then revalidates ancestor L1 layout (`107`) and verifies automatic cascade to L2 `layout.rsc` and lazy HTML re-composition on both nested PPR and nested Static children. | **PASSED** |
 | **12** | **`router.refresh()` vs. `router.refresh({ layout: true })` with Query Params (`?mode=live-query`) + `no_layout` PPR Boundary** | Verifies `router.refresh()` on `/triple-sinergy-test?mode=live-query` makes 0 `/____rsc_layout____` fetches while forwarding `?mode=live-query` to the dynamic PPR hole, `router.refresh({ layout: true })` refreshes both while preserving layout client state, and soft-navigation to `/triple-sinergy-test/no-layout-ppr` (`no_layout` + PPR + `<DinouCacheSlot>`) and back works with `0` hydration errors. | **PASSED** |
 
+---
+
+## 8. Suite 7: Pairwise Synergy #2 — Pure Horizontal Segmentation + `<DinouCacheSlot>` Without PPR (`/hs-cache-slot-test` / `/t-rigurous-hs-cache-slot`)
+
+### 8.1. Purpose & Scope
+Tests the interaction between **Horizontal Segmentation** (`layout.rsc` vs. `page.rsc`, `@sidebar` parallel route slots, multi-level nested layouts, and client `pageCache` / `layoutCache`) and **Vertical Segmentation** (`<DinouCacheSlot>`, `refreshSlot`, `revalidateTag`, nested slots, and `revalidate={0}`) on standard non-PPR routes (`ppr = false`). Detailed root-cause analyses of the client-side `slotOverrideCache` and `knownClientSlots` unmounted refresh architecture are recorded in `rigurous-hs-cache-slot.md`.
+
+### 8.2. The 10 Automated Scenarios (`10 / 10 PASSED`)
+
+| # | Scenario | What It Verifies & Asserts | Status |
+| :--- | :--- | :--- | :--- |
+| **1** | **Baseline Segmented Render (`L1 Layout + @sidebar + Page A`) & Multi-Level Client State Init** | Resets and revalidates all segments (`100` / `200` baselines) and increments client `useState` counters inside L1 Layout, L1 Layout Slot, `@sidebar` Host, `@sidebar` Slot, Page A Host, and Page A Slot, recording their initial `mountId` values. | **PASSED** |
+| **2** | **Surgical Page A Slot Revalidation (`revalidateTag` + `refreshSlot`) & Server Action Prop in Slot** | Bumps `l1LayoutSeq`, `pageASeq`, and `pageASlotSeq` (`200 -> 201`), then calls `revalidateTag("hscs-page-a-slot-tag")` + `refreshSlot("hscs-page-a-slot-tag")` and `refreshSlot("hscs-page-a-slot", true)` (`201 -> 202`). Verifies `pageASlotSeq` updates in place while `l1LayoutSeq` (`100`) and `pageASeq` (`200`) are untouched, client `useState` and `mountId` inside the slot are preserved, and the prop-passed `"use server"` action (`hscsSlotServerAction`) executes over RPC. | **PASSED** |
+| **3** | **Surgical L1 Layout Slot & `@sidebar` Parallel Slot Revalidation (Preserving Host Layout & Page)** | Bumps `l1SlotSeq` (`100 -> 101`) and `sidebarSlotSeq` (`100 -> 101`), then invalidates and refreshes `"hscs-l1-slot-tag"` and `"hscs-sidebar-slot-tag"`. Verifies both layout-level slots update to `101`, their internal client `useState` and `mountId`s remain intact, `@sidebar`'s prop-passed `"use server"` action succeeds, and neither L1 Layout host (`100`) nor Page A host (`200`) re-executes. | **PASSED** |
+| **4** | **Cross-Axis Shared Tag (`hscs-shared-tag`) Simultaneous Layout Slot + Page Slot Update** | Bumps `l1SharedSlotSeq` (`100 -> 101`) and `pageASharedSlotSeq` (`200 -> 201`), then calls `revalidateTag("hscs-shared-tag")` + `refreshSlot("hscs-shared-tag")` once. Verifies both the L1 layout slot (`101`) and Page A slot (`201`) update simultaneously without re-executing `layout.tsx` (`100`) or `page.tsx` (`200`). | **PASSED** |
+| **5** | **Nested `<DinouCacheSlot>` (`Outer + Inner`) Surgical Inner vs. Outer Refresh in Layout & Page** | Bumps both outer and inner counters in L1 Layout and Page A, invalidates only the inner tags (`"hscs-l1-inner-tag"` and `"hscs-page-a-inner-tag"`), and verifies `refreshNestedSlotsInTree` updates the inner slots (`101` and `201`) while keeping the outer slots cached (`100` and `200`). Then invalidates the outer tags and verifies both outer (`102`, `202`) and inner (`103`, `203`) slots update. | **PASSED** |
+| **6** | **Dynamic `<DinouCacheSlot revalidate={0}>` Storage Bypass Inside Static Non-PPR Page** | Bumps `pageADynSlotSeq` (`200 -> 201`) without revalidating any tag or page, calls `router.refresh()`, and verifies `hscs-page-a-dyn-slot` (`revalidate={0}`) bypasses storage caching (`201`) while host Page A remains cached (`200`). | **PASSED** |
+| **7** | **Round-Trip Soft Navigation (`Page A -> Page B -> Page A`): `0` Network Hits + Refreshed Slot Persistence** | Refreshes `hscs-page-a-slot` to `203` on Page A, soft-navigates to `/hs-cache-slot-test/page-b` (`0` `/____rsc_layout____` fetches, L1 Layout & `@sidebar` client state preserved), and soft-navigates back to `/hs-cache-slot-test`. Asserts **`0` `/____rsc_page____` and `0` `/____rsc_layout____` network requests** (served from `pageCache`) and verifies `slotOverrideCache` preserves the refreshed `203` slot tree. | **PASSED** |
+| **8** | **Unmounted Slot Refresh on Sibling Route (`Refresh Page A Slot While on Page B -> Return to Page A`)** | Navigates to `/hs-cache-slot-test/page-b` (unmounting Page A), bumps `pageASlotSeq` to `204`, calls `revalidateTag("hscs-page-a-slot-tag")` + `refreshSlot("hscs-page-a-slot-tag")` while `hscs-page-a-slot` is **unmounted**, and immediately soft-navigates back to Page A. Verifies `knownClientSlots` + `slotOverrideCache` refreshes the unmounted slot in the background and renders `204` on Page A. | **PASSED** |
+| **9** | **Multi-Level Nested Layout (`/nested`) Slot Refresh & Round-Trip (`/nested -> /page-b -> /nested`)** | Soft-navigates to `/hs-cache-slot-test/nested` (`0` L1 layout fetches), increments L2 Layout and L2 Slot client `useState`, surgically refreshes L2 Layout Slot (`400 -> 401`) and Nested Page Slot (`500 -> 501`), and performs a round-trip soft navigation (`/nested -> /page-b -> /nested`) verifying `slotOverrideCache` preserves both `401` and `501` with `0` `/____rsc_page____` fetches. | **PASSED** |
+| **10** | **Host Segment Revalidation (`revalidatePage` & `revalidateLayout`) Coexistence with Cached Slots** | Revalidates host Page A (`200 -> 205`) and host L1 Layout (`100 -> 105`) without invalidating slot tags, verifying both hosts update while reusing their cached `<DinouCacheSlot>` entries (`204` and `101`) from `slots/<id>/slot.json` and preserving L1 Layout & `@sidebar` client `mountId`s. | **PASSED** |

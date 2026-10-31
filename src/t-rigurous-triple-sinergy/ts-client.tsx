@@ -878,46 +878,56 @@ export function TsAutomatedSuiteRunner() {
       });
 
       // =========================================================================
-      // SCENARIO 9: Surgical revalidateTag("ts-layout-shell-slot-tag") Across Static & PPR Children
+      // SCENARIO 9: Surgical revalidateTag("ts-layout-shell-slot-tag") & Static Page Slot Tag Across Static & PPR Children
       // =========================================================================
       await runStep(9, async () => {
         // First revalidate static-b as a page so its metadata.json only has static-b's page slotTags
         await tsMutateOnly({ staticBPageSeq: 101 });
         await tsRunRevalidatePage("/t-rigurous-triple-sinergy/static-b");
 
-        // Now bump layoutSlotSeq to 102 (while setting staticBPageSeq=999 and pprAPageSeq=999 unrevalidated!)
-        // and invalidate ONLY "ts-layout-shell-slot-tag"
+        // Now bump layoutSlotSeq to 102 and staticASlotSeq to 101 (while setting layoutSeq, staticAPageSeq, staticBPageSeq and pprAPageSeq to 999 unrevalidated!)
+        // and invalidate ONLY "ts-layout-shell-slot-tag" and "ts-static-a-slot-tag"
         await tsMutateOnly({
+          layoutSeq: isDevMode ? 100 : 999,
           layoutSlotSeq: 102,
+          staticAPageSeq: isDevMode ? 100 : 999,
+          staticASlotSeq: 101,
           staticBPageSeq: isDevMode ? 101 : 999,
           pprAPageSeq: isDevMode ? 103 : 999,
         });
         try {
           await tsRunRevalidateTag("ts-layout-shell-slot-tag");
+          await tsRunRevalidateTag("ts-static-a-slot-tag");
 
-          // Verify both /t-rigurous-triple-sinergy (PPR) and /t-rigurous-triple-sinergy/static-b (Static) serve layoutSlotSeq=102 on HTML GET!
-          const [pprHtmlRes, staticBHtmlRes] = await Promise.all([
+          // Verify /t-rigurous-triple-sinergy (PPR), /t-rigurous-triple-sinergy/static-a (Static) & /t-rigurous-triple-sinergy/static-b (Static)
+          const [pprHtmlRes, staticAHtmlRes, staticBHtmlRes] = await Promise.all([
             origFetch("/t-rigurous-triple-sinergy", { headers: { Accept: "text/html" } }),
+            origFetch("/t-rigurous-triple-sinergy/static-a", { headers: { Accept: "text/html" } }),
             origFetch("/t-rigurous-triple-sinergy/static-b", { headers: { Accept: "text/html" } }),
           ]);
-          const [pprHtml, staticBHtml] = await Promise.all([
+          const [pprHtml, staticAHtml, staticBHtml] = await Promise.all([
             pprHtmlRes.text(),
+            staticAHtmlRes.text(),
             staticBHtmlRes.text(),
           ]);
 
+          const pprLayoutSeq = extractIdValueFromHtml(pprHtml, "ts-layout-seq");
+          const staticBLayoutSeq = extractIdValueFromHtml(staticBHtml, "ts-layout-seq");
           const pprLayoutSlot = extractIdValueFromHtml(pprHtml, "ts-layout-slot-seq");
           const staticBLayoutSlot = extractIdValueFromHtml(staticBHtml, "ts-layout-slot-seq");
           const pprPageSeq = extractIdValueFromHtml(pprHtml, "ts-ppr-a-page-seq");
           const staticBPageSeq = extractIdValueFromHtml(staticBHtml, "ts-static-b-page-seq");
+          const staticAPageSeq = extractIdValueFromHtml(staticAHtml, "ts-static-a-page-seq");
+          const staticASlotSeq = extractIdValueFromHtml(staticAHtml, "ts-static-a-slot-seq");
 
-          if (staticBLayoutSlot !== "102") {
+          if (staticBLayoutSlot !== "102" || pprLayoutSlot !== "102") {
             throw new Error(
-              `Static child /static-b did not update layout slot after revalidateTag("ts-layout-shell-slot-tag")! Expected 102, got ${staticBLayoutSlot}`
+              `Layout slot did not update after revalidateTag("ts-layout-shell-slot-tag")! staticB=${staticBLayoutSlot}, pprA=${pprLayoutSlot} (exp 102)`
             );
           }
-          if (pprLayoutSlot !== "102") {
+          if (pprLayoutSeq !== "100" || staticBLayoutSeq !== "100") {
             throw new Error(
-              `PPR child /t-rigurous-triple-sinergy did not update layout slot after revalidateTag("ts-layout-shell-slot-tag")! Expected 102, got ${pprLayoutSlot}`
+              `revalidateTag("ts-layout-shell-slot-tag") unexpectedly re-executed outer layout.tsx! Expected layoutSeq=100, got ppr=${pprLayoutSeq}, staticB=${staticBLayoutSeq}`
             );
           }
           if (staticBPageSeq !== "101" || pprPageSeq !== "103") {
@@ -925,12 +935,22 @@ export function TsAutomatedSuiteRunner() {
               `Lazy re-composition after layout slot tag invalidation unexpectedly re-executed child page.tsx! staticB=${staticBPageSeq} (exp 101), pprA=${pprPageSeq} (exp 103)`
             );
           }
+          if (staticASlotSeq !== "101" || staticAPageSeq !== "100") {
+            throw new Error(
+              `revalidateTag("ts-static-a-slot-tag") on Static Page (ppr=false) failed surgical slot-only refresh! Expected slot=101 & page=100, got slot=${staticASlotSeq}, page=${staticAPageSeq}`
+            );
+          }
 
           clickEl("ts-btn-router-refresh-layout");
           await waitForText("ts-layout-slot-seq", "102");
-          return `revalidateTag("ts-layout-shell-slot-tag") regenerated layout.rsc (slot=102) and lazily re-composed both /static-b (page=101) and PPR /t-rigurous-triple-sinergy (page=103)`;
+          return `Surgical slot-only revalidation verified on Layout Slot (slot=102, layout=100) and Static Page Slot (slot=101, staticA=100) without re-executing layout.tsx or page.tsx`;
         } finally {
-          await tsMutateOnly({ staticBPageSeq: 101, pprAPageSeq: 103 });
+          await tsMutateOnly({
+            layoutSeq: 100,
+            staticAPageSeq: 100,
+            staticBPageSeq: 101,
+            pprAPageSeq: 103,
+          });
         }
       });
 
@@ -1205,4 +1225,3 @@ export function TsAutomatedSuiteRunner() {
     </div>
   );
 }
-
