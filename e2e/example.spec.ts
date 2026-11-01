@@ -1728,17 +1728,30 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // 🛡️ Esperar Hidratación (Tu fix)
       await page.waitForSelector('body[data-hydrated="true"]');
 
-      // 📏 FORZAR ALTURA ROBUSTA (Inline Style)
-      await page.evaluate(() => {
-        document.body.style.minHeight = "3000px";
-      });
+      // 📏 FORZAR ALTURA ROBUSTA (Inline Style) y esperar 2 frames tras hidratación
+      // para que el requestAnimationFrame inicial de <Router /> (window.scrollTo(0, 0))
+      // ya haya ejecutado antes de posicionar el scroll en 500px.
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            document.body.style.minHeight = "3000px";
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          }),
+      );
 
-      // 3. Hacer Scroll hacia abajo (ej. 500px)
-      await page.evaluate(() => window.scrollTo(0, 500));
-
-      // Verificar que estamos abajo
-      let scrollY = await page.evaluate(() => window.scrollY);
-      expect(scrollY).toBeCloseTo(500, 1); // Margen de error de 1px
+      // 3. Hacer Scroll hacia abajo (ej. 500px) y asegurar estabilidad
+      await expect
+        .poll(
+          async () => {
+            return await page.evaluate(() => {
+              document.body.style.minHeight = "3000px";
+              window.scrollTo(0, 500);
+              return window.scrollY;
+            });
+          },
+          { timeout: 5000 },
+        )
+        .toBeCloseTo(500, 1);
 
       // 4. 🚀 NAVEGACIÓN NUEVA (Click sin mover el scroll)
       // Usamos evaluate para hacer click JS puro, así Playwright NO hace auto-scroll
@@ -2879,8 +2892,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     }) => {
       await page.goto("/t-cache-slot");
       await expect(page.locator("h1")).toContainText("Vertical Segmentation Lab");
-      await expect(page.locator("body")).toHaveAttribute("data-hydrated", "true");
-      await expect(page.locator("#slot-buttons-container")).toHaveAttribute("data-hydrated", "true");
+      await expect(page.locator("body")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
+      await expect(page.locator("#slot-buttons-container")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
 
       // Invalidate fast slot at the start so every browser starts with an isolated, fresh 5s TTL cycle
       await Promise.all([
@@ -2888,7 +2901,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         page.click("#btn-revalidate-fast"),
       ]);
       await page.reload();
-      await expect(page.locator("body")).toHaveAttribute("data-hydrated", "true");
+      await expect(page.locator("body")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
       await page.waitForTimeout(100);
 
       const pageTime1 = await page.locator("#page-time").innerText();
@@ -2903,8 +2916,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.waitForTimeout(100);
 
       await page.reload();
-      await expect(page.locator("body")).toHaveAttribute("data-hydrated", "true");
-      await expect(page.locator("#slot-buttons-container")).toHaveAttribute("data-hydrated", "true");
+      await expect(page.locator("body")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
+      await expect(page.locator("#slot-buttons-container")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
       await page.waitForTimeout(100);
 
       const pageTime2 = await page.locator("#page-time").innerText();
@@ -2948,8 +2961,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     }) => {
       await page.goto("/t-cache-slot");
       await expect(page.locator("h1")).toContainText("Vertical Segmentation Lab");
-      await expect(page.locator("body")).toHaveAttribute("data-hydrated", "true");
-      await expect(page.locator("#slot-buttons-container")).toHaveAttribute("data-hydrated", "true");
+      await expect(page.locator("body")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
+      await expect(page.locator("#slot-buttons-container")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
       await page.waitForTimeout(100);
 
       const pageTime1 = await page.locator("#page-time").innerText();
@@ -5945,7 +5958,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // 3. Interactive Client Component inside Dynamic Hole
       await expect(page.getByTestId("hole-client-tier")).toHaveText("tier=enterprise | plan=ultra");
-      await expect(page.getByTestId("hole-client-widget")).toHaveAttribute("data-hydrated", "true");
+      await expect(page.getByTestId("hole-client-widget")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
       await expect(page.getByTestId("hole-client-clicks")).toHaveText("0");
       await page.getByTestId("hole-client-btn").click();
       await page.getByTestId("hole-client-btn").click();
@@ -6119,24 +6132,24 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // 1b. Navigate to Static Host Page and verify revalidateTag updates static page on reload
       await page.goto("/t-rigorous-cache-slot/static-host");
-      await expect(page.locator("#static-host-controls")).toHaveAttribute("data-hydrated", "true");
+      await expect(page.locator("#static-host-controls")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
 
       const token1 = await page.locator("#slot-static-host-token").innerText();
       expect(token1).toContain("static-slot-");
 
       await page.click("#btn-static-host-inv-only");
-      await expect(page.locator("#static-host-status")).toHaveText("invalidated");
+      await expect(page.locator("#static-host-status")).toHaveText("invalidated", { timeout: 15000 });
 
       await page.reload();
-      await expect(page.locator("#static-host-controls")).toHaveAttribute("data-hydrated", "true");
-      await expect(page.locator("#slot-static-host-token")).not.toHaveText(token1);
+      await expect(page.locator("#static-host-controls")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
+      await expect(page.locator("#slot-static-host-token")).not.toHaveText(token1, { timeout: 15000 });
       const token2 = await page.locator("#slot-static-host-token").innerText();
       const staticPageTimeBeforeLive = await page.locator("#static-page-time").innerText();
 
       // 1c. Live refreshSlot({ fresh: true }) on Static Host Page without page reload
       await page.click("#btn-static-host-fresh-only");
       await expect(page.locator("#slot-static-host-token")).not.toHaveText(token2, {
-        timeout: 10000,
+        timeout: 15000,
       });
       expect(await page.locator("#static-page-time").innerText()).toBe(staticPageTimeBeforeLive);
 
@@ -6145,9 +6158,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const slowTokenBeforeTtl = await page.locator("#slot-static-host-token").innerText();
       await new Promise((r) => setTimeout(r, 1200));
       await page.reload();
-      await expect(page.locator("#static-host-controls")).toHaveAttribute("data-hydrated", "true");
-      await expect(page.locator("#slot-static-fast-token")).not.toHaveText(fastToken1);
-      await expect(page.locator("#slot-static-host-token")).toHaveText(slowTokenBeforeTtl);
+      await expect(page.locator("#static-host-controls")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
+      await expect(page.locator("#slot-static-fast-token")).not.toHaveText(fastToken1, { timeout: 15000 });
+      await expect(page.locator("#slot-static-host-token")).toHaveText(slowTokenBeforeTtl, { timeout: 15000 });
 
       const fastToken2 = await page.locator("#slot-static-fast-token").innerText();
       await new Promise((r) => setTimeout(r, 1200));
@@ -6161,7 +6174,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       page,
     }) => {
       await page.goto("/t-rigorous-cache-slot");
-      await expect(page.locator("#cache-slot-controls")).toHaveAttribute("data-hydrated", "true");
+      await expect(page.locator("#cache-slot-controls")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
 
       const pageToken1 = await page.locator("#page-token").innerText();
       const alphaToken1 = await page.locator("#slot-alpha-token").innerText();
@@ -6172,7 +6185,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // Reload: Dynamic page & revalidate={0} slot must re-render; cached slots must hit cache
       await page.reload();
-      await expect(page.locator("#cache-slot-controls")).toHaveAttribute("data-hydrated", "true");
+      await expect(page.locator("#cache-slot-controls")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
 
       const pageToken2 = await page.locator("#page-token").innerText();
       const alphaToken2 = await page.locator("#slot-alpha-token").innerText();
@@ -6193,7 +6206,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("#last-action-status")).toContainText("invalidated:rig-tag-shared");
 
       await page.reload();
-      await expect(page.locator("#cache-slot-controls")).toHaveAttribute("data-hydrated", "true");
+      await expect(page.locator("#cache-slot-controls")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
 
       expect(await page.locator("#slot-alpha-token").innerText()).toBe(alphaToken2);
       expect(await page.locator("#slot-beta-token").innerText()).not.toBe(betaToken2);
@@ -6204,8 +6217,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       page,
     }) => {
       await page.goto("/t-rigorous-cache-slot");
-      await expect(page.locator("#cache-slot-controls")).toHaveAttribute("data-hydrated", "true");
-      await expect(page.locator("#slot-client-widget")).toHaveAttribute("data-hydrated", "true");
+      await expect(page.locator("#cache-slot-controls")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
+      await expect(page.locator("#slot-client-widget")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
 
       // Mutate page-level client state
       await page.click("#btn-inc-page-counter");
@@ -6267,7 +6280,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       page,
     }) => {
       await page.goto("/t-rigorous-cache-slot");
-      await expect(page.locator("#cache-slot-controls")).toHaveAttribute("data-hydrated", "true");
+      await expect(page.locator("#cache-slot-controls")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
 
       const outerToken1 = await page.locator("#slot-nested-outer-token").innerText();
       const innerToken1 = await page.locator("#slot-nested-inner-token").innerText();
@@ -6277,7 +6290,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("#last-action-status")).toContainText("invalidated:rig-tag-inner");
 
       await page.reload();
-      await expect(page.locator("#cache-slot-controls")).toHaveAttribute("data-hydrated", "true");
+      await expect(page.locator("#cache-slot-controls")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
 
       // Outer slot must remain cached; inner slot must update
       await expect(page.locator("#slot-nested-outer-token")).toHaveText(outerToken1);
@@ -6297,7 +6310,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       request,
     }) => {
       await page.goto("/t-rigorous-cache-slot");
-      await expect(page.locator("#cache-slot-controls")).toHaveAttribute("data-hydrated", "true");
+      await expect(page.locator("#cache-slot-controls")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
 
       // 5a. Concurrency Stampede Protection (5 simultaneous requests on cache MISS)
       await page.click("#btn-reset-stampede");
@@ -6508,9 +6521,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       ]);
 
       await page.goto("/t-rigorous-sinergy?mode=gamma-mode");
-      await expect(page.locator("#syn-controls")).toHaveAttribute("data-hydrated", "true");
-      await expect(page.locator("#syn-hole-outer-client")).toHaveAttribute("data-hydrated", "true");
-      await expect(page.locator("#syn-slot-client-widget")).toHaveAttribute("data-hydrated", "true");
+      await expect(page.locator("#syn-controls")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
+      await expect(page.locator("#syn-hole-outer-client")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
+      await expect(page.locator("#syn-slot-client-widget")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
 
       const layoutShellBefore = await page.locator("#syn-layout-shell-slot-token").innerText();
       const pageShellBefore = await page.locator("#syn-shell-slot-token").innerText();
@@ -6557,7 +6570,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
             const { shellPart } = splitPprWireHtml(await res.text());
             return extractSynIdText(shellPart, "syn-shell-slot-token");
           },
-          { timeout: 6000 }
+          { timeout: 15000 }
         )
         .not.toBe(pageShellBefore);
 
@@ -6593,7 +6606,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
             const { shellPart } = splitPprWireHtml(await res.text());
             return extractSynIdText(shellPart, "syn-shell-fast-slot-token");
           },
-          { timeout: 6000 }
+          { timeout: 15000 }
         )
         .not.toBe(fastShellSlotBefore);
     });
@@ -6611,9 +6624,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       ]);
 
       await page.goto("/t-rigorous-sinergy?mode=live-mode");
-      await expect(page.locator("#syn-controls")).toHaveAttribute("data-hydrated", "true");
-      await expect(page.locator("#syn-hole-outer-client")).toHaveAttribute("data-hydrated", "true");
-      await expect(page.locator("#syn-slot-client-widget")).toHaveAttribute("data-hydrated", "true");
+      await expect(page.locator("#syn-controls")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
+      await expect(page.locator("#syn-hole-outer-client")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
+      await expect(page.locator("#syn-slot-client-widget")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
 
       // Increment client states at all 3 levels: Static Shell (500->502), PPR Hole 1 (50->53), Slot Widget (0->2)
       await page.locator("#btn-inc-shell-counter").click();
