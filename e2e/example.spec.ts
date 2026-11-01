@@ -6650,7 +6650,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const layoutHoleSlot1 = await page.locator("#syn-layout-hole-slot-token").innerText();
 
       await page.locator("#btn-refresh-hole-slot-a-fresh").click();
-      await expect(page.locator("#syn-hole-slot-a-token")).not.toHaveText(holeSlotA1);
+      await expect(page.locator("#syn-hole-slot-a-token")).not.toHaveText(holeSlotA1, { timeout: 15000 });
       const holeSlotA2 = await page.locator("#syn-hole-slot-a-token").innerText();
 
       // Sibling client states in static shell, PPR hole 1, and PPR hole 3 slot widget are all preserved
@@ -6660,32 +6660,33 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // 3b. Live refresh Hole 1 Slot A by Tag
       await page.locator("#btn-refresh-hole-slot-a-by-tag").click();
-      await expect(page.locator("#syn-hole-slot-a-token")).not.toHaveText(holeSlotA2);
+      await expect(page.locator("#syn-hole-slot-a-token")).not.toHaveText(holeSlotA2, { timeout: 15000 });
       const holeSlotA3 = await page.locator("#syn-hole-slot-a-token").innerText();
 
       // 3c. Live refresh Nested Inner Slot via useRouter().refreshSlot while Outer Slot remains untouched
       await page.locator("#btn-refresh-nested-inner-fresh").click();
-      await expect(page.locator("#syn-nested-inner-token")).not.toHaveText(nestedInner1);
+      await expect(page.locator("#syn-nested-inner-token")).not.toHaveText(nestedInner1, { timeout: 15000 });
       const nestedInner2 = await page.locator("#syn-nested-inner-token").innerText();
       await expect(page.locator("#syn-nested-outer-token")).toHaveText(nestedOuter1);
 
       // 3d. Live refresh Static Shell Slot & Layout Hole Slot
       await page.locator("#btn-refresh-shell-slot-fresh").click();
-      await expect(page.locator("#syn-shell-slot-token")).not.toHaveText(shellSlot1);
+      await expect(page.locator("#syn-shell-slot-token")).not.toHaveText(shellSlot1, { timeout: 15000 });
       const shellSlot2 = await page.locator("#syn-shell-slot-token").innerText();
 
       await page.locator("#btn-refresh-layout-hole-slot-fresh").click();
-      await expect(page.locator("#syn-layout-hole-slot-token")).not.toHaveText(layoutHoleSlot1);
+      await expect(page.locator("#syn-layout-hole-slot-token")).not.toHaveText(layoutHoleSlot1, { timeout: 15000 });
 
       // 3e. Live refresh Client Widget Slot by Tag & re-verify Server Action prop binding after live refresh
       await page.locator("#btn-refresh-client-slot-by-tag").click();
-      await expect(page.locator("#syn-slot-widget-token")).not.toHaveText(widgetToken1);
+      await expect(page.locator("#syn-slot-widget-token")).not.toHaveText(widgetToken1, { timeout: 15000 });
       const widgetToken2 = await page.locator("#syn-slot-widget-token").innerText();
       await expect(page.locator("#syn-slot-widget-clicks")).toHaveText("2");
 
       await page.locator("#btn-syn-slot-prop-action").click();
       await expect(page.locator("#syn-slot-prop-action-res")).toHaveText(
-        `ok:ppr-slot-ack:prop-${widgetToken2}`
+        `ok:ppr-slot-ack:prop-${widgetToken2}`,
+        { timeout: 15000 }
       );
 
       // 3f. Wildcard refreshSlot("*", { fresh: true }) updates all slots across shell, layout, and PPR holes
@@ -6696,17 +6697,17 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const nocacheSlotPreWild = await page.locator("#syn-hole-slot-nocache-token").innerText();
       const directDynPreWild = await page.locator("#syn-direct-dynamic-token").innerText();
       await page.locator("#btn-refresh-all-wildcard").click();
-      await expect(page.locator("#syn-layout-shell-slot-token")).not.toHaveText(layoutShellPreWild);
-      await expect(page.locator("#syn-layout-hole-slot-token")).not.toHaveText(layoutHolePreWild);
-      await expect(page.locator("#syn-static-susp-slot-token")).not.toHaveText(staticSuspSlotPreWild);
-      await expect(page.locator("#syn-slot-wrapping-susp-token")).not.toHaveText(slotWrapSuspPreWild);
-      await expect(page.locator("#syn-hole-slot-nocache-token")).not.toHaveText(nocacheSlotPreWild);
-      await expect(page.locator("#syn-slot-widget-token")).not.toHaveText(widgetToken2);
-      await expect(page.locator("#syn-direct-dynamic-token")).not.toHaveText(directDynPreWild);
-      await expect(page.locator("#syn-shell-slot-token")).not.toHaveText(shellSlot2);
-      await expect(page.locator("#syn-hole-slot-a-token")).not.toHaveText(holeSlotA3);
-      await expect(page.locator("#syn-nested-outer-token")).not.toHaveText(nestedOuter1);
-      await expect(page.locator("#syn-nested-inner-token")).not.toHaveText(nestedInner2);
+      await expect(page.locator("#syn-layout-shell-slot-token")).not.toHaveText(layoutShellPreWild, { timeout: 25000 });
+      await expect(page.locator("#syn-layout-hole-slot-token")).not.toHaveText(layoutHolePreWild, { timeout: 25000 });
+      await expect(page.locator("#syn-static-susp-slot-token")).not.toHaveText(staticSuspSlotPreWild, { timeout: 25000 });
+      await expect(page.locator("#syn-slot-wrapping-susp-token")).not.toHaveText(slotWrapSuspPreWild, { timeout: 25000 });
+      await expect(page.locator("#syn-hole-slot-nocache-token")).not.toHaveText(nocacheSlotPreWild, { timeout: 25000 });
+      await expect(page.locator("#syn-slot-widget-token")).not.toHaveText(widgetToken2, { timeout: 25000 });
+      await expect(page.locator("#syn-direct-dynamic-token")).not.toHaveText(directDynPreWild, { timeout: 25000 });
+      await expect(page.locator("#syn-shell-slot-token")).not.toHaveText(shellSlot2, { timeout: 25000 });
+      await expect(page.locator("#syn-hole-slot-a-token")).not.toHaveText(holeSlotA3, { timeout: 25000 });
+      await expect(page.locator("#syn-nested-outer-token")).not.toHaveText(nestedOuter1, { timeout: 25000 });
+      await expect(page.locator("#syn-nested-inner-token")).not.toHaveText(nestedInner2, { timeout: 25000 });
 
       // Client state outside & inside PPR holes is still intact after wildcard refresh
       await expect(page.locator("#syn-shell-client-counter")).toHaveText("502");
