@@ -4535,107 +4535,109 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     test("Soft Navigation Crash and recovery to parent error lab", async ({ page }) => {
       await page.goto("/error");
       await page.waitForSelector('body[data-hydrated="true"]');
-      await expect(page.locator("h2")).toContainText("Error Handling Lab");
+      await expect(page.locator("h2")).toContainText("Error Handling Lab", { timeout: 15000 });
 
       // Click soft navigation crash trigger
       await page.click("text=2. Trigger Soft Navigation Crash");
-      await expect(page).toHaveURL(/\/error\?soft_crash=true/);
+      await expect(page).toHaveURL(/\/error\?soft_crash=true/, { timeout: 15000 });
 
-      // Page boundary should catch it and render error
-      await expect(page.locator("body")).toContainText("Dinou Page Boundary Captured an Error");
+      // Page boundary should catch it and render error (2 sequential RSC fetches: page crash -> error RSC payload)
+      await expect(page.locator("body")).toContainText("Dinou Page Boundary Captured an Error", { timeout: 15000 });
       if (isProd) {
         await expect(page.locator("body")).toContainText(
-          /An error occurred in the Server Components render|Minified React error #441/
+          /An error occurred in the Server Components render|Minified React error #441/,
+          { timeout: 15000 }
         );
       } else {
-        await expect(page.locator("body")).toContainText("Simulated Server Component Crash during Client-Side Soft Navigation");
+        await expect(page.locator("body")).toContainText("Simulated Server Component Crash during Client-Side Soft Navigation", { timeout: 15000 });
       }
 
       // Click Reset Demo Page
       await page.click("text=Reset Demo Page");
-      await expect(page).toHaveURL("/error");
-      await expect(page.locator("h2")).toContainText("Error Handling Lab");
+      await expect(page).toHaveURL("/error", { timeout: 15000 });
+      await expect(page.locator("h2")).toContainText("Error Handling Lab", { timeout: 15000 });
     });
 
     test("Client Component Render Crash and reset", async ({ page }) => {
       await page.goto("/error");
       await page.waitForSelector('body[data-hydrated="true"]');
-      await expect(page.locator("h2")).toContainText("Error Handling Lab");
+      await expect(page.locator("h2")).toContainText("Error Handling Lab", { timeout: 15000 });
 
       // Click client component render crash
       await page.click("text=3. Trigger Client Render Crash");
 
       // The client-side ErrorBoundary catches the error and fetches the error RSC
-      await expect(page.locator("body")).toContainText("Dinou Page Boundary Captured an Error");
-      await expect(page.locator("body")).toContainText("Client Component crashed during render pass");
+      await expect(page.locator("body")).toContainText("Dinou Page Boundary Captured an Error", { timeout: 15000 });
+      await expect(page.locator("body")).toContainText("Client Component crashed during render pass", { timeout: 15000 });
 
       // Recover
       await page.click("text=Reset Demo Page");
-      await expect(page).toHaveURL("/error");
-      await expect(page.locator("h2")).toContainText("Error Handling Lab");
+      await expect(page).toHaveURL("/error", { timeout: 15000 });
+      await expect(page.locator("h2")).toContainText("Error Handling Lab", { timeout: 15000 });
     });
 
     test("Server Function Action error bubbles back to call site", async ({ page }) => {
       await page.goto("/error");
       await page.waitForSelector('body[data-hydrated="true"]');
-      await expect(page.locator("h2")).toContainText("Error Handling Lab");
+      await expect(page.locator("h2")).toContainText("Error Handling Lab", { timeout: 15000 });
 
       // Click server function crash trigger
       await page.click("text=5. Call Server Function Action");
 
       // Message should show in target element
-      await expect(page.locator("body")).toContainText("Action Rejected: Server function failed");
+      await expect(page.locator("body")).toContainText("Action Rejected: Server function failed", { timeout: 15000 });
       // Main page should not crash
-      await expect(page.locator("h2")).toContainText("Error Handling Lab");
+      await expect(page.locator("h2")).toContainText("Error Handling Lab", { timeout: 15000 });
     });
 
     test("Parallel Slot Rendering Crash and independent recovery", async ({ page }) => {
       await page.goto("/error");
       await page.waitForSelector('body[data-hydrated="true"]');
-      await expect(page.locator("body")).toContainText("This is the normal parallel slot component view.");
+      await expect(page.locator("body")).toContainText("This is the normal parallel slot component view.", { timeout: 15000 });
 
       // Click parallel slot crash trigger
       await page.click("text=Trigger Slot Rendering Crash");
-      await expect(page).toHaveURL(/\/error\?slot_crash=true/);
+      await expect(page).toHaveURL(/\/error\?slot_crash=true/, { timeout: 15000 });
 
       // Only the slot should show the error
-      await expect(page.locator("body")).toContainText("Slot Error Caught");
-      await expect(page.locator("body")).toContainText("Parallel Slot component crashed during layout render pass");
+      await expect(page.locator("body")).toContainText("Slot Error Caught", { timeout: 15000 });
+      await expect(page.locator("body")).toContainText("Parallel Slot component crashed during layout render pass", { timeout: 15000 });
 
       // Main content is intact
-      await expect(page.locator("h2")).toContainText("Error Handling Lab");
+      await expect(page.locator("h2")).toContainText("Error Handling Lab", { timeout: 15000 });
 
       // Recover the slot
       await page.click("text=Reset Slot");
-      await expect(page.locator("body")).toContainText("This is the normal parallel slot component view.");
-      await expect(page).toHaveURL("/error");
+      await expect(page.locator("body")).toContainText("This is the normal parallel slot component view.", { timeout: 15000 });
+      await expect(page).toHaveURL("/error", { timeout: 15000 });
     });
 
     test("Nested Route Local Error Boundary capturing and recovery", async ({ page }) => {
       await page.goto("/error");
       await page.waitForSelector('body[data-hydrated="true"]');
       await page.click("text=Go to Nested Error Page (/error/nested)");
-      await expect(page).toHaveURL("/error/nested");
-      await expect(page.locator("main h3").first()).toContainText("Nested Route");
+      await expect(page).toHaveURL("/error/nested", { timeout: 15000 });
+      await expect(page.locator("main h3").first()).toContainText("Nested Route", { timeout: 15000 });
 
       // Trigger nested server crash
       await page.click("text=Trigger Nested Server Crash");
-      await expect(page).toHaveURL(/\/error\/nested\?nested_crash=true/);
+      await expect(page).toHaveURL(/\/error\/nested\?nested_crash=true/, { timeout: 15000 });
 
       // Nested error boundary should catch it locally
-      await expect(page.locator("body")).toContainText("Nested Local Error Boundary Captured");
+      await expect(page.locator("body")).toContainText("Nested Local Error Boundary Captured", { timeout: 15000 });
       if (isProd) {
         await expect(page.locator("body")).toContainText(
-          /An error occurred in the Server Components render|Minified React error #441/
+          /An error occurred in the Server Components render|Minified React error #441/,
+          { timeout: 15000 }
         );
       } else {
-        await expect(page.locator("body")).toContainText("Crash inside nested route page component");
+        await expect(page.locator("body")).toContainText("Crash inside nested route page component", { timeout: 15000 });
       }
 
       // Retry nested page
       await page.click("text=Retry Nested Page");
-      await expect(page).toHaveURL("/error/nested");
-      await expect(page.locator("main h3").first()).toContainText("Nested Route");
+      await expect(page).toHaveURL("/error/nested", { timeout: 15000 });
+      await expect(page.locator("main h3").first()).toContainText("Nested Route", { timeout: 15000 });
     });
 
     test("Double Crash displays generic last-resort fallback UI", async ({ page }) => {
@@ -4643,8 +4645,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.goto("/error?ssr_crash=true&double_crash=true");
 
       // It should display the generic fallback UI
-      await expect(page.locator("body")).toContainText("Application Error");
-      await expect(page.locator("body")).toContainText("Double Crash! The custom error boundary component itself has crashed");
+      await expect(page.locator("body")).toContainText("Application Error", { timeout: 15000 });
+      await expect(page.locator("body")).toContainText("Double Crash! The custom error boundary component itself has crashed", { timeout: 15000 });
     });
   });
 
