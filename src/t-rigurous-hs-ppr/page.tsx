@@ -1,9 +1,10 @@
 import React, { Suspense } from "react";
-import { getContext } from "dinou";
+import { getContext, noDynamic } from "dinou";
 import { getHsPprState } from "./hsppr-state";
 import { HsPprClientStateBox } from "./hsppr-client";
 
 async function PageAStaticAsyncBox() {
+  noDynamic();
   await new Promise((r) => setTimeout(r, 5));
   const st = getHsPprState();
   return (

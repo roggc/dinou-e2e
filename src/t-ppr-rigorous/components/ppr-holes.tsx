@@ -1,10 +1,11 @@
 import { Suspense, memo } from "react";
-import { getContext } from "dinou";
+import { getContext, noDynamic } from "dinou";
 import HoleClientWidget from "./hole-client-widget";
 
 // 1. Static Async Component inside <Suspense> (NO dynamic bailout!)
 // Must resolve at build time into shell.html and NOT be re-streamed at runtime.
 export async function StaticAsyncCard() {
+  noDynamic();
   await new Promise((r) => setTimeout(r, 15));
   const staticComputedAt = new Date().toISOString();
   const staticHash = `static-suspense-${Math.random().toString(36).slice(2, 8)}`;
@@ -119,6 +120,7 @@ async function InnerDynamicInStaticHole() {
 }
 
 export async function OuterStaticWithInnerDynamicHole() {
+  noDynamic();
   await new Promise((r) => setTimeout(r, 8));
   const outerStaticId = `outer-static-${Math.random().toString(36).slice(2, 8)}`;
 

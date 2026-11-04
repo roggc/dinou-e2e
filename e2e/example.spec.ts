@@ -7025,6 +7025,408 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
   });
 
+  test.describe.serial("New PPR Mental Model, noDynamic() & DinouCacheSlot Matrix (/t-new-ppr)", () => {
+    function splitNewPprWire(fullHtml: string) {
+      const tplIdx = fullHtml.indexOf('<template id="ppr-content-');
+      if (tplIdx !== -1) {
+        return {
+          shellPart: fullHtml.slice(0, tplIdx),
+          streamPart: fullHtml.slice(tplIdx),
+        };
+      }
+      return { shellPart: fullHtml, streamPart: "" };
+    }
+
+    function extractRenderCount(html: string, testId: string): number {
+      const escaped = testId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re1 = new RegExp(`data-testid="${escaped}"[^>]*data-render-count="(\\d+)"`, "i");
+      const m1 = html.match(re1);
+      if (m1) return Number(m1[1]);
+      const re2 = new RegExp(`data-render-count="(\\d+)"[^>]*data-testid="${escaped}"`, "i");
+      const m2 = html.match(re2);
+      return m2 ? Number(m2[1]) : 0;
+    }
+
+    function extractDataAttr(html: string, testId: string, attr: string): string | null {
+      const escapedId = testId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const escapedAttr = attr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const tagRe = new RegExp(`<[^>]*data-testid="${escapedId}"[^>]*>`, "i");
+      const tagMatch = html.match(tagRe);
+      if (!tagMatch) return null;
+      const attrMatch = tagMatch[0].match(new RegExp(`${escapedAttr}="([^"]*)"`, "i"));
+      return attrMatch ? attrMatch[1] : null;
+    }
+
+    test("1. Build Artifacts & Raw Wire Streaming Matrix: 12 Cases of Default Async Holes, noDynamic() Scoping/Timing/Override, DinouCacheSlot (8A/8B/8C/8D, 9A/9B, 10, 11) & Nested Suspense (/t-new-ppr)", async ({
+      request,
+    }) => {
+      const expectedDynamicHoles = [
+        "ppr-hole-2",
+        "ppr-hole-3",
+        "ppr-hole-4",
+        "ppr-hole-7",
+        "ppr-hole-8",
+        "ppr-hole-9",
+        "ppr-hole-12",
+        "ppr-hole-13",
+        "ppr-hole-14",
+        "ppr-hole-16",
+      ];
+
+      if (isProd) {
+        const metaPath = path.resolve(".dinou/dist2/t-new-ppr/metadata.json");
+        const shellPath = path.resolve(".dinou/dist2/t-new-ppr/shell.html");
+        const layoutMetaPath = path.resolve(".dinou/dist2/t-new-ppr/layout.metadata.json");
+
+        if (fs.existsSync(metaPath)) {
+          expect(fs.existsSync(shellPath)).toBe(true);
+          const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+          expect(meta.ppr).toBe(true);
+          expect(meta.holes).toEqual(expectedDynamicHoles);
+
+          if (fs.existsSync(layoutMetaPath)) {
+            const layoutMeta = JSON.parse(fs.readFileSync(layoutMetaPath, "utf8"));
+            expect(layoutMeta.ppr).toBe(true);
+            expect(layoutMeta.holes).toEqual(["ppr-hole-2"]);
+          }
+
+          const shellDisk = fs.readFileSync(shellPath, "utf8");
+          const diskHoleMarkers = [...shellDisk.matchAll(/data-ppr-hole="(ppr-hole-\d+)"/g)].map(
+            (m) => m[1]
+          );
+          expect(diskHoleMarkers).toEqual(expectedDynamicHoles);
+
+          // Case 12 Outer Static <Suspense> wrapping inner dynamic hole is marked with data-ppr-static-parent="ppr-hole-15"
+          expect(shellDisk).toContain('data-ppr-static-parent="ppr-hole-15"');
+        }
+      }
+
+      // Request #1
+      const res1 = await request.get("/t-new-ppr?filter=electronics", {
+        headers: {
+          Cookie: "session=sess-alpha; theme=dark-neon; user=alice",
+          "x-test-ppr": "hdr-alpha",
+        },
+      });
+      expect(res1.status()).toBe(200);
+      const html1 = await res1.text();
+
+      // Request #2
+      const res2 = await request.get("/t-new-ppr?filter=books", {
+        headers: {
+          Cookie: "session=sess-beta; theme=light-solar; user=bob",
+          "x-test-ppr": "hdr-beta",
+        },
+      });
+      expect(res2.status()).toBe(200);
+      const html2 = await res2.text();
+
+      const { shellPart: shell1, streamPart: rawStream1 } = splitNewPprWire(html1);
+      const stream1 = isProd ? rawStream1 : html1;
+      const { shellPart: shell2, streamPart: rawStream2 } = splitNewPprWire(html2);
+      const stream2 = isProd ? rawStream2 : html2;
+
+      if (isProd) {
+        // Verify all 10 dynamic holes are in shellPart as data-ppr-hole and streamed in streamPart as <template>
+        for (const holeId of expectedDynamicHoles) {
+          expect(shell1).toContain(`data-ppr-hole="${holeId}"`);
+          expect(stream1).toContain(`<template id="ppr-content-${holeId}">`);
+        }
+
+        // Static shell components MUST be resolved in shellPart and NOT re-streamed in streamPart
+        const staticTestIds = [
+          "layout-nodynamic-resolved",
+          "layout-slot-cached-resolved",
+          "case1-static-shell",
+          "case1b-unwrapped-child-shell",
+          "case4-resolved",
+          "case5-parent-resolved",
+          "case5-child-resolved",
+          "case8a-resolved",
+          "case8c-resolved",
+          "case8d-resolved",
+          "case9a-resolved",
+          "case12-outer-resolved",
+        ];
+        for (const tid of staticTestIds) {
+          expect(shell1).toContain(`data-testid="${tid}"`);
+          expect(stream1).not.toContain(`data-testid="${tid}"`);
+          const c1 = extractRenderCount(shell1, tid);
+          const c2 = extractRenderCount(shell2, tid);
+          expect(c1).toBeGreaterThanOrEqual(1);
+          expect(c2).toBe(c1);
+        }
+
+        // Static <Suspense> fallbacks must NOT appear in shellPart
+        for (const fbId of [
+          "layout-nodynamic-fallback",
+          "case4-fallback",
+          "case5-fallback",
+          "case8c-fallback",
+          "case8d-fallback",
+          "case12-outer-fallback",
+        ]) {
+          expect(shell1).not.toContain(`data-testid="${fbId}"`);
+        }
+
+        // Dynamic <Suspense> fallbacks MUST appear in shellPart
+        for (const dynFbId of [
+          "layout-dynamic-fallback",
+          "case2-fallback",
+          "case3-fallback",
+          "case6-fallback",
+          "case7-fallback",
+          "case8-fallback",
+          "case9-fallback",
+          "case10-fallback",
+          "case11-fallback",
+          "case12-inner-fallback",
+        ]) {
+          expect(shell1).toContain(`data-testid="${dynFbId}"`);
+        }
+
+        // Cached Dynamic PPR Holes (Case 8B, Case 9B, Case 11) execute once on Request #1 and stream from slot.json cache on Request #2
+        for (const cachedHoleTid of ["case8-resolved", "case9-resolved", "case11-resolved"]) {
+          expect(stream1).toContain(`data-testid="${cachedHoleTid}"`);
+          const c1 = extractRenderCount(stream1, cachedHoleTid);
+          const c2 = extractRenderCount(stream2, cachedHoleTid);
+          expect(c1).toBeGreaterThanOrEqual(1);
+          expect(c2).toBe(c1);
+        }
+      }
+
+      // Uncached Dynamic PPR Holes re-execute on every request (count2 > count1)
+      for (const uncachedHoleTid of [
+        "layout-dynamic-resolved",
+        "case2-resolved",
+        "case3-resolved",
+        "case6-resolved",
+        "case7-resolved",
+        "case10-resolved",
+        "case12-inner-resolved",
+      ]) {
+        expect(stream1).toContain(`data-testid="${uncachedHoleTid}"`);
+        const c1 = extractRenderCount(stream1, uncachedHoleTid);
+        const c2 = extractRenderCount(stream2, uncachedHoleTid);
+        expect(c1).toBeGreaterThanOrEqual(1);
+        expect(c2).toBeGreaterThan(c1);
+      }
+
+      // Verify per-request dynamic context values on Case 3 & Case 6
+      expect(extractDataAttr(stream1, "case3-resolved", "data-session")).toBe("sess-alpha");
+      expect(extractDataAttr(stream1, "case3-resolved", "data-header")).toBe("hdr-alpha");
+      expect(extractDataAttr(stream1, "case3-resolved", "data-filter")).toBe("electronics");
+
+      expect(extractDataAttr(stream2, "case3-resolved", "data-session")).toBe("sess-beta");
+      expect(extractDataAttr(stream2, "case3-resolved", "data-header")).toBe("hdr-beta");
+      expect(extractDataAttr(stream2, "case3-resolved", "data-filter")).toBe("books");
+
+      expect(extractDataAttr(stream1, "case6-resolved", "data-theme")).toBe("dark-neon");
+      expect(extractDataAttr(stream2, "case6-resolved", "data-theme")).toBe("light-solar");
+    });
+
+    test("2. Browser DOM Resolution, Slot Refresh Endpoints (/____rsc_slot____) & Soft Navigation (/t-new-ppr)", async ({
+      page,
+      context,
+      request,
+    }) => {
+      // Verify live /____rsc_slot____/<id>?fresh=1 re-executes and updates both Cached Dynamic Hole slots (8B, 11) and Static Shell slots (8A, 8D)
+      const beforeRes = await request.get("/t-new-ppr");
+      const beforeHtml = await beforeRes.text();
+      const count8aBefore = extractRenderCount(beforeHtml, "case8a-resolved");
+      const count8bBefore = extractRenderCount(beforeHtml, "case8-resolved");
+      const count8dBefore = extractRenderCount(beforeHtml, "case8d-resolved");
+      const count11Before = extractRenderCount(beforeHtml, "case11-resolved");
+
+      for (const slotId of [
+        "test-ppr-slot-unwrapped",
+        "test-ppr-slot-cached",
+        "test-ppr-slot-outer-wrapping-suspense",
+        "test-ppr-slot-cookies",
+      ]) {
+        const slotRes = await request.get(`/____rsc_slot____/${slotId}?fresh=1`, {
+          headers: {
+            "x-dinou-current-path": "/t-new-ppr",
+            Cookie: "user=refreshed-slot-user",
+          },
+        });
+        expect(slotRes.status()).toBe(200);
+      }
+
+      const afterRes = await request.get("/t-new-ppr", {
+        headers: { Cookie: "user=refreshed-slot-user" },
+      });
+      const afterHtml = await afterRes.text();
+      expect(extractRenderCount(afterHtml, "case8a-resolved")).toBeGreaterThan(count8aBefore);
+      expect(extractRenderCount(afterHtml, "case8-resolved")).toBeGreaterThan(count8bBefore);
+      expect(extractRenderCount(afterHtml, "case8d-resolved")).toBeGreaterThan(count8dBefore);
+      expect(extractRenderCount(afterHtml, "case11-resolved")).toBeGreaterThan(count11Before);
+
+      // Full browser load and DOM verification
+      await context.addCookies([
+        { name: "session", value: "browser-sess", path: "/", domain: "localhost" },
+        { name: "theme", value: "browser-theme", path: "/", domain: "localhost" },
+        { name: "user", value: "browser-user", path: "/", domain: "localhost" },
+      ]);
+
+      await page.goto("/t-new-ppr?filter=gaming");
+      await expect(page.getByTestId("test-ppr-layout")).toBeVisible();
+      await expect(page.getByTestId("layout-nodynamic-resolved")).toBeVisible();
+      await expect(page.getByTestId("layout-slot-cached-resolved")).toBeVisible();
+      await expect(page.getByTestId("layout-dynamic-resolved")).toBeVisible();
+
+      await expect(page.getByTestId("case1-static-shell")).toBeVisible();
+      await expect(page.getByTestId("case1b-unwrapped-child-shell")).toBeVisible();
+      await expect(page.getByTestId("case2-resolved")).toBeVisible();
+      await expect(page.getByTestId("case3-resolved")).toHaveAttribute("data-session", "browser-sess");
+      await expect(page.getByTestId("case3-resolved")).toHaveAttribute("data-filter", "gaming");
+      await expect(page.getByTestId("case4-resolved")).toBeVisible();
+      await expect(page.getByTestId("case5-parent-resolved")).toBeVisible();
+      await expect(page.getByTestId("case5-child-resolved")).toBeVisible();
+      await expect(page.getByTestId("case6-resolved")).toHaveAttribute("data-theme", "browser-theme");
+      await expect(page.getByTestId("case7-resolved")).toBeVisible();
+      await expect(page.getByTestId("case8a-resolved")).toBeVisible();
+      await expect(page.getByTestId("case8-resolved")).toBeVisible();
+      await expect(page.getByTestId("case8c-resolved")).toBeVisible();
+      await expect(page.getByTestId("case8d-resolved")).toBeVisible();
+      await expect(page.getByTestId("case9a-resolved")).toBeVisible();
+      await expect(page.getByTestId("case9-resolved")).toBeVisible();
+      await expect(page.getByTestId("case10-resolved")).toBeVisible();
+      await expect(page.getByTestId("case11-resolved")).toBeVisible();
+      await expect(page.getByTestId("case12-outer-resolved")).toBeVisible();
+      await expect(page.getByTestId("case12-inner-resolved")).toBeVisible();
+    });
+
+    test("3. Zero-Hole PPR Route (/t-new-ppr/all-static) & Child Route Opt-Out ppr=false Inside ppr=true Layout (/t-new-ppr/opt-out-route)", async ({
+      page,
+      request,
+    }) => {
+      if (isProd) {
+        const allStaticMetaPath = path.resolve(".dinou/dist2/t-new-ppr/all-static/metadata.json");
+        const optOutMetaPath = path.resolve(".dinou/dist2/t-new-ppr/opt-out-route/metadata.json");
+        const optOutShellPath = path.resolve(".dinou/dist2/t-new-ppr/opt-out-route/shell.html");
+        const optOutIndexPath = path.resolve(".dinou/dist2/t-new-ppr/opt-out-route/index.html");
+
+        if (fs.existsSync(allStaticMetaPath)) {
+          const allStaticMeta = JSON.parse(fs.readFileSync(allStaticMetaPath, "utf8"));
+          expect(allStaticMeta.ppr).toBe(true);
+          expect(allStaticMeta.holes).toEqual([]);
+        }
+
+        if (fs.existsSync(optOutMetaPath)) {
+          const optOutMeta = JSON.parse(fs.readFileSync(optOutMetaPath, "utf8"));
+          expect(optOutMeta.ppr).toBe(false);
+          expect(fs.existsSync(optOutShellPath)).toBe(false);
+          expect(fs.existsSync(optOutIndexPath)).toBe(true);
+        }
+      }
+
+      // Verify /t-new-ppr/all-static executes 0 times at runtime in prod and has no streamed templates
+      const asRes1 = await request.get("/t-new-ppr/all-static");
+      const asHtml1 = await asRes1.text();
+      const asRes2 = await request.get("/t-new-ppr/all-static");
+      const asHtml2 = await asRes2.text();
+
+      if (isProd) {
+        expect(asHtml1).not.toContain('<template id="ppr-content-');
+        expect(asHtml1).not.toContain('data-ppr-hole=');
+        for (const tid of [
+          "all-static-page-root",
+          "all-static-nodynamic-resolved",
+          "all-static-slot-resolved",
+          "all-static-slot-nodynamic-resolved",
+        ]) {
+          expect(extractRenderCount(asHtml1, tid)).toBe(extractRenderCount(asHtml2, tid));
+        }
+      }
+
+      await page.goto("/t-new-ppr/all-static");
+      await expect(page.getByTestId("all-static-nodynamic-resolved")).toBeVisible();
+      await expect(page.getByTestId("all-static-slot-resolved")).toBeVisible();
+      await expect(page.getByTestId("all-static-slot-nodynamic-resolved")).toBeVisible();
+
+      // Verify /t-new-ppr/opt-out-route (ppr = false inside ppr = true layout) resolves <Suspense> + async statically without noDynamic()
+      const optRes1 = await request.get("/t-new-ppr/opt-out-route");
+      const optHtml1 = await optRes1.text();
+      const optRes2 = await request.get("/t-new-ppr/opt-out-route");
+      const optHtml2 = await optRes2.text();
+
+      if (isProd) {
+        expect(optHtml1).not.toContain('<template id="ppr-content-');
+        expect(optHtml1).not.toContain('data-testid="opt-out-async-fallback"');
+        for (const tid of [
+          "opt-out-route-page",
+          "opt-out-unwrapped-child-resolved",
+          "opt-out-async-resolved",
+        ]) {
+          expect(extractRenderCount(optHtml1, tid)).toBe(extractRenderCount(optHtml2, tid));
+        }
+      }
+
+      await page.goto("/t-new-ppr/opt-out-route");
+      await expect(page.getByTestId("opt-out-page-await-resolved")).toBeVisible();
+      await expect(page.getByTestId("opt-out-unwrapped-child-resolved")).toBeVisible();
+      await expect(page.getByTestId("opt-out-async-resolved")).toBeVisible();
+    });
+
+    test("4. Full-Page Dynamic Bailouts: Unwrapped Cookies (/t-new-ppr/bailout-cookies), Unwrapped revalidate=0 Slot (/t-new-ppr/bailout-slot-0) & Non-PPR Cookie Read Inside Suspense (/t-new-ppr/no-ppr-bailout)", async ({
+      request,
+    }) => {
+      if (isProd) {
+        for (const bailoutSub of ["bailout-cookies", "bailout-slot-0", "no-ppr-bailout"]) {
+          const shellPath = path.resolve(`.dinou/dist2/t-new-ppr/${bailoutSub}/shell.html`);
+          const indexPath = path.resolve(`.dinou/dist2/t-new-ppr/${bailoutSub}/index.html`);
+          expect(fs.existsSync(shellPath)).toBe(false);
+          expect(fs.existsSync(indexPath)).toBe(false);
+        }
+      }
+
+      // 4a. /t-new-ppr/bailout-cookies (ppr = true, cookies outside <Suspense>)
+      const bc1 = await (
+        await request.get("/t-new-ppr/bailout-cookies", {
+          headers: { Cookie: "bailout_user=UserOne" },
+        })
+      ).text();
+      const bc2 = await (
+        await request.get("/t-new-ppr/bailout-cookies", {
+          headers: { Cookie: "bailout_user=UserTwo" },
+        })
+      ).text();
+      expect(bc1).toContain("cookie=UserOne");
+      expect(bc2).toContain("cookie=UserTwo");
+      const bcRoot1 = Number(bc1.match(/rootRenderCount=(\d+)/)?.[1] || 0);
+      const bcRoot2 = Number(bc2.match(/rootRenderCount=(\d+)/)?.[1] || 0);
+      expect(bcRoot2).toBeGreaterThan(bcRoot1);
+
+      // 4b. /t-new-ppr/bailout-slot-0 (ppr = true, <DinouCacheSlot revalidate={0}> outside <Suspense>)
+      const bs1 = await (await request.get("/t-new-ppr/bailout-slot-0")).text();
+      const bs2 = await (await request.get("/t-new-ppr/bailout-slot-0")).text();
+      const bsRoot1 = Number(bs1.match(/rootRenderCount=(\d+)/)?.[1] || 0);
+      const bsRoot2 = Number(bs2.match(/rootRenderCount=(\d+)/)?.[1] || 0);
+      const bsSlot1 = Number(bs1.match(/slotPayloadRenderCount=(\d+)/)?.[1] || 0);
+      const bsSlot2 = Number(bs2.match(/slotPayloadRenderCount=(\d+)/)?.[1] || 0);
+      expect(bsRoot2).toBeGreaterThan(bsRoot1);
+      expect(bsSlot2).toBeGreaterThan(bsSlot1);
+
+      // 4c. /t-new-ppr/no-ppr-bailout (ppr = false, cookies read inside <Suspense> taints entire page)
+      const np1 = await (
+        await request.get("/t-new-ppr/no-ppr-bailout", {
+          headers: { Cookie: "noppr_user=NoPprAlice" },
+        })
+      ).text();
+      const np2 = await (
+        await request.get("/t-new-ppr/no-ppr-bailout", {
+          headers: { Cookie: "noppr_user=NoPprBob" },
+        })
+      ).text();
+      expect(np1).toContain("user=NoPprAlice");
+      expect(np2).toContain("user=NoPprBob");
+      const npRoot1 = Number(np1.match(/rootRenderCount=(\d+)/)?.[1] || 0);
+      const npRoot2 = Number(np2.match(/rootRenderCount=(\d+)/)?.[1] || 0);
+      expect(npRoot2).toBeGreaterThan(npRoot1);
+    });
+  });
+
   test.describe("HMR & Fast Refresh automated verification", () => {
     // Run tests in serial mode so they do not collide on the same files on disk
     test.describe.configure({ mode: "serial" });

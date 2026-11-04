@@ -57,14 +57,14 @@ export default async function TestPprLayout({ children }: { children: ReactNode 
             PPR Test Suite Layout Shell (Render #{layoutShellCount})
           </h2>
           <nav className="flex gap-3 text-sm font-medium">
-            <Link href="/test-ppr" className="text-indigo-600 dark:text-indigo-400 hover:underline">
-              Matrix (/test-ppr)
+            <Link href="/t-new-ppr" className="text-indigo-600 dark:text-indigo-400 hover:underline">
+              Matrix (/t-new-ppr)
             </Link>
-            <Link href="/test-ppr/all-static" className="text-indigo-600 dark:text-indigo-400 hover:underline">
-              All Static (/test-ppr/all-static)
+            <Link href="/t-new-ppr/all-static" className="text-indigo-600 dark:text-indigo-400 hover:underline">
+              All Static (/t-new-ppr/all-static)
             </Link>
-            <Link href="/test-ppr/opt-out-route" className="text-indigo-600 dark:text-indigo-400 hover:underline">
-              Opt-Out ppr=false (/test-ppr/opt-out-route)
+            <Link href="/t-new-ppr/opt-out-route" className="text-indigo-600 dark:text-indigo-400 hover:underline">
+              Opt-Out ppr=false (/t-new-ppr/opt-out-route)
             </Link>
           </nav>
         </div>

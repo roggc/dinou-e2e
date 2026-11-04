@@ -1,5 +1,5 @@
 import React, { Suspense } from "react";
-import { getContext } from "dinou";
+import { getContext, noDynamic } from "dinou";
 import { DinouCacheSlot } from "dinou/server";
 import SynergyControlPanel, {
   PprHoleOuterClientState,
@@ -23,6 +23,7 @@ async function ShellSlotContent() {
 
 // Scenario 2A helper: Static Suspense (no dynamic reads) wrapping a DinouCacheSlot
 async function StaticSuspenseWithSlotContent() {
+  noDynamic();
   await new Promise((r) => setTimeout(r, 10));
   return (
     <div id="syn-static-suspense-resolved" data-testid="syn-static-suspense-resolved">
