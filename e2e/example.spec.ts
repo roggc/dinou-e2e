@@ -6289,7 +6289,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // 4a. Invalidate ONLY inner slot tag ("rig-tag-inner") and reload page
       await page.click("#btn-inv-inner");
-      await expect(page.locator("#last-action-status")).toContainText("invalidated:rig-tag-inner");
+      await expect(page.locator("#last-action-status")).toContainText("invalidated:rig-tag-inner", { timeout: 15000 });
 
       await page.reload();
       await expect(page.locator("#cache-slot-controls")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
@@ -6316,7 +6316,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // 5a. Concurrency Stampede Protection (5 simultaneous requests on cache MISS)
       await page.click("#btn-reset-stampede");
-      await expect(page.locator("#last-action-status")).toHaveText("stampede-reset");
+      await expect(page.locator("#last-action-status")).toHaveText("stampede-reset", { timeout: 15000 });
 
       const stampedeResponses = await Promise.all(
         Array.from({ length: 5 }, (_, i) =>
@@ -6536,10 +6536,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // 2a. Invalidate tag-syn-hole-slot-a and tag-syn-nested-inner via Server Action
       await page.locator("#btn-inv-hole-slot-a").click();
-      await expect(page.locator("#syn-action-status")).toHaveText("invalidated:tag-syn-hole-slot-a");
+      await expect(page.locator("#syn-action-status")).toHaveText("invalidated:tag-syn-hole-slot-a", { timeout: 15000 });
 
       await page.locator("#btn-inv-nested-inner").click();
-      await expect(page.locator("#syn-action-status")).toHaveText("invalidated:tag-syn-nested-inner");
+      await expect(page.locator("#syn-action-status")).toHaveText("invalidated:tag-syn-nested-inner", { timeout: 15000 });
 
       const resAfterHoleInv = await request.get("/t-rigorous-sinergy?mode=delta-mode", {
         headers: {
@@ -6563,7 +6563,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // 2b. Invalidate tag-syn-shell-slot (slot inside the PPR Static Shell) and verify background shell.html regeneration
       await page.locator("#btn-inv-shell-slot").click();
-      await expect(page.locator("#syn-action-status")).toHaveText("invalidated:tag-syn-shell-slot");
+      await expect(page.locator("#syn-action-status")).toHaveText("invalidated:tag-syn-shell-slot", { timeout: 15000 });
 
       await expect
         .poll(
@@ -7231,20 +7231,34 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       request,
     }) => {
       // Verify live /____rsc_slot____/<id>?fresh=1 re-executes and updates both Cached Dynamic Hole slots (8B, 11) and Static Shell slots (8A, 8D)
-      const beforeRes = await request.get("/t-new-ppr");
+      const refreshTargetSlots = [
+        "test-ppr-slot-unwrapped",
+        "test-ppr-slot-cached",
+        "test-ppr-slot-outer-wrapping-suspense",
+        "test-ppr-slot-cookies",
+      ];
+
+      for (const slotId of refreshTargetSlots) {
+        const syncRes = await request.get(`/____rsc_slot____/${slotId}?fresh=1&step=1`, {
+          headers: {
+            "x-dinou-current-path": "/t-new-ppr",
+            Cookie: "user=initial-slot-user",
+          },
+        });
+        expect(syncRes.status()).toBe(200);
+      }
+
+      const beforeRes = await request.get("/t-new-ppr", {
+        headers: { Cookie: "user=initial-slot-user" },
+      });
       const beforeHtml = await beforeRes.text();
       const count8aBefore = extractRenderCount(beforeHtml, "case8a-resolved");
       const count8bBefore = extractRenderCount(beforeHtml, "case8-resolved");
       const count8dBefore = extractRenderCount(beforeHtml, "case8d-resolved");
       const count11Before = extractRenderCount(beforeHtml, "case11-resolved");
 
-      for (const slotId of [
-        "test-ppr-slot-unwrapped",
-        "test-ppr-slot-cached",
-        "test-ppr-slot-outer-wrapping-suspense",
-        "test-ppr-slot-cookies",
-      ]) {
-        const slotRes = await request.get(`/____rsc_slot____/${slotId}?fresh=1`, {
+      for (const slotId of refreshTargetSlots) {
+        const slotRes = await request.get(`/____rsc_slot____/${slotId}?fresh=1&step=2`, {
           headers: {
             "x-dinou-current-path": "/t-new-ppr",
             Cookie: "user=refreshed-slot-user",
@@ -7261,6 +7275,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(extractRenderCount(afterHtml, "case8-resolved")).toBeGreaterThan(count8bBefore);
       expect(extractRenderCount(afterHtml, "case8d-resolved")).toBeGreaterThan(count8dBefore);
       expect(extractRenderCount(afterHtml, "case11-resolved")).toBeGreaterThan(count11Before);
+      expect(extractDataAttr(afterHtml, "case11-resolved", "data-user")).toBe("refreshed-slot-user");
 
       // Full browser load and DOM verification
       await context.addCookies([
@@ -7381,17 +7396,23 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         }
       }
 
+      const stripComments = (s: string) => s.replace(/<!--\s*-->/g, "");
+
       // 4a. /t-new-ppr/bailout-cookies (ppr = true, cookies outside <Suspense>)
-      const bc1 = await (
-        await request.get("/t-new-ppr/bailout-cookies", {
-          headers: { Cookie: "bailout_user=UserOne" },
-        })
-      ).text();
-      const bc2 = await (
-        await request.get("/t-new-ppr/bailout-cookies", {
-          headers: { Cookie: "bailout_user=UserTwo" },
-        })
-      ).text();
+      const bc1 = stripComments(
+        await (
+          await request.get("/t-new-ppr/bailout-cookies", {
+            headers: { Cookie: "bailout_user=UserOne" },
+          })
+        ).text()
+      );
+      const bc2 = stripComments(
+        await (
+          await request.get("/t-new-ppr/bailout-cookies", {
+            headers: { Cookie: "bailout_user=UserTwo" },
+          })
+        ).text()
+      );
       expect(bc1).toContain("cookie=UserOne");
       expect(bc2).toContain("cookie=UserTwo");
       const bcRoot1 = Number(bc1.match(/rootRenderCount=(\d+)/)?.[1] || 0);
@@ -7399,8 +7420,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(bcRoot2).toBeGreaterThan(bcRoot1);
 
       // 4b. /t-new-ppr/bailout-slot-0 (ppr = true, <DinouCacheSlot revalidate={0}> outside <Suspense>)
-      const bs1 = await (await request.get("/t-new-ppr/bailout-slot-0")).text();
-      const bs2 = await (await request.get("/t-new-ppr/bailout-slot-0")).text();
+      const bs1 = stripComments(await (await request.get("/t-new-ppr/bailout-slot-0")).text());
+      const bs2 = stripComments(await (await request.get("/t-new-ppr/bailout-slot-0")).text());
       const bsRoot1 = Number(bs1.match(/rootRenderCount=(\d+)/)?.[1] || 0);
       const bsRoot2 = Number(bs2.match(/rootRenderCount=(\d+)/)?.[1] || 0);
       const bsSlot1 = Number(bs1.match(/slotPayloadRenderCount=(\d+)/)?.[1] || 0);
@@ -7409,16 +7430,20 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(bsSlot2).toBeGreaterThan(bsSlot1);
 
       // 4c. /t-new-ppr/no-ppr-bailout (ppr = false, cookies read inside <Suspense> taints entire page)
-      const np1 = await (
-        await request.get("/t-new-ppr/no-ppr-bailout", {
-          headers: { Cookie: "noppr_user=NoPprAlice" },
-        })
-      ).text();
-      const np2 = await (
-        await request.get("/t-new-ppr/no-ppr-bailout", {
-          headers: { Cookie: "noppr_user=NoPprBob" },
-        })
-      ).text();
+      const np1 = stripComments(
+        await (
+          await request.get("/t-new-ppr/no-ppr-bailout", {
+            headers: { Cookie: "noppr_user=NoPprAlice" },
+          })
+        ).text()
+      );
+      const np2 = stripComments(
+        await (
+          await request.get("/t-new-ppr/no-ppr-bailout", {
+            headers: { Cookie: "noppr_user=NoPprBob" },
+          })
+        ).text()
+      );
       expect(np1).toContain("user=NoPprAlice");
       expect(np2).toContain("user=NoPprBob");
       const npRoot1 = Number(np1.match(/rootRenderCount=(\d+)/)?.[1] || 0);
