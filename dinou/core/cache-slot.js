@@ -645,6 +645,33 @@ async function DinouCacheSlot(props) {
       !isPprBuildActive() &&
       !getContext()?.platformContext?.isSSG;
 
+    if (
+      serveStaleWhileRevalidate &&
+      !getContext()?._isPprRuntimeResume &&
+      !backgroundRevalidations.has(storageKey) &&
+      !inflightSlotRenders.has(storageKey)
+    ) {
+      backgroundRevalidations.add(storageKey);
+      const reqContext = getContext();
+      const currentPath = reqContext?.req?.path;
+      const bgPromise = (async () => {
+        try {
+          await getSlotJSX(slotId, { fresh: true, currentPath });
+        } catch (e) {
+          console.error(
+            `[DinouCacheSlot] Background revalidation failed for slot "${slotId}":`,
+            e
+          );
+        } finally {
+          backgroundRevalidations.delete(storageKey);
+        }
+      })();
+      const ctx = reqContext?.platformContext?.ctx;
+      if (ctx && typeof ctx.waitUntil === "function") {
+        ctx.waitUntil(bgPromise);
+      }
+    }
+
     if (!isExpired || serveStaleWhileRevalidate) {
       try {
         const restored = deserializeJSX(cached.content);
@@ -817,6 +844,7 @@ async function getSlotJSX(slotId, options = {}) {
       isExpired &&
       !isNoCache &&
       !options.fresh &&
+      Boolean(options.skipHostRevalidate) &&
       Boolean(meta.inStaticShell) &&
       !isRevalidationActive() &&
       !isPprBuildActive() &&

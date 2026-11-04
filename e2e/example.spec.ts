@@ -6161,7 +6161,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await new Promise((r) => setTimeout(r, 1200));
       await page.reload();
       await expect(page.locator("#static-host-controls")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
-      await expect(page.locator("#slot-static-fast-token")).not.toHaveText(fastToken1, { timeout: 15000 });
+      await expect.poll(async () => {
+        await page.reload();
+        await expect(page.locator("#static-host-controls")).toHaveAttribute("data-hydrated", "true", { timeout: 15000 });
+        return await page.locator("#slot-static-fast-token").innerText();
+      }, { timeout: 15000, intervals: [200, 400] }).not.toBe(fastToken1);
       await expect(page.locator("#slot-static-host-token")).toHaveText(slowTokenBeforeTtl, { timeout: 15000 });
 
       const fastToken2 = await page.locator("#slot-static-fast-token").innerText();
