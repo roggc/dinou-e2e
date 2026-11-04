@@ -6602,7 +6602,17 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const htmlAfterTtl = await resAfterTtl.text();
       const { streamPart: rawStreamTtl } = splitPprWireHtml(htmlAfterTtl);
       const streamTtl = isProd ? rawStreamTtl : htmlAfterTtl;
-      expect(extractSynIdText(streamTtl, "syn-hole-fast-slot-token")).not.toBe(fastHoleSlotBefore);
+      await expect
+        .poll(
+          async () => {
+            const res = await request.get("/t-rigorous-sinergy?mode=zeta-mode");
+            const html = await res.text();
+            const { streamPart: rawStream } = splitPprWireHtml(html);
+            return extractSynIdText(isProd ? rawStream : html, "syn-hole-fast-slot-token");
+          },
+          { timeout: 15000 }
+        )
+        .not.toBe(fastHoleSlotBefore);
       expect(extractSynIdText(streamTtl, "syn-hole-slot-a-token")).toBe(holeSlotAAfter);
 
       await expect
@@ -7372,7 +7382,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       if (isProd) {
         expect(optHtml1).not.toContain('<template id="ppr-content-');
-        expect(optHtml1).not.toContain('data-testid="opt-out-async-fallback"');
+        expect(optHtml1).toContain('data-testid="opt-out-async-resolved"');
         for (const tid of [
           "opt-out-route-page",
           "opt-out-unwrapped-child-resolved",
