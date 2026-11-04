@@ -853,6 +853,10 @@ async function revalidateLayout(cleanPath, internalOptions = {}) {
             currentMeta.ppr = Boolean(layoutCfg.ppr);
           }
         }
+        if (typeof currentMeta.ppr !== "boolean") {
+          const layoutRouteCfg = await resolveRouteConfigForRevalidate(null, reqSegments, currentMeta);
+          currentMeta.ppr = Boolean(layoutRouteCfg.isRoutePpr);
+        }
       } catch (e) {}
 
       const prevGenTime = (currentMeta && currentMeta.generatedAt) || 0;
@@ -922,7 +926,10 @@ async function revalidateLayout(cleanPath, internalOptions = {}) {
             }
           }
           if (!resolvedLayoutJsx) {
-            await runWithPprContext({ isPpr: true }, async () => {
+            const isLayoutPpr = Boolean(
+              currentMeta.ppr || (Array.isArray(currentMeta.holes) && currentMeta.holes.length > 0)
+            );
+            await runWithPprContext({ isPpr: isLayoutPpr }, async () => {
               const rawJsx = await getJSX(reqPathWithSlash, {}, {}, false, false, {
                 segment: "layout",
               });
