@@ -975,6 +975,9 @@ function createServerFunctionContext(simReq, resBridge, platformContext = {}) {
         resBridge.write(`D:{"type":"cookie","cookie":${JSON.stringify(cookieStr)}}\n`);
       },
     },
+    env: platformContext.env || {},
+    ctx: platformContext.ctx || null,
+    platformContext,
   };
   setCurrentContext(context);
   return context;
@@ -987,8 +990,13 @@ function createServerFunctionContext(simReq, resBridge, platformContext = {}) {
  * @returns {Promise<Response>}
  */
 async function handleRequest(request, platformContext = {}) {
-  if (typeof globalThis !== "undefined" && platformContext?.renderHtmlStream) {
-    globalThis.__DINOU_RENDER_HTML_STREAM__ = platformContext.renderHtmlStream;
+  if (typeof globalThis !== "undefined") {
+    if (platformContext?.renderHtmlStream) {
+      globalThis.__DINOU_RENDER_HTML_STREAM__ = platformContext.renderHtmlStream;
+    }
+    if (platformContext?.env) {
+      globalThis.__DINOU_ENV__ = platformContext.env;
+    }
   }
   const url = new URL(request.url);
   const pathname = url.pathname;

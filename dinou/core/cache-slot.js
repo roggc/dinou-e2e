@@ -350,7 +350,8 @@ async function getSlotFromStorage(storage, storageKey, knownTags = []) {
     const assets =
       reqContext?.env?.ASSETS ||
       reqContext?.platformContext?.env?.ASSETS ||
-      reqContext?.req?.env?.ASSETS;
+      reqContext?.req?.env?.ASSETS ||
+      (typeof globalThis !== "undefined" ? globalThis.__DINOU_ENV__?.ASSETS : null);
     if (assets && typeof assets.fetch === "function") {
       const cleanKey = String(storageKey || "").replace(/^\/+/, "");
       const metaKey = cleanKey.endsWith("/slot.json")
@@ -392,6 +393,37 @@ async function getSlotFromStorage(storage, storageKey, knownTags = []) {
   } catch (e) {}
 
   return cached;
+}
+
+async function readMetaFromStorageOrAssets(storage, key) {
+  if (!storage || !key) return null;
+  try {
+    const item = await storage.get(key);
+    if (item?.metadata && typeof item.metadata === "object") return item.metadata;
+    if (item?.content) return JSON.parse(item.content);
+  } catch (e) {}
+  if (typeof storage.isDeleted === "function" && storage.isDeleted(key)) return null;
+  try {
+    const reqContext = getContext();
+    const assets =
+      reqContext?.env?.ASSETS ||
+      reqContext?.platformContext?.env?.ASSETS ||
+      reqContext?.req?.env?.ASSETS ||
+      (typeof globalThis !== "undefined" ? globalThis.__DINOU_ENV__?.ASSETS : null);
+    if (assets && typeof assets.fetch === "function") {
+      const cleanKey = String(key).replace(/^\/+/, "");
+      const res = await assets.fetch(new Request(`http://localhost/${cleanKey}`));
+      if (res && res.status === 200) {
+        const text = await res.text();
+        if (text && text.trimStart().startsWith("{")) {
+          const parsed = JSON.parse(text);
+          await storage.set(cleanKey, text);
+          return parsed;
+        }
+      }
+    }
+  } catch (e) {}
+  return null;
 }
 
 /**
@@ -1012,13 +1044,7 @@ async function getSlotJSX(slotId, options = {}) {
             ...(Array.isArray(entry.tags) ? entry.tags : []),
           ]);
           const metaKey = cleanRouteKey ? `${cleanRouteKey}/metadata.json` : "metadata.json";
-          const metaItem = await storage.get(metaKey);
-          let pageMeta = metaItem?.metadata;
-          if (!pageMeta && metaItem?.content) {
-            try {
-              pageMeta = JSON.parse(metaItem.content);
-            } catch (e) {}
-          }
+          const pageMeta = await readMetaFromStorageOrAssets(storage, metaKey);
           if (
             pageMeta &&
             Array.isArray(pageMeta.slotTags) &&
@@ -1036,13 +1062,7 @@ async function getSlotJSX(slotId, options = {}) {
           }
           for (const lKey of candidateLayoutKeys) {
             const lMetaKey = lKey ? `${lKey}/layout.metadata.json` : "layout.metadata.json";
-            const lItem = await storage.get(lMetaKey);
-            let lMeta = lItem?.metadata;
-            if (!lMeta && lItem?.content) {
-              try {
-                lMeta = JSON.parse(lItem.content);
-              } catch (e) {}
-            }
+            const lMeta = await readMetaFromStorageOrAssets(storage, lMetaKey);
             if (
               lMeta &&
               Array.isArray(lMeta.slotTags) &&
