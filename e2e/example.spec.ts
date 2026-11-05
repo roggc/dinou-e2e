@@ -7466,6 +7466,206 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
   });
 
+  test.describe("React 19 Server Component useId() & Stateless Hooks Suite (/t-use-id)", () => {
+    test.describe.configure({ mode: "serial" });
+
+    const EXPECTED_SERVER_IDS: Record<string, string> = {
+      "layout-sync-bar": "_layout_dS_1_",
+      "layout-slot-sync": "_slot_useid-layout-slot_dS_1_",
+      "layout-footer-sync": "_layout_dS_2_",
+      "page-static-sync-1": "_page_dS_1_",
+      "page-static-sync-2": "_page_dS_2_",
+      "nested-outer-slot-sync": "_slot_useid-outer-slot_dS_1_",
+      "nested-inner-slot-sync": "_slot_useid-inner-slot_dS_1_",
+      "nodynamic-suspense-sync": "_hole_ppr-hole-1_dS_1_",
+      "ppr-dynamic-hole-sync": "_hole_ppr-hole-2_dS_1_",
+      "dynamic-hole-slot-sync": "_slot_useid-dynamic-hole-slot_dS_1_",
+      "memo-sync-widget": "_page_dS_3_",
+      "forwardref-sync-widget": "_page_dS_4_",
+      "memo-forwardref-sync-widget": "_page_dS_5_",
+      "use-promise-sync-before": "_hole_ppr-hole-3_dS_1_",
+      "use-promise-sync-after": "_hole_ppr-hole-3_dS_2_",
+      "slot-use-promise-sync-before": "_slot_useid-use-hook-slot_dS_1_",
+      "slot-use-promise-sync-after": "_slot_useid-use-hook-slot_dS_2_",
+      "sandwich-outer-sync": "_hole_ppr-hole-4_dS_1_",
+      "sandwich-inner-sync": "_hole_ppr-hole-4_dS_2_",
+      "list-item-sync-0": "_page_dS_6_",
+      "list-item-sync-1": "_page_dS_7_",
+      "nocache-slot-sync": "_slot_useid-nocache-slot_dS_1_",
+      "suspense-slot-sync": "_slot_useid-suspense-slot_dS_1_",
+    };
+
+    const extractGeneratedId = (html: string, testId: string): string | null => {
+      const re1 = new RegExp(`data-testid="${testId}"[^>]*data-generated-id="([^"]+)"`);
+      const m1 = html.match(re1);
+      if (m1) return m1[1];
+      const re2 = new RegExp(`data-generated-id="([^"]+)"[^>]*data-testid="${testId}"`);
+      const m2 = html.match(re2);
+      return m2 ? m2[1] : null;
+    };
+
+    test("1. Deterministic Scoped useId() Across All 23 Server Component Casuistics, SSR HTML & Segmented RSC Endpoints (/t-use-id)", async ({
+      request,
+    }) => {
+      const res = await request.get("/t-use-id");
+      expect(res.status()).toBe(200);
+      const html = await res.text();
+
+      // Verify all 23 server-rendered [data-generated-id] nodes have exact deterministic scoped IDs
+      // and matching label[for] / input[id] attributes in raw SSR HTML
+      for (const [testId, expectedId] of Object.entries(EXPECTED_SERVER_IDS)) {
+        const actualId = extractGeneratedId(html, testId);
+        expect(actualId, `Mismatch for data-testid="${testId}"`).toBe(expectedId);
+        expect(html).toContain(`for="${expectedId}"`);
+        expect(html).toContain(`id="${expectedId}"`);
+      }
+
+      // Verify stateless server hooks (useMemo, useCallback, use(promise)) output in SSR HTML
+      expect(html).toContain("2A. Page Static Sync Component #1 (useId + useMemo + useCallback) [_page_dS_1_]");
+      expect(html).toContain('value="page-static:_page_dS_1_"');
+      expect(html).toContain('value="page-static:_page_dS_2_"');
+      expect(html).toContain("resolved-in-sync-server-comp");
+      expect(html).toContain("slot-use-resolved");
+      expect(html).not.toContain("_discovery_dS_");
+
+      // Verify Segmented Layout RSC Endpoint (/____rsc_layout____/t-use-id) preserves exact layout & layout-slot IDs
+      const layoutRscRes = await request.get("/____rsc_layout____/t-use-id");
+      expect(layoutRscRes.status()).toBe(200);
+      const layoutRscText = await layoutRscRes.text();
+      expect(layoutRscText).toContain('"_layout_dS_1_"');
+      expect(layoutRscText).toContain('"_slot_useid-layout-slot_dS_1_"');
+      expect(layoutRscText).toContain('"_layout_dS_2_"');
+      expect(layoutRscText).not.toContain("_discovery_dS_");
+
+      // Verify Segmented Page RSC Endpoint (/____rsc_page____/t-use-id) preserves exact page, hole & slot IDs
+      const pageRscRes = await request.get("/____rsc_page____/t-use-id");
+      expect(pageRscRes.status()).toBe(200);
+      const pageRscText = await pageRscRes.text();
+      for (const [testId, expectedId] of Object.entries(EXPECTED_SERVER_IDS)) {
+        if (testId.startsWith("layout-")) continue;
+        expect(pageRscText, `Missing ${expectedId} (${testId}) in /____rsc_page____/t-use-id`).toContain(
+          `"${expectedId}"`
+        );
+      }
+      expect(pageRscText).not.toContain("_discovery_dS_");
+    });
+
+    test("2. Standalone /____rsc_slot____/:id?fresh=1 Refresh Parity Across All 7 <DinouCacheSlot> Scopes (/t-use-id)", async ({
+      request,
+    }) => {
+      const slotExpectations: Array<{ slotId: string; expectedIds: string[] }> = [
+        {
+          slotId: "useid-layout-slot",
+          expectedIds: ["_slot_useid-layout-slot_dS_1_"],
+        },
+        {
+          slotId: "useid-outer-slot",
+          expectedIds: ["_slot_useid-outer-slot_dS_1_", "_slot_useid-inner-slot_dS_1_"],
+        },
+        {
+          slotId: "useid-inner-slot",
+          expectedIds: ["_slot_useid-inner-slot_dS_1_"],
+        },
+        {
+          slotId: "useid-dynamic-hole-slot",
+          expectedIds: ["_slot_useid-dynamic-hole-slot_dS_1_"],
+        },
+        {
+          slotId: "useid-use-hook-slot",
+          expectedIds: ["_slot_useid-use-hook-slot_dS_1_", "_slot_useid-use-hook-slot_dS_2_"],
+        },
+        {
+          slotId: "useid-nocache-slot",
+          expectedIds: ["_slot_useid-nocache-slot_dS_1_"],
+        },
+        {
+          slotId: "useid-suspense-slot",
+          expectedIds: ["_slot_useid-suspense-slot_dS_1_"],
+        },
+      ];
+
+      for (const { slotId, expectedIds } of slotExpectations) {
+        const slotRes = await request.get(`/____rsc_slot____/${slotId}?fresh=1`, {
+          headers: {
+            "x-dinou-current-path": "/t-use-id",
+          },
+        });
+        expect(slotRes.status(), `Failed standalone slot request for ${slotId}`).toBe(200);
+        const slotPayload = await slotRes.text();
+        for (const expectedId of expectedIds) {
+          expect(slotPayload, `Slot ${slotId} payload missing ${expectedId}`).toContain(`"${expectedId}"`);
+        }
+        expect(slotPayload).not.toContain("_discovery_dS_");
+      }
+    });
+
+    test("3. Browser Hydration, Zero Hydration Warnings, 24/24 Unique IDs & Interactive Slot + Router Refresh Stability (/t-use-id)", async ({
+      page,
+    }) => {
+      const hydrationErrors: string[] = [];
+      page.on("console", (msg) => {
+        if (msg.type() === "error" || msg.type() === "warning") {
+          const text = msg.text();
+          if (
+            /hydration|did not match|server-rendered HTML|expected server HTML/i.test(text)
+          ) {
+            hydrationErrors.push(text);
+          }
+        }
+      });
+      page.on("pageerror", (err) => {
+        hydrationErrors.push(err.message);
+      });
+
+      await page.goto("/t-use-id");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+
+      const statusBadge = page.getByTestId("useid-status-badge");
+      await expect(statusBadge).toHaveText(
+        "PASS: 24/24 Unique IDs & 100% Label->Input Match",
+        { timeout: 10000 }
+      );
+
+      // Verify all 23 server nodes in live DOM match EXPECTED_SERVER_IDS
+      for (const [testId, expectedId] of Object.entries(EXPECTED_SERVER_IDS)) {
+        const locator = page.getByTestId(testId);
+        await expect(locator).toBeVisible();
+        await expect(locator).toHaveAttribute("data-generated-id", expectedId);
+      }
+
+      // Verify client probe has a valid React Client Fiber ID that doesn't collide with server prefixes
+      const clientProbe = page.getByTestId("client-own-probe");
+      await expect(clientProbe).toBeVisible();
+      const clientGeneratedId = await clientProbe.getAttribute("data-generated-id");
+      expect(clientGeneratedId).toBeTruthy();
+      expect(Object.values(EXPECTED_SERVER_IDS)).not.toContain(clientGeneratedId);
+
+      // Exercise interactive slot refresh buttons and router.refresh({ layout: true })
+      const refreshButtons = [
+        "btn-refresh-inner-slot",
+        "btn-refresh-outer-slot",
+        "btn-refresh-layout-slot",
+        "btn-refresh-suspense-slot",
+        "btn-router-refresh",
+      ];
+
+      for (const btnId of refreshButtons) {
+        await page.getByTestId(btnId).click();
+        await expect(statusBadge).toHaveText(
+          "PASS: 24/24 Unique IDs & 100% Label->Input Match",
+          { timeout: 10000 }
+        );
+      }
+
+      // Re-verify all 23 server IDs remain completely invariant after slot and router refreshes
+      for (const [testId, expectedId] of Object.entries(EXPECTED_SERVER_IDS)) {
+        await expect(page.getByTestId(testId)).toHaveAttribute("data-generated-id", expectedId);
+      }
+
+      expect(hydrationErrors).toEqual([]);
+    });
+  });
+
   test.describe("HMR & Fast Refresh automated verification", () => {
     // Run tests in serial mode so they do not collide on the same files on disk
     test.describe.configure({ mode: "serial" });
