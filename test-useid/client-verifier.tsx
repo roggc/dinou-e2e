@@ -55,7 +55,7 @@ export function ClientUseIdVerifier({ serverPassedId }: { serverPassedId: string
 
   const allPassed =
     report.checked &&
-    report.totalIds >= 7 &&
+    report.totalIds >= 19 &&
     report.totalIds === report.uniqueIds &&
     report.allLabelsMatchedInputs;
 
@@ -136,6 +136,18 @@ export function ClientUseIdVerifier({ serverPassedId }: { serverPassedId: string
           className="px-3 py-1.5 rounded bg-blue-600 text-white font-medium hover:bg-blue-500 transition-colors"
         >
           Refresh Layout Slot (fresh: true)
+        </button>
+
+        <button
+          type="button"
+          data-testid="btn-refresh-suspense-slot"
+          onClick={() => {
+            refreshSlot("useid-suspense-slot", { fresh: true });
+            setTimeout(() => setRefreshCount((c) => c + 1), 300);
+          }}
+          className="px-3 py-1.5 rounded bg-cyan-600 text-white font-medium hover:bg-cyan-500 transition-colors"
+        >
+          Refresh Suspense Slot (fresh: true)
         </button>
 
         <button

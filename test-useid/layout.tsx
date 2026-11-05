@@ -3,7 +3,7 @@ import { DinouCacheSlot } from "dinou/server";
 
 function LayoutSyncAccessibilityBar() {
   const searchInputId = useId();
-  const computedLabel = useMemo(() => "Layout Sync Server Component (useId + useMemo)", []);
+  const computedLabel = useMemo(() => "Layout Header Sync Component (before {children})", []);
   const formatHint = useCallback((prefix: string) => `${prefix}:${searchInputId}`, [searchInputId]);
   useDebugValue(searchInputId);
 
@@ -14,7 +14,7 @@ function LayoutSyncAccessibilityBar() {
       className="p-3 rounded-lg border border-blue-500/30 bg-blue-500/5 text-xs space-y-1.5"
     >
       <div className="font-semibold text-blue-600 dark:text-blue-400">
-        1. {computedLabel}
+        1A. {computedLabel}
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <label htmlFor={searchInputId} data-testid="layout-label" className="font-mono">
@@ -34,7 +34,7 @@ function LayoutSyncAccessibilityBar() {
 
 function LayoutSlotSyncWidget() {
   const slotInputId = useId();
-  const slotTitle = useMemo(() => "Layout <DinouCacheSlot> Sync Server Component", []);
+  const slotTitle = useMemo(() => "Layout <DinouCacheSlot> Sync Component", []);
 
   return (
     <div
@@ -61,6 +61,37 @@ function LayoutSlotSyncWidget() {
   );
 }
 
+function LayoutFooterSyncBar() {
+  const footerInputId = useId();
+  const footerTitle = useMemo(
+    () => "Layout Footer Sync Component (rendered AFTER {children})",
+    []
+  );
+
+  return (
+    <div
+      data-testid="layout-footer-sync"
+      data-generated-id={footerInputId}
+      className="p-3 rounded-lg border border-blue-500/30 bg-blue-500/5 text-xs space-y-1.5"
+    >
+      <div className="font-semibold text-blue-600 dark:text-blue-400">
+        1B. {footerTitle}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <label htmlFor={footerInputId} className="font-mono">
+          Footer Layout ID ({footerInputId}):
+        </label>
+        <input
+          id={footerInputId}
+          defaultValue={`layout-footer:${footerInputId}`}
+          readOnly
+          className="px-2 py-1 rounded border bg-background font-mono text-xs"
+        />
+      </div>
+    </div>
+  );
+}
+
 export default function TestUseIdLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-6">
@@ -69,10 +100,12 @@ export default function TestUseIdLayout({ children }: { children: React.ReactNod
           React 19 Server Component <code>useId()</code> Verification Suite
         </h1>
         <p className="text-sm text-muted-foreground">
-          Verifies synchronous Server Components calling <code>useId()</code>, <code>useMemo()</code>,{" "}
-          <code>useCallback()</code>, and <code>useDebugValue()</code> across Layouts, Pages,{" "}
-          <code>&lt;DinouCacheSlot&gt;</code> (including nested slots), <code>noDynamic()</code>, and PPR{" "}
-          <code>&lt;Suspense&gt;</code> holes.
+          Verifies synchronous Server Components calling <code>useId()</code>, <code>use(promise)</code>,{" "}
+          <code>useMemo()</code>, <code>useCallback()</code>, and <code>useDebugValue()</code> across Layouts (before
+          &amp; after <code>&#123;children&#125;</code>), Pages, <code>React.memo</code> /{" "}
+          <code>React.forwardRef</code>, <code>.map()</code> lists, <code>Sync -&gt; Async -&gt; Sync</code> chains,{" "}
+          <code>&lt;DinouCacheSlot&gt;</code> (cached, nested, &amp; <code>revalidate=&#123;0&#125;</code>),{" "}
+          <code>noDynamic()</code>, and PPR <code>&lt;Suspense&gt;</code> holes.
         </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <LayoutSyncAccessibilityBar />
@@ -82,7 +115,9 @@ export default function TestUseIdLayout({ children }: { children: React.ReactNod
         </div>
       </header>
       <main>{children}</main>
+      <footer className="border-t pt-4">
+        <LayoutFooterSyncBar />
+      </footer>
     </div>
   );
 }
-
