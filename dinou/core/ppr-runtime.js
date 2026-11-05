@@ -19,6 +19,13 @@ import {
   runInRuntimeDynamicHole,
 } from "./ppr-context.js";
 
+async function PprDynamicHoleBoundary({ holeId, children }) {
+  return await runInRuntimeDynamicHole(
+    () => asyncRenderJSXToClientJSX(children),
+    holeId
+  );
+}
+
 function escapeHtml(str) {
   return String(str)
     .replace(/&/g, "&amp;")
@@ -163,10 +170,21 @@ async function spliceDynamicHolesIntoShell(
       }
       try {
         const innerComp = current.type.type;
-        const rendered =
-          typeof innerComp === "function"
-            ? await invokeWithServerHooksDispatcher(() => innerComp(current.props || {}))
-            : null;
+        let rendered = null;
+        if (typeof innerComp === "function") {
+          rendered = await invokeWithServerHooksDispatcher(() =>
+            innerComp(current.props || {})
+          );
+        } else if (
+          typeof innerComp === "object" &&
+          innerComp !== null &&
+          innerComp.$$typeof === Symbol.for("react.forward_ref") &&
+          typeof innerComp.render === "function"
+        ) {
+          rendered = await invokeWithServerHooksDispatcher(() =>
+            innerComp.render(current.props || {}, current.ref)
+          );
+        }
         await traverse(rendered);
       } catch (err) {
         if (err && err.$$typeof === SKIP_STATIC_SUSPENSE_SYMBOL) {
@@ -183,7 +201,18 @@ async function spliceDynamicHolesIntoShell(
       holeIndex++;
       const currentHoleId = `ppr-hole-${holeIndex}`;
       if (knownHoleIds.has(currentHoleId)) {
-        liveHolesMap.set(currentHoleId, current);
+        const wrappedHole = React.createElement(
+          React.Suspense,
+          {
+            ...(current.props || {}),
+            ...(current.key != null ? { key: current.key } : {}),
+            children: React.createElement(PprDynamicHoleBoundary, {
+              holeId: currentHoleId,
+              children: current.props?.children,
+            }),
+          }
+        );
+        liveHolesMap.set(currentHoleId, wrappedHole);
         return;
       }
       const runStaticScope = staticParentHoleIds.has(currentHoleId)
@@ -379,10 +408,21 @@ async function streamDynamicHoles(
       }
       try {
         const innerComp = current.type.type;
-        const rendered =
-          typeof innerComp === "function"
-            ? await invokeWithServerHooksDispatcher(() => innerComp(current.props || {}))
-            : null;
+        let rendered = null;
+        if (typeof innerComp === "function") {
+          rendered = await invokeWithServerHooksDispatcher(() =>
+            innerComp(current.props || {})
+          );
+        } else if (
+          typeof innerComp === "object" &&
+          innerComp !== null &&
+          innerComp.$$typeof === Symbol.for("react.forward_ref") &&
+          typeof innerComp.render === "function"
+        ) {
+          rendered = await invokeWithServerHooksDispatcher(() =>
+            innerComp.render(current.props || {}, current.ref)
+          );
+        }
         await traverse(rendered);
       } catch (err) {
         if (err && err.$$typeof === SKIP_STATIC_SUSPENSE_SYMBOL) {
@@ -432,7 +472,7 @@ async function streamDynamicHoles(
             const errChunk = `\n<template id="ppr-content-${currentHoleId}"><div style="color:#e11d48;padding:8px 12px;background:#fff1f2;border:1px solid #fecdd3;border-radius:6px;font-size:0.875rem;font-family:system-ui,sans-serif;">[PPR Error: ${errMsg}]</div></template>\n<script>(function(){var c=document.getElementById("ppr-content-${currentHoleId}");if(!c)return;var b=document.getElementById("B:${currentBoundaryIndex}");var t=document.querySelector('[data-ppr-hole="${currentHoleId}"]')||(b?b.nextElementSibling:null);try{if(t){if(c.content){t.replaceWith(c.content);}else{t.replaceWith.apply(t,Array.from(c.childNodes));}}}finally{c.remove();}})();</script>\n`;
             await writer.write(encoder.encode(errChunk));
           }
-        })());
+        })(), currentHoleId);
         holePromises.push(promise);
         return;
       }
