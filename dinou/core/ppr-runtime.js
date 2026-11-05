@@ -10,6 +10,10 @@ import { getClientManifest } from "./manifest-provider.js";
 import { requestStorage, setCurrentContext } from "./request-context.js";
 import getJSX from "./get-jsx.js";
 import {
+  asyncRenderJSXToClientJSX,
+  invokeWithServerHooksDispatcher,
+} from "./render-jsx-to-client-jsx.js";
+import {
   SKIP_STATIC_SUSPENSE_SYMBOL,
   runInRuntimeStaticSuspense,
   runInRuntimeDynamicHole,
@@ -114,7 +118,9 @@ async function spliceDynamicHolesIntoShell(
     }
     if (typeof current?.type === "function") {
       try {
-        const evaluated = await current.type(current.props || {});
+        const evaluated = await invokeWithServerHooksDispatcher(() =>
+          current.type(current.props || {})
+        );
         await traverse(evaluated);
       } catch (err) {
         if (err && err.$$typeof === SKIP_STATIC_SUSPENSE_SYMBOL) {
@@ -134,7 +140,9 @@ async function spliceDynamicHolesIntoShell(
         return;
       }
       try {
-        const rendered = await current.type.render(current.props || {}, current.ref);
+        const rendered = await invokeWithServerHooksDispatcher(() =>
+          current.type.render(current.props || {}, current.ref)
+        );
         await traverse(rendered);
       } catch (err) {
         if (err && err.$$typeof === SKIP_STATIC_SUSPENSE_SYMBOL) {
@@ -156,7 +164,9 @@ async function spliceDynamicHolesIntoShell(
       try {
         const innerComp = current.type.type;
         const rendered =
-          typeof innerComp === "function" ? await innerComp(current.props || {}) : null;
+          typeof innerComp === "function"
+            ? await invokeWithServerHooksDispatcher(() => innerComp(current.props || {}))
+            : null;
         await traverse(rendered);
       } catch (err) {
         if (err && err.$$typeof === SKIP_STATIC_SUSPENSE_SYMBOL) {
@@ -320,7 +330,9 @@ async function streamDynamicHoles(
     // Handle React Server Component function
     if (typeof current?.type === "function") {
       try {
-        const evaluated = await current.type(current.props || {});
+        const evaluated = await invokeWithServerHooksDispatcher(() =>
+          current.type(current.props || {})
+        );
         await traverse(evaluated);
       } catch (err) {
         if (err && err.$$typeof === SKIP_STATIC_SUSPENSE_SYMBOL) {
@@ -342,7 +354,9 @@ async function streamDynamicHoles(
         return;
       }
       try {
-        const rendered = await current.type.render(current.props || {}, current.ref);
+        const rendered = await invokeWithServerHooksDispatcher(() =>
+          current.type.render(current.props || {}, current.ref)
+        );
         await traverse(rendered);
       } catch (err) {
         if (err && err.$$typeof === SKIP_STATIC_SUSPENSE_SYMBOL) {
@@ -366,7 +380,9 @@ async function streamDynamicHoles(
       try {
         const innerComp = current.type.type;
         const rendered =
-          typeof innerComp === "function" ? await innerComp(current.props || {}) : null;
+          typeof innerComp === "function"
+            ? await invokeWithServerHooksDispatcher(() => innerComp(current.props || {}))
+            : null;
         await traverse(rendered);
       } catch (err) {
         if (err && err.$$typeof === SKIP_STATIC_SUSPENSE_SYMBOL) {
@@ -397,7 +413,8 @@ async function streamDynamicHoles(
           try {
             let html = "";
             if (platformContext && platformContext.renderHtmlStream) {
-              const rscStream = renderRSCStream(children, clientManifest, { runtime: "edge" });
+              const resolvedChildren = await asyncRenderJSXToClientJSX(children);
+              const rscStream = renderRSCStream(resolvedChildren, clientManifest, { runtime: "edge" });
               const htmlStream = await platformContext.renderHtmlStream(rscStream, {
                 bootstrapModules: [],
               });

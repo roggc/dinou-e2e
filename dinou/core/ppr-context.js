@@ -67,9 +67,25 @@ export function isNoDynamicActive() {
   return Boolean(store && store.noDynamic);
 }
 
-export function runInCachedSlot(callback) {
+export function runInCachedSlot(callback, options = {}) {
   const prev = cachedSlotStorage.getStore();
-  return cachedSlotStorage.run({ depth: (prev?.depth || 0) + 1 }, callback);
+  const isCached = options?.cached !== false;
+  const slotId =
+    typeof options === "string"
+      ? options
+      : options?.slotId || prev?.slotId || null;
+  return cachedSlotStorage.run(
+    {
+      depth: (prev?.depth || 0) + (isCached ? 1 : 0),
+      slotId,
+      idCount: 0,
+    },
+    callback
+  );
+}
+
+export function getActiveCachedSlotStore() {
+  return cachedSlotStorage.getStore() || null;
 }
 
 export function isInsideCachedSlot() {
@@ -96,7 +112,15 @@ export function isPageRootElement(el) {
 }
 
 export function runInPageSegment(callback) {
-  return pageSegmentStorage.run({ active: true }, callback);
+  const prev = pageSegmentStorage.getStore();
+  return pageSegmentStorage.run(
+    { active: true, idCount: prev?.idCount || 0 },
+    callback
+  );
+}
+
+export function getActivePageSegmentStore() {
+  return pageSegmentStorage.getStore() || null;
 }
 
 export function isInsidePageSegment() {
@@ -104,7 +128,15 @@ export function isInsidePageSegment() {
 }
 
 export function runInLayoutSegment(callback) {
-  return layoutSegmentStorage.run({ active: true }, callback);
+  const prev = layoutSegmentStorage.getStore();
+  return layoutSegmentStorage.run(
+    { active: true, idCount: prev?.idCount || 0 },
+    callback
+  );
+}
+
+export function getActiveLayoutSegmentStore() {
+  return layoutSegmentStorage.getStore() || null;
 }
 
 export function isInsideLayoutSegment() {

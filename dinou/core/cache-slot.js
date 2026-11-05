@@ -544,7 +544,8 @@ async function DinouCacheSlot(props) {
 
   const storageKey = `slots/${slotId}/slot.json`;
   const storage = getStorageAdapter();
-  const runSlotScope = isNoCache ? (fn) => fn() : runInCachedSlot;
+  const runSlotScope = (fn) =>
+    runInCachedSlot(fn, { cached: !isNoCache, slotId });
 
   function wrapWithBoundary(content, alreadyRendered = false) {
     const Boundary = getCacheSlotBoundary();
@@ -659,8 +660,10 @@ async function DinouCacheSlot(props) {
           } catch (e) {}
         }
       }
-      const childElement = typeof children === "function" ? await children() : children;
-      const directContent = await asyncRenderJSXToClientJSX(childElement);
+      const directContent = await runSlotScope(async () => {
+        const childElement = typeof children === "function" ? await children() : children;
+        return await asyncRenderJSXToClientJSX(childElement);
+      });
       commitSlotTags(slotTagsToCommit);
       return wrapWithBoundary(directContent, true);
     }
@@ -731,10 +734,13 @@ async function DinouCacheSlot(props) {
     !getContext()?._isPprRuntimeResume;
 
   const renderPromise = (async () => {
-    const resolved = await runInCachedSlot(async () => {
-      const childElement = typeof children === "function" ? await children() : children;
-      return await asyncRenderJSXToClientJSX(childElement);
-    });
+    const resolved = await runInCachedSlot(
+      async () => {
+        const childElement = typeof children === "function" ? await children() : children;
+        return await asyncRenderJSXToClientJSX(childElement);
+      },
+      { cached: true, slotId }
+    );
     const serialized = serializeJSX(resolved);
 
     const slotMeta = {

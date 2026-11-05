@@ -1,10 +1,12 @@
 import React from "react";
+import { createRequire } from "node:module";
 import {
   isPprBuildActive,
   isInsideSuspense,
   isInsideOuterSuspenseOutsideSlot,
   rollbackPprHolesAfter,
   isInsideCachedSlot,
+  getActiveCachedSlotStore,
   runInSuspense,
   getPprHoleCounter,
   commitPprSuspenseEffects,
@@ -12,12 +14,168 @@ import {
   markDynamicAccess,
   isPageRootElement,
   runInPageSegment,
+  getActivePageSegmentStore,
+  getActiveLayoutSegmentStore,
   resetComponentNoDynamicFlag,
   consumeComponentNoDynamicFlag,
   isNoDynamicActive,
   isSlotDiscoveryActive,
 } from "./ppr-context.js";
 import { getContext } from "./request-context.js";
+
+const REACT_MEMO_CACHE_SENTINEL = Symbol.for("react.memo_cache_sentinel");
+const REACT_CONTEXT_TYPE = Symbol.for("react.context");
+const CLIENT_REFERENCE_TAG = Symbol.for("react.client.reference");
+
+let fallbackRenderSeq = 0;
+
+function unsupportedHook() {
+  throw new Error("This Hook is not supported in Server Components.");
+}
+
+function unsupportedRefresh() {
+  throw new Error("Refreshing the cache is not supported in Server Components.");
+}
+
+function unsupportedContext() {
+  throw new Error("Cannot read a Client Context from a Server Component.");
+}
+
+function sanitizeIdSegment(val) {
+  return String(val || "slot").replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+function useServerId() {
+  const slotStore = getActiveCachedSlotStore();
+  if (slotStore && slotStore.slotId) {
+    slotStore.idCount = (slotStore.idCount || 0) + 1;
+    const safeSlot = sanitizeIdSegment(slotStore.slotId);
+    return `_slot_${safeSlot}_dS_${slotStore.idCount.toString(32)}_`;
+  }
+  const layoutStore = getActiveLayoutSegmentStore();
+  if (layoutStore && layoutStore.active) {
+    layoutStore.idCount = (layoutStore.idCount || 0) + 1;
+    return `_layout_dS_${layoutStore.idCount.toString(32)}_`;
+  }
+  const pageStore = getActivePageSegmentStore();
+  if (pageStore && pageStore.active) {
+    pageStore.idCount = (pageStore.idCount || 0) + 1;
+    return `_page_dS_${pageStore.idCount.toString(32)}_`;
+  }
+  const reqCtx = getContext();
+  if (reqCtx) {
+    reqCtx._dinouUseIdCount = (reqCtx._dinouUseIdCount || 0) + 1;
+    return `_dS_${reqCtx._dinouUseIdCount.toString(32)}_`;
+  }
+  const id = ++fallbackRenderSeq;
+  return `_dS_${id.toString(32)}_`;
+}
+
+function useServerUsable(usable) {
+  if (
+    (usable !== null && typeof usable === "object") ||
+    typeof usable === "function"
+  ) {
+    if (typeof usable.then === "function") {
+      if (usable.status === "fulfilled") {
+        return usable.value;
+      }
+      if (usable.status === "rejected") {
+        throw usable.reason;
+      }
+      throw usable;
+    }
+    if (usable.$$typeof === REACT_CONTEXT_TYPE) {
+      unsupportedContext();
+    }
+    if (usable.$$typeof === CLIENT_REFERENCE_TAG) {
+      if (usable.value != null && usable.value.$$typeof === REACT_CONTEXT_TYPE) {
+        unsupportedContext();
+      }
+      throw new Error("Cannot use() an already resolved Client Reference.");
+    }
+  }
+  throw new Error("An unsupported type was passed to use(): " + String(usable));
+}
+
+const DinouServerHooksDispatcher = {
+  readContext: unsupportedContext,
+  use: useServerUsable,
+  useCallback(callback) {
+    return callback;
+  },
+  useContext: unsupportedContext,
+  useEffect: unsupportedHook,
+  useImperativeHandle: unsupportedHook,
+  useLayoutEffect: unsupportedHook,
+  useInsertionEffect: unsupportedHook,
+  useMemo(nextCreate) {
+    return nextCreate();
+  },
+  useReducer: unsupportedHook,
+  useRef: unsupportedHook,
+  useState: unsupportedHook,
+  useDebugValue() {},
+  useDeferredValue: unsupportedHook,
+  useTransition: unsupportedHook,
+  useSyncExternalStore: unsupportedHook,
+  useId: useServerId,
+  useHostTransitionStatus: unsupportedHook,
+  useFormState: unsupportedHook,
+  useActionState: unsupportedHook,
+  useOptimistic: unsupportedHook,
+  useMemoCache(size) {
+    const data = new Array(size);
+    for (let i = 0; i < size; i++) {
+      data[i] = REACT_MEMO_CACHE_SENTINEL;
+    }
+    return data;
+  },
+  useCacheRefresh() {
+    return unsupportedRefresh;
+  },
+  useEffectEvent: unsupportedHook,
+};
+
+let _cachedReactInternalsList = null;
+function getReactInternalsList() {
+  if (_cachedReactInternalsList) return _cachedReactInternalsList;
+  const set = new Set();
+  const addFromModule = (mod) => {
+    if (!mod || typeof mod !== "object") return;
+    const s = mod.__SERVER_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
+    const c = mod.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
+    if (s && typeof s === "object" && "H" in s) set.add(s);
+    if (c && typeof c === "object" && "H" in c) set.add(c);
+  };
+  addFromModule(React);
+  try {
+    const req = createRequire(import.meta.url);
+    try {
+      addFromModule(req("react/index.js"));
+    } catch (_) {}
+    try {
+      addFromModule(req("react/react.react-server.js"));
+    } catch (_) {}
+  } catch (_) {}
+  _cachedReactInternalsList = Array.from(set);
+  return _cachedReactInternalsList;
+}
+
+function invokeWithServerHooksDispatcher(callFn) {
+  const internalsList = getReactInternalsList();
+  const prevDispatchers = internalsList.map((internals) => internals.H);
+  for (const internals of internalsList) {
+    internals.H = DinouServerHooksDispatcher;
+  }
+  try {
+    return callFn();
+  } finally {
+    for (let i = 0; i < internalsList.length; i++) {
+      internalsList[i].H = prevDispatchers[i];
+    }
+  }
+}
 
 function isThenable(val) {
   return (
@@ -34,7 +192,7 @@ function isCacheSlotComponent(fn) {
 
 async function invokeServerComponentInPpr(fn, callFn) {
   resetComponentNoDynamicFlag();
-  const rawResult = callFn();
+  const rawResult = invokeWithServerHooksDispatcher(callFn);
   const optedOut = consumeComponentNoDynamicFlag();
   if (
     isThenable(rawResult) &&
@@ -309,7 +467,9 @@ async function asyncRenderJSXToClientJSXInner(jsx, key = null) {
 
 export {
   asyncRenderJSXToClientJSX,
+  invokeWithServerHooksDispatcher,
 };
 export default {
   asyncRenderJSXToClientJSX,
+  invokeWithServerHooksDispatcher,
 };
