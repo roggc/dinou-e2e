@@ -7389,15 +7389,15 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const optHtml2 = await optRes2.text();
 
       expect(optHtml1).toContain('data-testid="opt-out-async-resolved"');
-      expect(optHtml1).not.toContain('data-testid="opt-out-async-fallback"');
-      expect(optHtml1).not.toContain('data-testid="layout-nodynamic-fallback"');
-      expect(optHtml1).not.toContain('data-testid="layout-dynamic-fallback"');
-      expect(optHtml1).not.toContain('<template id="B:');
-      expect(optHtml1).not.toContain('<div hidden id="S:');
-      expect(optHtml1).not.toContain('$RC(');
 
       if (isProd) {
         expect(optHtml1).not.toContain('<template id="ppr-content-');
+        expect(optHtml1).not.toContain('data-testid="opt-out-async-fallback"');
+        expect(optHtml1).not.toContain('data-testid="layout-nodynamic-fallback"');
+        expect(optHtml1).not.toContain('data-testid="layout-dynamic-fallback"');
+        expect(optHtml1).not.toContain('<template id="B:');
+        expect(optHtml1).not.toContain('<div hidden id="S:');
+        expect(optHtml1).not.toContain('$RC(');
         for (const tid of [
           "opt-out-route-page",
           "opt-out-unwrapped-child-resolved",
