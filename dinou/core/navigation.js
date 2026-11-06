@@ -63,6 +63,7 @@ export function useRouter() {
       back: () => { },
       forward: () => { },
       refresh: (options) => { },
+      refreshSlot: (slotId, options) => Promise.resolve(),
     };
   }
 
