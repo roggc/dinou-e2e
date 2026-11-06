@@ -187,7 +187,9 @@ export function getActiveLayoutSegmentStore() {
 }
 
 export function isInsideLayoutSegment() {
-  return Boolean(layoutSegmentStorage.getStore()?.active);
+  return Boolean(
+    layoutSegmentStorage.getStore()?.active && !isInsidePageSegment()
+  );
 }
 
 /**

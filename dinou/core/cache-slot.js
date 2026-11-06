@@ -304,10 +304,10 @@ function recordSlotTagsOnContext(
       for (const t of tags) {
         if (!t) continue;
         reqContext._slotTags.add(t);
-        if (inLayout) {
-          reqContext._layoutSlotTags.add(t);
-        } else if (inPage) {
+        if (inPage) {
           reqContext._pageSlotTags.add(t);
+        } else if (inLayout) {
+          reqContext._layoutSlotTags.add(t);
         } else if (!reqContext._layoutSlotTags.has(t)) {
           reqContext._pageSlotTags.add(t);
         }
