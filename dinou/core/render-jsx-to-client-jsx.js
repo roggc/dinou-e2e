@@ -689,6 +689,8 @@ async function asyncRenderJSXToClientJSXInner(jsx, key = null) {
             key ?? jsx.key,
             Component
           );
+        } else if (Component.$$dinouDeferredSuspenseStream) {
+          return jsx;
         } else {
           // Server component: execute and process
           const returnedJsx = await invokeServerComponentInPpr(Component, () =>
