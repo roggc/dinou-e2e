@@ -1,5 +1,6 @@
 import { Suspense, useId } from "react";
 import { DinouCacheSlot, getContext } from "dinou/server";
+import { NewCacheSlotControls } from "./controls";
 
 const TRACKER_KEY = Symbol.for("dinou.test.cacheSlot.tracker");
 
@@ -19,8 +20,11 @@ function getTracker() {
 
 function recordExec(name: "suspenseSlot" | "unwrappedSlot" | "noCacheSlot") {
   const tracker = getTracker();
-  tracker.counts[name] = (tracker.counts[name] || 0) + 1;
-  return tracker.counts[name];
+  const reqPath = String(getContext()?.req?.path || "");
+  if (!reqPath.includes("____rsc_page")) {
+    tracker.counts[name] = (tracker.counts[name] || 0) + 1;
+  }
+  return tracker.counts[name] || 1;
 }
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -77,6 +81,7 @@ export default function TestCacheSlotPage() {
       <header data-testid="dynamic-page-header" data-user={user}>
         <h1>Dynamic SSR Page (User: {user})</h1>
         <SyncIdProbe testId="page-header-sync-id" label="PageHeaderSync" />
+        <NewCacheSlotControls />
       </header>
 
       {/* 1. <Suspense> wrapping <DinouCacheSlot revalidate={2}> */}

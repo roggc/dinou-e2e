@@ -7729,6 +7729,283 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
   });
 
+  test.describe("Smart Cache-Aware <Suspense> for <DinouCacheSlot> in Dynamic SSR Routes (/t-new-cache-slot)", () => {
+    test.describe.configure({ mode: "serial" });
+
+    const EXPECTED_NEW_CACHE_SLOT_IDS: Record<string, string> = {
+      "page-header-sync-id": "_page_dS_1_",
+      "page-footer-sync-id": "_page_dS_2_",
+      "slot-suspense-sync-id": "_slot_test-dyn-suspense-slot_dS_1_",
+      "slot-unwrapped-sync-id": "_slot_test-dyn-unwrapped-slot_dS_1_",
+      "slot-nocache-sync-id": "_slot_test-dyn-nocache-slot_dS_1_",
+    };
+
+    function extractAttr(html: string, testId: string, attr: string): string | null {
+      const re1 = new RegExp(`data-testid="${testId}"[^>]*${attr}="([^"]+)"`);
+      const m1 = html.match(re1);
+      if (m1) return m1[1];
+      const re2 = new RegExp(`${attr}="([^"]+)"[^>]*data-testid="${testId}"`);
+      const m2 = html.match(re2);
+      return m2 ? m2[1] : null;
+    }
+
+    function extractExecCount(html: string, testId: string): number {
+      const val = extractAttr(html, testId, "data-exec-count");
+      return val ? Number(val) : 0;
+    }
+
+    test("1. Raw SSR Wire Lifecycle: Cold Cache Miss Streaming Fallback, Warm Cache Hit Zero Fallback, Background SWR on Expired TTL & revalidateTag Purge (/t-new-cache-slot)", async ({
+      request,
+    }) => {
+      // Reset tracker counts and purge slot caches so every browser run starts from a clean Cold Cache Miss
+      const resetRes = await safeApiGet(request, "/t-new-cache-slot/ctl?op=reset", {
+        headers: { connection: "close" },
+      });
+      expect(resetRes.status()).toBe(200);
+
+      // =========================================================================
+      // STAGE 1: Request #1 (Cold Cache Miss) -> Streams <Suspense> fallback + resolved slot
+      // =========================================================================
+      const res1 = await safeApiGet(request, "/t-new-cache-slot", {
+        headers: { Cookie: "user=alice", connection: "close" },
+      });
+      expect(res1.status()).toBe(200);
+      const html1 = await res1.text();
+
+      expect(extractAttr(html1, "dynamic-page-header", "data-user")).toBe("alice");
+
+      // On Cold Cache Miss, <Suspense> wrapping <DinouCacheSlot revalidate={2}> flushes fallback first AND streams resolved content
+      expect(html1).toContain('data-testid="slot-suspense-fallback"');
+      expect(html1).toContain('data-testid="slot-suspense-resolved"');
+      expect(extractExecCount(html1, "slot-suspense-resolved")).toBe(1);
+
+      // Unwrapped <DinouCacheSlot revalidate={2}> resolves directly in initial HTML
+      expect(html1).toContain('data-testid="slot-unwrapped-resolved"');
+      expect(extractExecCount(html1, "slot-unwrapped-resolved")).toBe(1);
+
+      // <Suspense> wrapping <DinouCacheSlot revalidate={0}> streams both fallback and resolved content
+      expect(html1).toContain('data-testid="slot-nocache-fallback"');
+      expect(html1).toContain('data-testid="slot-nocache-resolved"');
+      expect(extractExecCount(html1, "slot-nocache-resolved")).toBe(1);
+
+      for (const [testId, expectedId] of Object.entries(EXPECTED_NEW_CACHE_SLOT_IDS)) {
+        expect(extractAttr(html1, testId, "data-generated-id")).toBe(expectedId);
+      }
+
+      // =========================================================================
+      // STAGE 2: Request #2 (Warm Cache Hit) -> Zero fallback for cached slot!
+      // =========================================================================
+      const res2 = await safeApiGet(request, "/t-new-cache-slot", {
+        headers: { Cookie: "user=bob", connection: "close" },
+      });
+      expect(res2.status()).toBe(200);
+      const html2 = await res2.text();
+
+      // Dynamic page header updates per request while cached slots do NOT re-execute
+      expect(extractAttr(html2, "dynamic-page-header", "data-user")).toBe("bob");
+      expect(html2).toContain('data-testid="slot-suspense-resolved"');
+      expect(extractExecCount(html2, "slot-suspense-resolved")).toBe(1);
+      expect(extractExecCount(html2, "slot-unwrapped-resolved")).toBe(1);
+
+      // CRITICAL: Warm Cache Hit inside <Suspense> must NEVER emit the <Suspense> fallback
+      expect(html2).not.toContain('data-testid="slot-suspense-fallback"');
+
+      // revalidate={0} slot inside <Suspense> continues to stream its fallback and re-execute on every request
+      expect(html2).toContain('data-testid="slot-nocache-fallback"');
+      expect(html2).toContain('data-testid="slot-nocache-resolved"');
+      expect(extractExecCount(html2, "slot-nocache-resolved")).toBe(2);
+
+      // 100% useId() parity between streamed Cold Cache Miss (#1) and inlined Warm Cache Hit (#2)
+      for (const [testId, expectedId] of Object.entries(EXPECTED_NEW_CACHE_SLOT_IDS)) {
+        expect(extractAttr(html2, testId, "data-generated-id")).toBe(expectedId);
+      }
+
+      // =========================================================================
+      // STAGE 3: Segmented RSC (/____rsc_page____) & Standalone Slot (/____rsc_slot____) Parity
+      // =========================================================================
+      const pageRscRes = await safeApiGet(request, "/____rsc_page____/t-new-cache-slot", {
+        headers: { Cookie: "user=bob", connection: "close" },
+      });
+      expect(pageRscRes.status()).toBe(200);
+      const pageRscText = await pageRscRes.text();
+      for (const expectedId of Object.values(EXPECTED_NEW_CACHE_SLOT_IDS)) {
+        expect(pageRscText).toContain(`"${expectedId}"`);
+      }
+
+      const slotRscRes = await safeApiGet(request, "/____rsc_slot____/test-dyn-suspense-slot", {
+        headers: {
+          "x-dinou-current-path": "/t-new-cache-slot",
+          connection: "close",
+        },
+      });
+      expect(slotRscRes.status()).toBe(200);
+      const slotRscText = await slotRscRes.text();
+      expect(slotRscText).toContain('"_slot_test-dyn-suspense-slot_dS_1_"');
+
+      // =========================================================================
+      // STAGE 4: Expired TTL (after 2.2s) -> Non-Blocking Background SWR with Zero Fallback
+      // =========================================================================
+      await new Promise((r) => setTimeout(r, 2200));
+
+      const res3 = await safeApiGet(request, "/t-new-cache-slot", {
+        headers: { Cookie: "user=charlie", connection: "close" },
+      });
+      expect(res3.status()).toBe(200);
+      const html3 = await res3.text();
+
+      expect(extractAttr(html3, "dynamic-page-header", "data-user")).toBe("charlie");
+      // Immediately serves stale cached slot (exec #1) with ZERO fallback while triggering background SWR
+      expect(html3).toContain('data-testid="slot-suspense-resolved"');
+      expect(html3).not.toContain('data-testid="slot-suspense-fallback"');
+      expect(extractExecCount(html3, "slot-suspense-resolved")).toBe(1);
+
+      // Wait for background SWR to complete and verify Request #4 serves fresh exec #2 with ZERO fallback
+      await expect
+        .poll(
+          async () => {
+            const res4 = await safeApiGet(request, "/t-new-cache-slot", {
+              headers: { Cookie: "user=dave", connection: "close" },
+            });
+            const html4 = await res4.text();
+            expect(html4).not.toContain('data-testid="slot-suspense-fallback"');
+            return extractExecCount(html4, "slot-suspense-resolved");
+          },
+          { timeout: 10000, intervals: [150, 250, 500] }
+        )
+        .toBe(2);
+
+      // =========================================================================
+      // STAGE 5: revalidateTag("test-dyn-suspense-tag") Purge -> Cold Cache Miss Fallback Restored
+      // =========================================================================
+      const purgeRes = await safeApiGet(request, "/t-new-cache-slot/ctl?op=revalidate-tag", {
+        headers: { connection: "close" },
+      });
+      expect(purgeRes.status()).toBe(200);
+
+      // Request #5 right after revalidateTag is a Cold Cache Miss: MUST stream fallback first + exec #3
+      const res5 = await safeApiGet(request, "/t-new-cache-slot", {
+        headers: { Cookie: "user=eve", connection: "close" },
+      });
+      expect(res5.status()).toBe(200);
+      const html5 = await res5.text();
+      expect(extractAttr(html5, "dynamic-page-header", "data-user")).toBe("eve");
+      expect(html5).toContain('data-testid="slot-suspense-fallback"');
+      expect(html5).toContain('data-testid="slot-suspense-resolved"');
+      expect(extractExecCount(html5, "slot-suspense-resolved")).toBe(3);
+
+      // Request #6 immediately after is a Warm Cache Hit again: serves exec #3 with ZERO fallback
+      const res6 = await safeApiGet(request, "/t-new-cache-slot", {
+        headers: { Cookie: "user=frank", connection: "close" },
+      });
+      expect(res6.status()).toBe(200);
+      const html6 = await res6.text();
+      expect(extractAttr(html6, "dynamic-page-header", "data-user")).toBe("frank");
+      expect(html6).not.toContain('data-testid="slot-suspense-fallback"');
+      expect(extractExecCount(html6, "slot-suspense-resolved")).toBe(3);
+    });
+
+    test("2. Browser Hydration, Interactive revalidateTag Server Action vs. Live refreshSlot(id, { fresh: true }) Behavior (/t-new-cache-slot)", async ({
+      page,
+      context,
+      request,
+    }) => {
+      const hydrationErrors: string[] = [];
+      page.on("console", (msg) => {
+        if (msg.type() === "error" || msg.type() === "warning") {
+          const text = msg.text();
+          if (/hydration|did not match|server-rendered HTML|expected server HTML/i.test(text)) {
+            hydrationErrors.push(text);
+          }
+        }
+      });
+      page.on("pageerror", (err) => {
+        hydrationErrors.push(err.message);
+      });
+
+      // Reset so initial browser navigation hydrates from a genuine Cold Cache Miss stream
+      await safeApiGet(request, "/t-new-cache-slot/ctl?op=reset", {
+        headers: { connection: "close" },
+      });
+
+      await context.addCookies([
+        { name: "user", value: "browser-alice", path: "/", domain: "localhost" },
+      ]);
+
+      await page.goto("/t-new-cache-slot");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+
+      await expect(page.getByTestId("dynamic-page-header")).toHaveAttribute(
+        "data-user",
+        "browser-alice"
+      );
+      await expect(page.getByTestId("slot-suspense-resolved")).toHaveAttribute(
+        "data-exec-count",
+        "1"
+      );
+      await expect(page.getByTestId("slot-unwrapped-resolved")).toHaveAttribute(
+        "data-exec-count",
+        "1"
+      );
+      await expect(page.getByTestId("slot-nocache-resolved")).toHaveAttribute(
+        "data-exec-count",
+        "1"
+      );
+      await expect(page.getByTestId("slot-suspense-fallback")).toHaveCount(0);
+
+      for (const [testId, expectedId] of Object.entries(EXPECTED_NEW_CACHE_SLOT_IDS)) {
+        await expect(page.getByTestId(testId)).toHaveAttribute("data-generated-id", expectedId);
+      }
+
+      // Mutate client state to prove live refreshSlot preserves sibling client state
+      await page.getByTestId("btn-inc-client-state").click();
+      await page.getByTestId("btn-inc-client-state").click();
+      await expect(page.getByTestId("client-clicks-count")).toHaveText("2");
+
+      // 2A. Live refreshSlot("test-dyn-suspense-slot", { fresh: true }) updates in-place WITHOUT fallback
+      // and pre-populates storage cache so the next SSR request is a Warm Cache Hit (no fallback!)
+      await page.getByTestId("btn-refresh-suspense-slot-fresh").click();
+      await expect(page.getByTestId("new-cache-slot-controls")).toHaveAttribute(
+        "data-status",
+        "slot-refreshed",
+        { timeout: 15000 }
+      );
+      await expect(page.getByTestId("slot-suspense-resolved")).toHaveAttribute(
+        "data-exec-count",
+        "2"
+      );
+      await expect(page.getByTestId("slot-suspense-fallback")).toHaveCount(0);
+      await expect(page.getByTestId("client-clicks-count")).toHaveText("2");
+
+      const ssrAfterRefreshSlot = await (
+        await safeApiGet(request, "/t-new-cache-slot", {
+          headers: { Cookie: "user=after-refresh-slot", connection: "close" },
+        })
+      ).text();
+      expect(ssrAfterRefreshSlot).not.toContain('data-testid="slot-suspense-fallback"');
+      expect(extractExecCount(ssrAfterRefreshSlot, "slot-suspense-resolved")).toBe(2);
+
+      // 2B. Interactive "use server" revalidateTag("test-dyn-suspense-tag") purges slot cache,
+      // so the next SSR request IS a Cold Cache Miss (emits fallback + exec #3)
+      await page.getByTestId("btn-revalidate-suspense-tag").click();
+      await expect(page.getByTestId("new-cache-slot-controls")).toHaveAttribute(
+        "data-status",
+        "tag-revalidated",
+        { timeout: 15000 }
+      );
+
+      const ssrAfterRevalidateTag = await (
+        await safeApiGet(request, "/t-new-cache-slot", {
+          headers: { Cookie: "user=after-revalidate-tag", connection: "close" },
+        })
+      ).text();
+      expect(ssrAfterRevalidateTag).toContain('data-testid="slot-suspense-fallback"');
+      expect(ssrAfterRevalidateTag).toContain('data-testid="slot-suspense-resolved"');
+      expect(extractExecCount(ssrAfterRevalidateTag, "slot-suspense-resolved")).toBe(3);
+
+      expect(hydrationErrors).toEqual([]);
+    });
+  });
+
   test.describe("HMR & Fast Refresh automated verification", () => {
     // Run tests in serial mode so they do not collide on the same files on disk
     test.describe.configure({ mode: "serial" });
