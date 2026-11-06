@@ -64,11 +64,16 @@ With **Smart Cache-Aware `<Suspense>` Streaming**, [`DinouCacheSlot`](file:///c:
 - In `createRequestContext(simReq, resBridge, platformContext, dynamicState)` ([`dinou/core/handler.js`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-docs/dinou/core/handler.js#L886-L891)), attached `_dynamicState: dynamicState` to the request context object and excluded `"_dynamicState"` from being overwritten in `copyCustomContextProperties`.
 - This allows `DinouCacheSlot` to know whether the active route is executing as a dynamic route (`revalidate = 0` or after accessing `req.cookies`, `req.headers`, or `req.query`).
 
-### 3.3. Preserving Deferred Slot Stream Elements in `asyncRenderJSXToClientJSX` ([`dinou/core/render-jsx-to-client-jsx.js`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-docs/dinou/core/render-jsx-to-client-jsx.js#L674-L694))
-- In `asyncRenderJSXToClientJSXInner`, when `typeof jsx.type === "function"`:
-  1. First checks `if (isClientComponent(Component))` (critical so React Client Reference proxies are never dotted into with custom property lookups on the server).
-  2. Next checks `else if (Component.$$dinouDeferredSuspenseStream) { return jsx; }`.
-- When `DinouCacheSlot` returns a `<DinouDeferredSlotStream promise={...} />` element on a cold cache miss, `asyncRenderJSXToClientJSX` leaves that element untouched so `getJSX` finishes immediately without awaiting the slow slot promise.
+### 3.3. Preserving Deferred Slot Stream Elements & `dev`/`prod` Parity in `asyncRenderJSXToClientJSX` ([`dinou/core/render-jsx-to-client-jsx.js`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-docs/dinou/core/render-jsx-to-client-jsx.js#L366-L376))
+- **100% `dev` / `prod` Parity (`containsCacheSlot`)**:
+  - Added `containsCacheSlot(node)` and included `containsCacheSlot(jsx.props?.children)` in `shouldEagerlyResolveSuspense` ([lines 635–641](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-docs/dinou/core/render-jsx-to-client-jsx.js#L635-L641)).
+  - Without `containsCacheSlot`, in development (`NODE_ENV !== "production"`) a `<Suspense>` boundary wrapping `<DinouCacheSlot>` would wrap its children in the async `<DinouSuspenseHoleBoundary>` component evaluated lazily during `renderRSCStream`, causing React SSR to see a pending Promise and emit the `<Suspense>` fallback even on a Warm Cache Hit.
+  - With `containsCacheSlot(jsx.props?.children)`, `<Suspense>` boundaries wrapping `<DinouCacheSlot>` evaluate `DinouCacheSlot` during `getJSX` inside `runInRuntimeDynamicHole(..., holeId)` in **both** `dev` and `prod`—inlining Warm Cache Hits with zero fallback and returning `<DinouDeferredSlotStream>` on Cold Cache Misses across both modes.
+- **Preserving `<DinouDeferredSlotStream>` ([lines 687–706](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-docs/dinou/core/render-jsx-to-client-jsx.js#L687-L706))**:
+  - In `asyncRenderJSXToClientJSXInner`, when `typeof jsx.type === "function"`:
+    1. First checks `if (isClientComponent(Component))` (critical so React Client Reference proxies are never dotted into with custom property lookups on the server).
+    2. Next checks `else if (Component.$$dinouDeferredSuspenseStream) { return jsx; }`.
+  - When `DinouCacheSlot` returns a `<DinouDeferredSlotStream promise={...} />` element on a cold cache miss, `asyncRenderJSXToClientJSX` leaves that element untouched so `getJSX` finishes immediately without awaiting the slow slot promise.
 
 ### 3.4. Smart Cache-Aware Branching in `DinouCacheSlot` ([`dinou/core/cache-slot.js`](file:///c:/Users/roggc/dev/my-dinou-apps/dinou-docs/dinou/core/cache-slot.js#L507-L855))
 - Defined `DinouDeferredSlotStream`:
