@@ -368,7 +368,7 @@ function containsCacheSlot(node) {
   if (Array.isArray(node)) {
     return node.some(containsCacheSlot);
   }
-  if (node.$$typeof === Symbol.for("react.transitional.element") || node.$$typeof === Symbol.for("react.element")) {
+  if (node.$$typeof === Symbol.for("react.transitional.element")) {
     if (isCacheSlotComponent(node.type)) return true;
     return containsCacheSlot(node.props?.children);
   }
