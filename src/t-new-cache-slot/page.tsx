@@ -21,7 +21,11 @@ function getTracker() {
 function recordExec(name: "suspenseSlot" | "unwrappedSlot" | "noCacheSlot") {
   const tracker = getTracker();
   const reqPath = String(getContext()?.req?.path || "");
-  if (!reqPath.includes("____rsc_page")) {
+  const isOwnRouteOrSlot =
+    (reqPath.startsWith("/t-new-cache-slot") &&
+      !reqPath.includes("____rsc_page")) ||
+    reqPath.startsWith("/____rsc_slot____/test-dyn-");
+  if (isOwnRouteOrSlot) {
     tracker.counts[name] = (tracker.counts[name] || 0) + 1;
   }
   return tracker.counts[name] || 1;
