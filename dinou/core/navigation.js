@@ -102,13 +102,17 @@ export function useRouter() {
 export function refreshSlot(slotId, options) {
   if (typeof window !== "undefined") {
     if (typeof window.__DINOU_REFRESH_SLOT__ === "function") {
-      window.__DINOU_REFRESH_SLOT__(slotId, options);
-    } else {
-      window.dispatchEvent(
-        new CustomEvent("dinou:refresh-slot", { detail: { id: slotId, options } })
-      );
+      return window.__DINOU_REFRESH_SLOT__(slotId, options);
     }
+    const promises = [];
+    window.dispatchEvent(
+      new CustomEvent("dinou:refresh-slot", {
+        detail: { id: slotId, options, promises },
+      })
+    );
+    return Promise.all(promises).then(() => undefined);
   }
+  return Promise.resolve();
 }
 
 const DINOU_CONTEXT_KEY = Symbol.for("dinou.request.context.storage");

@@ -7961,14 +7961,24 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.getByTestId("btn-inc-client-state").click();
       await expect(page.getByTestId("client-clicks-count")).toHaveText("2");
 
-      // 2A. Live refreshSlot("test-dyn-suspense-slot", { fresh: true }) updates in-place WITHOUT fallback
-      // and pre-populates storage cache so the next SSR request is a Warm Cache Hit (no fallback!)
+      // 2A. Live refreshSlot("test-dyn-suspense-slot", { fresh: true }) returns a Promise<void>
+      // that can be awaited inside useTransition() to show a non-destructive loading indicator,
+      // updates in-place WITHOUT fallback, and pre-populates storage cache for the next SSR request!
       await page.getByTestId("btn-refresh-suspense-slot-fresh").click();
       await expect(page.getByTestId("new-cache-slot-controls")).toHaveAttribute(
         "data-status",
         "slot-refreshed",
         { timeout: 15000 }
       );
+      await expect(page.getByTestId("new-cache-slot-controls")).toHaveAttribute(
+        "data-slot-pending",
+        "false"
+      );
+      await expect(page.getByTestId("new-cache-slot-controls")).toHaveAttribute(
+        "data-refresh-diagnostics",
+        "thenable=true;before=1;fallback=false"
+      );
+      await expect(page.getByTestId("slot-refresh-pending-indicator")).toHaveCount(0);
       await expect(page.getByTestId("slot-suspense-resolved")).toHaveAttribute(
         "data-exec-count",
         "2"

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { refreshSlot } from "dinou";
 import {
   revalidateSuspenseSlotTagAction,
@@ -10,11 +10,15 @@ import {
 export function NewCacheSlotControls() {
   const [status, setStatus] = useState("idle");
   const [clientClicks, setClientClicks] = useState(0);
+  const [isSlotPending, startSlotTransition] = useTransition();
+  const [refreshDiagnostics, setRefreshDiagnostics] = useState("");
 
   return (
     <div
       data-testid="new-cache-slot-controls"
       data-status={status}
+      data-slot-pending={isSlotPending ? "true" : "false"}
+      data-refresh-diagnostics={refreshDiagnostics}
       className="flex gap-2 items-center"
     >
       <button
@@ -38,14 +42,35 @@ export function NewCacheSlotControls() {
       <button
         type="button"
         data-testid="btn-refresh-suspense-slot-fresh"
-        onClick={async () => {
+        onClick={() => {
           setStatus("refreshing-slot");
-          await refreshSlot("test-dyn-suspense-slot", { fresh: true });
-          setStatus("slot-refreshed");
+          startSlotTransition(async () => {
+            const p = refreshSlot("test-dyn-suspense-slot", { fresh: true });
+            const isThenable = Boolean(p && typeof p.then === "function");
+            const execBeforeAwait =
+              document
+                .querySelector('[data-testid="slot-suspense-resolved"]')
+                ?.getAttribute("data-exec-count") || "missing";
+            const fallbackDuringRefresh = Boolean(
+              document.querySelector('[data-testid="slot-suspense-fallback"]')
+            );
+            await p;
+            setRefreshDiagnostics(
+              `thenable=${isThenable};before=${execBeforeAwait};fallback=${fallbackDuringRefresh}`
+            );
+            setStatus("slot-refreshed");
+          });
         }}
       >
-        Refresh Suspense Slot (fresh: true)
+        {isSlotPending
+          ? "Refreshing Slot..."
+          : "Refresh Suspense Slot (fresh: true)"}
       </button>
+      {isSlotPending && (
+        <span data-testid="slot-refresh-pending-indicator">
+          Updating slot in background...
+        </span>
+      )}
       <button
         type="button"
         data-testid="btn-reset-suite"
@@ -60,4 +85,3 @@ export function NewCacheSlotControls() {
     </div>
   );
 }
-
