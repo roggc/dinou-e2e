@@ -40,10 +40,15 @@ async function pollUntilReady(request: APIRequestContext, maxRetries = 800) {
 }
 
 // Helper para peticiones de concurrencia que absorbe micro-glitches transitorios de sockets del SO (ECONNRESET)
-async function safeApiGet(apiCtx: APIRequestContext, url: string, retries = 2) {
+async function safeApiGet(
+  apiCtx: APIRequestContext,
+  url: string,
+  options?: Parameters<APIRequestContext["get"]>[1],
+  retries = 2
+) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      return await apiCtx.get(url);
+      return await apiCtx.get(url, options);
     } catch (err: any) {
       const isSocketGlitch =
         err?.message?.includes("ECONNRESET") ||
@@ -6324,7 +6329,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       const stampedeResponses = await Promise.all(
         Array.from({ length: 5 }, (_, i) =>
-          request.get(`/t-rigorous-cache-slot?stampede_probe=${i}`)
+          safeApiGet(request, `/t-rigorous-cache-slot?stampede_probe=${i}`, {
+            headers: { connection: "close" },
+          })
         )
       );
       const stampedeHtmls = await Promise.all(stampedeResponses.map((r) => r.text()));
@@ -6747,14 +6754,32 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     test("4. Direct /____rsc_slot____ Endpoint & Concurrency Stampede Deduplication for Slots Inside PPR Holes (/t-rigorous-sinergy)", async ({
       request,
     }) => {
-      const concurrentFreshPromises = Array.from({ length: 6 }, () =>
-        request.get("/____rsc_slot____/ppr-syn-hole-slot-a?fresh=1", {
-          headers: {
-            "x-dinou-current-path": "/t-rigorous-sinergy",
-          },
-        })
-      );
-      const responses = await Promise.all(concurrentFreshPromises);
+      let responses: Awaited<ReturnType<typeof request.get>>[] = [];
+      for (let attempt = 0; attempt <= 2; attempt++) {
+        try {
+          responses = await Promise.all(
+            Array.from({ length: 6 }, () =>
+              request.get("/____rsc_slot____/ppr-syn-hole-slot-a?fresh=1", {
+                headers: {
+                  "x-dinou-current-path": "/t-rigorous-sinergy",
+                  connection: "close",
+                },
+              })
+            )
+          );
+          break;
+        } catch (err: any) {
+          const isSocketGlitch =
+            err?.message?.includes("ECONNRESET") ||
+            err?.message?.includes("socket hang up") ||
+            err?.code === "ECONNRESET";
+          if (isSocketGlitch && attempt < 2) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            continue;
+          }
+          throw err;
+        }
+      }
       const bodies: string[] = [];
       for (const r of responses) {
         expect(r.status()).toBe(200);
@@ -6767,19 +6792,29 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         expect(bodies[i].match(/hole1-slotA-[a-z0-9-]+/i)?.[0]).toBe(token0);
       }
 
-      const innerRes = await request.get("/____rsc_slot____/ppr-syn-nested-inner?fresh=1", {
-        headers: {
-          "x-dinou-current-path": "/t-rigorous-sinergy",
-        },
-      });
+      const innerRes = await safeApiGet(
+        request,
+        "/____rsc_slot____/ppr-syn-nested-inner?fresh=1",
+        {
+          headers: {
+            "x-dinou-current-path": "/t-rigorous-sinergy",
+            connection: "close",
+          },
+        }
+      );
       expect(innerRes.status()).toBe(200);
       expect(await innerRes.text()).toContain("syn-nested-inner-token");
 
-      const tagRes = await request.get("/____rsc_slot____/tag-syn-client?fresh=1", {
-        headers: {
-          "x-dinou-current-path": "/t-rigorous-sinergy",
-        },
-      });
+      const tagRes = await safeApiGet(
+        request,
+        "/____rsc_slot____/tag-syn-client?fresh=1",
+        {
+          headers: {
+            "x-dinou-current-path": "/t-rigorous-sinergy",
+            connection: "close",
+          },
+        }
+      );
       expect(tagRes.status()).toBe(200);
       const tagBody = await tagRes.text();
       expect(tagBody).toContain("syn-client-slot-box");
