@@ -584,8 +584,10 @@ async function DinouCacheSlot(props) {
       discoveringSlots.add(slotId);
       try {
         await runInSlotDiscovery(async () => {
-          const childElement = typeof children === "function" ? await children() : children;
-          await asyncRenderJSXToClientJSX(childElement);
+          await runSlotScope(async () => {
+            const childElement = typeof children === "function" ? await children() : children;
+            await asyncRenderJSXToClientJSX(childElement);
+          });
         });
       } catch (e) {
       } finally {
@@ -597,11 +599,15 @@ async function DinouCacheSlot(props) {
   });
 
   // When running inside a nested slot discovery pass, recursively discover any child slots
-  if (isSlotDiscoveryActive() && !discoveringSlots.has(slotId)) {
-    const ownEntry = slotRegistry.get(slotId);
-    if (ownEntry && typeof ownEntry.discover === "function") {
-      await ownEntry.discover();
+  // and short-circuit so discovery passes never overwrite storage cache with discovery renders.
+  if (isSlotDiscoveryActive()) {
+    if (!discoveringSlots.has(slotId)) {
+      const ownEntry = slotRegistry.get(slotId);
+      if (ownEntry && typeof ownEntry.discover === "function") {
+        await ownEntry.discover();
+      }
     }
+    return null;
   }
 
   if (isNoCache && !isSlotDiscoveryActive()) {

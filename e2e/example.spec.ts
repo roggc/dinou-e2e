@@ -7597,6 +7597,19 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         }
         expect(slotPayload).not.toContain("_discovery_dS_");
       }
+
+      // Verify that a slot discovery pass (triggered by requesting an unknown slot) never poisons
+      // nested slot caches (such as useid-inner-slot) with "_discovery_dS_"
+      await request.get("/____rsc_slot____/non-existent-discovery-probe-slot", {
+        headers: {
+          "x-dinou-current-path": "/t-use-id",
+        },
+      });
+      const postDiscoveryHtml = await (await request.get("/t-use-id")).text();
+      expect(extractGeneratedId(postDiscoveryHtml, "nested-inner-slot-sync")).toBe(
+        "_slot_useid-inner-slot_dS_1_"
+      );
+      expect(postDiscoveryHtml).not.toContain("_discovery_dS_");
     });
 
     test("3. Browser Hydration, Zero Hydration Warnings, 24/24 Unique IDs & Interactive Slot + Router Refresh Stability (/t-use-id)", async ({

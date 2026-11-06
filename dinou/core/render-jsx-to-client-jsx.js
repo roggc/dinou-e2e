@@ -52,14 +52,14 @@ function sanitizeIdSegment(val) {
 }
 
 function useServerId() {
-  if (isSlotDiscoveryActive()) {
-    return "_discovery_dS_";
-  }
   const slotStore = getActiveCachedSlotStore();
   if (slotStore && slotStore.slotId) {
     slotStore.idCount = (slotStore.idCount || 0) + 1;
     const safeSlot = sanitizeIdSegment(slotStore.slotId);
     return `_slot_${safeSlot}_dS_${slotStore.idCount.toString(32)}_`;
+  }
+  if (isSlotDiscoveryActive()) {
+    return "_discovery_dS_";
   }
   const holeStore = getActiveRuntimeDynamicHoleStore();
   if (holeStore && holeStore.holeId) {
