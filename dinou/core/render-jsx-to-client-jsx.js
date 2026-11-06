@@ -498,13 +498,6 @@ function isClientComponent(type) {
   );
 }
 
-async function DinouSuspenseHoleBoundary({ holeId, children }) {
-  return await runInRuntimeDynamicHole(
-    () => asyncRenderJSXToClientJSX(children),
-    holeId
-  );
-}
-
 async function asyncRenderJSXToClientJSX(jsx, key = null) {
   if (isPageRootElement(jsx)) {
     return await runInPageSegment(async () => {
@@ -620,37 +613,17 @@ async function asyncRenderJSXToClientJSXInner(jsx, key = null) {
             );
           });
         }
-        if (Boolean(getPprStore()) || Boolean(getActiveRuntimeDynamicHoleStore())) {
-          return await runInSuspense(async (holeId) => {
-            const renderedChildren = await runInRuntimeDynamicHole(
-              () => asyncRenderJSXToClientJSX(jsx.props?.children),
-              holeId
-            );
-            const renderedFallback = await asyncRenderJSXToClientJSX(jsx.props?.fallback);
-            return cloneWithDevProps(
-              jsx,
-              {
-                ...jsx.props,
-                children: renderedChildren,
-                fallback: renderedFallback,
-              },
-              key ?? jsx.key
-            );
-          });
-        }
-        if (jsx.props?.children?.type === DinouSuspenseHoleBoundary) {
-          return jsx;
-        }
         return await runInSuspense(async (holeId) => {
+          const renderedChildren = await runInRuntimeDynamicHole(
+            () => asyncRenderJSXToClientJSX(jsx.props?.children),
+            holeId
+          );
           const renderedFallback = await asyncRenderJSXToClientJSX(jsx.props?.fallback);
           return cloneWithDevProps(
             jsx,
             {
               ...jsx.props,
-              children: React.createElement(DinouSuspenseHoleBoundary, {
-                holeId,
-                children: jsx.props?.children,
-              }),
+              children: renderedChildren,
               fallback: renderedFallback,
             },
             key ?? jsx.key
