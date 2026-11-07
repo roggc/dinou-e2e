@@ -456,12 +456,12 @@ async function streamDynamicHoles(
               const resolvedChildren = await asyncRenderJSXToClientJSX(children);
               const rscStream = renderRSCStream(resolvedChildren, clientManifest, { runtime: "edge" });
               const htmlStream = await platformContext.renderHtmlStream(rscStream, {
-                bootstrapModules: [],
+                bootstrapModules: [], importMapHtml: "",
               });
               html = await new Response(htmlStream).text();
             }
 
-            const chunk = `\n<template id="ppr-content-${currentHoleId}">${html}</template>\n<script>(function(){var c=document.getElementById("ppr-content-${currentHoleId}");if(!c)return;var b=document.getElementById("B:${currentBoundaryIndex}");var t=document.querySelector('[data-ppr-hole="${currentHoleId}"]')||(b?b.nextElementSibling:null);try{if(t){if(c.content){t.replaceWith(c.content);}else{t.replaceWith.apply(t,Array.from(c.childNodes));}}}finally{c.remove();}})();</script>\n`;
+            const chunk = `\n<template id="ppr-content-${currentHoleId}"><!--$-->${html}<!--/$--></template>\n<script>(function(){var c=document.getElementById("ppr-content-${currentHoleId}");if(!c)return;var b=document.getElementById("B:${currentBoundaryIndex}");var t=document.querySelector('[data-ppr-hole="${currentHoleId}"]')||(b?b.nextElementSibling:null);try{if(t){if(c.content){t.replaceWith(c.content);}else{t.replaceWith.apply(t,Array.from(c.childNodes));}}}finally{c.remove();}})();</script>\n`;
             await writer.write(encoder.encode(chunk));
           } catch (holeErr) {
             console.error(`[Dinou PPR] Error resolving dynamic hole ${currentHoleId}:`, holeErr);
@@ -548,7 +548,9 @@ async function handlePprResume({
 
   // Separate shell into prelude (up to </body>) and postlude
   const lowerHtml = shellHtml.toLowerCase();
-  const bodyCloseIndex = lowerHtml.lastIndexOf("</body>");
+  const mainScriptMatch = typeof shellHtml === "string" ? shellHtml.match(/<script\b[^>]*\bsrc="\/(?:runtime|main)[^"]*"[^>]*><\/script>/i) : null;
+  const rawBodyCloseIndex = lowerHtml.lastIndexOf("</body>");
+  const bodyCloseIndex = mainScriptMatch && typeof mainScriptMatch.index === "number" && (rawBodyCloseIndex === -1 || mainScriptMatch.index < rawBodyCloseIndex) ? mainScriptMatch.index : rawBodyCloseIndex;
   let shellPrelude =
     bodyCloseIndex !== -1 ? shellHtml.slice(0, bodyCloseIndex) : shellHtml;
   let shellPostlude =

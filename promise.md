@@ -142,9 +142,9 @@ function isCacheSlotComponent(fn) {
     }
 ```
 
-### 3.2. `dinou/core/ppr-runtime.js`
+### 3.2. `dinou/core/ppr-runtime.js` & `dinou/core/edge-ssr.js`
 
-Added a guard in `collectKnownHoles` and `replaceHoles` so `Promise` / thenable instances are returned untouched without object cloning or property traversal:
+1. **Client Reference & Promise Traversal Guard**: Added a guard in `collectKnownHoles` and `replaceHoles` so `Promise` / thenable instances and `react.client.reference` proxies are returned untouched without object cloning or property traversal:
 
 ```js
 // dinou/core/ppr-runtime.js
@@ -159,6 +159,12 @@ function replaceHoles(node) {
   ...
 }
 ```
+
+2. **PPR Dynamic Hole Hydration Alignment for Un-awaited Promise Props**:
+   - When a PPR Dynamic Hole (`<Suspense>`) contains a Client Component receiving an un-awaited `Promise` prop (`Strategy 9 + PPR`), the RSC payload (`/____rsc_page____`) flushes its initial chunk (`<Suspense><ClientPromiseConsumer promise="$@6" /></Suspense>`) at `t = 0ms` without blocking on the server, while the SSR HTML hole stream (`<template id="ppr-content-ppr-hole-1">`) resolves when the promise settles (`t = 150ms`).
+   - To prevent React Hydration Error #418 (`nodeType === 1` `<div data-ppr-hole="...">` still present or missing `<!--$-->...<!--/$-->` Suspense boundary markers when `hydrateRoot` executes):
+     - `handlePprResume` in `dinou/core/ppr-runtime.js` splits `shellHtml` into `shellPrelude` and `shellPostlude` right before the trailing `<script type="module" src="/main-....js">` tag (keeping `<link rel="modulepreload" href="/main-....js"/>` in `<head>` so the browser still preloads the JS bundle at `t = 0ms`, while deferring `hydrateRoot` execution until the `<template id="ppr-content-...">` swap script has replaced `<div data-ppr-hole="...">`).
+     - Each streamed `<template id="ppr-content-...">` wraps its resolved HTML in React 19's `<Suspense>` hydration comment markers (`<!--$-->${html}<!--/$-->`), and passes `importMapHtml: ""` to `renderFlightStreamToHtml` (`dinou/core/edge-ssr.js`) so hole templates do not emit duplicate `<script type="importmap">` tags inside the `<Suspense>` boundary.
 
 ---
 
