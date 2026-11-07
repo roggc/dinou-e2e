@@ -1,6 +1,39 @@
-import { test, expect, APIRequestContext, request as playwrightRequest } from "@playwright/test";
+import { test as base, expect, APIRequestContext, request as playwrightRequest } from "@playwright/test";
 import fs from "fs";
 import path from "path";
+
+const HYDRATION_ERROR_REGEX =
+  /hydration failed|server-rendered HTML|expected server HTML|did not match|didn't match|Minified React error #(418|419|422|423|425)/i;
+
+// Fixture global: cualquier test que use `page` (o abra páginas nuevas en el contexto)
+// fallará automáticamente si React emite algún error o warning de hidratación.
+const test = base.extend({
+  page: async ({ page }, use) => {
+    const hydrationErrors: string[] = [];
+    const attachHydrationWatchers = (p: any) => {
+      p.on("console", (msg: any) => {
+        if (msg.type() === "error" || msg.type() === "warning") {
+          const text = msg.text();
+          if (HYDRATION_ERROR_REGEX.test(text)) {
+            hydrationErrors.push(`[console.${msg.type()}] ${text}`);
+          }
+        }
+      });
+      p.on("pageerror", (err: Error) => {
+        if (HYDRATION_ERROR_REGEX.test(err.message)) {
+          hydrationErrors.push(`[pageerror] ${err.message}`);
+        }
+      });
+    };
+
+    attachHydrationWatchers(page);
+    page.context().on("page", (newPage) => attachHydrationWatchers(newPage));
+
+    await use(page);
+
+    expect(hydrationErrors, "Expected zero React hydration errors during test").toEqual([]);
+  },
+});
 // Detectamos si estamos en un entorno de "start" (Producción) o Cloudflare / Deno
 const isCloudflare = (process.env.TEST_CMD || "").includes("cloudflare") || (process.env.TEST_CMD || "").includes("wrangler");
 const isDeno = (process.env.TEST_CMD || "").includes("deno");
