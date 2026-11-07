@@ -58,7 +58,7 @@ async function spliceDynamicHolesIntoShell(
   const knownHoleIds = new Set();
   const staticParentHoleIds = new Set();
   function collectKnownHoles(node) {
-    if (!node || typeof node !== "object") return;
+    if (!node || typeof node !== "object" || node instanceof Promise || typeof node.then === "function") return;
     if (Array.isArray(node)) {
       for (const item of node) collectKnownHoles(item);
       return;
@@ -238,7 +238,7 @@ async function spliceDynamicHolesIntoShell(
   await traverse(livePageNode);
 
   function replaceHoles(node) {
-    if (!node || typeof node !== "object") return node;
+    if (!node || typeof node !== "object" || node instanceof Promise || typeof node.then === "function") return node;
     if (Array.isArray(node)) {
       return node.map((item) => replaceHoles(item));
     }
