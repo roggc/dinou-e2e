@@ -354,12 +354,12 @@ function isThenable(val) {
   return (
     val !== null &&
     (typeof val === "object" || typeof val === "function") &&
-    typeof val.then === "function"
+    val.$$typeof !== CLIENT_REFERENCE_TAG && !isClientComponent(val) && typeof val.then === "function"
   );
 }
 
 function isCacheSlotComponent(fn) {
-  if (!fn) return false;
+  if (!fn || fn.$$typeof === CLIENT_REFERENCE_TAG || isClientComponent(fn)) return false;
   return Boolean(fn.$$dinouCacheSlot || fn.name === "DinouCacheSlot");
 }
 

@@ -1,19 +1,29 @@
-// Automated test suite for src/test-promise
+// Automated Core AST & TTFB test suite for src/t-promise
 // Verifies Strategy 9 (RSC Promise -> Client use()), Strategy 9 + PPR, and Strategy 12 (getProps Promise -> Client use())
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import React from "react";
 import esbuild from "esbuild";
-import getJSX from "../../dinou/core/get-jsx.js";
-import { asyncRenderJSXToClientJSX } from "../../dinou/core/render-jsx-to-client-jsx.js";
-import {
-  runWithPprContext,
-  resetPprHoles,
-  getRegisteredHoles,
-} from "../../dinou/core/ppr-context.js";
-import { registerRouteModules } from "../../dinou/core/import-module.js";
+
+const dinouCoreDir = fs.existsSync(path.resolve(process.cwd(), "dinou/core"))
+  ? path.resolve(process.cwd(), "dinou/core")
+  : path.resolve(process.cwd(), "node_modules/dinou/core");
+
+const { default: getJSX } = await import(
+  pathToFileURL(path.join(dinouCoreDir, "get-jsx.js")).href
+);
+const { asyncRenderJSXToClientJSX } = await import(
+  pathToFileURL(path.join(dinouCoreDir, "render-jsx-to-client-jsx.js")).href
+);
+const { runWithPprContext, resetPprHoles, getRegisteredHoles } = await import(
+  pathToFileURL(path.join(dinouCoreDir, "ppr-context.js")).href
+);
+const { registerRouteModules } = await import(
+  pathToFileURL(path.join(dinouCoreDir, "import-module.js")).href
+);
 
 const CLIENT_REFERENCE = Symbol.for("react.client.reference");
 
@@ -27,13 +37,7 @@ function compileTsxModule(relPath, { asClientRef = false } = {}) {
   });
 
   const mod = { exports: {} };
-  const fn = new Function(
-    "exports",
-    "require",
-    "module",
-    "React",
-    code
-  );
+  const fn = new Function("exports", "require", "module", "React", code);
   const customRequire = (id) => {
     if (id === "react") return React;
     if (id.endsWith("client-consumer")) return clientConsumerRscExports;
@@ -60,41 +64,44 @@ function compileTsxModule(relPath, { asClientRef = false } = {}) {
   return { rscExports: mod.exports, realExports: mod.exports };
 }
 
-const {
-  rscExports: clientConsumerRscExports,
-  realExports: clientConsumerRealExports,
-} = compileTsxModule("src/test-promise/client-consumer.tsx", {
-  asClientRef: true,
-});
+const { rscExports: clientConsumerRscExports } = compileTsxModule(
+  "src/t-promise/client-consumer.tsx",
+  {
+    asClientRef: true,
+  }
+);
 
-const rscPage = compileTsxModule("src/test-promise/page.tsx");
-const rscPageFns = compileTsxModule("src/test-promise/page_functions.ts");
-const pprPage = compileTsxModule("src/test-promise/ppr/page.tsx");
-const pprPageFns = compileTsxModule("src/test-promise/ppr/page_functions.ts");
-const getPropsPage = compileTsxModule("src/test-promise/getprops/page.tsx", {
+const rscPage = compileTsxModule("src/t-promise/page.tsx");
+const rscPageFns = compileTsxModule("src/t-promise/page_functions.ts");
+const pprPage = compileTsxModule("src/t-promise/ppr/page.tsx");
+const pprPageFns = compileTsxModule("src/t-promise/ppr/page_functions.ts");
+const getPropsPage = compileTsxModule("src/t-promise/getprops/page.tsx", {
   asClientRef: true,
 });
 const getPropsPageFns = compileTsxModule(
-  "src/test-promise/getprops/page_functions.ts"
+  "src/t-promise/getprops/page_functions.ts"
 );
 
 // Stub root layout so getJSX only tests the target route tree cleanly
 const passthroughLayout = {
   default: function RootLayout({ children }) {
-    return React.createElement("div", { "data-testid": "root-layout" }, children);
+    return React.createElement(
+      "div",
+      { "data-testid": "root-layout" },
+      children
+    );
   },
 };
 
 registerRouteModules({
   "src/layout.tsx": () => passthroughLayout,
-  "src/test-promise/client-consumer.tsx": () => clientConsumerRscExports,
-  "src/test-promise/page.tsx": () => rscPage.rscExports,
-  "src/test-promise/page_functions.ts": () => rscPageFns.rscExports,
-  "src/test-promise/ppr/page.tsx": () => pprPage.rscExports,
-  "src/test-promise/ppr/page_functions.ts": () => pprPageFns.rscExports,
-  "src/test-promise/getprops/page.tsx": () => getPropsPage.rscExports,
-  "src/test-promise/getprops/page_functions.ts": () =>
-    getPropsPageFns.rscExports,
+  "src/t-promise/client-consumer.tsx": () => clientConsumerRscExports,
+  "src/t-promise/page.tsx": () => rscPage.rscExports,
+  "src/t-promise/page_functions.ts": () => rscPageFns.rscExports,
+  "src/t-promise/ppr/page.tsx": () => pprPage.rscExports,
+  "src/t-promise/ppr/page_functions.ts": () => pprPageFns.rscExports,
+  "src/t-promise/getprops/page.tsx": () => getPropsPage.rscExports,
+  "src/t-promise/getprops/page_functions.ts": () => getPropsPageFns.rscExports,
 });
 
 function findElementByType(node, predicate) {
@@ -149,7 +156,9 @@ async function runTest(name, fn) {
   }
 }
 
-console.log("\n=== Running Dinou Promise Streaming Test Suite (src/test-promise) ===\n");
+console.log(
+  "\n=== Running Dinou Promise Streaming Core Test Suite (src/t-promise) ===\n"
+);
 
 // TEST 1: Strategy 9 — RSC Promise + Array of Promises -> Client use()
 await runTest(
@@ -159,7 +168,7 @@ await runTest(
     process.env.NODE_ENV = "production";
     try {
       const start = Date.now();
-      const tree = await getJSX("/test-promise", {}, null, false, false, {
+      const tree = await getJSX("/t-promise", {}, null, false, false, {
         segment: "page",
       });
       const elapsed = Date.now() - start;
@@ -188,7 +197,10 @@ await runTest(
         tree,
         (n) => n?.props?.testId === "rsc-array-resolved"
       );
-      assert.ok(arrayConsumerEl, "Expected to find <ClientPromiseArrayConsumer>");
+      assert.ok(
+        arrayConsumerEl,
+        "Expected to find <ClientPromiseArrayConsumer>"
+      );
       assert.equal(
         Array.isArray(arrayConsumerEl.props.promises) &&
           arrayConsumerEl.props.promises.every((p) => p instanceof Promise),
@@ -218,7 +230,7 @@ await runTest(
   async () => {
     await runWithPprContext({ isPpr: true }, async () => {
       resetPprHoles();
-      const rawTree = await getJSX("/test-promise/ppr", {}, null, false, false, {
+      const rawTree = await getJSX("/t-promise/ppr", {}, null, false, false, {
         segment: "page",
       });
       const pprShellTree = await asyncRenderJSXToClientJSX(rawTree);
@@ -247,7 +259,7 @@ await runTest(
   "Test 3 (Strategy 12): getProps returns un-awaited Promise to 'use client' Page without blocking TTFB or unwrapping on server",
   async () => {
     const start = Date.now();
-    const tree = await getJSX("/test-promise/getprops", {}, null, false, false, {
+    const tree = await getJSX("/t-promise/getprops", {}, null, false, false, {
       segment: "page",
     });
     const elapsed = Date.now() - start;
@@ -273,7 +285,9 @@ await runTest(
   }
 );
 
-console.log("\n=====================================================================");
+console.log(
+  "\n====================================================================="
+);
 if (failures > 0) {
   console.error(`RESULT: ${failures} test(s) FAILED ❌`);
   process.exit(1);
@@ -281,3 +295,4 @@ if (failures > 0) {
   console.log("RESULT: All 3 tests PASSED ✅");
   process.exit(0);
 }
+

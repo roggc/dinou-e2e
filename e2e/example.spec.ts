@@ -8016,6 +8016,213 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
   });
 
+  test.describe("Server-to-Client Promise Streaming & React 19 use() (/t-promise)", () => {
+    test("1. Strategy 9 (/t-promise): RSC passes un-awaited Promise & Promise[] to Client Component without blocking TTFB or unwrapping on server", async ({
+      page,
+      request,
+    }) => {
+      // 1A. Raw SSR Wire Stream: verifies <Suspense> fallbacks flush before promises resolve, followed by $RC replacements
+      const res = await safeApiGet(request, "/t-promise", {
+        headers: { connection: "close" },
+      });
+      expect(res.status()).toBe(200);
+      const html = await res.text();
+
+      expect(html).toContain('data-testid="rsc-static-header"');
+      expect(html).toContain('data-testid="rsc-fallback"');
+      expect(html).toContain('data-testid="rsc-array-fallback"');
+      expect(html).toContain('data-testid="rsc-resolved"');
+      expect(html).toContain('data-value="42"');
+      expect(html).toContain("RSC-Promise-OK");
+      expect(html).toContain('data-testid="rsc-array-resolved"');
+      expect(html).toContain("Alpha");
+      expect(html).toContain("Beta");
+
+      // 1B. Segmented RSC Flight Stream (/____rsc_page____/t-promise)
+      const rscRes = await safeApiGet(request, "/____rsc_page____/t-promise", {
+        headers: { connection: "close" },
+      });
+      expect(rscRes.status()).toBe(200);
+      const rscText = await rscRes.text();
+      expect(rscText).toContain("RSC-Promise-OK");
+      expect(rscText).toContain("Alpha");
+      expect(rscText).toContain("Beta");
+
+      // 1C. Browser Hydration & React 19 use() Resolution (zero TypeError / hydration mismatch)
+      const runtimeErrors: string[] = [];
+      page.on("console", (msg) => {
+        if (msg.type() === "error" || msg.type() === "warning") {
+          const text = msg.text();
+          if (
+            /hydration|did not match|server-rendered HTML|expected server HTML|unsupported type was passed to use/i.test(
+              text
+            )
+          ) {
+            runtimeErrors.push(text);
+          }
+        }
+      });
+      page.on("pageerror", (err) => {
+        runtimeErrors.push(err.message);
+      });
+
+      await page.goto("/t-promise");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+
+      await expect(page.getByTestId("rsc-static-header")).toContainText(
+        "Strategy 9: RSC Promise to Client use()"
+      );
+      await expect(page.getByTestId("rsc-resolved")).toHaveAttribute("data-value", "42");
+      await expect(page.getByTestId("rsc-resolved")).toContainText("RSC-Promise-OK: 42");
+      await expect(page.getByTestId("rsc-array-resolved-item-0")).toHaveText("Alpha");
+      await expect(page.getByTestId("rsc-array-resolved-item-1")).toHaveText("Beta");
+
+      await expect(page.getByTestId("rsc-fallback")).toHaveCount(0);
+      await expect(page.getByTestId("rsc-array-fallback")).toHaveCount(0);
+
+      expect(runtimeErrors).toEqual([]);
+    });
+
+    test("2. Strategy 9 + PPR (/t-promise/ppr): Client Component with Promise prop inside <Suspense> registers PPR Dynamic Hole (ppr-hole-1) & streams cleanly", async ({
+      page,
+      request,
+    }) => {
+      // 2A. In Production builds on Node/Bun/Deno, verify static PPR shell artifacts on disk
+      if (isProd) {
+        const metaPath = path.resolve(".dinou/dist2/t-promise/ppr/metadata.json");
+        const shellPath = path.resolve(".dinou/dist2/t-promise/ppr/shell.html");
+
+        if (fs.existsSync(metaPath)) {
+          expect(fs.existsSync(shellPath)).toBe(true);
+          const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+          expect(meta.ppr).toBe(true);
+          expect(meta.holes).toEqual(["ppr-hole-1"]);
+
+          const shellDisk = fs.readFileSync(shellPath, "utf8");
+          expect(shellDisk).toContain('data-testid="ppr-static-shell"');
+          expect(shellDisk).toContain('data-ppr-hole="ppr-hole-1"');
+          expect(shellDisk).toContain('data-testid="ppr-promise-fallback"');
+          expect(shellDisk).not.toContain("PPR-Promise-OK");
+        }
+      }
+
+      // 2B. Raw SSR Wire Stream: static shell + fallback + streamed dynamic hole resolution
+      const res = await safeApiGet(request, "/t-promise/ppr", {
+        headers: { connection: "close" },
+      });
+      expect(res.status()).toBe(200);
+      const html = await res.text();
+
+      expect(html).toContain('data-testid="ppr-static-shell"');
+      expect(html).toContain('data-testid="ppr-promise-fallback"');
+      expect(html).toContain('data-testid="ppr-promise-resolved"');
+      expect(html).toContain('data-value="77"');
+      expect(html).toContain("PPR-Promise-OK");
+
+      // 2C. Browser Hydration & Dynamic Hole Resolution
+      const runtimeErrors: string[] = [];
+      page.on("console", (msg) => {
+        if (msg.type() === "error" || msg.type() === "warning") {
+          const text = msg.text();
+          if (
+            /hydration|did not match|server-rendered HTML|expected server HTML|unsupported type was passed to use/i.test(
+              text
+            )
+          ) {
+            runtimeErrors.push(text);
+          }
+        }
+      });
+      page.on("pageerror", (err) => {
+        runtimeErrors.push(err.message);
+      });
+
+      await page.goto("/t-promise/ppr");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+
+      await expect(page.getByTestId("ppr-static-shell")).toContainText(
+        "Strategy 9 with PPR Static Shell"
+      );
+      await expect(page.getByTestId("ppr-promise-resolved")).toHaveAttribute("data-value", "77");
+      await expect(page.getByTestId("ppr-promise-resolved")).toContainText("PPR-Promise-OK: 77");
+      await expect(page.getByTestId("ppr-promise-fallback")).toHaveCount(0);
+
+      expect(runtimeErrors).toEqual([]);
+    });
+
+    test("3. Strategy 12 (/t-promise/getprops): Client-First getProps returns un-awaited Promise to 'use client' Page & supports Soft Client Navigation across all 3 routes", async ({
+      page,
+      request,
+    }) => {
+      // 3A. Raw SSR Wire Stream: client page shell + <Suspense> fallback + streamed docPromise resolution
+      const res = await safeApiGet(request, "/t-promise/getprops", {
+        headers: { connection: "close" },
+      });
+      expect(res.status()).toBe(200);
+      const html = await res.text();
+
+      expect(html).toContain('data-testid="getprops-client-shell"');
+      expect(html).toContain('data-testid="getprops-fallback"');
+      expect(html).toContain('data-testid="getprops-resolved"');
+      expect(html).toContain('data-value="99"');
+      expect(html).toContain("GetProps-Promise-OK");
+
+      // 3B. Browser Hydration on /t-promise/getprops + Soft Client Navigation -> /t-promise -> /t-promise/ppr
+      const runtimeErrors: string[] = [];
+      page.on("console", (msg) => {
+        if (msg.type() === "error" || msg.type() === "warning") {
+          const text = msg.text();
+          if (
+            /hydration|did not match|server-rendered HTML|expected server HTML|unsupported type was passed to use/i.test(
+              text
+            )
+          ) {
+            runtimeErrors.push(text);
+          }
+        }
+      });
+      page.on("pageerror", (err) => {
+        runtimeErrors.push(err.message);
+      });
+
+      await page.goto("/t-promise/getprops");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+
+      await expect(page.getByTestId("getprops-client-shell")).toContainText(
+        "Strategy 12: getProps Promise to Client use()"
+      );
+      await expect(page.getByTestId("getprops-resolved")).toHaveAttribute("data-value", "99");
+      await expect(page.getByTestId("getprops-resolved")).toContainText("GetProps-Promise-OK: 99");
+      await expect(page.getByTestId("getprops-fallback")).toHaveCount(0);
+
+      // Soft navigate to /t-promise (verifies client-side Flight stream Promise & Promise[] deserialization)
+      await page.getByTestId("nav-to-rsc").click();
+      await expect(page.getByTestId("rsc-resolved")).toContainText("RSC-Promise-OK: 42", {
+        timeout: 15000,
+      });
+      await expect(page.getByTestId("rsc-array-resolved-item-0")).toHaveText("Alpha");
+      await expect(page.getByTestId("rsc-array-resolved-item-1")).toHaveText("Beta");
+
+      // Soft navigate to /t-promise/ppr
+      await page.getByTestId("nav-to-ppr").click();
+      await expect(page.getByTestId("ppr-promise-resolved")).toContainText("PPR-Promise-OK: 77", {
+        timeout: 15000,
+      });
+
+      expect(runtimeErrors).toEqual([]);
+    });
+
+    test("4. Core AST & Non-Blocking TTFB Pipeline Suite (tests/promise-streaming.test.mjs)", async () => {
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        [path.resolve("tests/promise-streaming.test.mjs")],
+        { encoding: "utf8" }
+      );
+      expect(output).toContain("RESULT: All 3 tests PASSED");
+    });
+  });
+
   test.describe("HMR & Fast Refresh automated verification", () => {
     // Run tests in serial mode so they do not collide on the same files on disk
     test.describe.configure({ mode: "serial" });

@@ -12,6 +12,15 @@ export default function TestPprPromisePage() {
         <h1 className="text-2xl font-bold">Strategy 9 with PPR Static Shell</h1>
       </header>
 
+      <nav className="flex gap-4 text-sm underline">
+        <a href="/t-promise" data-testid="nav-to-rsc">
+          Go to RSC Promise
+        </a>
+        <a href="/t-promise/getprops" data-testid="nav-to-getprops">
+          Go to getProps Promise
+        </a>
+      </nav>
+
       <Suspense fallback={<div data-testid="ppr-promise-fallback">PPR Fallback Skeleton</div>}>
         <ClientPromiseConsumer promise={pprPromise} testId="ppr-promise-resolved" />
       </Suspense>

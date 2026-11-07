@@ -65,6 +65,26 @@ In `dinou/core/ppr-runtime.js`, `collectKnownHoles(node)` and `replaceHoles(node
 Updated both the `Array.isArray(jsx)` branch and the plain object props (`Object.entries(jsx)`) branch to check `isThenable(...)`:
 - **At runtime (`!isPprBuildActive()`)**: Preserves the `Promise` reference directly in the array or props object (`results.push(child)` / `entries.push([propName, value])`) without calling `await asyncRenderJSXToClientJSX(...)`.
 - **During PPR Static Shell Build (`isPprBuildActive()`)**: When inside an outer `<Suspense>` boundary outside a cached slot (`isInsideOuterSuspenseOutsideSlot() && !isSlotDiscoveryActive() && !isNoDynamicActive()`), attaches a no-op rejection handler (`value.then(null, () => {})`) and calls `markDynamicAccess("async-suspense")` so the enclosing `<Suspense>` boundary is registered as a dynamic PPR hole (`ppr-hole-*`).
+- **Client Reference Proxy Guard (`CLIENT_REFERENCE_TAG`)**: Both `isThenable(val)` and `isCacheSlotComponent(fn)` guard against `react-server-dom-webpack` Client Reference Proxies (`val.$$typeof === CLIENT_REFERENCE_TAG || isClientComponent(val)`) before reading `.then` or `.$$dinouCacheSlot`, preventing Proxy trap errors (`Cannot access <ClientComponent>.$$dinouCacheSlot on the server` / `Cannot await or return from a thenable`) when a `<Suspense>` boundary wraps a Client Component in dev mode (`containsCacheSlot`) or when a Client Component reference is passed as a prop.
+
+```js
+// dinou/core/render-jsx-to-client-jsx.js
+
+function isThenable(val) {
+  return (
+    val !== null &&
+    (typeof val === "object" || typeof val === "function") &&
+    val.$$typeof !== CLIENT_REFERENCE_TAG &&
+    !isClientComponent(val) &&
+    typeof val.then === "function"
+  );
+}
+
+function isCacheSlotComponent(fn) {
+  if (!fn || fn.$$typeof === CLIENT_REFERENCE_TAG || isClientComponent(fn)) return false;
+  return Boolean(fn.$$dinouCacheSlot || fn.name === "DinouCacheSlot");
+}
+```
 
 ```js
 // dinou/core/render-jsx-to-client-jsx.js
@@ -130,12 +150,12 @@ Added a guard in `collectKnownHoles` and `replaceHoles` so `Promise` / thenable 
 // dinou/core/ppr-runtime.js
 
 function collectKnownHoles(node) {
-  if (!node || typeof node !== "object" || node instanceof Promise || typeof node.then === "function") return;
+  if (!node || typeof node !== "object" || node instanceof Promise || node.$$typeof === Symbol.for("react.client.reference") || typeof node.then === "function") return;
   ...
 }
 
 function replaceHoles(node) {
-  if (!node || typeof node !== "object" || node instanceof Promise || typeof node.then === "function") return node;
+  if (!node || typeof node !== "object" || node instanceof Promise || node.$$typeof === Symbol.for("react.client.reference") || typeof node.then === "function") return node;
   ...
 }
 ```
@@ -153,22 +173,24 @@ function replaceHoles(node) {
 
 ---
 
-## 5. Verification & Test Suite (`src/test-promise/`)
+## 5. Verification & Test Suite (`src/t-promise/`, `tests/promise-streaming.test.mjs` & `e2e/example.spec.ts`)
 
-A dedicated test suite was created under `src/test-promise/`:
+A dedicated test suite is included under `src/t-promise/`, `tests/promise-streaming.test.mjs`, and `e2e/example.spec.ts`:
 
-- `src/test-promise/client-consumer.tsx`: `"use client"` components (`ClientPromiseConsumer` and `ClientPromiseArrayConsumer`) that unwrap `promise` and `promises` using React 19's `use()`.
-- `src/test-promise/page.tsx` & `src/test-promise/page_functions.ts`: **Strategy 9 (Dynamic SSR)** route passing a single `Promise` and an array of `Promise`s from an RSC to Client Components inside `<Suspense>`.
-- `src/test-promise/ppr/page.tsx` & `src/test-promise/ppr/page_functions.ts`: **Strategy 9 + PPR (`export const ppr = true`)** route verifying static shell generation and `ppr-hole-1` registration when a Client Component inside `<Suspense>` receives a `Promise` prop.
-- `src/test-promise/getprops/page.tsx` & `src/test-promise/getprops/page_functions.ts`: **Strategy 12 (`getProps` Promise ➔ Client `use()`)** route where `getProps()` returns `{ docPromise }` without `await` to a `"use client"` page.
-- `src/test-promise/run-tests.mjs`: Automated test runner executing the Dinou pipeline (`getJSX`, `asyncRenderJSXToClientJSX`, `runWithPprContext`, `getRegisteredHoles`, and `use()` verification).
+- `src/t-promise/client-consumer.tsx`: `"use client"` components (`ClientPromiseConsumer` and `ClientPromiseArrayConsumer`) that unwrap `promise` and `promises` using React 19's `use()`.
+- `src/t-promise/page.tsx` & `src/t-promise/page_functions.ts`: **Strategy 9 (Dynamic SSR)** route passing a single `Promise` and an array of `Promise`s from an RSC to Client Components inside `<Suspense>`.
+- `src/t-promise/ppr/page.tsx` & `src/t-promise/ppr/page_functions.ts`: **Strategy 9 + PPR (`export const ppr = true`)** route verifying static shell generation and `ppr-hole-1` registration when a Client Component inside `<Suspense>` receives a `Promise` prop.
+- `src/t-promise/getprops/page.tsx` & `src/t-promise/getprops/page_functions.ts`: **Strategy 12 (`getProps` Promise ➔ Client `use()`)** route where `getProps()` returns `{ docPromise }` without `await` to a `"use client"` page.
+- `tests/promise-streaming.test.mjs`: Automated core AST & TTFB test runner executing the Dinou pipeline (`getJSX`, `asyncRenderJSXToClientJSX`, `runWithPprContext`, `getRegisteredHoles`, and `use()` verification).
+- `e2e/example.spec.ts` (`Server-to-Client Promise Streaming & React 19 use() (/t-promise)`): Full Playwright E2E verification across raw SSR HTML streaming, segmented RSC Flight payloads, PPR static shell disk artifacts (`metadata.json` / `shell.html`), browser hydration, React 19 `use()` resolution, and soft client navigation across `/t-promise`, `/t-promise/ppr`, and `/t-promise/getprops`.
 
 ### Running the Tests
 
 ```bash
-node src/test-promise/run-tests.mjs
+node tests/promise-streaming.test.mjs
+npx playwright test --project=chromium -g "t-promise"
 ```
 
 1. **Before the fix (`git stash`)**: All 3 tests failed (`props.promise` and `tree.props.docPromise` were unwrapped into plain objects on the server, blocking TTFB, and PPR registered `[]` instead of `['ppr-hole-1']`).
-2. **After the fix (`git stash pop`)**: All 3 tests pass (`RESULT: All 3 tests PASSED ✅`).
+2. **After the fix (`git stash pop`)**: All tests pass (`RESULT: All 3 tests PASSED ✅`).
 

@@ -28,7 +28,9 @@ export function ClientPromiseArrayConsumer({
   return (
     <ul data-testid={testId} className="list-disc pl-5">
       {items.map((item, idx) => (
-        <li key={idx}>{item}</li>
+        <li key={idx} data-testid={`${testId}-item-${idx}`}>
+          {item}
+        </li>
       ))}
     </ul>
   );

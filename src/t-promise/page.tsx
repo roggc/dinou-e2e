@@ -21,6 +21,15 @@ export default function TestRscPromisePage() {
         Strategy 9: RSC Promise to Client use()
       </h1>
 
+      <nav className="flex gap-4 text-sm underline">
+        <a href="/t-promise/ppr" data-testid="nav-to-ppr">
+          Go to PPR Promise
+        </a>
+        <a href="/t-promise/getprops" data-testid="nav-to-getprops">
+          Go to getProps Promise
+        </a>
+      </nav>
+
       <Suspense fallback={<div data-testid="rsc-fallback">Loading RSC Promise...</div>}>
         <ClientPromiseConsumer promise={itemPromise} testId="rsc-resolved" />
       </Suspense>
