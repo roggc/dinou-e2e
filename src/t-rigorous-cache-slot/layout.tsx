@@ -26,40 +26,32 @@ export default async function CacheSlotTestLayout({
 }) {
   const layoutRenderTime = Date.now();
   return (
-    <html lang="en">
-      <head>
-        <meta charSet="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Dinou Vertical Segmentation (DinouCacheSlot) Audit Lab</title>
-      </head>
-      <body style={{ fontFamily: "system-ui, sans-serif", margin: 0, padding: "20px" }}>
-        <header
-          id="cache-slot-layout-header"
-          style={{
-            padding: "12px",
-            marginBottom: "16px",
-            background: "#1e293b",
-            color: "#f8fafc",
-            borderRadius: "8px",
-          }}
+    <div style={{ fontFamily: "system-ui, sans-serif", margin: 0, padding: "20px" }}>
+      <header
+        id="cache-slot-layout-header"
+        style={{
+          padding: "12px",
+          marginBottom: "16px",
+          background: "#1e293b",
+          color: "#f8fafc",
+          borderRadius: "8px",
+        }}
+      >
+        <div>
+          Layout Render Time:{" "}
+          <span id="layout-render-time" data-testid="layout-render-time">
+            {layoutRenderTime}
+          </span>
+        </div>
+        <DinouCacheSlot
+          id="rig-slot-layout-banner"
+          tag="rig-tag-layout-banner"
+          revalidate={3600}
         >
-          <div>
-            Layout Render Time:{" "}
-            <span id="layout-render-time" data-testid="layout-render-time">
-              {layoutRenderTime}
-            </span>
-          </div>
-          <DinouCacheSlot
-            id="rig-slot-layout-banner"
-            tag="rig-tag-layout-banner"
-            revalidate={3600}
-          >
-            <LayoutBannerSlotContent />
-          </DinouCacheSlot>
-        </header>
-        {children}
-      </body>
-    </html>
+          <LayoutBannerSlotContent />
+        </DinouCacheSlot>
+      </header>
+      {children}
+    </div>
   );
 }
-

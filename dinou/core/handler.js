@@ -133,6 +133,233 @@ function copyCustomContextProperties(source, target) {
   }
 }
 
+function safeJsonForInlineScript(str) {
+  return JSON.stringify(str)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
+function formatRscPushScript(kind, chunkStr) {
+  const arrName = `__DINOU_RSC_${kind}__`;
+  const pushFn = `__DINOU_RSC_${kind}_PUSH__`;
+  const encoded = safeJsonForInlineScript(chunkStr);
+  return `<script>(self.${arrName}=self.${arrName}||[]).push(${encoded});if(self.${pushFn})self.${pushFn}(${encoded});</script>`;
+}
+
+function formatRscDoneScript(kind) {
+  const doneName = `__DINOU_RSC_${kind}_DONE__`;
+  const closeFn = `__DINOU_RSC_${kind}_CLOSE__`;
+  return `<script>self.${doneName}=true;if(self.${closeFn})self.${closeFn}();</script>`;
+}
+
+function injectInlineRscIntoHtmlString(fullHtml, layoutRscText, pageRscText, hasLayout) {
+  if (!fullHtml || !pageRscText || (hasLayout && !layoutRscText)) return fullHtml;
+  let inlineScripts =
+    "<script>window.__DINOU_INLINE_RSC__=true;window.__DINOU_RSC_P__=window.__DINOU_RSC_P__||[];window.__DINOU_RSC_L__=window.__DINOU_RSC_L__||[];</script>";
+  if (hasLayout && layoutRscText) {
+    inlineScripts += formatRscPushScript("L", layoutRscText) + formatRscDoneScript("L");
+  }
+  inlineScripts += formatRscPushScript("P", pageRscText) + formatRscDoneScript("P");
+  const scriptMatch = fullHtml.match(/<script[^>]*\bsrc="\/(?:runtime|main)/i);
+  if (scriptMatch && typeof scriptMatch.index === "number") {
+    const idx = scriptMatch.index;
+    return fullHtml.slice(0, idx) + inlineScripts + fullHtml.slice(idx);
+  }
+  const bodyCloseIdx = fullHtml.toLowerCase().lastIndexOf("</body>");
+  if (bodyCloseIdx !== -1) {
+    return fullHtml.slice(0, bodyCloseIdx) + inlineScripts + fullHtml.slice(bodyCloseIdx);
+  }
+  return fullHtml + inlineScripts;
+}
+
+function createInlineRscHtmlStream(htmlStream, context, clientManifest) {
+  const hasLayoutSegment =
+    context._resolvedLayoutClientJsx !== null &&
+    context._resolvedLayoutClientJsx !== undefined;
+  const layoutStream = hasLayoutSegment
+    ? requestStorage.run(context, () =>
+        renderRSCStream(context._resolvedLayoutClientJsx, clientManifest, {
+          runtime: "edge",
+        })
+      )
+    : null;
+  const pageStream = requestStorage.run(context, () =>
+    renderRSCStream(context._resolvedPageClientJsx, clientManifest, {
+      runtime: "edge",
+    })
+  );
+
+  const encoder = new TextEncoder();
+  let initialSpliceDone = false;
+  let streamClosed = false;
+  const pendingScripts = [];
+
+  return new ReadableStream({
+    async start(controller) {
+      const safeEnqueueText = (str) => {
+        if (streamClosed || !str) return;
+        try {
+          controller.enqueue(encoder.encode(str));
+        } catch (e) {}
+      };
+
+      const flushPendingScripts = () => {
+        if (pendingScripts.length === 0) return;
+        const batch = pendingScripts.splice(0, pendingScripts.length).join("");
+        safeEnqueueText(batch);
+      };
+
+      const onRscScript = (scriptStr) => {
+        pendingScripts.push(scriptStr);
+        if (initialSpliceDone) {
+          flushPendingScripts();
+        }
+      };
+
+      const startPump = (rscStream, kind) => {
+        if (!rscStream) {
+          return {
+            firstChunkReady: Promise.resolve(),
+            donePromise: Promise.resolve(),
+          };
+        }
+        let resolveFirst;
+        const firstChunkReady = new Promise((r) => {
+          resolveFirst = r;
+        });
+        const donePromise = (async () => {
+          const reader = rscStream.getReader();
+          const decoder = new TextDecoder();
+          let first = true;
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) {
+                const rem = decoder.decode();
+                if (rem) {
+                  onRscScript(formatRscPushScript(kind, rem));
+                }
+                onRscScript(formatRscDoneScript(kind));
+                if (first) {
+                  first = false;
+                  resolveFirst();
+                }
+                break;
+              }
+              const chunkStr = decoder.decode(value, { stream: true });
+              if (chunkStr) {
+                onRscScript(formatRscPushScript(kind, chunkStr));
+                if (first) {
+                  first = false;
+                  resolveFirst();
+                }
+              }
+            }
+          } catch (err) {
+            onRscScript(formatRscDoneScript(kind));
+            if (first) {
+              first = false;
+              resolveFirst();
+            }
+          }
+        })();
+        return { firstChunkReady, donePromise };
+      };
+
+      const layoutPump = startPump(layoutStream, "L");
+      const pagePump = startPump(pageStream, "P");
+
+      const htmlReader = htmlStream.getReader();
+      const htmlDecoder = new TextDecoder();
+      let heldBodyClose = "";
+
+      try {
+        while (true) {
+          const { done, value } = await htmlReader.read();
+          if (done) {
+            const rem = htmlDecoder.decode();
+            if (rem) {
+              if (heldBodyClose) {
+                const combined = heldBodyClose + rem;
+                heldBodyClose = "";
+                const closeMatch = combined.match(/<\/body>\s*<\/html>\s*$/i);
+                if (closeMatch) {
+                  heldBodyClose = closeMatch[0];
+                  safeEnqueueText(combined.slice(0, combined.length - heldBodyClose.length));
+                } else {
+                  safeEnqueueText(combined);
+                }
+              } else {
+                const closeMatch = rem.match(/<\/body>\s*<\/html>\s*$/i);
+                if (closeMatch) {
+                  heldBodyClose = closeMatch[0];
+                  safeEnqueueText(rem.slice(0, rem.length - heldBodyClose.length));
+                } else {
+                  safeEnqueueText(rem);
+                }
+              }
+            }
+            break;
+          }
+
+          let text = htmlDecoder.decode(value, { stream: true });
+          if (!text) continue;
+
+          if (heldBodyClose) {
+            text = heldBodyClose + text;
+            heldBodyClose = "";
+          }
+
+          const closeMatch = text.match(/<\/body>\s*<\/html>\s*$/i);
+          if (closeMatch) {
+            heldBodyClose = closeMatch[0];
+            text = text.slice(0, text.length - heldBodyClose.length);
+          }
+
+          if (!initialSpliceDone) {
+            const scriptMatch = text.match(/<script[^>]*\bsrc="\/(?:runtime|main)/i);
+            if (scriptMatch && typeof scriptMatch.index === "number") {
+              await Promise.race([
+                Promise.all([layoutPump.firstChunkReady, pagePump.firstChunkReady]),
+                new Promise((r) => setTimeout(r, 15)),
+              ]);
+              const idx = scriptMatch.index;
+              const scriptsToInject = pendingScripts.splice(0, pendingScripts.length).join("");
+              text = text.slice(0, idx) + scriptsToInject + text.slice(idx);
+              initialSpliceDone = true;
+            }
+          }
+
+          if (text) {
+            safeEnqueueText(text);
+          }
+          if (initialSpliceDone && pendingScripts.length > 0) {
+            flushPendingScripts();
+          }
+        }
+
+        initialSpliceDone = true;
+        flushPendingScripts();
+        await Promise.all([layoutPump.donePromise, pagePump.donePromise]);
+        flushPendingScripts();
+        if (heldBodyClose) {
+          safeEnqueueText(heldBodyClose);
+          heldBodyClose = "";
+        }
+        streamClosed = true;
+        controller.close();
+      } catch (err) {
+        streamClosed = true;
+        try {
+          controller.error(err);
+        } catch (e) {}
+      }
+    },
+  });
+}
+
 // Anti-Bot Shield patterns
 const botGarbagePatterns = [
   /\.php$/i,
@@ -2622,7 +2849,21 @@ async function handleRequest(request, platformContext = {}) {
         const rscStream = requestStorage.run(context, () => renderRSCStream(jsx, clientManifest, { runtime: "edge" }));
 
         if (platformContext && platformContext.renderHtmlStream) {
-          const [streamForSsr, streamForCache] = rscStream.tee();
+          const canUseInlineRsc = Boolean(
+            !isError &&
+              !platformContext?.isSSG &&
+              !shouldCacheISG &&
+              context._hasResolvedSegments &&
+              context._resolvedPageClientJsx !== undefined
+          );
+
+          let streamForSsr = rscStream;
+          let streamForCache = null;
+          if (shouldCacheISG) {
+            const teed = rscStream.tee();
+            streamForSsr = teed[0];
+            streamForCache = teed[1];
+          }
 
           let bootstrapScriptContent = "";
           const knownLayouts = getDiscoveredLayouts();
@@ -2638,6 +2879,12 @@ async function handleRequest(request, platformContext = {}) {
                 bootstrapScriptContent += `window.__DINOU_BUILD_ID__ = "${nowGen}";\n`;
               }
             }
+          }
+          if (canUseInlineRsc) {
+            bootstrapScriptContent +=
+              "window.__DINOU_INLINE_RSC__ = true;\n" +
+              "window.__DINOU_RSC_P__ = window.__DINOU_RSC_P__ || [];\n" +
+              "window.__DINOU_RSC_L__ = window.__DINOU_RSC_L__ || [];\n";
           }
           if (isDevelopment) {
             const isStrictMode = dinouConfig?.reactStrictMode !== false;
@@ -2897,6 +3144,30 @@ async function handleRequest(request, platformContext = {}) {
                     await storage.set(shellHtmlKey, fullHtml, genMeta);
                     await storage.set(shellRscKey, pageRscText || rscPayload);
                   }
+                  if (!platformContext?.isSSG && !genMeta.ppr && !isError && context._hasResolvedSegments && pageRscText) {
+                    let layoutRscText = "";
+                    const hasLayoutSeg =
+                      context._resolvedLayoutClientJsx !== null &&
+                      context._resolvedLayoutClientJsx !== undefined;
+                    if (hasLayoutSeg) {
+                      try {
+                        const layoutStream = requestStorage.run(context, () =>
+                          renderRSCStream(context._resolvedLayoutClientJsx, clientManifest, {
+                            runtime: "edge",
+                          })
+                        );
+                        layoutRscText = await new Response(layoutStream).text();
+                      } catch (e) {}
+                    }
+                    if (!hasLayoutSeg || layoutRscText) {
+                      fullHtml = injectInlineRscIntoHtmlString(
+                        fullHtml,
+                        layoutRscText,
+                        pageRscText,
+                        hasLayoutSeg
+                      );
+                    }
+                  }
                   if (!platformContext?.isSSG || process.env.DINOU_DEBUG) {
                     console.log(`✅ [Edge ISG] Successfully cached ${reqPath} to KV`);
                   }
@@ -2911,6 +3182,44 @@ async function handleRequest(request, platformContext = {}) {
                   "window.__DINOU_USE_STATIC__ = true;",
                   "window.__DINOU_USE_STATIC__ = false;"
                 );
+                if (
+                  !platformContext?.isSSG &&
+                  !isError &&
+                  context._hasResolvedSegments &&
+                  context._resolvedPageClientJsx !== undefined
+                ) {
+                  try {
+                    const hasLayoutSeg =
+                      context._resolvedLayoutClientJsx !== null &&
+                      context._resolvedLayoutClientJsx !== undefined;
+                    const pageStream = requestStorage.run(context, () =>
+                      renderRSCStream(context._resolvedPageClientJsx, clientManifest, {
+                        runtime: "edge",
+                      })
+                    );
+                    const layoutPromise = hasLayoutSeg
+                      ? new Response(
+                          requestStorage.run(context, () =>
+                            renderRSCStream(context._resolvedLayoutClientJsx, clientManifest, {
+                              runtime: "edge",
+                            })
+                          )
+                        ).text()
+                      : Promise.resolve("");
+                    const [layoutRscText, pageRscText] = await Promise.all([
+                      layoutPromise,
+                      new Response(pageStream).text(),
+                    ]);
+                    if (pageRscText && (!hasLayoutSeg || layoutRscText)) {
+                      fullHtml = injectInlineRscIntoHtmlString(
+                        fullHtml,
+                        layoutRscText,
+                        pageRscText,
+                        hasLayoutSeg
+                      );
+                    }
+                  } catch (e) {}
+                }
                 if (!platformContext?.isSSG || process.env.DINOU_DEBUG) {
                   console.log(`ℹ️ [Edge ISG] Dynamic bailout detected during render for ${reqPath}, skipping KV cache`);
                 }
@@ -2928,6 +3237,10 @@ async function handleRequest(request, platformContext = {}) {
           // Dynamic streaming responses cannot be shared across multiple requests in inFlightGenerations
           if (inFlightKey) {
             inFlightGenerations.delete(inFlightKey);
+          }
+
+          if (canUseInlineRsc && !isError && htmlStream) {
+            htmlStream = createInlineRscHtmlStream(htmlStream, context, clientManifest);
           }
 
           return {

@@ -417,6 +417,7 @@ async function revalidatePage(reqPath, internalOptions = {}) {
     let newHtml = cached ? cached.content : "";
     let renderedRsc = "";
     let renderedFullRsc = "";
+    let pendingShellPageJson = null;
     let composedFromCachedLayout = false;
 
     if (pagePath) {
@@ -482,7 +483,7 @@ async function revalidatePage(reqPath, internalOptions = {}) {
                   })
                 );
                 if (resolvedPageJsx) {
-                  await storage.set(shellPageKey, serializeJSX(resolvedPageJsx));
+                  pendingShellPageJson = serializeJSX(resolvedPageJsx);
                 }
               }
             } catch (e) {
@@ -510,7 +511,7 @@ async function revalidatePage(reqPath, internalOptions = {}) {
               });
               if (resolvedPageJsx && !isNotFound.value) {
                 try {
-                  await storage.set(shellPageKey, serializeJSX(resolvedPageJsx));
+                  pendingShellPageJson = serializeJSX(resolvedPageJsx);
                 } catch (e) {}
               }
             }
@@ -549,7 +550,7 @@ async function revalidatePage(reqPath, internalOptions = {}) {
                 }
                 if (resolvedPageJsx) {
                   try {
-                    await storage.set(shellPageKey, serializeJSX(resolvedPageJsx));
+                    pendingShellPageJson = serializeJSX(resolvedPageJsx);
                   } catch (e) {}
                 }
               }
@@ -684,6 +685,11 @@ async function revalidatePage(reqPath, internalOptions = {}) {
     await storage.set(htmlKey, newHtml, currentMeta);
     if (isRoutePpr) {
       await storage.set(shellHtmlKey, newHtml, currentMeta);
+    }
+    if (pendingShellPageJson) {
+      try {
+        await storage.set(shellPageKey, pendingShellPageJson);
+      } catch (e) {}
     }
     if (cleanPathKey) {
       await storage.set(cleanPathKey, newHtml, currentMeta);

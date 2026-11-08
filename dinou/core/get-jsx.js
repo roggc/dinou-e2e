@@ -28,6 +28,37 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 
+function createDinouPageSlotElement() {
+  let DinouPageSlot = RawDinouPageSlot;
+  if (
+    typeof DinouPageSlot === "function" &&
+    DinouPageSlot.$$typeof !== Symbol.for("react.client.reference")
+  ) {
+    const slotPath = path.resolve(currentDir, "slot.js");
+    const fileUrl = pathToFileURL(slotPath).href;
+    let regFn = null;
+    try {
+      const pkg = require("react-server-dom-webpack/server");
+      regFn = pkg.registerClientReference;
+    } catch (e) {}
+    if (!regFn) {
+      try {
+        const pkg = require("@roggc/react-server-dom-esm/server.node.js");
+        regFn = pkg.registerClientReference;
+      } catch (e) {}
+    }
+    if (regFn) {
+      DinouPageSlot = regFn(DinouPageSlot, fileUrl, "DinouPageSlot");
+    } else {
+      Object.defineProperties(DinouPageSlot, {
+        $$typeof: { value: Symbol.for("react.client.reference") },
+        $$id: { value: fileUrl + "#DinouPageSlot" },
+      });
+    }
+  }
+  return React.createElement(DinouPageSlot);
+}
+
 async function getJSX(
   reqPath,
   query,
@@ -46,34 +77,7 @@ async function getJSX(
 
   // 1. Segmented handling for Layout: If only the layout is requested
   if (options && options.segment === "layout") {
-    let DinouPageSlot = RawDinouPageSlot;
-    if (
-      typeof DinouPageSlot === "function" &&
-      DinouPageSlot.$$typeof !== Symbol.for("react.client.reference")
-    ) {
-      const slotPath = path.resolve(currentDir, "slot.js");
-      const fileUrl = pathToFileURL(slotPath).href;
-      let regFn = null;
-      try {
-        const pkg = require("react-server-dom-webpack/server");
-        regFn = pkg.registerClientReference;
-      } catch (e) {}
-      if (!regFn) {
-        try {
-          const pkg = require("@roggc/react-server-dom-esm/server.node.js");
-          regFn = pkg.registerClientReference;
-        } catch (e) {}
-      }
-      if (regFn) {
-        DinouPageSlot = regFn(DinouPageSlot, fileUrl, "DinouPageSlot");
-      } else {
-        Object.defineProperties(DinouPageSlot, {
-          $$typeof: { value: Symbol.for("react.client.reference") },
-          $$id: { value: fileUrl + "#DinouPageSlot" },
-        });
-      }
-    }
-    jsx = React.createElement(DinouPageSlot);
+    jsx = createDinouPageSlotElement();
   } else {
     const hasRouterSyntax = reqSegments.some((seg) => {
       const isGroup = seg.startsWith("(") && seg.endsWith(")");
@@ -168,6 +172,12 @@ async function getJSX(
             !options?.skipLayoutProbe
           ) {
             jsx = await runInPageSegment(() => asyncRenderJSXToClientJSX(jsx));
+            const ctx = getContext();
+            if (ctx) {
+              ctx._resolvedPageClientJsx = jsx;
+              ctx._resolvedLayoutClientJsx = null;
+              ctx._hasResolvedSegments = true;
+            }
           }
           return jsx;
         }
@@ -210,6 +220,10 @@ async function getJSX(
       !options?.skipLayoutProbe
     ) {
       jsx = await runInPageSegment(() => asyncRenderJSXToClientJSX(jsx));
+      const ctx = getContext();
+      if (ctx) {
+        ctx._resolvedPageClientJsx = jsx;
+      }
     }
 
     // 2. Segmented handling for Page: If only the page is requested, return without layouts
@@ -228,6 +242,11 @@ async function getJSX(
       false,
     )[0]
   ) {
+    const ctx = getContext();
+    if (ctx && !options?.segment) {
+      ctx._resolvedLayoutClientJsx = null;
+      ctx._hasResolvedSegments = true;
+    }
     return jsx;
   }
 
@@ -247,6 +266,8 @@ async function getJSX(
   if (layouts && Array.isArray(layouts)) {
     let index = 0;
     const layoutSegmentStore = { active: true, idCount: 0, holeCount: 0 };
+    let layoutOnlyJsx = !options?.segment && layouts.length > 0 ? createDinouPageSlotElement() : null;
+    let layoutRenderFailed = false;
     for (const [layoutPath, dParams, slots] of layouts.reverse()) {
       const layoutModule = await importModule(layoutPath);
       const layoutFolderPath = path.dirname(layoutPath);
@@ -336,12 +357,16 @@ async function getJSX(
       let props = { params: dParams, ...updatedSlots, ...(layoutProps ?? {}) };
       if (options?.skipLayoutProbe) {
         jsx = markLayoutRootElement(React.createElement(Layout, props, jsx));
+        layoutOnlyJsx = null;
       } else if (isPprBuildActive()) {
         try {
           const testElement = React.createElement(Layout, props, null);
           await runInLayoutSegment(() => asyncRenderJSXToClientJSX(testElement));
           jsx = markLayoutRootElement(React.createElement(Layout, props, jsx));
+          layoutOnlyJsx = null;
         } catch (layoutErr) {
+          layoutRenderFailed = true;
+          layoutOnlyJsx = null;
           console.warn(
             `[Dinou] Layout ${layoutPath} failed during render, isolating layout error:`,
             layoutErr?.message || layoutErr
@@ -370,7 +395,12 @@ async function getJSX(
             layoutSegmentStore
           );
           jsx = replaceLayoutChildrenPlaceholder(resolvedLayout, jsx, placeholder);
+          if (layoutOnlyJsx && !layoutRenderFailed) {
+            layoutOnlyJsx = replaceLayoutChildrenPlaceholder(resolvedLayout, layoutOnlyJsx, placeholder);
+          }
         } catch (layoutErr) {
+          layoutRenderFailed = true;
+          layoutOnlyJsx = null;
           layoutSegmentStore.idCount = prevLayoutIdCount;
           layoutSegmentStore.holeCount = prevLayoutHoleCount;
           console.warn(
@@ -395,6 +425,24 @@ async function getJSX(
         break;
       }
       index++;
+    }
+    if (!options?.segment) {
+      const ctx = getContext();
+      if (ctx) {
+        if (!layoutRenderFailed) {
+          ctx._resolvedLayoutClientJsx = layouts.length > 0 ? layoutOnlyJsx : null;
+          ctx._hasResolvedSegments = Boolean(layouts.length === 0 || layoutOnlyJsx);
+        } else {
+          ctx._resolvedLayoutClientJsx = null;
+          ctx._hasResolvedSegments = false;
+        }
+      }
+    }
+  } else if (!options?.segment) {
+    const ctx = getContext();
+    if (ctx) {
+      ctx._resolvedLayoutClientJsx = null;
+      ctx._hasResolvedSegments = true;
     }
   }
 
