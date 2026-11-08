@@ -317,12 +317,12 @@ function getReactInternalsList() {
   };
   addFromModule(React);
   try {
-    const req = createRequire(import.meta.url);
+    const createReq = createRequire; const req = createReq(import.meta.url); const reactPkgPath = req.resolve("react/package.json"); const reactDir = reactPkgPath.slice(0, reactPkgPath.length - "package.json".length);
     try {
-      addFromModule(req("react/index.js"));
+      addFromModule(req(reactDir + "index.js"));
     } catch (_) {}
     try {
-      addFromModule(req("react/react.react-server.js"));
+      addFromModule(req(reactDir + "react.react-server.js"));
     } catch (_) {}
   } catch (_) {}
   _cachedReactInternalsList = Array.from(set);
