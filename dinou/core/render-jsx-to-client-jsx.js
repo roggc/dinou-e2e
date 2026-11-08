@@ -332,11 +332,12 @@ function getReactInternalsList() {
     const s = mod.__SERVER_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
     const c = mod.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
     if (s && typeof s === "object" && "H" in s) {
+      s._dinouIsServerInternals = true;
       patchInternalsDispatcherSetter(s);
       set.add(s);
     }
     if (c && typeof c === "object" && "H" in c) {
-      patchInternalsDispatcherSetter(c);
+      // Do not install setter on __CLIENT_INTERNALS__ (used by react-dom/server SSR)
       set.add(c);
     }
   };
@@ -357,7 +358,7 @@ function getReactInternalsList() {
 function ensureServerHooksPatched() {
   const list = getReactInternalsList();
   for (const internals of list) {
-    patchInternalsDispatcherSetter(internals);
+    if (internals._dinouIsServerInternals) patchInternalsDispatcherSetter(internals);
   }
 }
 
@@ -727,7 +728,8 @@ async function asyncRenderJSXToClientJSXInner(jsx, key = null) {
         }
         if (
           jsx.props?.children?.type === DinouSuspenseHoleBoundary ||
-          jsx.props?.children?.type?.$$dinouDeferredSuspenseStream
+          (!isClientComponent(jsx.props?.children?.type) &&
+            jsx.props?.children?.type?.$$dinouDeferredSuspenseStream)
         ) {
           return jsx;
         }
