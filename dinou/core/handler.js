@@ -2821,13 +2821,10 @@ async function handleRequest(request, platformContext = {}) {
             !dynamicState.value &&
             allowISGValue !== false &&
             Object.keys(queryObj).length === 0) ||
-          (platformContext.isSSG === true && (!dynamicState.value || (isPprConfig && !ssgPprUnwrappedBailout)));
+          (platformContext.isSSG === true && !ssgPprUnwrappedBailout);
 
         if (!shouldCacheISG && inFlightKey) {
           inFlightGenerations.delete(inFlightKey);
-        }
-        if (platformContext?.isSSG && !shouldCacheISG) {
-          bridge.setHeader("X-Dinou-Dynamic-Bailout", "true");
         }
 
         // Generic fallback for double crash
@@ -2966,12 +2963,27 @@ async function handleRequest(request, platformContext = {}) {
                   const leafRscKey = leafLayout.cleanLayoutKey
                     ? `${leafLayout.cleanLayoutKey}/layout.rsc`
                     : "layout.rsc";
-                  precomputedLayoutRscText = await readRscFromStorage(
+                  const leafMetaKey = leafLayout.cleanLayoutKey
+                    ? `${leafLayout.cleanLayoutKey}/layout.metadata.json`
+                    : "layout.metadata.json";
+                  const lMeta = await readMetaFromStorage(
                     storage,
+                    leafMetaKey,
                     leafRscKey,
                     platformContext,
                     request.url
                   );
+                  const layoutHasPprHoles =
+                    Boolean(lMeta?.ppr) ||
+                    (Array.isArray(lMeta?.holes) && lMeta.holes.length > 0);
+                  if (!layoutHasPprHoles) {
+                    precomputedLayoutRscText = await readRscFromStorage(
+                      storage,
+                      leafRscKey,
+                      platformContext,
+                      request.url
+                    );
+                  }
                 }
               } catch (e) {}
             }
@@ -3156,8 +3168,8 @@ async function handleRequest(request, platformContext = {}) {
             }
 
             if (fullHtml) {
-              if (!dynamicState.value || (platformContext.isSSG === true && isPprConfig && !ssgPprUnwrappedBailout)) {
-                if (platformContext.isSSG === true && isPprConfig && !ssgPprUnwrappedBailout) dynamicState.value = false;
+              if (!dynamicState.value || (platformContext.isSSG === true && !ssgPprUnwrappedBailout)) {
+                if (platformContext.isSSG === true && !ssgPprUnwrappedBailout) dynamicState.value = false;
                 for (const k of [reqPath, cleanPath, cleanPath ? `/${cleanPath}` : "/"]) {
                   if (!k) continue;
                   if (isDynamic.has(k)) {

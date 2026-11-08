@@ -221,10 +221,9 @@ async function generateStatic() {
       }
 
       // B. Pre-render isolated page RSC segment (page.rsc) if not already persisted in Step 5A
-      const isSsgDynamicBailout = res.headers.get("x-dinou-dynamic-bailout") === "true";
       const pageRscKey = cleanPagePath ? `${cleanPagePath}/page.rsc` : "page.rsc";
       const existingPageRsc = await storage.get(pageRscKey);
-      if (!isSsgDynamicBailout && (!existingPageRsc || !existingPageRsc.content)) {
+      if (!existingPageRsc || !existingPageRsc.content) {
         try {
           const pageReq = new Request(`http://localhost/____rsc_page____${reqPath}`);
           const pageRes = await rscModule.handleRequest(pageReq, {
