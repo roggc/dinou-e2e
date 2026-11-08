@@ -19,16 +19,49 @@ runs:
         cache: npm
 
     - name: Setup Deno
+      id: setup-deno
       if: inputs.deno == 'true'
+      continue-on-error: true
       uses: denoland/setup-deno@v2
       with:
         deno-version: v2.x
+        cache: true
+
+    - name: Fallback Setup Deno via npm
+      if: inputs.deno == 'true' && steps.setup-deno.outcome == 'failure'
+      shell: bash
+      run: |
+        echo "::warning::denoland/setup-deno falló (p. ej. 504 en GitHub Releases); instalando Deno vía npm..."
+        npm install -g deno@latest
+        NPM_PREFIX="$(npm config get prefix)"
+        if [ -d "$NPM_PREFIX/bin" ]; then
+          echo "$NPM_PREFIX/bin" >> "$GITHUB_PATH"
+        else
+          echo "$NPM_PREFIX" >> "$GITHUB_PATH"
+        fi
+        deno --version
 
     - name: Setup Bun
+      id: setup-bun
       if: inputs.bun == 'true'
+      continue-on-error: true
       uses: oven-sh/setup-bun@v2
       with:
         bun-version: latest
+
+    - name: Fallback Setup Bun via npm
+      if: inputs.bun == 'true' && steps.setup-bun.outcome == 'failure'
+      shell: bash
+      run: |
+        echo "::warning::oven-sh/setup-bun falló (p. ej. 504 en GitHub Releases); instalando Bun vía npm..."
+        npm install -g bun@latest
+        NPM_PREFIX="$(npm config get prefix)"
+        if [ -d "$NPM_PREFIX/bin" ]; then
+          echo "$NPM_PREFIX/bin" >> "$GITHUB_PATH"
+        else
+          echo "$NPM_PREFIX" >> "$GITHUB_PATH"
+        fi
+        bun --version
 
     - name: Install dependencies
       shell: bash
