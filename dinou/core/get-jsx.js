@@ -10,7 +10,8 @@ import {
   asyncRenderJSXToClientJSX,
   replaceLayoutChildrenPlaceholder,
 } from "./render-jsx-to-client-jsx.js";
-import { getLayoutProps } from "./layout-functions.js";
+import { getLayoutProps, resolveLayoutChainPpr } from "./layout-functions.js";
+import { resolveModulePpr } from "./resolve-module-ppr.js";
 import { DinouPageSlot as RawDinouPageSlot } from "./slot.js";
 import { getErrorJSX } from "./get-error-jsx.js";
 import {
@@ -75,6 +76,13 @@ async function getJSX(
   let jsx;
   let pageFunctionsProps;
 
+  const { layoutPprMap, leafLayoutPpr } = await resolveLayoutChainPpr(
+    reqSegments,
+    query || {},
+    srcFolder,
+    { ignoreNoLayout: options?.segment === "layout" },
+  );
+
   // 1. Segmented handling for Layout: If only the layout is requested
   if (options && options.segment === "layout") {
     jsx = createDinouPageSlotElement();
@@ -132,6 +140,7 @@ async function getJSX(
             null,
             `Page not found: no "page" file found for "${normalizedReqPath}"`,
           ),
+          Boolean(leafLayoutPpr),
         );
       } else {
         const pageModule = await importModule(notFoundPath);
@@ -151,15 +160,24 @@ async function getJSX(
           undefined,
           reqSegments.length,
         );
+        let explicitNotFoundPpr = null;
         if (pageFunctionsPath) {
           const pageFunctionsModule = await importModule(pageFunctionsPath);
+          explicitNotFoundPpr = await resolveModulePpr(pageFunctionsModule);
           const defaultExport = pageFunctionsModule.default?.default ? pageFunctionsModule.default.default : pageFunctionsModule.default;
           const getProps = pageFunctionsModule.getProps || defaultExport?.getProps;
           pageFunctionsProps = await getProps?.(dParams ?? {});
           props = { ...props, ...(pageFunctionsProps ?? {}) };
         }
+        const notFoundEffectivePpr =
+          explicitNotFoundPpr !== null
+            ? explicitNotFoundPpr
+            : Boolean(leafLayoutPpr);
 
-        jsx = markPageRootElement(React.createElement(Page, props));
+        jsx = markPageRootElement(
+          React.createElement(Page, props),
+          notFoundEffectivePpr,
+        );
         const noLayoutNotFoundPath = path.join(
           notFoundDir,
           `no_layout_not_found`,
@@ -184,12 +202,6 @@ async function getJSX(
       }
     } else {
       if (isNotFound) isNotFound.value = false;
-      const pageModule = await importModule(pagePath);
-      const Page = pageModule.default ?? pageModule;
-
-      let props = {
-        params: dynamicParams,
-      };
 
       const pageFolder = path.dirname(pagePath);
       const [pageFunctionsPath] = getFilePathAndDynamicParams(
@@ -202,15 +214,64 @@ async function getJSX(
         undefined,
         reqSegments.length,
       );
+      let pageFunctionsModule = null;
+      let explicitPagePpr = null;
       if (pageFunctionsPath) {
-        const pageFunctionsModule = await importModule(pageFunctionsPath);
-        const defaultExport = pageFunctionsModule.default?.default ? pageFunctionsModule.default.default : pageFunctionsModule.default;
-        const getProps = pageFunctionsModule.getProps || defaultExport?.getProps;
-        pageFunctionsProps = await getProps?.(dynamicParams);
-        props = { ...props, ...(pageFunctionsProps ?? {}) };
+        pageFunctionsModule = await importModule(pageFunctionsPath);
+        explicitPagePpr = await resolveModulePpr(pageFunctionsModule);
       }
+      if (
+        explicitPagePpr === null &&
+        typeof globalThis !== "undefined" &&
+        globalThis.__DINOU_ROUTE_METADATA__
+      ) {
+        const normKey = (pageFunctionsPath || pagePath || "").replace(
+          /\\/g,
+          "/",
+        );
+        for (const [k, meta] of Object.entries(
+          globalThis.__DINOU_ROUTE_METADATA__,
+        )) {
+          if (
+            meta.ppr !== undefined &&
+            (normKey === k || normKey.endsWith("/" + k) || normKey.endsWith(k))
+          ) {
+            explicitPagePpr = Boolean(meta.ppr);
+            break;
+          }
+        }
+      }
+      const pageEffectivePpr =
+        explicitPagePpr !== null ? explicitPagePpr : Boolean(leafLayoutPpr);
 
-      jsx = markPageRootElement(React.createElement(Page, props));
+      if (getContext()?._isPprRuntimeResume && !pageEffectivePpr) {
+        if (options && options.segment === "page") {
+          return null;
+        }
+        jsx = markPageRootElement(null, false);
+      } else {
+        const pageModule = await importModule(pagePath);
+        const Page = pageModule.default ?? pageModule;
+
+        let props = {
+          params: dynamicParams,
+        };
+
+        if (pageFunctionsModule) {
+          const defaultExport = pageFunctionsModule.default?.default
+            ? pageFunctionsModule.default.default
+            : pageFunctionsModule.default;
+          const getProps =
+            pageFunctionsModule.getProps || defaultExport?.getProps;
+          pageFunctionsProps = await getProps?.(dynamicParams);
+          props = { ...props, ...(pageFunctionsProps ?? {}) };
+        }
+
+        jsx = markPageRootElement(
+          React.createElement(Page, props),
+          pageEffectivePpr,
+        );
+      }
     }
 
     if (
@@ -269,7 +330,6 @@ async function getJSX(
     let layoutOnlyJsx = !options?.segment && layouts.length > 0 ? createDinouPageSlotElement() : null;
     let layoutRenderFailed = false;
     for (const [layoutPath, dParams, slots] of layouts.reverse()) {
-      const layoutModule = await importModule(layoutPath);
       const layoutFolderPath = path.dirname(layoutPath);
       const resetLayoutPath = getFilePathAndDynamicParams(
         [],
@@ -278,6 +338,20 @@ async function getJSX(
         "reset_layout",
         false,
       )[0];
+      const normLayoutPath = layoutPath.replace(/\\/g, "/");
+      const layoutEffectivePpr = layoutPprMap.has(normLayoutPath)
+        ? Boolean(layoutPprMap.get(normLayoutPath))
+        : Boolean(leafLayoutPpr);
+
+      if (getContext()?._isPprRuntimeResume && !layoutEffectivePpr) {
+        if (resetLayoutPath) {
+          break;
+        }
+        index++;
+        continue;
+      }
+
+      const layoutModule = await importModule(layoutPath);
       const Layout = layoutModule.default ?? layoutModule;
       const updatedSlots = {};
       for (const [slotName, slotValue] of Object.entries(slots)) {
@@ -299,11 +373,18 @@ async function getJSX(
           } else {
             elementToRender = slotValue;
           }
+          elementToRender = markLayoutRootElement(
+            elementToRender,
+            layoutEffectivePpr,
+          );
           const resolvedSlot = await runInLayoutSegment(
             () => asyncRenderJSXToClientJSX(elementToRender),
             layoutSegmentStore
           );
-          updatedSlotElement = isPprBuildActive() ? elementToRender : resolvedSlot;
+          updatedSlotElement =
+            isPprBuildActive() || Boolean(getPprStore())
+              ? elementToRender
+              : resolvedSlot;
         } catch (e) {
           layoutSegmentStore.idCount = prevSlotIdCount;
           layoutSegmentStore.holeCount = prevSlotHoleCount;
@@ -356,13 +437,22 @@ async function getJSX(
       const layoutProps = await getLayoutProps(layoutPath, dParams);
       let props = { params: dParams, ...updatedSlots, ...(layoutProps ?? {}) };
       if (options?.skipLayoutProbe) {
-        jsx = markLayoutRootElement(React.createElement(Layout, props, jsx));
+        jsx = markLayoutRootElement(
+          React.createElement(Layout, props, jsx),
+          layoutEffectivePpr,
+        );
         layoutOnlyJsx = null;
-      } else if (isPprBuildActive()) {
+      } else if (isPprBuildActive() || Boolean(getPprStore())) {
         try {
-          const testElement = React.createElement(Layout, props, null);
+          const testElement = markLayoutRootElement(
+            React.createElement(Layout, props, null),
+            layoutEffectivePpr,
+          );
           await runInLayoutSegment(() => asyncRenderJSXToClientJSX(testElement));
-          jsx = markLayoutRootElement(React.createElement(Layout, props, jsx));
+          jsx = markLayoutRootElement(
+            React.createElement(Layout, props, jsx),
+            layoutEffectivePpr,
+          );
           layoutOnlyJsx = null;
         } catch (layoutErr) {
           layoutRenderFailed = true;
@@ -389,7 +479,10 @@ async function getJSX(
         const prevLayoutHoleCount = layoutSegmentStore.holeCount;
         try {
           const placeholder = createLayoutChildrenPlaceholder();
-          const testElement = React.createElement(Layout, props, placeholder);
+          const testElement = markLayoutRootElement(
+            React.createElement(Layout, props, placeholder),
+            layoutEffectivePpr,
+          );
           const resolvedLayout = await runInLayoutSegment(
             () => asyncRenderJSXToClientJSX(testElement),
             layoutSegmentStore

@@ -3,6 +3,7 @@ import { existsSync } from "./vfs.js";
 import importModule from "./import-module.js";
 import { resolveModulePpr } from "./resolve-module-ppr.js";
 import { getFilePathAndDynamicParams } from "./get-file-path-and-dynamic-params.js";
+import { getDinouConfig } from "./load-dinou-config.js";
 
 const LAYOUT_FUNCTIONS_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mjs"];
 const LAYOUT_FUNCTIONS_NAMES = ["layout_functions", "layout.functions"];
@@ -275,15 +276,53 @@ function getActiveLayoutChain(
   return activeChain;
 }
 
+/**
+ * Resolves the effective PPR boolean for each active layout in the chain (from outermost to innermost),
+ * inheriting from global dinou.config.js -> parent layout -> child layout.
+ */
+async function resolveLayoutChainPpr(
+  reqSegments,
+  queryObj = {},
+  srcFolder = path.resolve(process.cwd(), "src"),
+  options = {}
+) {
+  const globalCfg = await getDinouConfig();
+  let inheritedPpr = Boolean(globalCfg?.ppr);
+  const activeChain = getActiveLayoutChain(reqSegments, queryObj, srcFolder, options);
+  const layoutPprMap = new Map();
+
+  for (let i = activeChain.length - 1; i >= 0; i--) {
+    const entry = activeChain[i];
+    const lConfig = await resolveLayoutFunctionsConfig(entry.layoutPath, entry.dParams);
+    if (lConfig && lConfig.ppr !== null && lConfig.ppr !== undefined) {
+      inheritedPpr = Boolean(lConfig.ppr);
+    }
+    entry.effectivePpr = inheritedPpr;
+    layoutPprMap.set(entry.layoutPath, inheritedPpr);
+    layoutPprMap.set(path.normalize(entry.layoutPath), inheritedPpr);
+    layoutPprMap.set(entry.layoutPath.replace(/\\/g, "/"), inheritedPpr);
+  }
+
+  const anyLayoutPpr = activeChain.some((entry) => Boolean(entry.effectivePpr));
+  return {
+    activeChain,
+    layoutPprMap,
+    leafLayoutPpr: inheritedPpr,
+    anyLayoutPpr,
+  };
+}
+
 export {
   getLayoutFunctionsPath,
   getLayoutProps,
   resolveLayoutFunctionsConfig,
   getActiveLayoutChain,
+  resolveLayoutChainPpr,
 };
 export default {
   getLayoutFunctionsPath,
   getLayoutProps,
   resolveLayoutFunctionsConfig,
   getActiveLayoutChain,
+  resolveLayoutChainPpr,
 };

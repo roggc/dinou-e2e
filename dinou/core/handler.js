@@ -23,7 +23,7 @@ import { getFilePathAndDynamicParams } from "./get-file-path-and-dynamic-params.
 import getJSX from "./get-jsx.js";
 import { getErrorJSX } from "./get-error-jsx.js";
 import importModule from "./import-module.js";
-import { resolveLayoutFunctionsConfig, getActiveLayoutChain } from "./layout-functions.js";
+import { resolveLayoutFunctionsConfig, getActiveLayoutChain, resolveLayoutChainPpr } from "./layout-functions.js";
 import { revalidating, regenerating, inFlightGenerations } from "./revalidating.js";
 import { generatingISG } from "./generating-isg.js";
 import { requestStorage, setCurrentContext } from "./request-context.js";
@@ -407,32 +407,24 @@ if (!globalThis[IS_DYNAMIC_MAP_KEY]) {
 const isDynamic = globalThis[IS_DYNAMIC_MAP_KEY];
 const pageFunctionsConfigCache = new Map();
 
-async function resolvePprForRoute(pagePath, pageFunctionsModule, reqSegments, queryObj) {
-  const globalCfg = await getDinouConfig();
-  let inheritedPpr = Boolean(globalCfg?.ppr);
-  try {
-    const srcFolder = path.resolve(process.cwd(), "src");
-    const layouts = getFilePathAndDynamicParams(
-      reqSegments || [],
-      queryObj || {},
-      srcFolder,
-      "layout",
-      true,
-      false,
-      undefined,
-      0,
-      {},
-      true
-    );
-    if (layouts && Array.isArray(layouts)) {
-      for (const [lPath, lParams] of layouts) {
-        const lConfig = await resolveLayoutFunctionsConfig(lPath, lParams);
-        if (lConfig && lConfig.ppr !== null && lConfig.ppr !== undefined) {
-          inheritedPpr = Boolean(lConfig.ppr);
-        }
-      }
-    }
-  } catch (e) {}
+async function resolvePprForRoute(
+  pagePath,
+  pageFunctionsModule,
+  reqSegments,
+  queryObj,
+  options = {},
+) {
+  const srcFolder = path.resolve(process.cwd(), "src");
+  const { leafLayoutPpr, anyLayoutPpr } = await resolveLayoutChainPpr(
+    reqSegments || [],
+    queryObj || {},
+    srcFolder,
+    { ignoreNoLayout: Boolean(options?.ignoreNoLayout) },
+  );
+
+  if (options?.segment === "layout") {
+    return Boolean(anyLayoutPpr);
+  }
 
   let explicitPagePpr = null;
   let pfMod = pageFunctionsModule;
@@ -447,7 +439,7 @@ async function resolvePprForRoute(pagePath, pageFunctionsModule, reqSegments, qu
         true,
         true,
         undefined,
-        (reqSegments || []).length
+        (reqSegments || []).length,
       );
       if (pageFunctionsPath) {
         pfMod = await importModule(pageFunctionsPath);
@@ -458,8 +450,33 @@ async function resolvePprForRoute(pagePath, pageFunctionsModule, reqSegments, qu
   if (pfMod) {
     explicitPagePpr = await resolveModulePpr(pfMod);
   }
+  if (
+    explicitPagePpr === null &&
+    typeof globalThis !== "undefined" &&
+    globalThis.__DINOU_ROUTE_METADATA__ &&
+    pagePath
+  ) {
+    const normPage = pagePath.replace(/\\/g, "/");
+    const pageDir = path.dirname(normPage);
+    for (const [k, meta] of Object.entries(
+      globalThis.__DINOU_ROUTE_METADATA__,
+    )) {
+      if (
+        meta.ppr !== undefined &&
+        (normPage.endsWith(k) || k.startsWith(pageDir + "/page_functions"))
+      ) {
+        explicitPagePpr = Boolean(meta.ppr);
+        break;
+      }
+    }
+  }
 
-  return explicitPagePpr !== null ? explicitPagePpr : inheritedPpr;
+  const pageEffectivePpr =
+    explicitPagePpr !== null ? explicitPagePpr : Boolean(leafLayoutPpr);
+  if (options?.segment === "page") {
+    return Boolean(pageEffectivePpr);
+  }
+  return Boolean(pageEffectivePpr || anyLayoutPpr);
 }
 
 /**
@@ -495,6 +512,9 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
       }
 
       const isPpr = await resolvePprForRoute(pagePath, pageFunctionsModule, reqSegments, queryObj);
+      const isPagePpr = await resolvePprForRoute(pagePath, pageFunctionsModule, reqSegments, queryObj, {
+        segment: "page",
+      });
 
       if (pageFunctionsModule) {
         const defaultExport = pageFunctionsModule.default?.default ? pageFunctionsModule.default.default : pageFunctionsModule.default;
@@ -554,6 +574,7 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
           revalidate: revalidateVal,
           tags: tagsVal,
           ppr: isPpr,
+          pagePpr: isPagePpr,
         };
       } else {
         cachedConfig = {
@@ -564,6 +585,7 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
           revalidate: undefined,
           tags: [],
           ppr: isPpr,
+          pagePpr: isPagePpr,
         };
       }
 
@@ -620,6 +642,7 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
     revalidate: cachedConfig?.revalidate,
     tags: cachedConfig?.tags || [],
     ppr: Boolean(cachedConfig?.ppr),
+    pagePpr: Boolean(cachedConfig?.pagePpr),
     staticPathsSet: cachedConfig?.staticPathsSet || null,
   };
 }
@@ -1637,6 +1660,7 @@ async function handleRequest(request, platformContext = {}) {
       : "page.rsc";
 
     let isRoutePpr = false;
+    let hasDetectedSegmentPpr = false;
     let currentGeneratedAt = null;
     let leafLayoutSuspenseCount = 0;
     if (!isDevelopment && isEdgeRuntime(platformContext)) {
@@ -1731,11 +1755,20 @@ async function handleRequest(request, platformContext = {}) {
             if (edgeMeta.dynamic) {
               dynamicState.value = true;
             }
+            if (edgeMeta.ppr !== undefined) {
+              isRoutePpr = Boolean(edgeMeta.ppr);
+              hasDetectedSegmentPpr = true;
+            }
             if (Array.isArray(edgeMeta.holes) && edgeMeta.holes.length > 0) {
               isRoutePpr = true;
+              hasDetectedSegmentPpr = true;
             }
-          } else if (edgeMeta.ppr) {
-            isRoutePpr = true;
+          } else if (edgeMeta.pagePpr !== undefined) {
+            isRoutePpr = Boolean(edgeMeta.pagePpr);
+            hasDetectedSegmentPpr = true;
+          } else if (edgeMeta.ppr !== undefined) {
+            isRoutePpr = Boolean(edgeMeta.ppr);
+            hasDetectedSegmentPpr = true;
           }
         }
       }
@@ -1751,59 +1784,36 @@ async function handleRequest(request, platformContext = {}) {
             if (metaObj.dynamic) {
               dynamicState.value = true;
             }
+            if (metaObj.ppr !== undefined) {
+              isRoutePpr = Boolean(metaObj.ppr);
+              hasDetectedSegmentPpr = true;
+            }
             if (Array.isArray(metaObj.holes) && metaObj.holes.length > 0) {
               isRoutePpr = true;
+              hasDetectedSegmentPpr = true;
             }
-          } else if (metaObj.ppr) {
-            isRoutePpr = true;
+          } else if (metaObj.pagePpr !== undefined) {
+            isRoutePpr = Boolean(metaObj.pagePpr);
+            hasDetectedSegmentPpr = true;
+          } else if (metaObj.ppr !== undefined) {
+            isRoutePpr = Boolean(metaObj.ppr);
+            hasDetectedSegmentPpr = true;
           }
         }
       } catch (e) {}
     }
 
-    if (!isRoutePpr) {
+    if (!hasDetectedSegmentPpr) {
       isRoutePpr = isLayoutReq
-        ? Boolean(platformContext?.isSSG && layoutConfig?.ppr)
-        : pageConfig?.ppr !== undefined && pageConfig?.ppr !== null
-        ? Boolean(pageConfig.ppr)
-        : await resolvePprForRoute(pagePath, null, reqSegments, queryObj);
-    }
-
-    let useStaticLayoutFallbackFile = false;
-    if (
-      isLayoutReq &&
-      isStatic &&
-      isRoutePpr &&
-      !isDevelopment &&
-      !platformContext?.isSSG
-    ) {
-      const cleanRel = cleanPath.replace(/^\/+/, "").replace(/\/+$/, "");
-      const staticLayoutKey = cleanRel
-        ? `${cleanRel}/layout.static.rsc`
-        : "layout.static.rsc";
-      if (isEdgeRuntime(platformContext)) {
-        const storage = getStorageAdapter();
-        const cachedStaticLayout = await readRscFromStorage(
-          storage,
-          staticLayoutKey,
-          platformContext,
-          request.url
-        );
-        if (cachedStaticLayout) {
-          isRoutePpr = false;
-          useStaticLayoutFallbackFile = true;
-        }
-      } else {
-        const staticLayoutPath = path.resolve(
-          ".dinou/dist2",
-          cleanRel,
-          "layout.static.rsc"
-        );
-        if (existsSync(staticLayoutPath)) {
-          isRoutePpr = false;
-          useStaticLayoutFallbackFile = true;
-        }
-      }
+        ? await resolvePprForRoute(null, null, reqSegments, queryObj, {
+            segment: "layout",
+            ignoreNoLayout: true,
+          })
+        : pageConfig?.pagePpr !== undefined && pageConfig?.pagePpr !== null
+        ? Boolean(pageConfig.pagePpr)
+        : await resolvePprForRoute(pagePath, null, reqSegments, queryObj, {
+            segment: "page",
+          });
     }
 
     const canServeCachedRsc = isLayoutReq
@@ -1826,15 +1836,11 @@ async function handleRequest(request, platformContext = {}) {
           currentGeneratedAt &&
           Number(internalBuildId) < Number(currentGeneratedAt));
 
-      const resolvedTargetFileName = useStaticLayoutFallbackFile
-        ? "layout.static.rsc"
-        : targetFileName;
+      const resolvedTargetFileName = targetFileName;
 
       const actualFileName = useOld
         ? isLayoutReq
-          ? useStaticLayoutFallbackFile
-            ? "layout.static._old.rsc"
-            : "layout._old.rsc"
+          ? "layout._old.rsc"
           : "page._old.rsc"
         : resolvedTargetFileName;
 
@@ -2097,7 +2103,13 @@ async function handleRequest(request, platformContext = {}) {
         let jsx;
         if (platformContext?.isSSG) {
           const ssgIsPpr = isLayoutReq
-            ? Boolean(isRoutePpr || (await resolvePprForRoute(null, null, reqSegments, queryObj)))
+            ? Boolean(
+                isRoutePpr ||
+                  (await resolvePprForRoute(null, null, reqSegments, queryObj, {
+                    segment: "layout",
+                    ignoreNoLayout: true,
+                  })),
+              )
             : Boolean(isRoutePpr);
           jsx = await runWithPprContext({ isPpr: ssgIsPpr }, async () => {
             const rawJsx = await getJSX(reqPath, queryObj, isNotFound, isDevelopment, isPathBlocked, {
@@ -2116,6 +2128,9 @@ async function handleRequest(request, platformContext = {}) {
             const regHoles = getRegisteredHoles();
             if (regHoles.length > 0) {
               bridge.setHeader("X-Dinou-Ppr-Holes", JSON.stringify(regHoles));
+            }
+            if (isLayoutReq && ssgIsPpr) {
+              bridge.setHeader("X-Dinou-Ppr", "true");
             }
             bridge.setHeader("X-Dinou-Suspense-Count", String(getPprHoleCounter()));
             if (rscDynamicState.value) {
@@ -2259,7 +2274,15 @@ async function handleRequest(request, platformContext = {}) {
     dynamicState.value = false;
   }
 
-  let { isPathBlocked, allowISGValue, isDynamicConfig, revalidate, tags, ppr: isPprConfig } = await resolvePageFunctionsConfig(
+  let {
+    isPathBlocked,
+    allowISGValue,
+    isDynamicConfig,
+    revalidate,
+    tags,
+    ppr: isPprConfig,
+    pagePpr: isPagePprConfig,
+  } = await resolvePageFunctionsConfig(
     pagePath,
     reqSegments,
     queryObj,
@@ -2827,19 +2850,81 @@ async function handleRequest(request, platformContext = {}) {
           : null;
         let jsx;
         let rscText = "";
+        let precomputedPageRscText = "";
+        let precomputedLayoutRscText = "";
 
         let pprHoles = [];
         try {
           if (!isError) {
             if (platformContext?.isSSG && isPprConfig) {
-              await requestStorage.run(context, async () => {
-                await runWithPprContext({ isPpr: true }, async () => {
-                  jsx = await getJSX(reqPath, queryObj, isNotFound, isDevelopment, !pagePath);
-                  resetPprHoles();
-                  jsx = await asyncRenderJSXToClientJSX(jsx);
-                  pprHoles = getRegisteredHoles();
+              const activeChain = getActiveLayoutChain(reqSegments, queryObj, srcFolder);
+              let leafLayoutRsc = "";
+              let leafMeta = null;
+              if (activeChain.length > 0) {
+                const leafLayout = activeChain[0];
+                const leafRscKey = leafLayout.cleanLayoutKey
+                  ? `${leafLayout.cleanLayoutKey}/layout.rsc`
+                  : "layout.rsc";
+                const leafMetaKey = leafLayout.cleanLayoutKey
+                  ? `${leafLayout.cleanLayoutKey}/layout.metadata.json`
+                  : "layout.metadata.json";
+                leafMeta = await readMetaFromStorage(
+                  storage,
+                  leafMetaKey,
+                  leafRscKey,
+                  platformContext,
+                  request.url,
+                );
+                if (!leafMeta?.dynamic) {
+                  leafLayoutRsc = await readRscFromStorage(
+                    storage,
+                    leafRscKey,
+                    platformContext,
+                    request.url,
+                  );
+                }
+              }
+
+              if (activeChain.length > 0 && leafLayoutRsc) {
+                precomputedLayoutRscText = leafLayoutRsc;
+                const leafSuspenseCount = Number(leafMeta?.suspenseCount || 0);
+                const leafHoles = Array.isArray(leafMeta?.holes) ? leafMeta.holes : [];
+                await requestStorage.run(context, async () => {
+                  await runWithPprContext({ isPpr: Boolean(isPagePprConfig) }, async () => {
+                    const rawPageJsx = await getJSX(
+                      reqPath,
+                      queryObj,
+                      isNotFound,
+                      isDevelopment,
+                      !pagePath,
+                      { segment: "page" },
+                    );
+                    resetPprHoles(leafSuspenseCount);
+                    const renderedPageJsx = await runInPageSegment(() =>
+                      asyncRenderJSXToClientJSX(rawPageJsx),
+                    );
+                    context._resolvedPageClientJsx = renderedPageJsx;
+                    context._hasResolvedSegments = true;
+                    jsx = renderedPageJsx;
+                    const pageHoles = isPagePprConfig ? getRegisteredHoles() : [];
+                    pprHoles = Array.from(new Set([...leafHoles, ...pageHoles]));
+                  });
                 });
-              });
+              } else {
+                await requestStorage.run(context, async () => {
+                  await runWithPprContext({ isPpr: true }, async () => {
+                    jsx = await getJSX(reqPath, queryObj, isNotFound, isDevelopment, !pagePath);
+                    resetPprHoles();
+                    jsx = await asyncRenderJSXToClientJSX(jsx);
+                    pprHoles = getRegisteredHoles();
+                    if (activeChain.length === 0) {
+                      context._resolvedPageClientJsx = jsx;
+                      context._resolvedLayoutClientJsx = null;
+                      context._hasResolvedSegments = true;
+                    }
+                  });
+                });
+              }
             } else {
               await requestStorage.run(context, async () => {
                 jsx = await getJSX(reqPath, queryObj, isNotFound, isDevelopment, !pagePath);
@@ -2888,6 +2973,7 @@ async function handleRequest(request, platformContext = {}) {
           pageRevalidate: revalidate !== undefined ? revalidate : null,
           tags: tags || [],
           ppr: Boolean(isPprConfig),
+          pagePpr: Boolean(isPagePprConfig),
           holes: pprHoles,
           effects: {
             redirect: bridge.headers.get("Location") || null,
@@ -3016,9 +3102,21 @@ async function handleRequest(request, platformContext = {}) {
             bootstrapScriptContent += `window.HMR_WEBSOCKET_URL="ws://localhost:${hmrPort}";\n`;
           }
 
-          let precomputedPageRscText = "";
-          let precomputedLayoutRscText = "";
           if (
+            precomputedLayoutRscText &&
+            !precomputedPageRscText &&
+            !isError &&
+            context._resolvedPageClientJsx !== undefined
+          ) {
+            try {
+              const pageStream = requestStorage.run(context, () =>
+                renderRSCStream(context._resolvedPageClientJsx, clientManifest, {
+                  runtime: "edge",
+                })
+              );
+              precomputedPageRscText = await new Response(pageStream).text();
+            } catch (e) {}
+          } else if (
             shouldCacheISG &&
             !isPprConfig &&
             !isError &&
@@ -3065,27 +3163,6 @@ async function handleRequest(request, platformContext = {}) {
                       platformContext,
                       request.url
                     );
-                  } else {
-                    const staticLayoutRscKey = leafLayout.cleanLayoutKey
-                      ? `${leafLayout.cleanLayoutKey}/layout.static.rsc`
-                      : "layout.static.rsc";
-                    precomputedLayoutRscText = await readRscFromStorage(
-                      storage,
-                      staticLayoutRscKey,
-                      platformContext,
-                      request.url
-                    );
-                    if (!precomputedLayoutRscText) {
-                      const layoutStream = requestStorage.run(context, () =>
-                        renderRSCStream(context._resolvedLayoutClientJsx, clientManifest, {
-                          runtime: "edge",
-                        })
-                      );
-                      precomputedLayoutRscText = await new Response(layoutStream).text();
-                      if (precomputedLayoutRscText) {
-                        await storage.set(staticLayoutRscKey, precomputedLayoutRscText);
-                      }
-                    }
                   }
                 }
               } catch (e) {}

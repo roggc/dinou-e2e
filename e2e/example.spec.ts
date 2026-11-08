@@ -7435,8 +7435,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.getByTestId("case12-inner-resolved")).toBeVisible();
     });
 
-    test("3. Zero-Hole PPR Route (/t-new-ppr/all-static) & Child Route Opt-Out ppr=false Inside ppr=true Layout (/t-new-ppr/opt-out-route)", async ({
+    test("3. Zero-Hole PPR Route (/t-new-ppr/all-static), Per-Segment Opt-Out (/t-new-ppr/opt-out-route) & Per-Segment Opt-In (/t-new-ppr/opt-in-route)", async ({
       page,
+      context,
       request,
     }) => {
       if (isProd) {
@@ -7444,6 +7445,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         const optOutMetaPath = path.resolve(".dinou/dist2/t-new-ppr/opt-out-route/metadata.json");
         const optOutShellPath = path.resolve(".dinou/dist2/t-new-ppr/opt-out-route/shell.html");
         const optOutIndexPath = path.resolve(".dinou/dist2/t-new-ppr/opt-out-route/index.html");
+        const optInMetaPath = path.resolve(".dinou/dist2/t-new-ppr/opt-in-route/metadata.json");
+        const optInShellPath = path.resolve(".dinou/dist2/t-new-ppr/opt-in-route/shell.html");
 
         if (fs.existsSync(allStaticMetaPath)) {
           const allStaticMeta = JSON.parse(fs.readFileSync(allStaticMetaPath, "utf8"));
@@ -7453,17 +7456,35 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
         if (fs.existsSync(optOutMetaPath)) {
           const optOutMeta = JSON.parse(fs.readFileSync(optOutMetaPath, "utf8"));
-          expect(optOutMeta.ppr).toBe(false);
-          expect(fs.existsSync(optOutShellPath)).toBe(false);
+          expect(optOutMeta.ppr).toBe(true);
+          expect(optOutMeta.pagePpr).toBe(false);
+          expect(optOutMeta.holes).toEqual(["ppr-hole-2"]);
+          expect(fs.existsSync(optOutShellPath)).toBe(true);
           expect(fs.existsSync(optOutIndexPath)).toBe(true);
-          const optOutDiskHtml = fs.readFileSync(optOutIndexPath, "utf8");
+          const optOutDiskHtml = fs.readFileSync(optOutShellPath, "utf8");
+          // Page segment (ppr=false) resolved <Suspense> statically at build time without noDynamic()
           expect(optOutDiskHtml).toContain('data-testid="opt-out-async-resolved"');
           expect(optOutDiskHtml).not.toContain('data-testid="opt-out-async-fallback"');
-          expect(optOutDiskHtml).not.toContain('data-testid="layout-nodynamic-fallback"');
-          expect(optOutDiskHtml).not.toContain('data-testid="layout-dynamic-fallback"');
-          expect(optOutDiskHtml).not.toContain('<template id="B:');
-          expect(optOutDiskHtml).not.toContain('<div hidden id="S:');
-          expect(optOutDiskHtml).not.toContain('$RC(');
+          // Parent Layout segment (ppr=true) keeps its dynamic PPR hole (ppr-hole-2)
+          expect(optOutDiskHtml).toContain('data-testid="layout-dynamic-fallback"');
+          expect(optOutDiskHtml).toContain('data-ppr-hole="ppr-hole-2"');
+        }
+
+        if (fs.existsSync(optInMetaPath)) {
+          const optInMeta = JSON.parse(fs.readFileSync(optInMetaPath, "utf8"));
+          expect(optInMeta.ppr).toBe(true);
+          expect(optInMeta.pagePpr).toBe(true);
+          expect(optInMeta.holes).toEqual(["ppr-hole-2", "ppr-hole-4"]);
+          expect(fs.existsSync(optInShellPath)).toBe(true);
+          const optInDiskHtml = fs.readFileSync(optInShellPath, "utf8");
+          // Inner Layout segment (ppr=false) resolved <Suspense> statically at build time without noDynamic()
+          expect(optInDiskHtml).toContain('data-testid="opt-in-layout-suspense-resolved"');
+          expect(optInDiskHtml).not.toContain('data-testid="opt-in-layout-suspense-fallback"');
+          // Page segment (ppr=true) resolved noDynamic() <Suspense> statically and kept dynamic hole (ppr-hole-4)
+          expect(optInDiskHtml).toContain('data-testid="opt-in-page-nodynamic-resolved"');
+          expect(optInDiskHtml).not.toContain('data-testid="opt-in-page-nodynamic-fallback"');
+          expect(optInDiskHtml).toContain('data-testid="opt-in-page-dynamic-fallback"');
+          expect(optInDiskHtml).toContain('data-ppr-hole="ppr-hole-4"');
         }
       }
 
@@ -7491,23 +7512,25 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.getByTestId("all-static-slot-resolved")).toBeVisible();
       await expect(page.getByTestId("all-static-slot-nodynamic-resolved")).toBeVisible();
 
-      // Verify /t-new-ppr/opt-out-route (ppr = false inside ppr = true layout) resolves <Suspense> + async statically without noDynamic()
+      // Verify /t-new-ppr/opt-out-route (Page ppr=false inside Layout ppr=true):
+      // Page resolves <Suspense> + async statically at build time (0 runtime executions), while Layout streams its dynamic hole!
       const optRes1 = await request.get("/t-new-ppr/opt-out-route");
       const optHtml1 = await optRes1.text();
       const optRes2 = await request.get("/t-new-ppr/opt-out-route");
       const optHtml2 = await optRes2.text();
 
       expect(optHtml1).toContain('data-testid="opt-out-async-resolved"');
+      expect(optHtml1).toContain('data-testid="layout-dynamic-resolved"');
+      expect(extractRenderCount(optHtml2, "layout-dynamic-resolved")).toBeGreaterThan(
+        extractRenderCount(optHtml1, "layout-dynamic-resolved"),
+      );
 
       if (isProd) {
-        expect(optHtml1).not.toContain('<template id="ppr-content-');
+        expect(optHtml1).toContain('<template id="ppr-content-ppr-hole-2">');
         expect(optHtml1).not.toContain('data-testid="opt-out-async-fallback"');
-        expect(optHtml1).not.toContain('data-testid="layout-nodynamic-fallback"');
-        expect(optHtml1).not.toContain('data-testid="layout-dynamic-fallback"');
-        expect(optHtml1).not.toContain('<template id="B:');
-        expect(optHtml1).not.toContain('<div hidden id="S:');
-        expect(optHtml1).not.toContain('$RC(');
         for (const tid of [
+          "layout-static-shell",
+          "layout-nodynamic-resolved",
           "opt-out-route-page",
           "opt-out-unwrapped-child-resolved",
           "opt-out-async-resolved",
@@ -7517,9 +7540,72 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       }
 
       await page.goto("/t-new-ppr/opt-out-route");
+      await expect(page.getByTestId("layout-dynamic-resolved")).toBeVisible();
       await expect(page.getByTestId("opt-out-page-await-resolved")).toBeVisible();
       await expect(page.getByTestId("opt-out-unwrapped-child-resolved")).toBeVisible();
       await expect(page.getByTestId("opt-out-async-resolved")).toBeVisible();
+
+      // Verify /t-new-ppr/opt-in-route (Page ppr=true inside Inner Layout ppr=false inside Outer Layout ppr=true):
+      // Inner Layout (ppr=false) resolves <Suspense> statically at build time (0 runtime executions),
+      // while Page (ppr=true) and Outer Layout (ppr=true) stream their dynamic holes on every request!
+      const optInRes1 = await request.get("/t-new-ppr/opt-in-route?tag=alpha", {
+        headers: { Cookie: "optin_user=UserAlpha" },
+      });
+      const optInHtml1 = await optInRes1.text();
+      const optInRes2 = await request.get("/t-new-ppr/opt-in-route?tag=beta", {
+        headers: { Cookie: "optin_user=UserBeta" },
+      });
+      const optInHtml2 = await optInRes2.text();
+
+      expect(optInHtml1).toContain('data-testid="opt-in-layout-suspense-resolved"');
+      expect(optInHtml1).toContain('data-testid="opt-in-page-nodynamic-resolved"');
+      expect(optInHtml1).toContain('data-testid="opt-in-page-dynamic-resolved"');
+      expect(extractDataAttr(optInHtml1, "opt-in-page-dynamic-resolved", "data-user")).toBe("UserAlpha");
+      expect(extractDataAttr(optInHtml1, "opt-in-page-dynamic-resolved", "data-tag")).toBe("alpha");
+      expect(extractDataAttr(optInHtml2, "opt-in-page-dynamic-resolved", "data-user")).toBe("UserBeta");
+      expect(extractDataAttr(optInHtml2, "opt-in-page-dynamic-resolved", "data-tag")).toBe("beta");
+
+      for (const dynTid of ["layout-dynamic-resolved", "opt-in-page-dynamic-resolved"]) {
+        expect(extractRenderCount(optInHtml2, dynTid)).toBeGreaterThan(
+          extractRenderCount(optInHtml1, dynTid),
+        );
+      }
+
+      if (isProd) {
+        expect(optInHtml1).toContain('<template id="ppr-content-ppr-hole-2">');
+        expect(optInHtml1).toContain('<template id="ppr-content-ppr-hole-4">');
+        expect(optInHtml1).not.toContain('data-testid="opt-in-layout-suspense-fallback"');
+        expect(optInHtml1).not.toContain('data-testid="opt-in-page-nodynamic-fallback"');
+        for (const staticTid of [
+          "layout-static-shell",
+          "layout-nodynamic-resolved",
+          "opt-in-layout-root",
+          "opt-in-layout-suspense-resolved",
+          "opt-in-route-page",
+          "opt-in-page-nodynamic-resolved",
+        ]) {
+          expect(extractRenderCount(optInHtml1, staticTid)).toBe(
+            extractRenderCount(optInHtml2, staticTid),
+          );
+        }
+      }
+
+      await context.addCookies([
+        { name: "optin_user", value: "BrowserOptInUser", path: "/", domain: "localhost" },
+      ]);
+      await page.goto("/t-new-ppr/opt-in-route?tag=browser-tag");
+      await expect(page.getByTestId("opt-in-layout-await-resolved")).toBeVisible();
+      await expect(page.getByTestId("opt-in-layout-suspense-resolved")).toBeVisible();
+      await expect(page.getByTestId("opt-in-page-shell-resolved")).toBeVisible();
+      await expect(page.getByTestId("opt-in-page-nodynamic-resolved")).toBeVisible();
+      await expect(page.getByTestId("opt-in-page-dynamic-resolved")).toHaveAttribute(
+        "data-user",
+        "BrowserOptInUser",
+      );
+      await expect(page.getByTestId("opt-in-page-dynamic-resolved")).toHaveAttribute(
+        "data-tag",
+        "browser-tag",
+      );
     });
 
     test("4. Full-Page Dynamic Bailouts: Unwrapped Cookies (/t-new-ppr/bailout-cookies), Unwrapped revalidate=0 Slot (/t-new-ppr/bailout-slot-0) & Non-PPR Cookie Read Inside Suspense (/t-new-ppr/no-ppr-bailout)", async ({

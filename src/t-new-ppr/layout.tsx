@@ -66,6 +66,9 @@ export default async function TestPprLayout({ children }: { children: ReactNode 
             <Link href="/t-new-ppr/opt-out-route" className="text-indigo-600 dark:text-indigo-400 hover:underline">
               Opt-Out ppr=false (/t-new-ppr/opt-out-route)
             </Link>
+            <Link href="/t-new-ppr/opt-in-route" className="text-indigo-600 dark:text-indigo-400 hover:underline">
+              Opt-In ppr=true (/t-new-ppr/opt-in-route)
+            </Link>
           </nav>
         </div>
 

@@ -16,7 +16,10 @@ import {
   registerHole,
   markDynamicAccess,
   isPageRootElement,
+  getPageRootPpr,
   isLayoutRootElement,
+  getLayoutRootPpr,
+  runWithSegmentPpr,
   isLayoutChildrenPlaceholder,
   runInPageSegment,
   runInLayoutSegment,
@@ -536,19 +539,25 @@ DinouSuspenseHoleBoundary.$$dinouDeferredSuspenseStream = true;
 
 async function asyncRenderJSXToClientJSX(jsx, key = null) {
   if (isPageRootElement(jsx)) {
-    return await runInPageSegment(async () => {
-      const resolved = await asyncRenderJSXToClientJSXInner(jsx, key);
-      const ctx = getContext();
-      if (ctx) {
-        ctx._resolvedPageClientJsx = resolved;
-      }
-      return resolved;
-    });
+    const pagePpr = getPageRootPpr(jsx);
+    return await runWithSegmentPpr(pagePpr, () =>
+      runInPageSegment(async () => {
+        const resolved = await asyncRenderJSXToClientJSXInner(jsx, key);
+        const ctx = getContext();
+        if (ctx) {
+          ctx._resolvedPageClientJsx = resolved;
+        }
+        return resolved;
+      })
+    );
   }
   if (isLayoutRootElement(jsx)) {
-    return await runInLayoutSegment(async () => {
-      return await asyncRenderJSXToClientJSXInner(jsx, key);
-    });
+    const layoutPpr = getLayoutRootPpr(jsx);
+    return await runWithSegmentPpr(layoutPpr, () =>
+      runInLayoutSegment(async () => {
+        return await asyncRenderJSXToClientJSXInner(jsx, key);
+      })
+    );
   }
   return await asyncRenderJSXToClientJSXInner(jsx, key);
 }

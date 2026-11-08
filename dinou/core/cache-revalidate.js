@@ -8,7 +8,7 @@ import { getStorageAdapter } from "./storage-adapter.js";
 import { isEdgeRuntime, renderRSCStream } from "./rsc-renderer.js";
 import getJSX from "./get-jsx.js";
 import { getFilePathAndDynamicParams } from "./get-file-path-and-dynamic-params.js";
-import { getActiveLayoutChain, resolveLayoutFunctionsConfig } from "./layout-functions.js";
+import { getActiveLayoutChain, resolveLayoutFunctionsConfig, resolveLayoutChainPpr } from "./layout-functions.js";
 import importModule from "./import-module.js";
 import { resolveModulePpr } from "./resolve-module-ppr.js";
 import { getDinouConfig } from "./load-dinou-config.js";
@@ -120,6 +120,8 @@ async function resolveRouteConfigForRevalidate(pagePath, reqSegments, existingMe
   const srcFolder = path.resolve(process.cwd(), "src");
   let isRoutePpr =
     typeof existingMeta?.ppr === "boolean" ? existingMeta.ppr : null;
+  let isPagePpr =
+    typeof existingMeta?.pagePpr === "boolean" ? existingMeta.pagePpr : null;
   let tags = Array.isArray(existingMeta?.tags) ? existingMeta.tags : null;
   let revalidate = existingMeta?.revalidate;
   let pageRevalidate = existingMeta?.pageRevalidate;
@@ -151,32 +153,12 @@ async function resolveRouteConfigForRevalidate(pagePath, reqSegments, existingMe
     } catch (e) {}
   }
 
-  if (isRoutePpr === null) {
-    let inheritedPpr = false;
-    try {
-      const globalCfg = await getDinouConfig();
-      inheritedPpr = Boolean(globalCfg?.ppr);
-      const layouts = getFilePathAndDynamicParams(
-        reqSegments,
-        {},
-        srcFolder,
-        "layout",
-        true,
-        false,
-        undefined,
-        0,
-        {},
-        true
-      );
-      if (layouts && Array.isArray(layouts)) {
-        for (const [lPath, lParams] of layouts) {
-          const lConfig = await resolveLayoutFunctionsConfig(lPath, lParams);
-          if (lConfig && lConfig.ppr !== null && lConfig.ppr !== undefined) {
-            inheritedPpr = Boolean(lConfig.ppr);
-          }
-        }
-      }
-    } catch (e) {}
+  if (isRoutePpr === null || isPagePpr === null) {
+    const { leafLayoutPpr, anyLayoutPpr } = await resolveLayoutChainPpr(
+      reqSegments || [],
+      {},
+      srcFolder,
+    );
 
     let explicitPagePpr = null;
     if (pfMod) {
@@ -184,7 +166,14 @@ async function resolveRouteConfigForRevalidate(pagePath, reqSegments, existingMe
         explicitPagePpr = await resolveModulePpr(pfMod);
       } catch (e) {}
     }
-    isRoutePpr = explicitPagePpr !== null ? explicitPagePpr : inheritedPpr;
+    const resolvedPagePpr =
+      explicitPagePpr !== null ? explicitPagePpr : Boolean(leafLayoutPpr);
+    if (isPagePpr === null) {
+      isPagePpr = Boolean(resolvedPagePpr);
+    }
+    if (isRoutePpr === null) {
+      isRoutePpr = Boolean(resolvedPagePpr || anyLayoutPpr);
+    }
   }
 
   if ((!tags || tags.length === 0) && pfMod) {
@@ -226,6 +215,7 @@ async function resolveRouteConfigForRevalidate(pagePath, reqSegments, existingMe
 
   return {
     isRoutePpr: Boolean(isRoutePpr),
+    isPagePpr: Boolean(isPagePpr),
     tags: Array.isArray(tags) ? tags : [],
     revalidate,
     pageRevalidate,
@@ -338,6 +328,7 @@ async function revalidatePage(reqPath, internalOptions = {}) {
       currentMeta
     );
     const isRoutePpr = routeCfg.isRoutePpr;
+    const isPagePpr = routeCfg.isPagePpr;
     if (!Array.isArray(currentMeta.tags) || currentMeta.tags.length === 0) {
       currentMeta.tags = routeCfg.tags;
     }
@@ -352,7 +343,6 @@ async function revalidatePage(reqPath, internalOptions = {}) {
     }
 
     let activeLayoutRscText = "";
-    let activeStaticLayoutRscKey = "";
     let maxActiveLayoutGenTime = 0;
     let leafSuspenseCount = 0;
     let leafHoles = [];
@@ -399,17 +389,9 @@ async function revalidatePage(reqPath, internalOptions = {}) {
         }
         leafSuspenseCount = Number(leafLayout.suspenseCount || 0);
         leafHoles = Array.isArray(leafLayout.holes) ? leafLayout.holes : [];
-        const useStaticLayoutRsc = !isRoutePpr && leafHoles.length > 0;
-        const leafRscKey = useStaticLayoutRsc
-          ? leafLayout.cleanLayoutKey
-            ? `${leafLayout.cleanLayoutKey}/layout.static.rsc`
-            : "layout.static.rsc"
-          : leafLayout.cleanLayoutKey
+        const leafRscKey = leafLayout.cleanLayoutKey
           ? `${leafLayout.cleanLayoutKey}/layout.rsc`
           : "layout.rsc";
-        if (useStaticLayoutRsc) {
-          activeStaticLayoutRscKey = leafRscKey;
-        }
         const leafRscItem = await readEdgeStorageOrAsset(storage, leafRscKey);
         if (leafRscItem && leafRscItem.content && !leafRscItem.content.trimStart().startsWith("<")) {
           activeLayoutRscText = leafRscItem.content;
@@ -501,9 +483,9 @@ async function revalidatePage(reqPath, internalOptions = {}) {
           }
 
           if (isRoutePpr) {
-            let pageHoles = Array.isArray(currentMeta.holes) ? currentMeta.holes : [];
+            let pageHoles = [];
             if (!resolvedPageJsx) {
-              await runWithPprContext({ isPpr: true }, async () => {
+              await runWithPprContext({ isPpr: Boolean(isPagePpr) }, async () => {
                 const rawPageJsx = await getJSX(
                   reqPathWithSlash,
                   {},
@@ -516,7 +498,7 @@ async function revalidatePage(reqPath, internalOptions = {}) {
                 resolvedPageJsx = await runInPageSegment(() =>
                   asyncRenderJSXToClientJSX(rawPageJsx)
                 );
-                pageHoles = getRegisteredHoles();
+                pageHoles = isPagePpr ? getRegisteredHoles() : [];
               });
               if (resolvedPageJsx && !isNotFound.value) {
                 try {
@@ -531,7 +513,11 @@ async function revalidatePage(reqPath, internalOptions = {}) {
               renderedRsc = await new Response(pageStream).text();
             }
             currentMeta.ppr = true;
-            const mergedHoles = Array.from(new Set([...leafHoles, ...pageHoles]));
+            currentMeta.pagePpr = Boolean(isPagePpr);
+            const mergedHoles =
+              onlyRefreshSlots && Array.isArray(currentMeta.holes)
+                ? currentMeta.holes
+                : Array.from(new Set([...leafHoles, ...pageHoles]));
             if (mergedHoles.length > 0 || !Array.isArray(currentMeta.holes)) {
               currentMeta.holes = mergedHoles;
             }
@@ -569,35 +555,6 @@ async function revalidatePage(reqPath, internalOptions = {}) {
                 runtime: "edge",
               });
               renderedRsc = await new Response(pageStream).text();
-            }
-            if (!activeLayoutRscText && activeStaticLayoutRscKey && !isNotFound.value) {
-              try {
-                const rawLayoutJsx = await getJSX(
-                  reqPathWithSlash,
-                  {},
-                  isNotFound,
-                  false,
-                  false,
-                  { segment: "layout" }
-                );
-                if (rawLayoutJsx && !revalDynamicState.value) {
-                  const resolvedStaticLayoutJsx = await runInLayoutSegment(() =>
-                    asyncRenderJSXToClientJSX(rawLayoutJsx)
-                  );
-                  if (resolvedStaticLayoutJsx && !revalDynamicState.value) {
-                    const layoutStream = renderRSCStream(
-                      resolvedStaticLayoutJsx,
-                      clientManifest,
-                      { runtime: "edge" }
-                    );
-                    const staticLayoutText = await new Response(layoutStream).text();
-                    if (staticLayoutText) {
-                      activeLayoutRscText = staticLayoutText;
-                      await storage.set(activeStaticLayoutRscKey, staticLayoutText);
-                    }
-                  }
-                }
-              } catch (e) {}
             }
           }
 
@@ -902,10 +859,6 @@ async function revalidateLayout(cleanPath, internalOptions = {}) {
       const cleanPathKey = targetPath.replace(/^\/+/, "").replace(/\/+$/, "");
       const layoutRscKey = cleanPathKey ? `${cleanPathKey}/layout.rsc` : "layout.rsc";
       const layoutOldRscKey = cleanPathKey ? `${cleanPathKey}/layout._old.rsc` : "layout._old.rsc";
-      const layoutStaticRscKey = cleanPathKey ? `${cleanPathKey}/layout.static.rsc` : "layout.static.rsc";
-      const layoutStaticOldRscKey = cleanPathKey
-        ? `${cleanPathKey}/layout.static._old.rsc`
-        : "layout.static._old.rsc";
       const layoutMetaKey = cleanPathKey ? `${cleanPathKey}/layout.metadata.json` : "layout.metadata.json";
       const shellLayoutKey = cleanPathKey ? `${cleanPathKey}/shell.layout.json` : "shell.layout.json";
 
@@ -921,11 +874,6 @@ async function revalidateLayout(cleanPath, internalOptions = {}) {
       try {
         if (cached && cached.content) {
           await storage.set(layoutOldRscKey, cached.content);
-        }
-        const cachedStatic = await readEdgeStorageOrAsset(storage, layoutStaticRscKey);
-        if (cachedStatic && cachedStatic.content) {
-          await storage.set(layoutStaticOldRscKey, cachedStatic.content);
-          await storage.delete(layoutStaticRscKey);
         }
       } catch (e) {}
 
@@ -952,14 +900,11 @@ async function revalidateLayout(cleanPath, internalOptions = {}) {
           if (layoutCfg.revalidate !== undefined) {
             currentMeta.revalidate = layoutCfg.revalidate;
           }
-          if (layoutCfg.ppr !== null && layoutCfg.ppr !== undefined) {
-            currentMeta.ppr = Boolean(layoutCfg.ppr);
-          }
         }
-        if (typeof currentMeta.ppr !== "boolean") {
-          const layoutRouteCfg = await resolveRouteConfigForRevalidate(null, reqSegments, currentMeta);
-          currentMeta.ppr = Boolean(layoutRouteCfg.isRoutePpr);
-        }
+        const { anyLayoutPpr } = await resolveLayoutChainPpr(reqSegments, {}, srcFolder, {
+          ignoreNoLayout: true,
+        });
+        currentMeta.ppr = Boolean(anyLayoutPpr);
       } catch (e) {}
 
       const prevGenTime = (currentMeta && currentMeta.generatedAt) || 0;
@@ -1097,18 +1042,10 @@ async function revalidateLayout(cleanPath, internalOptions = {}) {
     const reqPathWithSlash = targetPath.endsWith("/") ? targetPath : targetPath + "/";
     const layoutFinalPath = path.join(dist2Folder, reqPathWithSlash, "layout.rsc");
     const layoutOldPath = path.join(dist2Folder, reqPathWithSlash, "layout._old.rsc");
-    const layoutStaticFinalPath = path.join(dist2Folder, reqPathWithSlash, "layout.static.rsc");
-    const layoutStaticOldPath = path.join(dist2Folder, reqPathWithSlash, "layout.static._old.rsc");
 
     if (existsSync(layoutFinalPath)) {
       try {
         copyFileSync(layoutFinalPath, layoutOldPath);
-      } catch (e) {}
-    }
-    if (existsSync(layoutStaticFinalPath)) {
-      try {
-        copyFileSync(layoutStaticFinalPath, layoutStaticOldPath);
-        await fs.unlink(layoutStaticFinalPath).catch(() => {});
       } catch (e) {}
     }
 
