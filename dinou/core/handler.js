@@ -194,6 +194,7 @@ function createInlineRscHtmlStream(htmlStream, context, clientManifest) {
   const encoder = new TextEncoder();
   let initialSpliceDone = false;
   let streamClosed = false;
+  let htmlBuffer = "";
   const pendingScripts = [];
 
   return new ReadableStream({
@@ -213,7 +214,7 @@ function createInlineRscHtmlStream(htmlStream, context, clientManifest) {
 
       const onRscScript = (scriptStr) => {
         pendingScripts.push(scriptStr);
-        if (initialSpliceDone) {
+        if (initialSpliceDone && htmlBuffer.length === 0) {
           flushPendingScripts();
         }
       };
@@ -281,45 +282,59 @@ function createInlineRscHtmlStream(htmlStream, context, clientManifest) {
           if (done) {
             const rem = htmlDecoder.decode();
             if (rem) {
-              if (heldBodyClose) {
-                const combined = heldBodyClose + rem;
-                heldBodyClose = "";
-                const closeMatch = combined.match(/<\/body>\s*<\/html>\s*$/i);
-                if (closeMatch) {
-                  heldBodyClose = closeMatch[0];
-                  safeEnqueueText(combined.slice(0, combined.length - heldBodyClose.length));
-                } else {
-                  safeEnqueueText(combined);
-                }
+              htmlBuffer += rem;
+            }
+            if (heldBodyClose) {
+              htmlBuffer = heldBodyClose + htmlBuffer;
+              heldBodyClose = "";
+            }
+            const closeMatch = htmlBuffer.match(/<\/body>\s*<\/html>\s*$/i);
+            if (closeMatch) {
+              heldBodyClose = closeMatch[0];
+              htmlBuffer = htmlBuffer.slice(0, htmlBuffer.length - heldBodyClose.length);
+            }
+            if (!initialSpliceDone) {
+              await Promise.race([
+                Promise.all([layoutPump.firstChunkReady, pagePump.firstChunkReady]),
+                new Promise((r) => setTimeout(r, 15)),
+              ]);
+              const scriptMatch = htmlBuffer.match(/<script[^>]*\bsrc="\/(?:runtime|main)/i);
+              const scriptsToInject = pendingScripts.splice(0, pendingScripts.length).join("");
+              if (scriptMatch && typeof scriptMatch.index === "number") {
+                const idx = scriptMatch.index;
+                htmlBuffer = htmlBuffer.slice(0, idx) + scriptsToInject + htmlBuffer.slice(idx);
               } else {
-                const closeMatch = rem.match(/<\/body>\s*<\/html>\s*$/i);
-                if (closeMatch) {
-                  heldBodyClose = closeMatch[0];
-                  safeEnqueueText(rem.slice(0, rem.length - heldBodyClose.length));
-                } else {
-                  safeEnqueueText(rem);
-                }
+                htmlBuffer += scriptsToInject;
               }
+              initialSpliceDone = true;
+            }
+            if (htmlBuffer) {
+              safeEnqueueText(htmlBuffer);
+              htmlBuffer = "";
             }
             break;
           }
 
-          let text = htmlDecoder.decode(value, { stream: true });
+          const text = htmlDecoder.decode(value, { stream: true });
           if (!text) continue;
 
           if (heldBodyClose) {
-            text = heldBodyClose + text;
+            htmlBuffer += heldBodyClose + text;
             heldBodyClose = "";
+          } else {
+            htmlBuffer += text;
           }
 
-          const closeMatch = text.match(/<\/body>\s*<\/html>\s*$/i);
+          const closeMatch = htmlBuffer.match(/<\/body>\s*<\/html>\s*$/i);
           if (closeMatch) {
             heldBodyClose = closeMatch[0];
-            text = text.slice(0, text.length - heldBodyClose.length);
+            htmlBuffer = htmlBuffer.slice(0, htmlBuffer.length - heldBodyClose.length);
           }
 
           if (!initialSpliceDone) {
-            const scriptMatch = text.match(/<script[^>]*\bsrc="\/(?:runtime|main)/i);
+            const scriptMatch = htmlBuffer.match(
+              /<script\b[^>]*\bsrc="\/(?:runtime|main)[^"]*"[^>]*><\/script>/i
+            );
             if (scriptMatch && typeof scriptMatch.index === "number") {
               await Promise.race([
                 Promise.all([layoutPump.firstChunkReady, pagePump.firstChunkReady]),
@@ -327,16 +342,24 @@ function createInlineRscHtmlStream(htmlStream, context, clientManifest) {
               ]);
               const idx = scriptMatch.index;
               const scriptsToInject = pendingScripts.splice(0, pendingScripts.length).join("");
-              text = text.slice(0, idx) + scriptsToInject + text.slice(idx);
+              htmlBuffer = htmlBuffer.slice(0, idx) + scriptsToInject + htmlBuffer.slice(idx);
               initialSpliceDone = true;
             }
           }
 
-          if (text) {
-            safeEnqueueText(text);
-          }
-          if (initialSpliceDone && pendingScripts.length > 0) {
-            flushPendingScripts();
+          if (initialSpliceDone) {
+            const lastScriptClose = htmlBuffer.toLowerCase().lastIndexOf("</script>");
+            if (lastScriptClose !== -1) {
+              const cutIdx = lastScriptClose + 9;
+              const toFlush = htmlBuffer.slice(0, cutIdx);
+              htmlBuffer = htmlBuffer.slice(cutIdx);
+              if (toFlush) {
+                safeEnqueueText(toFlush);
+              }
+              if (htmlBuffer.length === 0 && pendingScripts.length > 0) {
+                flushPendingScripts();
+              }
+            }
           }
         }
 
@@ -1746,8 +1769,48 @@ async function handleRequest(request, platformContext = {}) {
         : await resolvePprForRoute(pagePath, null, reqSegments, queryObj);
     }
 
+    let useStaticLayoutFallbackFile = false;
+    if (
+      isLayoutReq &&
+      isStatic &&
+      isRoutePpr &&
+      !isDevelopment &&
+      !platformContext?.isSSG
+    ) {
+      const cleanRel = cleanPath.replace(/^\/+/, "").replace(/\/+$/, "");
+      const staticLayoutKey = cleanRel
+        ? `${cleanRel}/layout.static.rsc`
+        : "layout.static.rsc";
+      if (isEdgeRuntime(platformContext)) {
+        const storage = getStorageAdapter();
+        const cachedStaticLayout = await readRscFromStorage(
+          storage,
+          staticLayoutKey,
+          platformContext,
+          request.url
+        );
+        if (cachedStaticLayout) {
+          isRoutePpr = false;
+          useStaticLayoutFallbackFile = true;
+        }
+      } else {
+        const staticLayoutPath = path.resolve(
+          ".dinou/dist2",
+          cleanRel,
+          "layout.static.rsc"
+        );
+        if (existsSync(staticLayoutPath)) {
+          isRoutePpr = false;
+          useStaticLayoutFallbackFile = true;
+        }
+      }
+    }
+
     const canServeCachedRsc = isLayoutReq
-      ? !isDevelopment && !platformContext?.isSSG && !dynamicState.value && !isRoutePpr
+      ? !isDevelopment &&
+        !platformContext?.isSSG &&
+        (!dynamicState.value || (isStatic && Boolean(internalBuildId))) &&
+        !isRoutePpr
       : !isDevelopment &&
         !platformContext?.isSSG &&
         (!dynamicState.value || (isStatic && Boolean(internalBuildId))) &&
@@ -1763,17 +1826,34 @@ async function handleRequest(request, platformContext = {}) {
           currentGeneratedAt &&
           Number(internalBuildId) < Number(currentGeneratedAt));
 
+      const resolvedTargetFileName = useStaticLayoutFallbackFile
+        ? "layout.static.rsc"
+        : targetFileName;
+
       const actualFileName = useOld
         ? isLayoutReq
-          ? "layout._old.rsc"
+          ? useStaticLayoutFallbackFile
+            ? "layout.static._old.rsc"
+            : "layout._old.rsc"
           : "page._old.rsc"
-        : targetFileName;
+        : resolvedTargetFileName;
 
       let payloadPath = path.resolve(
         ".dinou/dist2",
         cleanPath.replace(/^\//, ""),
         actualFileName,
       );
+
+      if (!existsSync(payloadPath) && useOld) {
+        const currentFallbackPath = path.resolve(
+          ".dinou/dist2",
+          cleanPath.replace(/^\//, ""),
+          resolvedTargetFileName,
+        );
+        if (existsSync(currentFallbackPath)) {
+          payloadPath = currentFallbackPath;
+        }
+      }
 
       // Legacy fallback for rsc_payload if page.rsc doesn't exist
       if (!existsSync(payloadPath) && !isLayoutReq && !isPageReq) {
@@ -1799,7 +1879,9 @@ async function handleRequest(request, platformContext = {}) {
         try {
           let cached = await storage.get(rscKey);
           if (!cached && useOld) {
-            const fallbackCurrKey = cleanRel ? `${cleanRel}/${targetFileName}` : targetFileName;
+            const fallbackCurrKey = cleanRel
+              ? `${cleanRel}/${resolvedTargetFileName}`
+              : resolvedTargetFileName;
             cached = await storage.get(fallbackCurrKey);
           }
           if (!cached && !isLayoutReq && !isPageReq) {
@@ -2983,6 +3065,27 @@ async function handleRequest(request, platformContext = {}) {
                       platformContext,
                       request.url
                     );
+                  } else {
+                    const staticLayoutRscKey = leafLayout.cleanLayoutKey
+                      ? `${leafLayout.cleanLayoutKey}/layout.static.rsc`
+                      : "layout.static.rsc";
+                    precomputedLayoutRscText = await readRscFromStorage(
+                      storage,
+                      staticLayoutRscKey,
+                      platformContext,
+                      request.url
+                    );
+                    if (!precomputedLayoutRscText) {
+                      const layoutStream = requestStorage.run(context, () =>
+                        renderRSCStream(context._resolvedLayoutClientJsx, clientManifest, {
+                          runtime: "edge",
+                        })
+                      );
+                      precomputedLayoutRscText = await new Response(layoutStream).text();
+                      if (precomputedLayoutRscText) {
+                        await storage.set(staticLayoutRscKey, precomputedLayoutRscText);
+                      }
+                    }
                   }
                 }
               } catch (e) {}

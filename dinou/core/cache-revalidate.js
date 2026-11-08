@@ -352,6 +352,7 @@ async function revalidatePage(reqPath, internalOptions = {}) {
     }
 
     let activeLayoutRscText = "";
+    let activeStaticLayoutRscKey = "";
     let maxActiveLayoutGenTime = 0;
     let leafSuspenseCount = 0;
     let leafHoles = [];
@@ -398,9 +399,17 @@ async function revalidatePage(reqPath, internalOptions = {}) {
         }
         leafSuspenseCount = Number(leafLayout.suspenseCount || 0);
         leafHoles = Array.isArray(leafLayout.holes) ? leafLayout.holes : [];
-        const leafRscKey = leafLayout.cleanLayoutKey
+        const useStaticLayoutRsc = !isRoutePpr && leafHoles.length > 0;
+        const leafRscKey = useStaticLayoutRsc
+          ? leafLayout.cleanLayoutKey
+            ? `${leafLayout.cleanLayoutKey}/layout.static.rsc`
+            : "layout.static.rsc"
+          : leafLayout.cleanLayoutKey
           ? `${leafLayout.cleanLayoutKey}/layout.rsc`
           : "layout.rsc";
+        if (useStaticLayoutRsc) {
+          activeStaticLayoutRscKey = leafRscKey;
+        }
         const leafRscItem = await readEdgeStorageOrAsset(storage, leafRscKey);
         if (leafRscItem && leafRscItem.content && !leafRscItem.content.trimStart().startsWith("<")) {
           activeLayoutRscText = leafRscItem.content;
@@ -560,6 +569,35 @@ async function revalidatePage(reqPath, internalOptions = {}) {
                 runtime: "edge",
               });
               renderedRsc = await new Response(pageStream).text();
+            }
+            if (!activeLayoutRscText && activeStaticLayoutRscKey && !isNotFound.value) {
+              try {
+                const rawLayoutJsx = await getJSX(
+                  reqPathWithSlash,
+                  {},
+                  isNotFound,
+                  false,
+                  false,
+                  { segment: "layout" }
+                );
+                if (rawLayoutJsx && !revalDynamicState.value) {
+                  const resolvedStaticLayoutJsx = await runInLayoutSegment(() =>
+                    asyncRenderJSXToClientJSX(rawLayoutJsx)
+                  );
+                  if (resolvedStaticLayoutJsx && !revalDynamicState.value) {
+                    const layoutStream = renderRSCStream(
+                      resolvedStaticLayoutJsx,
+                      clientManifest,
+                      { runtime: "edge" }
+                    );
+                    const staticLayoutText = await new Response(layoutStream).text();
+                    if (staticLayoutText) {
+                      activeLayoutRscText = staticLayoutText;
+                      await storage.set(activeStaticLayoutRscKey, staticLayoutText);
+                    }
+                  }
+                }
+              } catch (e) {}
             }
           }
 
@@ -864,6 +902,10 @@ async function revalidateLayout(cleanPath, internalOptions = {}) {
       const cleanPathKey = targetPath.replace(/^\/+/, "").replace(/\/+$/, "");
       const layoutRscKey = cleanPathKey ? `${cleanPathKey}/layout.rsc` : "layout.rsc";
       const layoutOldRscKey = cleanPathKey ? `${cleanPathKey}/layout._old.rsc` : "layout._old.rsc";
+      const layoutStaticRscKey = cleanPathKey ? `${cleanPathKey}/layout.static.rsc` : "layout.static.rsc";
+      const layoutStaticOldRscKey = cleanPathKey
+        ? `${cleanPathKey}/layout.static._old.rsc`
+        : "layout.static._old.rsc";
       const layoutMetaKey = cleanPathKey ? `${cleanPathKey}/layout.metadata.json` : "layout.metadata.json";
       const shellLayoutKey = cleanPathKey ? `${cleanPathKey}/shell.layout.json` : "shell.layout.json";
 
@@ -879,6 +921,11 @@ async function revalidateLayout(cleanPath, internalOptions = {}) {
       try {
         if (cached && cached.content) {
           await storage.set(layoutOldRscKey, cached.content);
+        }
+        const cachedStatic = await readEdgeStorageOrAsset(storage, layoutStaticRscKey);
+        if (cachedStatic && cachedStatic.content) {
+          await storage.set(layoutStaticOldRscKey, cachedStatic.content);
+          await storage.delete(layoutStaticRscKey);
         }
       } catch (e) {}
 
@@ -1050,10 +1097,18 @@ async function revalidateLayout(cleanPath, internalOptions = {}) {
     const reqPathWithSlash = targetPath.endsWith("/") ? targetPath : targetPath + "/";
     const layoutFinalPath = path.join(dist2Folder, reqPathWithSlash, "layout.rsc");
     const layoutOldPath = path.join(dist2Folder, reqPathWithSlash, "layout._old.rsc");
+    const layoutStaticFinalPath = path.join(dist2Folder, reqPathWithSlash, "layout.static.rsc");
+    const layoutStaticOldPath = path.join(dist2Folder, reqPathWithSlash, "layout.static._old.rsc");
 
     if (existsSync(layoutFinalPath)) {
       try {
         copyFileSync(layoutFinalPath, layoutOldPath);
+      } catch (e) {}
+    }
+    if (existsSync(layoutStaticFinalPath)) {
+      try {
+        copyFileSync(layoutStaticFinalPath, layoutStaticOldPath);
+        await fs.unlink(layoutStaticFinalPath).catch(() => {});
       } catch (e) {}
     }
 
