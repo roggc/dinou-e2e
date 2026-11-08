@@ -484,8 +484,14 @@ async function resolvePprForRoute(
  * and determines whether the current request path is blocked or allowed for ISG.
  */
 async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynamicParams, reqPath, isSSG = false) {
+  const globalCfg = await getDinouConfig();
+  const defaultAllowISG =
+    globalCfg?.allowISG !== undefined && globalCfg?.allowISG !== null
+      ? Boolean(globalCfg.allowISG)
+      : true;
+
   let isPathBlocked = false;
-  let allowISGValue = true;
+  let allowISGValue = defaultAllowISG;
   let isDynamicConfig = false;
   let cachedConfig = null;
 
@@ -523,7 +529,7 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
             ? await pageFunctionsModule.allowISG()
             : typeof defaultExport?.allowISG === "function"
             ? await defaultExport.allowISG()
-            : (pageFunctionsModule.allowISG ?? defaultExport?.allowISG ?? true);
+            : (pageFunctionsModule.allowISG ?? defaultExport?.allowISG ?? null);
 
         const getStaticPathsFn = pageFunctionsModule.getStaticPaths || defaultExport?.getStaticPaths;
         let staticPathsSet = null;
@@ -578,7 +584,7 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
         };
       } else {
         cachedConfig = {
-          allowISG: true,
+          allowISG: null,
           staticPathsSet: null,
           validateParams: null,
           isDynamic: false,
@@ -595,7 +601,10 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
     }
 
     const { allowISG: cachedAllowISG, staticPathsSet, validateParams: validateParamsFn, isDynamic: cachedIsDynamic } = cachedConfig;
-    allowISGValue = cachedAllowISG;
+    allowISGValue =
+      cachedAllowISG !== null && cachedAllowISG !== undefined
+        ? Boolean(cachedAllowISG)
+        : defaultAllowISG;
     isDynamicConfig = Boolean(cachedIsDynamic);
     const hasParams = Object.keys(dynamicParams || {}).length > 0;
     if (hasParams) {

@@ -75,8 +75,14 @@ async function getLayoutProps(layoutPath, dParams = {}) {
  * @returns {Promise<object>}
  */
 async function resolveLayoutFunctionsConfig(layoutPath, dParams = {}) {
+  const globalCfg = await getDinouConfig();
+  const defaultAllowISG =
+    globalCfg?.allowISG !== undefined && globalCfg?.allowISG !== null
+      ? Boolean(globalCfg.allowISG)
+      : true;
+
   const defaultConfig = {
-    allowISG: true,
+    allowISG: defaultAllowISG,
     staticPathsSet: null,
     validateParams: null,
     isDynamic: false,
@@ -115,7 +121,7 @@ async function resolveLayoutFunctionsConfig(layoutPath, dParams = {}) {
         ? await mod.allowISG()
         : typeof defaultExport?.allowISG === "function"
         ? await defaultExport.allowISG()
-        : (mod.allowISG ?? defaultExport?.allowISG ?? true);
+        : (mod.allowISG ?? defaultExport?.allowISG ?? defaultAllowISG);
 
     const getStaticPathsFn = mod.getStaticPaths || defaultExport?.getStaticPaths;
     let staticPathsSet = null;

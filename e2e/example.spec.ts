@@ -2944,6 +2944,64 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         "/____rsc_page____/t-layout-functions/no-isg/unrendered-slug-123/posts/post-1",
       );
       expect(blockedChildPageRsc.status()).toBe(404);
+
+      // 5. Verify global default allowISG via dinou.config.js (true by default, overridable to false)
+      const { resolveLayoutFunctionsConfig } = await import("../dinou/core/layout-functions.js");
+      const { resolvePageFunctionsConfig } = await import("../dinou/core/handler.js");
+      const prevGlobalCfg = (globalThis as any).__DINOU_CONFIG__;
+      try {
+        delete (globalThis as any).__DINOU_CONFIG__;
+        const defaultLayoutCfg = await resolveLayoutFunctionsConfig(
+          path.resolve(process.cwd(), "src/t-layout-functions/dyn/[id]/layout.tsx"),
+          { id: "1" },
+        );
+        expect(defaultLayoutCfg.allowISG).toBe(true);
+
+        const defaultPageCfg = await resolvePageFunctionsConfig(
+          path.resolve(process.cwd(), "src/t-layout-functions/no-isg/[id]/page.tsx"),
+          ["t-layout-functions", "no-isg", "prerendered"],
+          {},
+          { id: "prerendered" },
+          "/t-layout-functions/no-isg/prerendered/",
+        );
+        expect(defaultPageCfg.allowISGValue).toBe(true);
+
+        // When dinou.config.js sets allowISG: false, unconfigured segments default to false
+        (globalThis as any).__DINOU_CONFIG__ = { allowISG: false };
+        const globalFalseLayoutCfg = await resolveLayoutFunctionsConfig(
+          path.resolve(process.cwd(), "src/t-layout-functions/dyn/[id]/layout.tsx"),
+          { id: "1" },
+        );
+        expect(globalFalseLayoutCfg.allowISG).toBe(false);
+
+        const globalFalsePageCfg = await resolvePageFunctionsConfig(
+          path.resolve(process.cwd(), "src/t-layout-functions/no-isg/[id]/page.tsx"),
+          ["t-layout-functions", "no-isg", "prerendered"],
+          {},
+          { id: "prerendered" },
+          "/t-layout-functions/no-isg/prerendered/",
+        );
+        expect(globalFalsePageCfg.allowISGValue).toBe(false);
+
+        // Segments with explicit allowISG = true override global allowISG: false
+        const explicitTruePageCfg = await resolvePageFunctionsConfig(
+          path.resolve(
+            process.cwd(),
+            "src/t-layout-functions/no-isg/[id]/posts/[postId]/page.tsx",
+          ),
+          ["t-layout-functions", "no-isg", "prerendered", "posts", "post-1"],
+          {},
+          { id: "prerendered", postId: "post-1" },
+          "/t-layout-functions/no-isg/prerendered/posts/post-1/",
+        );
+        expect(explicitTruePageCfg.allowISGValue).toBe(true);
+      } finally {
+        if (prevGlobalCfg === undefined) {
+          delete (globalThis as any).__DINOU_CONFIG__;
+        } else {
+          (globalThis as any).__DINOU_CONFIG__ = prevGlobalCfg;
+        }
+      }
     });
   });
   test.describe("Dinou not found", () => {
