@@ -25,6 +25,12 @@ const { registerRouteModules } = await import(
   pathToFileURL(path.join(dinouCoreDir, "import-module.js")).href
 );
 
+// Pre-populate globalThis.__DINOU_CONFIG__ so cold esbuild compilation of dinou.config.ts
+// does not run inside getJSX on heavily loaded CI runners.
+if (typeof globalThis !== "undefined" && !globalThis.__DINOU_CONFIG__) {
+  globalThis.__DINOU_CONFIG__ = { plugins: [] };
+}
+
 const CLIENT_REFERENCE = Symbol.for("react.client.reference");
 
 function compileTsxModule(relPath, { asClientRef = false } = {}) {
@@ -143,6 +149,15 @@ async function simulateReact19ClientUse(usable) {
   return await usable;
 }
 
+/**
+ * Deterministically checks whether a Promise is still pending at the current microtask tick.
+ */
+async function getPromiseStatus(promise) {
+  const pendingToken = Symbol("pending");
+  const winner = await Promise.race([promise, Promise.resolve(pendingToken)]);
+  return winner === pendingToken ? "pending" : "settled";
+}
+
 let failures = 0;
 
 async function runTest(name, fn) {
@@ -167,11 +182,9 @@ await runTest(
     const prevEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = "production";
     try {
-      const start = Date.now();
       const tree = await getJSX("/t-promise", {}, null, false, false, {
         segment: "page",
       });
-      const elapsed = Date.now() - start;
 
       const singleConsumerEl = findElementByType(
         tree,
@@ -186,13 +199,17 @@ await runTest(
         `Expected props.promise to be a Promise, but got ${typeof singleConsumerEl.props.promise}: ${JSON.stringify(singleConsumerEl.props.promise)}`
       );
 
-      // 2. Must not have blocked getJSX waiting for the 150ms timer
-      assert.ok(
-        elapsed < 100,
-        `Expected getJSX to return immediately without blocking TTFB (<100ms), but took ${elapsed}ms`
+      // 2. Deterministic non-blocking check: the 150ms Promise must still be pending when getJSX returns
+      const statusAtReturn = await getPromiseStatus(
+        singleConsumerEl.props.promise
+      );
+      assert.equal(
+        statusAtReturn,
+        "pending",
+        `Expected getJSX to return while the 150ms Promise is still pending, but status was "${statusAtReturn}"`
       );
 
-      // 3. Array of Promises prop must also preserve Promise instances
+      // 3. Array of Promises prop must also preserve pending Promise instances
       const arrayConsumerEl = findElementByType(
         tree,
         (n) => n?.props?.testId === "rsc-array-resolved"
@@ -258,11 +275,9 @@ await runTest(
 await runTest(
   "Test 3 (Strategy 12): getProps returns un-awaited Promise to 'use client' Page without blocking TTFB or unwrapping on server",
   async () => {
-    const start = Date.now();
     const tree = await getJSX("/t-promise/getprops", {}, null, false, false, {
       segment: "page",
     });
-    const elapsed = Date.now() - start;
 
     assert.ok(tree, "Expected root page element from getJSX");
 
@@ -273,10 +288,12 @@ await runTest(
       `Expected tree.props.docPromise to be a Promise, but got ${typeof tree.props.docPromise}: ${JSON.stringify(tree.props.docPromise)}`
     );
 
-    // 2. Must not have blocked TTFB waiting for the 150ms docPromise
-    assert.ok(
-      elapsed < 100,
-      `Expected getJSX with getProps Promise to return immediately (<100ms), but took ${elapsed}ms`
+    // 2. Deterministic non-blocking check: the 150ms docPromise must still be pending when getJSX returns
+    const statusAtReturn = await getPromiseStatus(tree.props.docPromise);
+    assert.equal(
+      statusAtReturn,
+      "pending",
+      `Expected getJSX with getProps Promise to return while the 150ms docPromise is still pending, but status was "${statusAtReturn}"`
     );
 
     // 3. Simulated React 19 client use(docPromise) must succeed
@@ -295,4 +312,3 @@ if (failures > 0) {
   console.log("RESULT: All 3 tests PASSED ✅");
   process.exit(0);
 }
-
