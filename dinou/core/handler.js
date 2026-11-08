@@ -3263,9 +3263,6 @@ async function handleRequest(request, platformContext = {}) {
                 if (inFlightKey) {
                   inFlightGenerations.delete(inFlightKey);
                 }
-                if (platformContext?.isSSG) {
-                  bridge.setHeader("X-Dinou-Dynamic-Bailout", "true");
-                }
                 fullHtml = fullHtml.replace(
                   "window.__DINOU_USE_STATIC__ = true;",
                   "window.__DINOU_USE_STATIC__ = false;"
