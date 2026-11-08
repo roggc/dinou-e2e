@@ -1748,7 +1748,11 @@ async function handleRequest(request, platformContext = {}) {
 
     const canServeCachedRsc = isLayoutReq
       ? !isDevelopment && !platformContext?.isSSG && !dynamicState.value && !isRoutePpr
-      : !isDevelopment && !platformContext?.isSSG && !dynamicState.value && (!hasQueryParams || isStatic) && !isRoutePpr;
+      : !isDevelopment &&
+        !platformContext?.isSSG &&
+        (!dynamicState.value || (isStatic && Boolean(internalBuildId))) &&
+        (!hasQueryParams || isStatic) &&
+        !isRoutePpr;
 
     if (canServeCachedRsc) {
       const useOld =
@@ -2817,10 +2821,13 @@ async function handleRequest(request, platformContext = {}) {
             !dynamicState.value &&
             allowISGValue !== false &&
             Object.keys(queryObj).length === 0) ||
-          (platformContext.isSSG === true && !ssgPprUnwrappedBailout);
+          (platformContext.isSSG === true && (!dynamicState.value || (isPprConfig && !ssgPprUnwrappedBailout)));
 
         if (!shouldCacheISG && inFlightKey) {
           inFlightGenerations.delete(inFlightKey);
+        }
+        if (platformContext?.isSSG && !shouldCacheISG) {
+          bridge.setHeader("X-Dinou-Dynamic-Bailout", "true");
         }
 
         // Generic fallback for double crash
@@ -2930,18 +2937,82 @@ async function handleRequest(request, platformContext = {}) {
             bootstrapScriptContent += `window.HMR_WEBSOCKET_URL="ws://localhost:${hmrPort}";\n`;
           }
 
+          let precomputedPageRscText = "";
+          let precomputedLayoutRscText = "";
+          if (
+            shouldCacheISG &&
+            !isPprConfig &&
+            !isError &&
+            context._hasResolvedSegments &&
+            context._resolvedPageClientJsx !== undefined
+          ) {
+            try {
+              const pageStream = requestStorage.run(context, () =>
+                renderRSCStream(context._resolvedPageClientJsx, clientManifest, {
+                  runtime: "edge",
+                })
+              );
+              precomputedPageRscText = await new Response(pageStream).text();
+            } catch (e) {}
+            if (
+              precomputedPageRscText &&
+              context._resolvedLayoutClientJsx !== null &&
+              context._resolvedLayoutClientJsx !== undefined
+            ) {
+              try {
+                const activeChain = getActiveLayoutChain(reqSegments, queryObj, srcFolder);
+                if (activeChain.length > 0) {
+                  const leafLayout = activeChain[0];
+                  const leafRscKey = leafLayout.cleanLayoutKey
+                    ? `${leafLayout.cleanLayoutKey}/layout.rsc`
+                    : "layout.rsc";
+                  precomputedLayoutRscText = await readRscFromStorage(
+                    storage,
+                    leafRscKey,
+                    platformContext,
+                    request.url
+                  );
+                }
+              } catch (e) {}
+            }
+          }
+
           let htmlStream;
           try {
             await requestStorage.run(context, async () => {
-              htmlStream = await platformContext.renderHtmlStream(streamForSsr, {
-                bootstrapModules,
-                bootstrapScriptContent,
-                onError(err) {
-                  if (!platformContext?.isSSG || process.env.DINOU_DEBUG) {
-                    console.error("[Edge Native SSR] Stream error:", err);
+              if (precomputedLayoutRscText && precomputedPageRscText) {
+                const encoder = new TextEncoder();
+                const toStream = (str) =>
+                  new ReadableStream({
+                    start(controller) {
+                      controller.enqueue(encoder.encode(str));
+                      controller.close();
+                    },
+                  });
+                htmlStream = await platformContext.renderHtmlStream(
+                  toStream(precomputedLayoutRscText),
+                  {
+                    pageRscStream: toStream(precomputedPageRscText),
+                    bootstrapModules,
+                    bootstrapScriptContent,
+                    onError(err) {
+                      if (!platformContext?.isSSG || process.env.DINOU_DEBUG) {
+                        console.error("[Edge Native SSR] Stream error:", err);
+                      }
+                    },
                   }
-                },
-              });
+                );
+              } else {
+                htmlStream = await platformContext.renderHtmlStream(streamForSsr, {
+                  bootstrapModules,
+                  bootstrapScriptContent,
+                  onError(err) {
+                    if (!platformContext?.isSSG || process.env.DINOU_DEBUG) {
+                      console.error("[Edge Native SSR] Stream error:", err);
+                    }
+                  },
+                });
+              }
             });
           } catch (ssrErr) {
             if (!platformContext?.isSSG || process.env.DINOU_DEBUG) {
@@ -3085,8 +3156,8 @@ async function handleRequest(request, platformContext = {}) {
             }
 
             if (fullHtml) {
-              if (!dynamicState.value || (platformContext.isSSG === true && !ssgPprUnwrappedBailout)) {
-                if (platformContext.isSSG === true && !ssgPprUnwrappedBailout) dynamicState.value = false;
+              if (!dynamicState.value || (platformContext.isSSG === true && isPprConfig && !ssgPprUnwrappedBailout)) {
+                if (platformContext.isSSG === true && isPprConfig && !ssgPprUnwrappedBailout) dynamicState.value = false;
                 for (const k of [reqPath, cleanPath, cleanPath ? `/${cleanPath}` : "/"]) {
                   if (!k) continue;
                   if (isDynamic.has(k)) {
@@ -3104,14 +3175,16 @@ async function handleRequest(request, platformContext = {}) {
                 }
                 try {
                   const pageRscKey = cleanPath ? `${cleanPath}/page.rsc` : "page.rsc";
-                  let pageRscText = "";
+                  let pageRscText = precomputedPageRscText || "";
                   if (context._resolvedPageClientJsx) {
-                    try {
-                      const pageStream = requestStorage.run(context, () =>
-                        renderRSCStream(context._resolvedPageClientJsx, clientManifest, { runtime: "edge" })
-                      );
-                      pageRscText = await new Response(pageStream).text();
-                    } catch (e) {}
+                    if (!pageRscText) {
+                      try {
+                        const pageStream = requestStorage.run(context, () =>
+                          renderRSCStream(context._resolvedPageClientJsx, clientManifest, { runtime: "edge" })
+                        );
+                        pageRscText = await new Response(pageStream).text();
+                      } catch (e) {}
+                    }
                     if (genMeta.ppr || (Array.isArray(genMeta.slotTags) && genMeta.slotTags.length > 0)) {
                       try {
                         const shellPageKey = cleanPath ? `${cleanPath}/shell.page.json` : "shell.page.json";
@@ -3145,11 +3218,11 @@ async function handleRequest(request, platformContext = {}) {
                     await storage.set(shellRscKey, pageRscText || rscPayload);
                   }
                   if (!platformContext?.isSSG && !genMeta.ppr && !isError && context._hasResolvedSegments && pageRscText) {
-                    let layoutRscText = "";
+                    let layoutRscText = precomputedLayoutRscText || "";
                     const hasLayoutSeg =
                       context._resolvedLayoutClientJsx !== null &&
                       context._resolvedLayoutClientJsx !== undefined;
-                    if (hasLayoutSeg) {
+                    if (hasLayoutSeg && !layoutRscText) {
                       try {
                         const layoutStream = requestStorage.run(context, () =>
                           renderRSCStream(context._resolvedLayoutClientJsx, clientManifest, {
@@ -3177,6 +3250,9 @@ async function handleRequest(request, platformContext = {}) {
               } else {
                 if (inFlightKey) {
                   inFlightGenerations.delete(inFlightKey);
+                }
+                if (platformContext?.isSSG) {
+                  bridge.setHeader("X-Dinou-Dynamic-Bailout", "true");
                 }
                 fullHtml = fullHtml.replace(
                   "window.__DINOU_USE_STATIC__ = true;",
