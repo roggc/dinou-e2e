@@ -10,7 +10,38 @@ const HYDRATION_ERROR_REGEX =
 const test = base.extend({
   page: async ({ page }, use) => {
     const hydrationErrors: string[] = [];
+    const trackedPages = new Set<any>();
+
+    const waitForHydrationIfApplicable = async (p: any) => {
+      try {
+        if (!p || p.isClosed()) return;
+        const url = p.url();
+        if (!url || !url.startsWith("http://localhost:")) return;
+
+        const shouldWait = await p.evaluate(() => {
+          if (!document?.body) return false;
+          if (document.body.getAttribute("data-hydrated") === "true") return false;
+          if (document.readyState === "loading") return false;
+          return Boolean(
+            document.querySelector('script[src*="/main"], script[src*="/runtime"]')
+          );
+        });
+
+        if (shouldWait) {
+          await p.waitForSelector('body[data-hydrated="true"]', {
+            state: "attached",
+            timeout: 3000,
+          });
+        }
+      } catch {
+        // Ignorar si el test bloqueó JS/red a propósito, cerró la página o navegó fuera
+      }
+    };
+
     const attachHydrationWatchers = (p: any) => {
+      if (trackedPages.has(p)) return;
+      trackedPages.add(p);
+
       p.on("console", (msg: any) => {
         if (msg.type() === "error" || msg.type() === "warning") {
           const text = msg.text();
@@ -24,12 +55,22 @@ const test = base.extend({
           hydrationErrors.push(`[pageerror] ${err.message}`);
         }
       });
+
+      const origGoto = p.goto.bind(p);
+      p.goto = async (...args: any[]) => {
+        await waitForHydrationIfApplicable(p);
+        return origGoto(...args);
+      };
     };
 
     attachHydrationWatchers(page);
     page.context().on("page", (newPage) => attachHydrationWatchers(newPage));
 
     await use(page);
+
+    for (const p of trackedPages) {
+      await waitForHydrationIfApplicable(p);
+    }
 
     expect(hydrationErrors, "Expected zero React hydration errors during test").toEqual([]);
   },
