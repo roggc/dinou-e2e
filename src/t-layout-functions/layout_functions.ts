@@ -12,3 +12,7 @@ export function revalidate() {
 export function getCacheTags() {
   return ["layout-test-tag"];
 }
+
+export function allowISG() {
+  return false;
+}

@@ -2897,9 +2897,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const invalidRes = await page.goto("/t-layout-functions/dyn/invalid");
       expect(invalidRes?.status()).toBe(404);
 
-      // 3. Segmented RSC endpoint directly responds 404
+      // 3. Segmented RSC endpoints (both layout and page) directly respond 404
       const rscRes = await page.request.get("/____rsc_layout____/t-layout-functions/dyn/invalid");
       expect(rscRes.status()).toBe(404);
+      const rscPageRes = await page.request.get("/____rsc_page____/t-layout-functions/dyn/invalid");
+      expect(rscPageRes.status()).toBe(404);
     });
 
     test("Should enforce allowISG(false) at layout level", async ({
@@ -2910,9 +2912,38 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(validRes?.status()).toBe(200);
       await expect(page.locator("#no-isg-page")).toHaveText("ID: prerendered");
 
-      // 2. Non pre-rendered route rejected by allowISG -> 404
+      // 2. Non pre-rendered route rejected by allowISG -> 404 (HTML, layout RSC, and page RSC)
       const invalidRes = await page.goto("/t-layout-functions/no-isg/unrendered-slug-123");
       expect(invalidRes?.status()).toBe(404);
+      const invalidLayoutRsc = await page.request.get(
+        "/____rsc_layout____/t-layout-functions/no-isg/unrendered-slug-123",
+      );
+      expect(invalidLayoutRsc.status()).toBe(404);
+      const invalidPageRsc = await page.request.get(
+        "/____rsc_page____/t-layout-functions/no-isg/unrendered-slug-123",
+      );
+      expect(invalidPageRsc.status()).toBe(404);
+
+      // 3. Valid layout param ("prerendered", allowISG=false) + new child page param ("post-2", allowISG=true)
+      //    succeeds via ISG because layout's own dynamic param is valid
+      const validChildIsgRes = await page.goto(
+        "/t-layout-functions/no-isg/prerendered/posts/post-2",
+      );
+      expect(validChildIsgRes?.status()).toBe(200);
+      await expect(page.locator("#no-isg-post-page")).toHaveText(
+        "ID: prerendered | Post: post-2",
+      );
+
+      // 4. Invalid layout param ("unrendered-slug-123", allowISG=false) + valid child param ("post-1")
+      //    is rejected (404) across HTML, layout RSC, and page RSC
+      const blockedChildRes = await page.goto(
+        "/t-layout-functions/no-isg/unrendered-slug-123/posts/post-1",
+      );
+      expect(blockedChildRes?.status()).toBe(404);
+      const blockedChildPageRsc = await page.request.get(
+        "/____rsc_page____/t-layout-functions/no-isg/unrendered-slug-123/posts/post-1",
+      );
+      expect(blockedChildPageRsc.status()).toBe(404);
     });
   });
   test.describe("Dinou not found", () => {

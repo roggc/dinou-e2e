@@ -483,7 +483,7 @@ async function resolvePprForRoute(
  * Resolves page_functions configuration (allowISG, validateParams, getStaticPaths)
  * and determines whether the current request path is blocked or allowed for ISG.
  */
-async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynamicParams, reqPath) {
+async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynamicParams, reqPath, isSSG = false) {
   let isPathBlocked = false;
   let allowISGValue = true;
   let isDynamicConfig = false;
@@ -606,7 +606,7 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
         }
       }
 
-      if (!isPathBlocked && allowISGValue === false) {
+      if (!isPathBlocked && allowISGValue === false && !isSSG) {
         let isPathAllowed = false;
         if (staticPathsSet) {
           const sortedQueryEntries = Object.entries(dynamicParams)
@@ -626,7 +626,9 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
           } else {
             const cleanReq = reqPath.replace(/^\//, "").replace(/\/$/, "");
             const htmlPath = path.join(process.cwd(), ".dinou/dist2", cleanReq, "index.html");
-            if (!existsSync(htmlPath)) {
+            const shellHtmlPath = path.join(process.cwd(), ".dinou/dist2", cleanReq, "shell.html");
+            const pageRscPath = path.join(process.cwd(), ".dinou/dist2", cleanReq, "page.rsc");
+            if (!existsSync(htmlPath) && !existsSync(shellHtmlPath) && !existsSync(pageRscPath)) {
               isPathBlocked = true;
             }
           }
@@ -645,6 +647,60 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
     pagePpr: Boolean(cachedConfig?.pagePpr),
     staticPathsSet: cachedConfig?.staticPathsSet || null,
   };
+}
+
+/**
+ * Evaluates whether a layout segment blocks the current request via validateParams or allowISG=false.
+ * Only applies when the layout segment has dynamic parameters (Object.keys(lParams || {}).length > 0).
+ */
+async function isLayoutSegmentBlocked(
+  layoutPath,
+  lParams,
+  layoutConfig,
+  cleanLayoutKey,
+  reqPath,
+  isDevelopment,
+  isSSG = false,
+) {
+  if (!layoutPath || !layoutConfig) return false;
+  if (Object.keys(lParams || {}).length === 0) return false;
+
+  if (layoutConfig.validateParams) {
+    const isValid = await layoutConfig.validateParams(lParams);
+    if (!isValid) {
+      return true;
+    }
+  }
+
+  if (layoutConfig.allowISG === false && !isSSG) {
+    let isPathAllowed = false;
+    if (layoutConfig.staticPathsSet) {
+      const sortedEntries = Object.entries(lParams)
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([k, v]) => (Array.isArray(v) ? [k, v.join(",")] : [k, String(v)]));
+      const serialized = JSON.stringify(sortedEntries);
+      const singleVal = Object.values(lParams)[0];
+      const singleValStr = Array.isArray(singleVal) ? singleVal.join(",") : String(singleVal);
+      isPathAllowed =
+        layoutConfig.staticPathsSet.has(serialized) ||
+        layoutConfig.staticPathsSet.has(singleValStr);
+    }
+    if (!isPathAllowed) {
+      if (isDevelopment) {
+        return true;
+      }
+      const cleanReq = reqPath.replace(/^\//, "").replace(/\/$/, "");
+      const targetLayoutKey = cleanLayoutKey !== undefined ? cleanLayoutKey : cleanReq;
+      const layoutRscPath = path.join(process.cwd(), ".dinou/dist2", targetLayoutKey, "layout.rsc");
+      const htmlPath = path.join(process.cwd(), ".dinou/dist2", cleanReq, "index.html");
+      const shellHtmlPath = path.join(process.cwd(), ".dinou/dist2", cleanReq, "shell.html");
+      if (!existsSync(layoutRscPath) && !existsSync(htmlPath) && !existsSync(shellHtmlPath)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -1641,6 +1697,7 @@ async function handleRequest(request, platformContext = {}) {
         queryObj,
         dynamicParams,
         reqPath,
+        Boolean(platformContext?.isSSG),
       );
       if (pageConfig.isDynamicConfig) {
         dynamicState.value = true;
@@ -2003,93 +2060,85 @@ async function handleRequest(request, platformContext = {}) {
     }
 
     if (isLayoutReq) {
-      if (layouts && Array.isArray(layouts)) {
-        for (const [lPath, lParams] of layouts) {
-          const lConfig = await resolveLayoutFunctionsConfig(lPath, lParams);
-          if (lConfig.allowISG === false) {
-            let isPathAllowed = false;
-            if (lConfig.staticPathsSet) {
-              const sortedEntries = Object.entries(lParams || {})
-                .sort((a, b) => a[0].localeCompare(b[0]))
-                .map(([k, v]) => {
-                  if (Array.isArray(v)) return [k, v.join(",")];
-                  return [k, String(v)];
-                });
-              const serializedQuery = JSON.stringify(sortedEntries);
-              const singleVal = Object.values(lParams || {})[0];
-              const singleValStr = Array.isArray(singleVal) ? singleVal.join(",") : String(singleVal);
-              isPathAllowed = lConfig.staticPathsSet.has(serializedQuery) || lConfig.staticPathsSet.has(singleValStr);
-            }
-            if (!isPathAllowed) {
-              if (isDevelopment) {
-                isPathBlocked = true;
-                break;
-              }
-              const cleanReq = reqPath.replace(/^\//, "").replace(/\/$/, "");
-              const rscPath = path.join(process.cwd(), ".dinou/dist2", cleanReq, "layout.rsc");
-              if (!existsSync(rscPath)) {
-                isPathBlocked = true;
-                break;
-              }
-            }
-          }
-          if (lConfig.validateParams) {
-            const isValid = await lConfig.validateParams(lParams);
-            if (!isValid) {
-              isPathBlocked = true;
-              break;
-            }
+      const activeLayoutChainForRsc = getActiveLayoutChain(reqSegments, queryObj, srcFolder, {
+        ignoreNoLayout: true,
+      });
+      if (activeLayoutChainForRsc.length > 0) {
+        for (const entry of activeLayoutChainForRsc) {
+          const lConfig = await resolveLayoutFunctionsConfig(entry.layoutPath, entry.dParams);
+          if (
+            await isLayoutSegmentBlocked(
+              entry.layoutPath,
+              entry.dParams,
+              lConfig,
+              entry.cleanLayoutKey,
+              reqPath,
+              isDevelopment,
+              Boolean(platformContext?.isSSG),
+            )
+          ) {
+            isPathBlocked = true;
+            break;
           }
         }
-      } else {
+      } else if (layoutPath) {
         if (!layoutConfig) {
           layoutConfig = await resolveLayoutFunctionsConfig(layoutPath, layoutParams);
         }
-        if (layoutConfig.allowISG === false) {
-          let isPathAllowed = false;
-          if (layoutConfig.staticPathsSet) {
-            const sortedEntries = Object.entries(layoutParams || {})
-              .sort((a, b) => a[0].localeCompare(b[0]))
-              .map(([k, v]) => {
-                if (Array.isArray(v)) return [k, v.join(",")];
-                return [k, String(v)];
-              });
-            const serializedQuery = JSON.stringify(sortedEntries);
-            const singleVal = Object.values(layoutParams || {})[0];
-            const singleValStr = Array.isArray(singleVal) ? singleVal.join(",") : String(singleVal);
-            isPathAllowed = layoutConfig.staticPathsSet.has(serializedQuery) || layoutConfig.staticPathsSet.has(singleValStr);
-          }
-          if (!isPathAllowed) {
-            if (isDevelopment) {
-              isPathBlocked = true;
-            } else {
-              const cleanReq = reqPath.replace(/^\//, "").replace(/\/$/, "");
-              const rscPath = path.join(process.cwd(), ".dinou/dist2", cleanReq, "layout.rsc");
-              if (!existsSync(rscPath)) {
-                isPathBlocked = true;
-              }
-            }
-          }
+        if (
+          await isLayoutSegmentBlocked(
+            layoutPath,
+            layoutParams,
+            layoutConfig,
+            undefined,
+            reqPath,
+            isDevelopment,
+            Boolean(platformContext?.isSSG),
+          )
+        ) {
+          isPathBlocked = true;
         }
-        if (layoutConfig.validateParams) {
-          const isValid = await layoutConfig.validateParams(layoutParams);
-          if (!isValid) {
+      }
+      if (isPathBlocked) {
+        return new Response("Not Found", { status: 404 });
+      }
+    } else {
+      if (!pageConfig) {
+        pageConfig = await resolvePageFunctionsConfig(
+          pagePath,
+          reqSegments,
+          queryObj,
+          dynamicParams,
+          reqPath,
+          Boolean(platformContext?.isSSG),
+        );
+      }
+      isPathBlocked = pageConfig.isPathBlocked;
+      if (!isPathBlocked) {
+        const activeLayoutChainForPage = getActiveLayoutChain(reqSegments, queryObj, srcFolder, {
+          ignoreNoLayout: false,
+        });
+        for (const entry of activeLayoutChainForPage) {
+          const lConfig = await resolveLayoutFunctionsConfig(entry.layoutPath, entry.dParams);
+          if (
+            await isLayoutSegmentBlocked(
+              entry.layoutPath,
+              entry.dParams,
+              lConfig,
+              entry.cleanLayoutKey,
+              reqPath,
+              isDevelopment,
+              Boolean(platformContext?.isSSG),
+            )
+          ) {
             isPathBlocked = true;
+            break;
           }
         }
       }
       if (isPathBlocked) {
         return new Response("Not Found", { status: 404 });
       }
-    } else if (!pageConfig) {
-      pageConfig = await resolvePageFunctionsConfig(
-        pagePath,
-        reqSegments,
-        queryObj,
-        dynamicParams,
-        reqPath,
-      );
-      isPathBlocked = pageConfig.isPathBlocked;
     }
 
     const rscDynamicState = isLayoutReq ? dynamicState : (isRoutePpr ? { value: false } : dynamicState);
@@ -2288,6 +2337,7 @@ async function handleRequest(request, platformContext = {}) {
     queryObj,
     dynamicParams,
     reqPath,
+    Boolean(platformContext?.isSSG),
   );
   let hasStaticDynamicConfig = Boolean(isDynamicConfig);
   if (isDynamicConfig) {
@@ -2310,52 +2360,29 @@ async function handleRequest(request, platformContext = {}) {
   let combinedTags = Array.isArray(tags) ? [...tags] : [];
   let combinedRevalidate = revalidate;
 
-  if (layouts && Array.isArray(layouts)) {
-    for (const [layoutPath, layoutParams] of layouts) {
-      const layoutConfig = await resolveLayoutFunctionsConfig(layoutPath, layoutParams);
-
-      if (layoutConfig.validateParams) {
-        try {
-          const isValid = await layoutConfig.validateParams(layoutParams);
-          if (!isValid) {
-            isPathBlocked = true;
-          }
-        } catch (e) {
-          console.error(`[Dinou] Error executing validateParams for layout ${layoutPath}:`, e);
-        }
-      }
+  const activeLayoutsForRoute = getActiveLayoutChain(reqSegments, queryObj, srcFolder);
+  if (activeLayoutsForRoute.length > 0) {
+    for (const entry of activeLayoutsForRoute) {
+      const layoutConfig = await resolveLayoutFunctionsConfig(entry.layoutPath, entry.dParams);
 
       if (layoutConfig.isDynamic) {
         dynamicState.value = true;
         hasStaticDynamicConfig = true;
       }
 
-      if (layoutConfig.allowISG === false) {
+      if (
+        await isLayoutSegmentBlocked(
+          entry.layoutPath,
+          entry.dParams,
+          layoutConfig,
+          entry.cleanLayoutKey,
+          reqPath,
+          isDevelopment,
+          Boolean(platformContext?.isSSG),
+        )
+      ) {
+        isPathBlocked = true;
         allowISGValue = false;
-        let isPathAllowed = false;
-        if (layoutConfig.staticPathsSet) {
-          const sortedEntries = Object.entries(layoutParams || {})
-            .sort((a, b) => a[0].localeCompare(b[0]))
-            .map(([k, v]) => {
-              if (Array.isArray(v)) return [k, v.join(",")];
-              return [k, String(v)];
-            });
-          const serializedQuery = JSON.stringify(sortedEntries);
-          const singleVal = Object.values(layoutParams || {})[0];
-          const singleValStr = Array.isArray(singleVal) ? singleVal.join(",") : String(singleVal);
-          isPathAllowed = layoutConfig.staticPathsSet.has(serializedQuery) || layoutConfig.staticPathsSet.has(singleValStr);
-        }
-        if (!isPathAllowed) {
-          if (isDevelopment) {
-            isPathBlocked = true;
-          } else {
-            const cleanReq = reqPath.replace(/^\//, "").replace(/\/$/, "");
-            const htmlPath = path.join(process.cwd(), ".dinou/dist2", cleanReq, "index.html");
-            if (!existsSync(htmlPath)) {
-              isPathBlocked = true;
-            }
-          }
-        }
       }
 
       if (typeof layoutConfig.revalidate === "number" && layoutConfig.revalidate >= 0) {
