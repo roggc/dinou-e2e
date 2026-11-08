@@ -277,8 +277,9 @@ function getActiveLayoutChain(
 }
 
 /**
- * Resolves the effective PPR boolean for each active layout in the chain (from outermost to innermost),
- * inheriting from global dinou.config.js -> parent layout -> child layout.
+ * Resolves the effective PPR boolean for each active layout in the chain (from outermost to innermost).
+ * Each layout segment uses its own explicit `ppr` config in `layout_functions`, or falls back to
+ * the global default `ppr` from `dinou.config.js` (`false` if omitted). No parent-to-child inheritance.
  */
 async function resolveLayoutChainPpr(
   reqSegments,
@@ -287,27 +288,28 @@ async function resolveLayoutChainPpr(
   options = {}
 ) {
   const globalCfg = await getDinouConfig();
-  let inheritedPpr = Boolean(globalCfg?.ppr);
+  const defaultPpr = Boolean(globalCfg?.ppr);
   const activeChain = getActiveLayoutChain(reqSegments, queryObj, srcFolder, options);
   const layoutPprMap = new Map();
 
   for (let i = activeChain.length - 1; i >= 0; i--) {
     const entry = activeChain[i];
     const lConfig = await resolveLayoutFunctionsConfig(entry.layoutPath, entry.dParams);
-    if (lConfig && lConfig.ppr !== null && lConfig.ppr !== undefined) {
-      inheritedPpr = Boolean(lConfig.ppr);
-    }
-    entry.effectivePpr = inheritedPpr;
-    layoutPprMap.set(entry.layoutPath, inheritedPpr);
-    layoutPprMap.set(path.normalize(entry.layoutPath), inheritedPpr);
-    layoutPprMap.set(entry.layoutPath.replace(/\\/g, "/"), inheritedPpr);
+    const segmentPpr =
+      lConfig && lConfig.ppr !== null && lConfig.ppr !== undefined
+        ? Boolean(lConfig.ppr)
+        : defaultPpr;
+    entry.effectivePpr = segmentPpr;
+    layoutPprMap.set(entry.layoutPath, segmentPpr);
+    layoutPprMap.set(path.normalize(entry.layoutPath), segmentPpr);
+    layoutPprMap.set(entry.layoutPath.replace(/\\/g, "/"), segmentPpr);
   }
 
   const anyLayoutPpr = activeChain.some((entry) => Boolean(entry.effectivePpr));
   return {
     activeChain,
     layoutPprMap,
-    leafLayoutPpr: inheritedPpr,
+    defaultPpr,
     anyLayoutPpr,
   };
 }

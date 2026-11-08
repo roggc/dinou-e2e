@@ -391,13 +391,16 @@ export function HsPprAutomatedSuiteRunner() {
         throw new Error("Dynamic holes did not receive query params in streamed tail");
       }
 
-      // Verify static opt-out route (/t-rigurous-hs-ppr/static-optout) is purely static (no PPR stream)
+      // Verify static opt-out route (/t-rigurous-hs-ppr/static-optout): L1 layout keeps its PPR holes while the page itself is static (ppr=false)
       const optRes = await fetch("/t-rigurous-hs-ppr/static-optout", {
         headers: { Accept: "text/html" },
       });
-      const optHtml = await optRes.text();
-      if (optHtml.includes("window.__DINOU_PPR__ = true") || optHtml.includes('id="ppr-content-')) {
-        throw new Error("Expected /t-rigurous-hs-ppr/static-optout (ppr=false) to opt out of PPR");
+      const optSplit = splitPprWire(await optRes.text());
+      if (extractIdText(optSplit.shell, "hsppr-static-optout-seq") !== "100") {
+        throw new Error("Expected /t-rigurous-hs-ppr/static-optout (ppr=false) to pre-render staticOptOutSeq=100 in shell");
+      }
+      if (optSplit.shell.includes('data-ppr-hole="ppr-hole-3"') || optSplit.stream.includes('id="ppr-content-ppr-hole-3"')) {
+        throw new Error("Expected /t-rigurous-hs-ppr/static-optout (ppr=false) not to emit any page-level PPR holes");
       }
 
       return "shell.html holds L1 + @sidebar + Page A + Static <Suspense>; ppr-hole-1..4 streamed in tail; static-optout verified";

@@ -76,7 +76,7 @@ async function getJSX(
   let jsx;
   let pageFunctionsProps;
 
-  const { layoutPprMap, leafLayoutPpr } = await resolveLayoutChainPpr(
+  const { layoutPprMap, defaultPpr } = await resolveLayoutChainPpr(
     reqSegments,
     query || {},
     srcFolder,
@@ -140,7 +140,7 @@ async function getJSX(
             null,
             `Page not found: no "page" file found for "${normalizedReqPath}"`,
           ),
-          Boolean(leafLayoutPpr),
+          Boolean(defaultPpr),
         );
       } else {
         const pageModule = await importModule(notFoundPath);
@@ -172,7 +172,7 @@ async function getJSX(
         const notFoundEffectivePpr =
           explicitNotFoundPpr !== null
             ? explicitNotFoundPpr
-            : Boolean(leafLayoutPpr);
+            : Boolean(defaultPpr);
 
         jsx = markPageRootElement(
           React.createElement(Page, props),
@@ -242,7 +242,7 @@ async function getJSX(
         }
       }
       const pageEffectivePpr =
-        explicitPagePpr !== null ? explicitPagePpr : Boolean(leafLayoutPpr);
+        explicitPagePpr !== null ? explicitPagePpr : Boolean(defaultPpr);
 
       if (getContext()?._isPprRuntimeResume && !pageEffectivePpr) {
         if (options && options.segment === "page") {
@@ -341,7 +341,7 @@ async function getJSX(
       const normLayoutPath = layoutPath.replace(/\\/g, "/");
       const layoutEffectivePpr = layoutPprMap.has(normLayoutPath)
         ? Boolean(layoutPprMap.get(normLayoutPath))
-        : Boolean(leafLayoutPpr);
+        : Boolean(defaultPpr);
 
       if (getContext()?._isPprRuntimeResume && !layoutEffectivePpr) {
         if (resetLayoutPath) {

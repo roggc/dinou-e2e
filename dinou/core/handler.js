@@ -415,7 +415,7 @@ async function resolvePprForRoute(
   options = {},
 ) {
   const srcFolder = path.resolve(process.cwd(), "src");
-  const { leafLayoutPpr, anyLayoutPpr } = await resolveLayoutChainPpr(
+  const { defaultPpr, anyLayoutPpr } = await resolveLayoutChainPpr(
     reqSegments || [],
     queryObj || {},
     srcFolder,
@@ -472,7 +472,7 @@ async function resolvePprForRoute(
   }
 
   const pageEffectivePpr =
-    explicitPagePpr !== null ? explicitPagePpr : Boolean(leafLayoutPpr);
+    explicitPagePpr !== null ? explicitPagePpr : Boolean(defaultPpr);
   if (options?.segment === "page") {
     return Boolean(pageEffectivePpr);
   }

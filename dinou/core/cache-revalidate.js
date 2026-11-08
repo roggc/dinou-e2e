@@ -154,7 +154,7 @@ async function resolveRouteConfigForRevalidate(pagePath, reqSegments, existingMe
   }
 
   if (isRoutePpr === null || isPagePpr === null) {
-    const { leafLayoutPpr, anyLayoutPpr } = await resolveLayoutChainPpr(
+    const { defaultPpr, anyLayoutPpr } = await resolveLayoutChainPpr(
       reqSegments || [],
       {},
       srcFolder,
@@ -167,7 +167,7 @@ async function resolveRouteConfigForRevalidate(pagePath, reqSegments, existingMe
       } catch (e) {}
     }
     const resolvedPagePpr =
-      explicitPagePpr !== null ? explicitPagePpr : Boolean(leafLayoutPpr);
+      explicitPagePpr !== null ? explicitPagePpr : Boolean(defaultPpr);
     if (isPagePpr === null) {
       isPagePpr = Boolean(resolvedPagePpr);
     }

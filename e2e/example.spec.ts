@@ -7606,6 +7606,45 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         "data-tag",
         "browser-tag",
       );
+
+      // 4. Verify No Parent-to-Child Inheritance & Global Default via dinou.config.js
+      const { resolveLayoutChainPpr } = await import("../dinou/core/layout-functions.js");
+      const prevGlobalCfg = (globalThis as any).__DINOU_CONFIG__;
+      try {
+        delete (globalThis as any).__DINOU_CONFIG__;
+        const chainDefaultFalse = await resolveLayoutChainPpr(["t-ppr-layout", "nested"]);
+        expect(chainDefaultFalse.defaultPpr).toBe(false);
+        const outerEntryFalse = chainDefaultFalse.activeChain.find((e: any) =>
+          e.layoutPath.replace(/\\/g, "/").endsWith("src/t-ppr-layout/layout.tsx"),
+        );
+        const nestedEntryFalse = chainDefaultFalse.activeChain.find((e: any) =>
+          e.layoutPath.replace(/\\/g, "/").endsWith("src/t-ppr-layout/nested/layout.tsx"),
+        );
+        expect(outerEntryFalse?.effectivePpr).toBe(true);
+        // Nested layout has no layout_functions.ts -> does NOT inherit from outer layout, falls back to defaultPpr (false)
+        expect(nestedEntryFalse?.effectivePpr).toBe(false);
+
+        // When dinou.config.js sets ppr: true globally, unconfigured segments default to true while explicit ppr = false opts out
+        (globalThis as any).__DINOU_CONFIG__ = { ppr: true };
+        const chainDefaultTrue = await resolveLayoutChainPpr(["t-ppr-layout", "nested"]);
+        expect(chainDefaultTrue.defaultPpr).toBe(true);
+        const nestedEntryTrue = chainDefaultTrue.activeChain.find((e: any) =>
+          e.layoutPath.replace(/\\/g, "/").endsWith("src/t-ppr-layout/nested/layout.tsx"),
+        );
+        expect(nestedEntryTrue?.effectivePpr).toBe(true);
+
+        const optInChainGlobalTrue = await resolveLayoutChainPpr(["t-new-ppr", "opt-in-route"]);
+        const innerOptOutEntry = optInChainGlobalTrue.activeChain.find((e: any) =>
+          e.layoutPath.replace(/\\/g, "/").endsWith("src/t-new-ppr/opt-in-route/layout.tsx"),
+        );
+        expect(innerOptOutEntry?.effectivePpr).toBe(false);
+      } finally {
+        if (prevGlobalCfg === undefined) {
+          delete (globalThis as any).__DINOU_CONFIG__;
+        } else {
+          (globalThis as any).__DINOU_CONFIG__ = prevGlobalCfg;
+        }
+      }
     });
 
     test("4. Full-Page Dynamic Bailouts: Unwrapped Cookies (/t-new-ppr/bailout-cookies), Unwrapped revalidate=0 Slot (/t-new-ppr/bailout-slot-0) & Non-PPR Cookie Read Inside Suspense (/t-new-ppr/no-ppr-bailout)", async ({

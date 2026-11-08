@@ -12,7 +12,7 @@ import { getDinouConfig } from "./load-dinou-config.js";
 import { createBailoutProxy } from "./bailout-proxy.js";
 
 async function resolveBuildPprForRoute(segments, pagePath, pageFunctionsPath, srcFolder) {
-  const { layoutPprMap, leafLayoutPpr, anyLayoutPpr } = await resolveLayoutChainPpr(
+  const { layoutPprMap, defaultPpr, anyLayoutPpr } = await resolveLayoutChainPpr(
     segments || [],
     {},
     srcFolder,
@@ -36,7 +36,7 @@ async function resolveBuildPprForRoute(segments, pagePath, pageFunctionsPath, sr
   }
 
   const pageEffectivePpr =
-    explicitPagePpr !== null ? explicitPagePpr : Boolean(leafLayoutPpr);
+    explicitPagePpr !== null ? explicitPagePpr : Boolean(defaultPpr);
   const isRoutePpr = Boolean(pageEffectivePpr || anyLayoutPpr);
 
   return { isRoutePpr, pageEffectivePpr, layoutPprMap };
