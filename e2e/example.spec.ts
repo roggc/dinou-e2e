@@ -7813,6 +7813,202 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const npRoot2 = Number(np2.match(/rootRenderCount=(\d+)/)?.[1] || 0);
       expect(npRoot2).toBeGreaterThan(npRoot1);
     });
+
+    test("5. Parallel Slot Pages (@sidebar) Inherit Owning Layout ppr=true While Unconfigured Sibling Page & Nested Child Layout (+ @panel Slot) Default to ppr=false (/t-ppr-slot)", async ({
+      page,
+      context,
+      request,
+    }) => {
+      if (isProd) {
+        const rootMetaPath = path.resolve(".dinou/dist2/t-ppr-slot/metadata.json");
+        const rootLayoutMetaPath = path.resolve(".dinou/dist2/t-ppr-slot/layout.metadata.json");
+        const rootShellPath = path.resolve(".dinou/dist2/t-ppr-slot/shell.html");
+        const subMetaPath = path.resolve(".dinou/dist2/t-ppr-slot/sub/metadata.json");
+        const subLayoutMetaPath = path.resolve(".dinou/dist2/t-ppr-slot/sub/layout.metadata.json");
+        const subShellPath = path.resolve(".dinou/dist2/t-ppr-slot/sub/shell.html");
+
+        if (fs.existsSync(rootMetaPath)) {
+          const rootMeta = JSON.parse(fs.readFileSync(rootMetaPath, "utf8"));
+          expect(rootMeta.ppr).toBe(true);
+          // Unconfigured main page.tsx does NOT inherit ppr=true from layout_functions.ts
+          expect(rootMeta.pagePpr).toBe(false);
+          // Only @sidebar's dynamic <Suspense> boundary (ppr-hole-2) is registered as a PPR hole
+          expect(rootMeta.holes).toEqual(["ppr-hole-2"]);
+
+          if (fs.existsSync(rootLayoutMetaPath)) {
+            const rootLayoutMeta = JSON.parse(fs.readFileSync(rootLayoutMetaPath, "utf8"));
+            expect(rootLayoutMeta.ppr).toBe(true);
+            expect(rootLayoutMeta.holes).toEqual(["ppr-hole-2"]);
+            expect(rootLayoutMeta.suspenseCount).toBe(2);
+          }
+
+          expect(fs.existsSync(rootShellPath)).toBe(true);
+          const rootShellDisk = fs.readFileSync(rootShellPath, "utf8");
+          // @sidebar noDynamic() <Suspense> resolved into static shell
+          expect(rootShellDisk).toContain('data-testid="sidebar-slot-nodynamic-resolved"');
+          expect(rootShellDisk).not.toContain('data-testid="sidebar-slot-nodynamic-fallback"');
+          expect(rootShellDisk).not.toContain('data-ppr-hole="ppr-hole-1"');
+          // @sidebar dynamic <Suspense> (without noDynamic) postponed as ppr-hole-2
+          expect(rootShellDisk).toContain('data-testid="sidebar-slot-dynamic-fallback"');
+          expect(rootShellDisk).toContain('data-ppr-hole="ppr-hole-2"');
+          // Unconfigured sibling page.tsx (ppr=false) resolved <Suspense> statically without noDynamic()
+          expect(rootShellDisk).toContain('data-testid="main-page-suspense-resolved"');
+          expect(rootShellDisk).not.toContain('data-testid="main-page-suspense-fallback"');
+          expect(rootShellDisk).not.toContain('data-ppr-hole="ppr-hole-3"');
+        }
+
+        if (fs.existsSync(subMetaPath)) {
+          const subMeta = JSON.parse(fs.readFileSync(subMetaPath, "utf8"));
+          expect(subMeta.ppr).toBe(true);
+          expect(subMeta.pagePpr).toBe(false);
+          expect(subMeta.holes).toEqual(["ppr-hole-2"]);
+
+          if (fs.existsSync(subLayoutMetaPath)) {
+            const subLayoutMeta = JSON.parse(fs.readFileSync(subLayoutMetaPath, "utf8"));
+            expect(subLayoutMeta.ppr).toBe(true);
+            expect(subLayoutMeta.holes).toEqual(["ppr-hole-2"]);
+            expect(subLayoutMeta.suspenseCount).toBe(2);
+          }
+
+          expect(fs.existsSync(subShellPath)).toBe(true);
+          const subShellDisk = fs.readFileSync(subShellPath, "utf8");
+          // Nested sub/@panel/page.tsx under unconfigured sub/layout.tsx (ppr=false) resolved <Suspense> statically without noDynamic()
+          expect(subShellDisk).toContain('data-testid="sub-panel-suspense-resolved"');
+          expect(subShellDisk).not.toContain('data-testid="sub-panel-suspense-fallback"');
+          expect(subShellDisk).not.toContain('data-ppr-hole="ppr-hole-3"');
+          // Outer @sidebar still keeps its dynamic PPR hole on /t-ppr-slot/sub
+          expect(subShellDisk).toContain('data-ppr-hole="ppr-hole-2"');
+        }
+      }
+
+      // 5a. Raw wire streaming on /t-ppr-slot across two requests with distinct cookies & query params
+      const slotRes1 = await request.get("/t-ppr-slot?sfilter=alpha", {
+        headers: { Cookie: "slot_role=admin" },
+      });
+      expect(slotRes1.status()).toBe(200);
+      const slotHtml1 = await slotRes1.text();
+
+      const slotRes2 = await request.get("/t-ppr-slot?sfilter=beta", {
+        headers: { Cookie: "slot_role=editor" },
+      });
+      expect(slotRes2.status()).toBe(200);
+      const slotHtml2 = await slotRes2.text();
+
+      expect(slotHtml1).toContain('data-testid="sidebar-slot-nodynamic-resolved"');
+      expect(slotHtml1).toContain('data-testid="sidebar-slot-dynamic-resolved"');
+      expect(slotHtml1).toContain('data-testid="main-page-suspense-resolved"');
+      expect(extractDataAttr(slotHtml1, "sidebar-slot-dynamic-resolved", "data-role")).toBe("admin");
+      expect(extractDataAttr(slotHtml1, "sidebar-slot-dynamic-resolved", "data-sfilter")).toBe("alpha");
+      expect(extractDataAttr(slotHtml2, "sidebar-slot-dynamic-resolved", "data-role")).toBe("editor");
+      expect(extractDataAttr(slotHtml2, "sidebar-slot-dynamic-resolved", "data-sfilter")).toBe("beta");
+      expect(extractRenderCount(slotHtml2, "sidebar-slot-dynamic-resolved")).toBeGreaterThan(
+        extractRenderCount(slotHtml1, "sidebar-slot-dynamic-resolved"),
+      );
+
+      if (isProd) {
+        const { shellPart: sShell1, streamPart: sStream1 } = splitNewPprWire(slotHtml1);
+        expect(sShell1).toContain('data-ppr-hole="ppr-hole-2"');
+        expect(sStream1).toContain('<template id="ppr-content-ppr-hole-2">');
+        expect(slotHtml1).not.toContain("ppr-hole-1");
+        expect(slotHtml1).not.toContain("ppr-hole-3");
+        for (const staticTid of [
+          "slot-ppr-layout-shell",
+          "sidebar-slot-shell",
+          "sidebar-slot-nodynamic-resolved",
+          "slot-ppr-main-page",
+          "main-page-suspense-resolved",
+        ]) {
+          expect(extractRenderCount(slotHtml1, staticTid)).toBe(
+            extractRenderCount(slotHtml2, staticTid),
+          );
+        }
+      }
+
+      // 5b. Raw wire streaming on /t-ppr-slot/sub (outer @sidebar ppr=true + nested sub/@panel ppr=false)
+      const subRes1 = await request.get("/t-ppr-slot/sub?sfilter=sub-one", {
+        headers: { Cookie: "slot_role=auditor" },
+      });
+      expect(subRes1.status()).toBe(200);
+      const subHtml1 = await subRes1.text();
+
+      const subRes2 = await request.get("/t-ppr-slot/sub?sfilter=sub-two", {
+        headers: { Cookie: "slot_role=reviewer" },
+      });
+      expect(subRes2.status()).toBe(200);
+      const subHtml2 = await subRes2.text();
+
+      expect(subHtml1).toContain('data-testid="sub-panel-suspense-resolved"');
+      expect(extractDataAttr(subHtml1, "sidebar-slot-dynamic-resolved", "data-role")).toBe("auditor");
+      expect(extractDataAttr(subHtml1, "sidebar-slot-dynamic-resolved", "data-sfilter")).toBe("sub-one");
+      expect(extractDataAttr(subHtml2, "sidebar-slot-dynamic-resolved", "data-role")).toBe("reviewer");
+      expect(extractDataAttr(subHtml2, "sidebar-slot-dynamic-resolved", "data-sfilter")).toBe("sub-two");
+      expect(extractRenderCount(subHtml2, "sidebar-slot-dynamic-resolved")).toBeGreaterThan(
+        extractRenderCount(subHtml1, "sidebar-slot-dynamic-resolved"),
+      );
+
+      if (isProd) {
+        expect(subHtml1).toContain('<template id="ppr-content-ppr-hole-2">');
+        expect(subHtml1).not.toContain("ppr-hole-3");
+        for (const staticSubTid of [
+          "slot-ppr-layout-shell",
+          "sidebar-slot-shell",
+          "slot-ppr-sub-layout",
+          "sub-panel-slot-shell",
+          "sub-panel-suspense-resolved",
+          "slot-ppr-sub-page",
+        ]) {
+          expect(extractRenderCount(subHtml1, staticSubTid)).toBe(
+            extractRenderCount(subHtml2, staticSubTid),
+          );
+        }
+      }
+
+      // 5c. Browser DOM hydration, router.refresh({ layout: true }) live @sidebar hole splice, & soft-navigation
+      await context.addCookies([
+        { name: "slot_role", value: "browser-initial", path: "/", domain: "localhost" },
+      ]);
+      await page.goto("/t-ppr-slot?sfilter=browser-q");
+      await expect(page.getByTestId("sidebar-slot-nodynamic-resolved")).toBeVisible();
+      await expect(page.getByTestId("main-page-suspense-resolved")).toBeVisible();
+      await expect(page.getByTestId("sidebar-slot-dynamic-resolved")).toHaveAttribute(
+        "data-role",
+        "browser-initial",
+      );
+      await expect(page.getByTestId("sidebar-slot-dynamic-resolved")).toHaveAttribute(
+        "data-sfilter",
+        "browser-q",
+      );
+
+      const sidebarShellBefore = await page
+        .getByTestId("sidebar-slot-shell")
+        .getAttribute("data-render-count");
+
+      await page.getByTestId("sidebar-client-inc").click();
+      await expect(page.getByTestId("sidebar-client-count")).toHaveText("1");
+
+      // Update cookie and refresh layout: @sidebar dynamic hole updates live while client state & static shell persist
+      await context.addCookies([
+        { name: "slot_role", value: "browser-refreshed", path: "/", domain: "localhost" },
+      ]);
+      await page.getByTestId("slot-ppr-refresh-layout").click();
+      await expect(page.getByTestId("sidebar-slot-dynamic-resolved")).toHaveAttribute(
+        "data-role",
+        "browser-refreshed",
+      );
+      await expect(page.getByTestId("sidebar-client-count")).toHaveText("1");
+      if (isProd) {
+        await expect(page.getByTestId("sidebar-slot-shell")).toHaveAttribute(
+          "data-render-count",
+          sidebarShellBefore!,
+        );
+      }
+
+      // Soft-navigate to /t-ppr-slot/sub: outer @sidebar client state persists & nested @panel renders resolved
+      await page.getByTestId("slot-ppr-link-sub").click();
+      await expect(page.getByTestId("slot-ppr-sub-page")).toBeVisible();
+      await expect(page.getByTestId("sub-panel-suspense-resolved")).toBeVisible();
+      await expect(page.getByTestId("sidebar-client-count")).toHaveText("1");
+    });
   });
 
   test.describe("React 19 Server Component useId() & Stateless Hooks Suite (/t-use-id)", () => {

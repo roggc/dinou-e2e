@@ -11,7 +11,7 @@ if (!process.env.TEST_CMD) {
   process.env.TEST_CMD = "npm run build:node:esbuild && npm run start:node:esbuild";
 }
 const commandToRun = process.env.TEST_CMD;
-const port = 3000;
+const port = Number(process.env.PORT) || 3000;
 
 /**
  * 2. 🧠 LÓGICA DINÁMICA PARA LA URL DE ESPERA
