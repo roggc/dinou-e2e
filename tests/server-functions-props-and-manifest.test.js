@@ -46,10 +46,15 @@ test("Server Functions: Rollup, esbuild and Webpack plugins process serverFiles 
 
   try {
     const pagePath = path.resolve(projectRoot, "src/t-sf-props/page.tsx");
+    const dinouBase = fs.existsSync(new URL("../dinou/core/handler.js", import.meta.url))
+      ? "../dinou"
+      : fs.existsSync(new URL("../node_modules/dinou/dinou/core/handler.js", import.meta.url))
+        ? "../node_modules/dinou/dinou"
+        : "../node_modules/dinou";
 
     // 1. Rollup Plugin
-    const { default: rollupPluginFn } = await import("../dinou/rollup/rollup-plugins/rollup-plugin-server-functions.js");
-    const { default: manifestGeneratorPlugin } = await import("../dinou/rollup/rollup-plugins/manifest-generator-plugin.js");
+    const { default: rollupPluginFn } = await import(`${dinouBase}/rollup/rollup-plugins/rollup-plugin-server-functions.js`);
+    const { default: manifestGeneratorPlugin } = await import(`${dinouBase}/rollup/rollup-plugins/manifest-generator-plugin.js`);
     manifestGeneratorPlugin.manifestData = { "serverFunctionProxy.js": "serverFunctionProxy.js" };
     const rollupPlugin = rollupPluginFn({ serverFiles: new Set([pagePath]) });
     // Notice: no transform() called, so serverFunctions Map starts empty (size === 0)
@@ -61,7 +66,7 @@ test("Server Functions: Rollup, esbuild and Webpack plugins process serverFiles 
   assert.ok(rollupManifest[rollupPageKey].some((fn) => fn.startsWith("$$dinou_action_inlineAction_")));
 
   // 2. esbuild Plugin
-  const { default: esbuildPluginFn } = await import("../dinou/esbuild/plugins-esbuild/server-functions-plugin.js");
+  const { default: esbuildPluginFn } = await import(`${dinouBase}/esbuild/plugins-esbuild/server-functions-plugin.js`);
   const esbuildPlugin = esbuildPluginFn({
     serverFiles: new Set([pagePath]),
     manifestData: { "serverFunctionProxy.js": "serverFunctionProxy.js" }
@@ -82,8 +87,8 @@ test("Server Functions: Rollup, esbuild and Webpack plugins process serverFiles 
   assert.ok(esbuildManifest[esbuildPageKey].some((fn) => fn.startsWith("$$dinou_action_inlineAction_")));
 
   // 3. Webpack Plugin
-  const { default: WebpackPluginClass } = await import("../dinou/webpack/plugins/server-functions-plugin.js");
-  const { default: webpackManifestGenerator } = await import("../dinou/webpack/plugins/manifest-generator-plugin.js");
+  const { default: WebpackPluginClass } = await import(`${dinouBase}/webpack/plugins/server-functions-plugin.js`);
+  const { default: webpackManifestGenerator } = await import(`${dinouBase}/webpack/plugins/manifest-generator-plugin.js`);
   webpackManifestGenerator.manifestData = { "serverFunctionProxy.js": "serverFunctionProxy.js" };
   const webpackPlugin = new WebpackPluginClass({ serverFiles: new Set([pagePath]) });
   let processAssetsCb;

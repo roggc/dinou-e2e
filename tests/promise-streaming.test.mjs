@@ -10,7 +10,9 @@ import esbuild from "esbuild";
 
 const dinouCoreDir = fs.existsSync(path.resolve(process.cwd(), "dinou/core"))
   ? path.resolve(process.cwd(), "dinou/core")
-  : path.resolve(process.cwd(), "node_modules/dinou/core");
+  : fs.existsSync(path.resolve(process.cwd(), "node_modules/dinou/dinou/core"))
+    ? path.resolve(process.cwd(), "node_modules/dinou/dinou/core")
+    : path.resolve(process.cwd(), "node_modules/dinou/core");
 
 const { default: getJSX } = await import(
   pathToFileURL(path.join(dinouCoreDir, "get-jsx.js")).href

@@ -1,6 +1,17 @@
 import { test as base, expect, APIRequestContext, request as playwrightRequest } from "@playwright/test";
 import fs from "fs";
 import path from "path";
+import { pathToFileURL } from "url";
+
+function resolveDinouCoreModuleUrl(fileName: string): string {
+  const candidates = [
+    path.resolve(process.cwd(), "dinou/core", fileName),
+    path.resolve(process.cwd(), "node_modules/dinou/dinou/core", fileName),
+    path.resolve(process.cwd(), "node_modules/dinou/core", fileName),
+  ];
+  const found = candidates.find((p) => fs.existsSync(p)) ?? candidates[0];
+  return pathToFileURL(found).href;
+}
 
 const HYDRATION_ERROR_REGEX =
   /hydration failed|server-rendered HTML|expected server HTML|did not match|didn't match|Minified React error #(418|419|422|423|425)/i;
@@ -2946,8 +2957,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(blockedChildPageRsc.status()).toBe(404);
 
       // 5. Verify global default allowISG via dinou.config.js (true by default, overridable to false)
-      const { resolveLayoutFunctionsConfig } = await import("../dinou/core/layout-functions.js");
-      const { resolvePageFunctionsConfig } = await import("../dinou/core/handler.js");
+      const { resolveLayoutFunctionsConfig } = await import(resolveDinouCoreModuleUrl("layout-functions.js"));
+      const { resolvePageFunctionsConfig } = await import(resolveDinouCoreModuleUrl("handler.js"));
       const prevGlobalCfg = (globalThis as any).__DINOU_CONFIG__;
       try {
         delete (globalThis as any).__DINOU_CONFIG__;
@@ -7697,7 +7708,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
 
       // 4. Verify No Parent-to-Child Inheritance & Global Default via dinou.config.js
-      const { resolveLayoutChainPpr } = await import("../dinou/core/layout-functions.js");
+      const { resolveLayoutChainPpr } = await import(resolveDinouCoreModuleUrl("layout-functions.js"));
       const prevGlobalCfg = (globalThis as any).__DINOU_CONFIG__;
       try {
         delete (globalThis as any).__DINOU_CONFIG__;

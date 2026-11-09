@@ -7,7 +7,9 @@ import { fileURLToPath } from "node:url";
 // Core framework modules
 const dinouCoreBase = fs.existsSync(new URL("../dinou/core/handler.js", import.meta.url))
   ? "../dinou/core"
-  : "../node_modules/dinou/core";
+  : fs.existsSync(new URL("../node_modules/dinou/dinou/core/handler.js", import.meta.url))
+    ? "../node_modules/dinou/dinou/core"
+    : "../node_modules/dinou/core";
 const { resolveLayoutFunctionsConfig } = await import(`${dinouCoreBase}/layout-functions.js`);
 const { resolvePageFunctionsConfig } = await import(`${dinouCoreBase}/handler.js`);
 const { resolveModulePpr } = await import(`${dinouCoreBase}/resolve-module-ppr.js`);
