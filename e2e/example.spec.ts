@@ -2915,6 +2915,126 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(rscPageRes.status()).toBe(404);
     });
 
+    test("Should enforce per-segment validateParams across outer layout, nested layout, page, no_layout, and reset_layout (/t-validate-segments)", async ({
+      page,
+    }) => {
+      // 1. Pre-rendered & dynamic ISG valid 3-segment combinations ([org] -> [project] -> [task]) succeed (200)
+      //    and simultaneously prove each layout's validateParams received ONLY its own accumulated params!
+      const validPreRes = await page.goto(
+        "/t-validate-segments/org-1/projects/proj-a/tasks/task-1",
+      );
+      expect(validPreRes?.status()).toBe(200);
+      await expect(page.getByTestId("vs-org-layout-param")).toHaveText("Org Layout: org-1");
+      await expect(page.getByTestId("vs-project-layout-param")).toHaveText(
+        "Project Layout: org-1/proj-a",
+      );
+      await expect(page.getByTestId("vs-task-page")).toHaveText(
+        "Task Detail: org-1/proj-a/task-1",
+      );
+
+      const validIsgRes = await page.goto(
+        "/t-validate-segments/org-2/projects/proj-b/tasks/task-2",
+      );
+      expect(validIsgRes?.status()).toBe(200);
+      await expect(page.getByTestId("vs-task-page")).toHaveText(
+        "Task Detail: org-2/proj-b/task-2",
+      );
+
+      // 2. Outer [org] layout rejects "bad-org" even when nested [project] & leaf [task] params are valid -> 404 everywhere
+      const badOrgHtml = await page.goto(
+        "/t-validate-segments/bad-org/projects/proj-a/tasks/task-1",
+      );
+      expect(badOrgHtml?.status()).toBe(404);
+      const badOrgLayoutRsc = await page.request.get(
+        "/____rsc_layout____/t-validate-segments/bad-org/projects/proj-a/tasks/task-1",
+      );
+      expect(badOrgLayoutRsc.status()).toBe(404);
+      const badOrgPageRsc = await page.request.get(
+        "/____rsc_page____/t-validate-segments/bad-org/projects/proj-a/tasks/task-1",
+      );
+      expect(badOrgPageRsc.status()).toBe(404);
+
+      // 3. Nested [project] layout rejects "bad-proj" even when outer [org] & leaf [task] are valid -> 404 on subtree,
+      //    while sibling route /t-validate-segments/org-1 (outside [project] layout) remains 200
+      const badProjHtml = await page.goto(
+        "/t-validate-segments/org-1/projects/bad-proj/tasks/task-1",
+      );
+      expect(badProjHtml?.status()).toBe(404);
+      const badProjLayoutRsc = await page.request.get(
+        "/____rsc_layout____/t-validate-segments/org-1/projects/bad-proj/tasks/task-1",
+      );
+      expect(badProjLayoutRsc.status()).toBe(404);
+      const badProjPageRsc = await page.request.get(
+        "/____rsc_page____/t-validate-segments/org-1/projects/bad-proj/tasks/task-1",
+      );
+      expect(badProjPageRsc.status()).toBe(404);
+
+      const siblingOrgRes = await page.goto("/t-validate-segments/org-1");
+      expect(siblingOrgRes?.status()).toBe(200);
+      await expect(page.getByTestId("vs-org-page")).toHaveText("Org Overview: org-1");
+
+      // 4. Leaf [task] page rejects "bad-task" when outer [org] & nested [project] are valid:
+      //    HTML and /____rsc_page____ return 404, while parent project page & /____rsc_layout____ stay 200!
+      const badTaskHtml = await page.goto(
+        "/t-validate-segments/org-1/projects/proj-a/tasks/bad-task",
+      );
+      expect(badTaskHtml?.status()).toBe(404);
+      const badTaskPageRsc = await page.request.get(
+        "/____rsc_page____/t-validate-segments/org-1/projects/proj-a/tasks/bad-task",
+      );
+      expect(badTaskPageRsc.status()).toBe(404);
+      const validChainLayoutRsc = await page.request.get(
+        "/____rsc_layout____/t-validate-segments/org-1/projects/proj-a/tasks/bad-task",
+      );
+      expect(validChainLayoutRsc.status()).toBe(200);
+
+      const validProjectPageRes = await page.goto("/t-validate-segments/org-1/projects/proj-a");
+      expect(validProjectPageRes?.status()).toBe(200);
+      await expect(page.getByTestId("vs-project-page")).toHaveText(
+        "Project Overview: org-1/proj-a",
+      );
+
+      // 5. no_layout detaches outer [org] layout from active chain: "bad-org" is NOT blocked by [org] layout (200),
+      //    while the page's own validateParams still enforces its own rule ("page-blocked" -> 404)
+      const noLayoutAllowedRes = await page.goto("/t-validate-segments/bad-org/no-layout-escape");
+      expect(noLayoutAllowedRes?.status()).toBe(200);
+      await expect(page.getByTestId("vs-no-layout-page")).toHaveText("NoLayout Org: bad-org");
+      const noLayoutAllowedPageRsc = await page.request.get(
+        "/____rsc_page____/t-validate-segments/bad-org/no-layout-escape",
+      );
+      expect(noLayoutAllowedPageRsc.status()).toBe(200);
+
+      const noLayoutBlockedRes = await page.goto(
+        "/t-validate-segments/page-blocked/no-layout-escape",
+      );
+      expect(noLayoutBlockedRes?.status()).toBe(404);
+      const noLayoutBlockedPageRsc = await page.request.get(
+        "/____rsc_page____/t-validate-segments/page-blocked/no-layout-escape",
+      );
+      expect(noLayoutBlockedPageRsc.status()).toBe(404);
+
+      // 6. reset_layout stops active layout chain before outer [org] layout: "bad-org" succeeds when [scope] is valid (200),
+      //    and returns 404 when [scope] violates the reset_layout segment's own validateParams ("bad-scope" -> 404)
+      const resetAllowedRes = await page.goto("/t-validate-segments/bad-org/reset/scope-ok");
+      expect(resetAllowedRes?.status()).toBe(200);
+      await expect(page.getByTestId("vs-reset-page")).toHaveText("Reset Page: bad-org/scope-ok");
+      const resetAllowedLayoutRsc = await page.request.get(
+        "/____rsc_layout____/t-validate-segments/bad-org/reset/scope-ok",
+      );
+      expect(resetAllowedLayoutRsc.status()).toBe(200);
+
+      const resetBlockedRes = await page.goto("/t-validate-segments/bad-org/reset/bad-scope");
+      expect(resetBlockedRes?.status()).toBe(404);
+      const resetBlockedLayoutRsc = await page.request.get(
+        "/____rsc_layout____/t-validate-segments/bad-org/reset/bad-scope",
+      );
+      expect(resetBlockedLayoutRsc.status()).toBe(404);
+      const resetBlockedPageRsc = await page.request.get(
+        "/____rsc_page____/t-validate-segments/bad-org/reset/bad-scope",
+      );
+      expect(resetBlockedPageRsc.status()).toBe(404);
+    });
+
     test("Should enforce allowISG(false) at layout level", async ({
       page,
     }) => {
