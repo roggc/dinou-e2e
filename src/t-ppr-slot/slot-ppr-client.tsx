@@ -1,12 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "dinou";
 
 export function SlotPprClientCounter() {
   const [count, setCount] = useState(0);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
+
   return (
-    <div className="flex items-center gap-2 text-xs font-mono" data-testid="sidebar-client-widget">
+    <div
+      className="flex items-center gap-2 text-xs font-mono"
+      data-testid="sidebar-client-widget"
+      data-client-ready={hydrated ? "true" : "false"}
+    >
       <span data-testid="sidebar-client-count">{count}</span>
       <button
         type="button"
@@ -33,4 +43,3 @@ export function SlotPprRefreshControls() {
     </button>
   );
 }
-

@@ -8088,6 +8088,12 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         { name: "slot_role", value: "browser-initial", path: "/", domain: "localhost" },
       ]);
       await page.goto("/t-ppr-slot?sfilter=browser-q");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+      await expect(page.getByTestId("sidebar-client-widget")).toHaveAttribute(
+        "data-client-ready",
+        "true",
+        { timeout: 15000 },
+      );
       await expect(page.getByTestId("sidebar-slot-nodynamic-resolved")).toBeVisible();
       await expect(page.getByTestId("main-page-suspense-resolved")).toBeVisible();
       await expect(page.getByTestId("sidebar-slot-dynamic-resolved")).toHaveAttribute(
