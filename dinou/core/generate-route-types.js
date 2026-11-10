@@ -454,8 +454,6 @@ ${dynamicUnion};
     | \`https://\${string}\`
     | \`mailto:\${string}\`
     | \`tel:\${string}\`
-    | \`./\${string}\`
-    | \`../\${string}\`
     | \`#\${string}\`
     | \`?\${string}\`;
 

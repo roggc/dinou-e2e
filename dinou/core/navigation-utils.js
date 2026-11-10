@@ -131,7 +131,35 @@ export function interpolateRouteParams(href, params) {
   return interpolatedPath + suffix;
 }
 
-export function resolveUrl(href, currentPathname) {
+export function resolveBasePathname(from, currentPathname) {
+  if (!from || typeof from !== "string" || !currentPathname) {
+    return currentPathname || "/";
+  }
+  const cleanFrom = from.startsWith("/") ? from : "/" + from;
+  if (cleanFrom === "/") {
+    return "/";
+  }
+  const fromSegs = cleanFrom.slice(1).split("/").filter(Boolean);
+  if (fromSegs.some((s) => s.startsWith("[...") || s.startsWith("[["))) {
+    return currentPathname;
+  }
+  const pathSegs = currentPathname
+    .split("?")[0]
+    .split("#")[0]
+    .split("/")
+    .filter(Boolean);
+  if (pathSegs.length < fromSegs.length) {
+    return currentPathname;
+  }
+  for (let i = 0; i < fromSegs.length; i++) {
+    const fSeg = fromSegs[i];
+    if (fSeg.startsWith("[") && fSeg.endsWith("]")) continue;
+    if (fSeg !== pathSegs[i]) return currentPathname;
+  }
+  return "/" + pathSegs.slice(0, fromSegs.length).join("/");
+}
+
+export function resolveUrl(href, currentPathname, from) {
   if (!href) {
     return "";
   }
@@ -147,7 +175,7 @@ export function resolveUrl(href, currentPathname) {
     return normalize(url.pathname + url.search + url.hash);
   }
 
-  let base = currentPathname;
+  let base = from ? resolveBasePathname(from, currentPathname) : currentPathname;
   if (!base.endsWith("/")) base += "/";
 
   const resolved = new URL(href, origin + base);

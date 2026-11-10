@@ -10,6 +10,7 @@ import {
 export function Link({
   href,
   to,
+  from,
   params,
   children,
   prefetch = true,
@@ -20,7 +21,7 @@ export function Link({
   const targetHref = interpolateRouteParams(href || to || "", params);
   const { push } = useRouter();
   const pathname = usePathname();
-  const resolvedHref = resolveUrl(targetHref, pathname);
+  const resolvedHref = resolveUrl(targetHref, pathname, from);
 
   const handlePrefetch = () => {
     if (!prefetch || !targetHref || fresh || isExternalUrl(targetHref)) return;
@@ -39,7 +40,7 @@ export function Link({
 
     e.preventDefault();
     if (targetHref) {
-      push(targetHref, { fresh });
+      push(resolvedHref || targetHref, { fresh });
     }
   };
 

@@ -774,7 +774,7 @@ export type NotFoundProps<
 >;
 
 // ====================================================================
-// DYNAMIC ROUTE PATTERN AUTOCOMPLETE & PARAMS INTERPOLATION TYPES
+// DYNAMIC ROUTE PATTERN, STRICT RELATIVE (`from`) & PARAMS TYPES
 // ====================================================================
 
 export type ToLinkInputParamValue<V> =
@@ -797,10 +797,15 @@ export type DinouNavigableRoutePatternMap =
       ? P
       : never;
 
+export type DinouNavigableRouteKey =
+  [DinouNavigableRoutePatternMap] extends [never]
+    ? never
+    : Extract<keyof DinouNavigableRoutePatternMap, string>;
+
 export type DinouDynamicRoutePattern =
   [DinouNavigableRoutePatternMap] extends [never]
     ? never
-    : Extract<keyof DinouNavigableRoutePatternMap, `${string}[${string}]${string}`>;
+    : Extract<DinouNavigableRouteKey, `${string}[${string}]${string}`>;
 
 export type DinouDynamicRouteWithSuffix =
   | DinouDynamicRoutePattern
@@ -810,12 +815,243 @@ export type DinouDynamicRouteWithSuffix =
     ) & Record<never, never>);
 
 /**
- * Union of all valid targets accepted by `<Link>`, `router.push()`, and `router.replace()`.
- * Combines concrete/interpolated `DinouRoute` URLs with exact dynamic route patterns
+ * Union of all valid non-relative targets accepted by `<Link>`, `router.push()`, and `router.replace()`
+ * when `from` is omitted. Combines concrete/interpolated `DinouRoute` URLs with exact dynamic route patterns
  * (e.g. `"/blog/[slug]"`) so IDEs surface dynamic routes in `Ctrl + Space` autocomplete
  * while requiring a typed `params` object whenever a `[param]` pattern is selected.
  */
 export type DinouLinkTarget = DinouRoute | DinouDynamicRouteWithSuffix;
+
+export type BuildDirectoryPrefixes<
+  Segs extends string[],
+  Acc extends string = ""
+> = Segs extends [infer Head extends string, ...infer Tail extends string[]]
+  ? `${Acc}/${Head}` | BuildDirectoryPrefixes<Tail, `${Acc}/${Head}`>
+  : "/";
+
+export type ExtractParentDirectories<Path extends string> =
+  Path extends any ? BuildDirectoryPrefixes<SplitRouteSegments<Path>> : never;
+
+export type PeelOptionalRouteSegments<Path extends string> =
+  | Path
+  | (Path extends `${infer Prefix}/[[${string}]]`
+      ? PeelOptionalRouteSegments<Prefix extends "" ? "/" : Prefix>
+      : never);
+
+export type DinouEffectiveRoutePattern =
+  PeelOptionalRouteSegments<DinouNavigableRouteKey>;
+
+export type DinouFromSlashRoute =
+  | DinouNavigableRouteKey
+  | (DinouRouter.Register extends { layoutParams: infer LP }
+      ? Extract<keyof LP, string>
+      : never)
+  | ExtractParentDirectories<DinouNavigableRouteKey>;
+
+/**
+ * Valid origin directory patterns accepted by the `from` prop on `<Link>` and `{ from }` option on `useRouter()`.
+ * Autocompletes leading-slash route/directory patterns (e.g. `"/t-slots/[slug]/contact"`) while also accepting
+ * non-leading-slash equivalents (e.g. `"t-slots/[slug]/contact"`).
+ */
+export type DinouFromRoute =
+  [DinouNavigableRoutePatternMap] extends [never]
+    ? string
+    : | DinouFromSlashRoute
+      | ((DinouFromSlashRoute extends `/${infer Rest}`
+          ? Rest extends ""
+            ? never
+            : Rest
+          : never) & Record<never, never>);
+
+export type SplitRouteSegments<Path extends string> =
+  Path extends "/" | ""
+    ? []
+    : Path extends `/${infer Rest}`
+      ? SplitRouteSegments<Rest>
+      : Path extends `${infer Head}/${infer Tail}`
+        ? [Head, ...SplitRouteSegments<Tail>]
+        : [Path];
+
+export type StripCommonPrefix<
+  FromSegs extends string[],
+  TargetSegs extends string[]
+> = FromSegs extends [infer FHead extends string, ...infer FTail extends string[]]
+  ? TargetSegs extends [FHead, ...infer TTail extends string[]]
+    ? StripCommonPrefix<FTail, TTail>
+    : [FromSegs, TargetSegs]
+  : [FromSegs, TargetSegs];
+
+export type HasVariableLengthSegment<Segs extends string[]> =
+  Segs extends [infer Head extends string, ...infer Tail extends string[]]
+    ? Head extends `[...${string}]` | `[[${string}]]`
+      ? true
+      : HasVariableLengthSegment<Tail>
+    : false;
+
+export type HasDynamicSegment<Segs extends string[]> =
+  Segs extends [infer Head extends string, ...infer Tail extends string[]]
+    ? Head extends `[${string}]`
+      ? true
+      : HasDynamicSegment<Tail>
+    : false;
+
+export type ToDotDotSegments<Segs extends string[]> =
+  Segs extends [string, ...infer Tail extends string[]]
+    ? ["..", ...ToDotDotSegments<Tail>]
+    : [];
+
+export type JoinSlash<Segs extends string[]> =
+  Segs extends []
+    ? ""
+    : Segs extends [infer Only extends string]
+      ? Only
+      : Segs extends [infer Head extends string, ...infer Tail extends string[]]
+        ? `${Head}/${JoinSlash<Tail>}`
+        : "";
+
+export type SegmentToTemplate<Seg extends string> =
+  Seg extends `[[...${string}]]`
+    ? `${string}`
+    : Seg extends `[[${string}]]`
+      ? `${string | number}`
+      : Seg extends `[...${string}]`
+        ? `${string}`
+        : Seg extends `[${string}]`
+          ? `${string | number}`
+          : Seg;
+
+export type MapSegmentsToTemplate<Segs extends string[]> =
+  Segs extends [infer Head extends string, ...infer Tail extends string[]]
+    ? [SegmentToTemplate<Head>, ...MapSegmentsToTemplate<Tail>]
+    : [];
+
+export type SharesFirstSegment<
+  FromSegs extends string[],
+  TargetSegs extends string[]
+> = FromSegs extends [infer FH extends string, ...string[]]
+  ? TargetSegs extends [FH, ...string[]]
+    ? true
+    : false
+  : true;
+
+export type ComputeRelativeCompletionSingle<
+  FromSegs extends string[],
+  TargetSegs extends string[]
+> = StripCommonPrefix<FromSegs, TargetSegs> extends [
+  infer RemFrom extends string[],
+  infer RemTarget extends string[]
+]
+  ? RemFrom extends []
+    ? RemTarget extends []
+      ? "."
+      : `${JoinSlash<RemTarget>}` | `./${JoinSlash<RemTarget>}`
+    : HasVariableLengthSegment<RemFrom> extends true
+      ? never
+      : RemTarget extends []
+        ? JoinSlash<ToDotDotSegments<RemFrom>>
+        : SharesFirstSegment<FromSegs, TargetSegs> extends true
+          ? JoinSlash<[...ToDotDotSegments<RemFrom>, ...RemTarget]>
+          : never
+  : never;
+
+export type ComputeRelativeAllPatternsSingle<
+  FromSegs extends string[],
+  TargetSegs extends string[]
+> = StripCommonPrefix<FromSegs, TargetSegs> extends [
+  infer RemFrom extends string[],
+  infer RemTarget extends string[]
+]
+  ? RemFrom extends []
+    ? RemTarget extends []
+      ? "." | "./"
+      : `${JoinSlash<RemTarget>}` | `./${JoinSlash<RemTarget>}`
+    : HasVariableLengthSegment<RemFrom> extends true
+      ? never
+      : JoinSlash<[...ToDotDotSegments<RemFrom>, ...RemTarget]>
+  : never;
+
+export type ComputeRelativeTemplateSingle<
+  FromSegs extends string[],
+  TargetSegs extends string[]
+> = StripCommonPrefix<FromSegs, TargetSegs> extends [
+  infer RemFrom extends string[],
+  infer RemTarget extends string[]
+]
+  ? HasDynamicSegment<RemTarget> extends false
+    ? never
+    : RemFrom extends []
+      ? | JoinSlash<MapSegmentsToTemplate<RemTarget>>
+        | `./${JoinSlash<MapSegmentsToTemplate<RemTarget>>}`
+      : HasVariableLengthSegment<RemFrom> extends true
+        ? never
+        : JoinSlash<[...ToDotDotSegments<RemFrom>, ...MapSegmentsToTemplate<RemTarget>]>
+  : never;
+
+export type DistributeRelativeCompletions<
+  FromPath extends string,
+  Targets extends string
+> = Targets extends any
+  ? ComputeRelativeCompletionSingle<
+      SplitRouteSegments<FromPath>,
+      SplitRouteSegments<Targets>
+    >
+  : never;
+
+export type DistributeAllRelativePatterns<
+  FromPath extends string,
+  Targets extends string
+> = Targets extends any
+  ? ComputeRelativeAllPatternsSingle<
+      SplitRouteSegments<FromPath>,
+      SplitRouteSegments<Targets>
+    >
+  : never;
+
+export type DistributeRelativeTemplates<
+  FromPath extends string,
+  Targets extends string
+> = Targets extends any
+  ? ComputeRelativeTemplateSingle<
+      SplitRouteSegments<FromPath>,
+      SplitRouteSegments<Targets>
+    >
+  : never;
+
+export type DinouRelativeDynamicPattern<TFrom extends string> = Extract<
+  DistributeAllRelativePatterns<CleanRoutePath<TFrom>, DinouEffectiveRoutePattern>,
+  `${string}[${string}]${string}`
+>;
+
+/**
+ * Valid relative navigation targets from origin `TFrom` (supporting both bare `"sub"` and `"./sub"`,
+ * as well as `".."` / `"../sibling"`, query/hash suffixes, and dynamic relative segments).
+ */
+export type DinouRelativeLinkTarget<TFrom extends string> =
+  [DinouNavigableRoutePatternMap] extends [never]
+    ? string
+    : [string] extends [TFrom]
+      ? string
+      : | DistributeRelativeCompletions<CleanRoutePath<TFrom>, DinouEffectiveRoutePattern>
+        | ((
+            | Exclude<
+                DistributeAllRelativePatterns<CleanRoutePath<TFrom>, DinouEffectiveRoutePattern>,
+                DistributeRelativeCompletions<CleanRoutePath<TFrom>, DinouEffectiveRoutePattern>
+              >
+            | DistributeRelativeTemplates<CleanRoutePath<TFrom>, DinouEffectiveRoutePattern>
+            | `${
+                | DistributeAllRelativePatterns<CleanRoutePath<TFrom>, DinouEffectiveRoutePattern>
+                | DistributeRelativeTemplates<CleanRoutePath<TFrom>, DinouEffectiveRoutePattern>
+              }?${string}`
+            | `${
+                | DistributeAllRelativePatterns<CleanRoutePath<TFrom>, DinouEffectiveRoutePattern>
+                | DistributeRelativeTemplates<CleanRoutePath<TFrom>, DinouEffectiveRoutePattern>
+              }#${string}`
+          ) & Record<never, never>);
+
+export type DinouLinkTargetForFrom<TFrom extends string | undefined> =
+  [TFrom] extends [undefined]
+    ? DinouLinkTarget
+    : DinouRelativeLinkTarget<Extract<TFrom, string>>;
 
 export type StripUrlSuffix<T extends string> =
   T extends `${infer Base}?${string}`
@@ -854,6 +1090,31 @@ export type ValidatedLinkHref<THref extends string> =
         : never
       : THref;
 
+export type HasInvalidBracketPatternForFrom<
+  TFrom extends string | undefined,
+  THref extends string
+> =
+  [string] extends [THref]
+    ? never
+    : DinouRouter.Register extends { route: unknown }
+      ? THref extends any
+        ? IsInternalBracketPattern<THref> extends true
+          ? [TFrom] extends [undefined]
+            ? StripUrlSuffix<THref> extends DinouDynamicRoutePattern
+              ? never
+              : true
+            : [string] extends [Extract<TFrom, string>]
+              ? never
+              : StripUrlSuffix<THref> extends DinouRelativeDynamicPattern<Extract<TFrom, string>>
+                ? never
+                : true
+          : never
+        : never
+      : never;
+
+export type HasInvalidBracketPattern<THref extends string> =
+  HasInvalidBracketPatternForFrom<undefined, THref>;
+
 export type HasBracketPattern<THref extends string> =
   [string] extends [THref]
     ? never
@@ -885,21 +1146,11 @@ export type ResolveLinkParams<THref extends string> = SimplifyParams<
   >
 >;
 
-export type HasInvalidBracketPattern<THref extends string> =
-  [string] extends [THref]
-    ? never
-    : DinouRouter.Register extends { route: unknown }
-      ? THref extends any
-        ? IsInternalBracketPattern<THref> extends true
-          ? StripUrlSuffix<THref> extends DinouDynamicRoutePattern
-            ? never
-            : true
-          : never
-        : never
-      : never;
-
-export type LinkParamsProps<THref extends string> =
-  [HasInvalidBracketPattern<THref>] extends [never]
+export type LinkParamsPropsForFrom<
+  TFrom extends string | undefined,
+  THref extends string
+> =
+  [HasInvalidBracketPatternForFrom<TFrom, THref>] extends [never]
     ? [HasBracketPattern<THref>] extends [never]
       ? { params?: never }
       : {} extends ResolveLinkParams<THref>
@@ -907,35 +1158,65 @@ export type LinkParamsProps<THref extends string> =
         : { params: ResolveLinkParams<THref> }
     : { params: never };
 
+export type LinkParamsProps<THref extends string> =
+  LinkParamsPropsForFrom<undefined, THref>;
+
 export type RouterNavigationArgs<THref extends string> =
   [HasInvalidBracketPattern<THref>] extends [never]
     ? [HasBracketPattern<THref>] extends [never]
-      ? [options?: NavigationOptions & { params?: never }]
+      ? [options?: NavigationOptions & { from?: never; params?: never }]
       : {} extends ResolveLinkParams<THref>
-        ? [options?: NavigationOptions & { params?: ResolveLinkParams<THref> }]
-        : [options: NavigationOptions & { params: ResolveLinkParams<THref> }]
+        ? [options?: NavigationOptions & { from?: never; params?: ResolveLinkParams<THref> }]
+        : [options: NavigationOptions & { from?: never; params: ResolveLinkParams<THref> }]
     : [options: never];
+
+export type RouterRelativeNavigationOptions<
+  TFrom extends DinouFromRoute,
+  THref extends string
+> =
+  [HasInvalidBracketPatternForFrom<TFrom, THref>] extends [never]
+    ? [HasBracketPattern<THref>] extends [never]
+      ? NavigationOptions & { from: TFrom; params?: never }
+      : {} extends ResolveLinkParams<THref>
+        ? NavigationOptions & { from: TFrom; params?: ResolveLinkParams<THref> }
+        : NavigationOptions & { from: TFrom; params: ResolveLinkParams<THref> }
+    : never;
+
+export interface DinouRouterNavigateFn {
+  /**
+   * Navigate to an absolute route, dynamic route pattern (with `{ params }`), query/hash, or external URL.
+   */
+  <THref extends DinouLinkTarget = DinouRoute>(
+    href: THref,
+    ...args: RouterNavigationArgs<NoInfer<THref>>
+  ): void;
+
+  /**
+   * Navigate to a strictly validated relative route (`"sub"`, `"./sub"`, `"../other"`) from `options.from`.
+   */
+  <
+    TFrom extends DinouFromRoute,
+    THref extends DinouRelativeLinkTarget<TFrom> = DinouRelativeLinkTarget<TFrom>
+  >(
+    href: THref,
+    options: RouterRelativeNavigationOptions<TFrom, NoInfer<THref>>
+  ): void;
+}
 
 export declare function useRouter(): {
   /**
    * Navigate to the provided href. Pushes a new entry into the history stack.
-   * Supports both interpolated URLs (`/blog/${slug}`) and autocompleted dynamic route patterns
-   * with typed `params` (`router.push("/blog/[slug]", { params: { slug } })`).
+   * Supports interpolated URLs (`/blog/${slug}`), autocompleted dynamic patterns with `{ params }`,
+   * and strict relative paths with `{ from }` (`router.push("sub", { from: "/blog/[slug]" })`).
    */
-  push: <THref extends DinouLinkTarget = DinouRoute>(
-    href: THref,
-    ...args: RouterNavigationArgs<NoInfer<THref>>
-  ) => void;
+  push: DinouRouterNavigateFn;
 
   /**
    * Navigate to the provided href. Replaces the current entry in the history stack.
-   * Supports both interpolated URLs (`/blog/${slug}`) and autocompleted dynamic route patterns
-   * with typed `params` (`router.replace("/blog/[slug]", { params: { slug } })`).
+   * Supports interpolated URLs (`/blog/${slug}`), autocompleted dynamic patterns with `{ params }`,
+   * and strict relative paths with `{ from }` (`router.replace("sub", { from: "/blog/[slug]" })`).
    */
-  replace: <THref extends DinouLinkTarget = DinouRoute>(
-    href: THref,
-    ...args: RouterNavigationArgs<NoInfer<THref>>
-  ) => void;
+  replace: DinouRouterNavigateFn;
 
   /**
    * Navigate back in the browser's history.
@@ -997,18 +1278,23 @@ import type { AnchorHTMLAttributes } from "react";
 
 /**
  * Props for the Dinou Link component.
- * Extends standard HTML `<a>` attributes and supports both interpolated URLs (`/blog/${slug}`)
- * and autocompleted dynamic route patterns with required `params` (`href="/blog/[slug]" params={{ slug }}`).
+ * Extends standard HTML `<a>` attributes and supports:
+ * - Static & interpolated URLs (`href="/about"`, `href={\`/blog/\${slug}\`}`)
+ * - Autocompleted dynamic route patterns with required `params` (`to="/blog/[slug]" params={{ slug }}`)
+ * - Strictly validated relative paths with required `from` (`from="/blog/[slug]" to="sub"` or `to="./sub"`)
  */
-export type LinkProps<THref extends DinouLinkTarget = DinouRoute> = Omit<
-  AnchorHTMLAttributes<HTMLAnchorElement>,
-  "href"
-> & {
+export type LinkProps<
+  TFrom extends DinouFromRoute | undefined = undefined,
+  THref extends DinouLinkTargetForFrom<TFrom> = DinouLinkTargetForFrom<TFrom>
+> = Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href"> & {
   /**
-   * The destination URL or dynamic route pattern.
-   * * Autocompletes all static AND dynamic routes discovered by Dinou.
-   * * When selecting a dynamic pattern (e.g. `"/blog/[slug]"`), TypeScript requires the `params` prop.
-   * * Also supports interpolated URLs (`/blog/${slug}`), relative paths, and external URLs.
+   * Origin route/directory pattern (e.g. `"/workspace/[org]/contact"`) used to strictly
+   * validate and autocomplete relative navigation targets (`"sub"`, `"./sub"`, `"../other"`).
+   */
+  from?: TFrom;
+
+  /**
+   * The destination URL, dynamic route pattern, or (when `from` is specified) relative path.
    */
   href?: THref;
 
@@ -1032,7 +1318,7 @@ export type LinkProps<THref extends DinouLinkTarget = DinouRoute> = Omit<
    * @default false
    */
   fresh?: boolean;
-} & LinkParamsProps<NoInfer<THref>>;
+} & LinkParamsPropsForFrom<NoInfer<TFrom>, NoInfer<THref>>;
 
 /**
  * A client-side navigation component that renders an `<a>` tag.
@@ -1041,24 +1327,10 @@ export type LinkProps<THref extends DinouLinkTarget = DinouRoute> = Omit<
  * 2. **Prefetching:** Loads the target route data on hover (if enabled).
  * 3. **Freshness:** Can force a re-fetch of data via the `fresh` prop.
  * 4. **Dynamic Params Interpolation:** Accepts `params={{ slug }}` when `href`/`to` uses a `[param]` pattern.
- * 5. **Relative Routing:** Resolves paths like standard filesystem navigation.
+ * 5. **Strict Relative Routing:** Validates and autocompletes `"sub"`, `"./sub"`, and `"../..."` when `from` is specified.
  * 6. **Scroll Management:** Preserves or resets scroll position intelligently.
- *
- * @example
- * <Link href="/about" className="text-blue-500">
- *   Go to About
- * </Link>
- *
- * @example
- * <Link href="/blog/[slug]" params={{ slug: post.slug }}>
- *   Read Post
- * </Link>
- *
- * @example
- * <Link href="/dashboard" fresh>
- *   Dashboard (Force Refresh)
- * </Link>
  */
-export declare function Link<THref extends DinouLinkTarget = DinouRoute>(
-  props: LinkProps<THref>
-): ReactNode;
+export declare function Link<
+  TFrom extends DinouFromRoute | undefined = undefined,
+  THref extends DinouLinkTargetForFrom<TFrom> = DinouLinkTargetForFrom<TFrom>
+>(props: LinkProps<TFrom, THref>): ReactNode;
