@@ -9,9 +9,9 @@ Dinou is built around **3D Route Segmentation**:
 
 Previously, Dinou's compile-time Type-Safe Routing system only indexed directories containing a `page.*` file. While sufficient for flat or page-centric routers, that page-only model left three gaps in a horizontally segmented framework:
 
-1. **Intermediate Layouts Without a Sibling `page.tsx`**:
-   - In real-world architectures (e.g., `src/workspace/[org]/layout.tsx` and `src/workspace/[org]/layout_functions.ts`, where navigable pages live deeper at `src/workspace/[org]/projects/[projectId]/page.tsx`), no `page.tsx` exists at `/workspace/[org]`.
-   - Because `/workspace/[org]` was absent from `DinouRouteParamsMap`, `LayoutProps<"/workspace/[org]">` and `LayoutFunctions<"/workspace/[org]">` were rejected by TypeScript's route constraint unless developers resorted to manual parameter interfaces.
+1. **Intermediate Layouts & `not_found.tsx` Boundaries Without a Sibling `page.tsx`**:
+   - In real-world architectures (e.g., `src/workspace/[org]/layout.tsx`, `layout_functions.ts`, or `not_found.tsx`, where navigable pages live deeper at `src/workspace/[org]/projects/[projectId]/page.tsx`), no `page.tsx` exists at `/workspace/[org]`.
+   - Previously, the scanner only indexed `page.*` files: `not_found.tsx` only worked indirectly if a sibling `page.tsx` happened to coexist in the same folder, and intermediate layouts, `layout_functions.ts`, and intermediate `not_found.tsx` boundaries were rejected by TypeScript unless developers wrote manual parameter interfaces.
 2. **Parallel `@slot` Pages, Slot Error Boundaries & Layout Slot Props**:
    - Parallel slot folders (`@sidebar/page.tsx`, `@analytics/page.tsx`, `@analytics/error.tsx`) were ignored by the route type scanner, leaving `@slot` components without segment-aware autocomplete (`SlotProps<"/workspace/[org]/@analytics">`) and requiring manual prop extensions on parent `LayoutProps` (`sidebar?: ReactNode`).
    - **Runtime Parity Bug**: In `dinou/core/get-file-path-and-dynamic-params.js`, `getSlots()` invoked `getFilePathAndDynamicParams` without forwarding the parent layout's accumulated `dParams` (and `get-jsx.js`, `get-error-jsx.js`, and `build-static-pages.js` similarly omitted `dParams` when resolving `@slot/error.*`). As a result, a parallel slot inside a dynamic segment like `src/workspace/[org]/@sidebar/page.tsx` received `params = {}` at runtime instead of `{ org: "acme" }`.
@@ -31,7 +31,7 @@ Dinou strictly separates **navigable URLs** from **internal horizontal segments*
 | Layer | Purpose | Source of Truth | Key Guarantee |
 | :--- | :--- | :--- | :--- |
 | **Level 1: Outward Navigation** | `<Link href / to>`, `router.push()`, `router.replace()`, `DinouRoute` | `page.*` files **only** | Intermediate layout-only folders (e.g. `/workspace/[org]`) and `@slot` folders (e.g. `/workspace/[org]/@sidebar`) are **never** valid `<Link>` targets—preventing accidental links to 404 intermediate paths. |
-| **Level 2: Inward Consumption** | `PageProps`, `LayoutProps`, `SlotProps`, `ErrorProps`, `PageFunctions`, `LayoutFunctions`, `RouteParams` | Dedicated segment maps (`params`, `layoutParams`, `layoutSlots`, `slotParams`, `errorParams`) | Every horizontal segment receives exact cumulative `params` up to its own directory (never leaking deeper child-page parameters into parent layouts or `@slots`) plus auto-inferred `@slot` `ReactNode` props on `LayoutProps`. |
+| **Level 2: Inward Consumption** | `PageProps`, `LayoutProps`, `SlotProps`, `ErrorProps`, `NotFoundProps`, `PageFunctions`, `LayoutFunctions`, `RouteParams` | Dedicated segment maps (`params`, `layoutParams`, `layoutSlots`, `slotParams`, `errorParams`) | Every horizontal segment receives exact cumulative `params` up to its own directory (never leaking deeper child-page parameters into parent layouts or `@slots`) plus auto-inferred `@slot` `ReactNode` props on `LayoutProps`. |
 
 ---
 
@@ -154,6 +154,7 @@ All routing types are exported from `"dinou"` (and re-exported from `"dinou/serv
 | `LayoutProps<T, TProps?>` | `layout.tsx` (leaf or intermediate) | Types `{ children: ReactNode; params: LayoutParams<T> } & LayoutSlots<T> & TProps`. Works on intermediate folders without a sibling `page.tsx` and **auto-infers** optional `ReactNode` props for all sibling `@slot` pages! |
 | `SlotProps<T>` | `@slot/page.tsx` | Dedicated prop interface `{ params: SlotParams<T> }` with autocomplete scoped strictly to parallel `@slot` segments (e.g. `"/workspace/[org]/@analytics"`). |
 | `ErrorProps<T>` | `error.tsx`, `@slot/error.tsx` | Types `{ error: Error; params: ErrorParams<T> }` across page routes, intermediate folder boundaries, and parallel `@slot` error boundaries. |
+| `NotFoundProps<T, TProps?>` | `not_found.tsx` (root, leaf, or intermediate) | Semantic type `{ params: RouteParams<T> } & TProps` for 404 boundaries (with or without a sibling `page.tsx`), plus optional `TProps` returned by a sibling `page_functions.ts` (`getProps`). Excludes `@slot` paths (since slots do not resolve `not_found.*`). |
 | `PageFunctions<T, TProps>` | `page_functions.ts` | Types `getProps`, `validateParams`, `getStaticPaths`, `revalidate`, `ppr`, and `allowISG` for a page route `T` (or explicit params object). |
 | `LayoutFunctions<T, TProps>` | `layout_functions.ts` / `layout.functions.ts` | Types `getProps`, `validateParams`, `revalidate`, `ppr`, and `allowISG` for any layout segment `T`—including intermediate layouts without a sibling `page.tsx`. |
 | `RouteParams<T>` | Standalone helpers / services | Extracts the resolved `params` dictionary for any valid page, layout, `@slot`, or error segment pattern `T`. |
@@ -169,6 +170,7 @@ src/
         ├── layout.tsx                        # Intermediate layout (no sibling page.tsx)
         ├── layout_functions.ts               # Intermediate layout functions
         ├── error.tsx                         # Intermediate error boundary
+        ├── not_found.tsx                     # Intermediate 404 boundary
         ├── @sidebar/
         │   ├── page.tsx                      # Parallel slot @sidebar
         │   └── error.tsx                     # Slot-isolated error boundary
@@ -241,7 +243,7 @@ src/
    }
    ```
 
-4. **Slot & Intermediate Error Boundaries (`error.tsx`)**:
+4. **Slot Error (`error.tsx`) & Intermediate Not-Found (`not_found.tsx`) Boundaries**:
    ```tsx
    "use client";
    import { useRouter, type ErrorProps } from "dinou";
@@ -256,6 +258,22 @@ src/
          <p>Sidebar failed for {params.org}: {error.message}</p>
          <button onClick={() => router.refresh({ layout: true })}>Retry</button>
        </div>
+     );
+   }
+   ```
+   ```tsx
+   // src/workspace/[org]/not_found.tsx (Server or Client Component)
+   import { Link, type NotFoundProps } from "dinou";
+
+   export default function WorkspaceNotFound({
+     params,
+   }: NotFoundProps<"/workspace/[org]">) {
+     // params.org -> string (works even with no sibling page.tsx!)
+     return (
+       <section>
+         <h1>Nothing found in workspace "{params.org}"</h1>
+         <Link href="/">Back to Home</Link>
+       </section>
      );
    }
    ```
@@ -294,7 +312,16 @@ src/
 | Optional `[[param]]` | `src/[[lang]]/page.tsx` | `{ lang?: string }` (`string \| undefined`) |
 | Optional catch-all `[[...param]]` | `src/shop/[[...opt]]/page.tsx` | `{ opt?: string[] }` (`string[] \| undefined`) |
 
-> **Leading Slash Ergonomics**: All segment generic types (`PageProps`, `LayoutProps`, `SlotProps`, `ErrorProps`, `PageFunctions`, `LayoutFunctions`, `RouteParams`) accept patterns both with and without a leading slash (e.g. `"/workspace/[org]"` or `"workspace/[org]"`), normalized internally via `CleanRoutePath<T>`.
+> **Leading Slash Ergonomics**: All segment generic types (`PageProps`, `LayoutProps`, `SlotProps`, `ErrorProps`, `NotFoundProps`, `PageFunctions`, `LayoutFunctions`, `RouteParams`) accept patterns both with and without a leading slash (e.g. `"/workspace/[org]"` or `"workspace/[org]"`), normalized internally via `CleanRoutePath<T>`.
+
+### `PageProps` vs. Semantic Aliases (`NotFoundProps`, `SlotProps`) vs. Dedicated Types (`LayoutProps`, `ErrorProps`)
+
+- **Semantic Aliases (`NotFoundProps` & `SlotProps`)**:
+  - `not_found.tsx` and `@slot/page.tsx` receive the exact same `{ params }` runtime shape as `page.tsx`.
+  - Developers can freely use `PageProps` in `page.tsx`, `not_found.tsx`, and `@slot/page.tsx`, or opt into `NotFoundProps` / `SlotProps` for semantic clarity and scoped `Ctrl + Space` autocomplete (`SlotProps` lists only `@slot` folders; `NotFoundProps` excludes `@slot` folders and includes intermediate layout folders even before `not_found.tsx` is first saved).
+- **Dedicated Non-Alias Types (`LayoutProps` & `ErrorProps`)**:
+  - **`LayoutProps`** is **not** an alias of `PageProps`: always use `LayoutProps` in `layout.tsx`. It adds `children: ReactNode`, auto-infers sibling parallel `@slot` `ReactNode` props, and validates against `DinouLayoutParamsMap` (supporting intermediate layouts without a sibling `page.tsx`, where `PageProps` intentionally errors).
+  - **`ErrorProps`** is **not** an alias of `PageProps`: always use `ErrorProps` in `error.tsx` and `@slot/error.tsx`. It adds `error: Error` alongside `params` and validates against `DinouErrorParamsMap`.
 
 ---
 
@@ -326,12 +353,13 @@ Several subtle TypeScript type-checker constraints are handled in `dinou/index.d
    - Chokidar watcher triggers `generateRouteTypes(projectRoot)` (`< 2ms`) whenever any `page`, `page_functions`, `layout`, `layout_functions`, `layout.functions`, `error`, or `not_found` file (`.tsx`, `.ts`, `.jsx`, `.js`, `.mjs`) is added or removed anywhere under `src/` (including inside `@slot` and `(group)` directories).
 2. **Production Builds (`dinou build` across Node, Bun, Deno & Cloudflare)**:
    - `bundleDualEngine` (`dinou/node/bundle-dual-engine.js`) and the Bun, Deno, and Cloudflare build pipelines invoke `generateRouteTypes(projectRoot)` as Step 0 prior to bundling.
-3. **Standalone CLI Command (`npx dinou typegen` — `dinou/cli.js`)**:
+3. **Standalone CLI Command (`npm run typegen` / `npx dinou typegen` — `dinou/cli.js`)**:
+   - Can be exposed in `package.json` as `"typegen": "dinou typegen"` (or `"node dinou/cli.js typegen"` in ejected projects).
    - Runs `generateRouteTypes(process.cwd())` directly in a few milliseconds without starting a dev server or running bundlers:
      ```bash
-     npx dinou typegen && npx tsc --noEmit
+     npm run typegen && npx tsc --noEmit
      ```
-   - Ideal for fast typecheck-only CI/CD jobs or right after cloning a repository where `.dinou/` is gitignored.
+   - Ideal right after cloning a repository (where `.dinou/` is gitignored), after offline route scaffolding while the dev server is stopped, or in fast typecheck-only CI/CD pipelines.
 
 ---
 
@@ -344,7 +372,7 @@ Several subtle TypeScript type-checker constraints are handled in `dinou/index.d
 | `dinou/core/get-error-jsx.js` | Propagated `dParams` / `slotParams` into parallel `@slot` and `@slot/error.*` rendering inside error recovery trees. |
 | `dinou/core/build-static-pages.js` | Propagated `slotParams` into `@slot/error.*` resolution during static/PPR build passes. |
 | `dinou/core/generate-route-types.js` | Added `collectRouteTopology()` and `inspectSlotDirectory()`, generating `DinouRouteParamsMap`, `DinouLayoutParamsMap`, `DinouLayoutSlotsMap`, `DinouSlotParamsMap`, and `DinouErrorParamsMap` while keeping `DinouGeneratedRoute` strictly scoped to `page.*` routes. |
-| `dinou/index.d.ts` | Upgraded `LayoutProps`, `PageProps`, `ErrorProps`, `RouteParams`, `PageFunctions`, and `LayoutFunctions`; added `SlotProps`, `LayoutParams`, `LayoutSlots`, `SlotParams`, `ErrorParams`, `DinouLayoutPattern`, `DinouSlotPattern`, `DinouErrorPattern`, and `TS2312`/`TS4058`-safe helpers. |
+| `dinou/index.d.ts` | Upgraded `LayoutProps`, `PageProps`, `ErrorProps`, `RouteParams`, `PageFunctions`, and `LayoutFunctions`; added `SlotProps`, `NotFoundProps`, `LayoutParams`, `LayoutSlots`, `SlotParams`, `ErrorParams`, `DinouLayoutPattern`, `DinouSlotPattern`, `DinouErrorPattern`, `DinouNotFoundPattern`, and `TS2312`/`TS4058`-safe helpers. |
 | `dinou/server.d.ts` | Re-exported all new horizontal routing types and helpers from `./index` so `"dinou"` and `"dinou/server"` stay in complete parity. |
 | `dinou/node/dev.js` | Expanded the hot route-type watcher regex to regenerate `.dinou/types/routes.d.ts` on `add`/`unlink` of `page`, `page_functions`, `layout`, `layout_functions`, `layout.functions`, `error`, and `not_found` files. |
 | `dinou/cli.js` | Added the `dinou typegen` CLI command for instant standalone `.dinou/types/routes.d.ts` generation. |
