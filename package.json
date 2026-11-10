@@ -151,7 +151,8 @@
     "export-static:esbuild": "node dinou/cli.js export-static:esbuild",
     "export-static:rollup": "node dinou/cli.js export-static:rollup",
     "export-static:webpack": "node dinou/cli.js export-static:webpack",
-    "build:vendors": "node dinou/cli.js build:vendors"
+    "build:vendors": "node dinou/cli.js build:vendors",
+    "typegen": "node dinou/cli.js typegen"
   },
   "keywords": [],
   "author": "",
