@@ -299,19 +299,28 @@ export type PageFunctions<
   TRouteOrParams extends DinouRoutePattern | object = any,
   TProps = any
 > = RouteSegmentConfig<
-  [TRouteOrParams] extends [string] ? RouteParams<TRouteOrParams> : TRouteOrParams,
+  0 extends 1 & TRouteOrParams
+    ? any
+    : [TRouteOrParams] extends [DinouRoutePattern]
+      ? RouteParams<Extract<TRouteOrParams, DinouRoutePattern>>
+      : TRouteOrParams,
   TProps
 >;
 
 /**
  * Type-safe interface representing the available exports in `layout_functions.ts`.
- * Accepts either a route pattern string (e.g. `"/[organization]"`) or a direct parameters dictionary.
+ * Accepts either a layout segment pattern string (e.g. `"/[organization]"`, including intermediate layouts without a sibling `page.tsx`)
+ * or a direct parameters dictionary.
  */
 export type LayoutFunctions<
-  TRouteOrParams extends DinouRoutePattern | object = any,
+  TRouteOrParams extends DinouLayoutPattern | object = any,
   TProps = any
 > = RouteSegmentConfig<
-  [TRouteOrParams] extends [string] ? RouteParams<TRouteOrParams> : TRouteOrParams,
+  0 extends 1 & TRouteOrParams
+    ? any
+    : [TRouteOrParams] extends [DinouLayoutPattern]
+      ? LayoutParams<Extract<TRouteOrParams, DinouLayoutPattern>>
+      : TRouteOrParams,
   TProps
 >;
 
@@ -444,7 +453,7 @@ export interface NavigationOptions {
  * router.refresh();
  */
 // ====================================================================
-// TYPE-SAFE ROUTING (Level 1 & Level 2)
+// TYPE-SAFE ROUTING (Level 1 & Level 2 — Hierarchical & Horizontal)
 // ====================================================================
 
 export namespace DinouRouter {
@@ -454,7 +463,7 @@ export namespace DinouRouter {
 }
 
 /**
- * Union of all valid routes in the application.
+ * Union of all valid navigable routes in the application (`page.*`).
  * When typed routes are generated, autocompletes known routes.
  * Falls back to string if not yet generated or in loose mode.
  */
@@ -487,64 +496,249 @@ export type ExtractRouteParams<Path extends string> =
     ? ExtractSegmentParam<Start> & ExtractRouteParams<Rest>
     : ExtractSegmentParam<Path>;
 
+export type SimplifyParams<T> = { [K in keyof T]: T[K] };
+
+export type FallbackRouteParams<Path extends string> =
+  [string] extends [Path]
+    ? Record<string, string | string[] | undefined>
+    : [`/@${string}`] extends [Path]
+      ? Record<string, string | string[] | undefined>
+      : keyof ExtractRouteParams<Path> extends never
+        ? Record<string, never>
+        : SimplifyParams<ExtractRouteParams<Path>>;
+
+export type FormatPatternKeys<K extends string> =
+  [K] extends [never]
+    ? string
+    : K | (K extends `/${infer Rest}` ? (Rest extends "" ? never : Rest) : never);
+
+export type FormatOptionalPatternKeys<K extends string> =
+  [K] extends [never]
+    ? never
+    : K | (K extends `/${infer Rest}` ? (Rest extends "" ? never : Rest) : never);
+
+export type IsUnion<T, U = T> = T extends any ? ([U] extends [T] ? false : true) : never;
+
+export type CleanRoutePath<T extends string> =
+  T extends "" ? "/" : T extends `/${string}` ? T : `/${T}`;
+
 /**
- * All known route patterns in the application (e.g. "/blog/[slug]", "/t-params/[[slug]]").
- * Autocompletes all project routes when typing PageProps<"..." or LayoutProps<"...".
+ * All known page route patterns in the application (e.g. "/blog/[slug]", "/t-params/[[slug]]").
+ * Autocompletes all project page routes when typing PageProps<"..."> or PageFunctions<"...">.
  */
 export type DinouRoutePattern = DinouRouter.Register extends { params: infer P }
-  ? (keyof P extends string ? keyof P | (keyof P extends `/${infer Rest}` ? Rest : never) : string)
+  ? FormatPatternKeys<Extract<keyof P, string>>
   : string;
 
-export type CleanRoutePath<T extends string> = T extends `/${string}` ? T : `/${T}`;
+/**
+ * Registered parallel `@slot` patterns when `.dinou/types/routes.d.ts` is present (`never` if the project has no `@slot` folders).
+ */
+export type DinouRegisteredSlotPattern = DinouRouter.Register extends { slotParams: infer SP }
+  ? FormatOptionalPatternKeys<Extract<keyof SP, string>>
+  : DinouRouter.Register extends { params: unknown }
+    ? never
+    : string;
 
 /**
- * Resolved route parameter types for a route.
- * Prioritizes the generated route parameters map from .dinou/types/routes.d.ts,
+ * All known parallel `@slot` patterns in the application (e.g. "/dashboard/[org]/@analytics", "/@modal").
+ * Autocompletes `@slot` folders when typing SlotProps<"...">.
+ */
+export type DinouSlotPattern = DinouRouter.Register extends { slotParams: infer SP }
+  ? ([Extract<keyof SP, string>] extends [never]
+      ? `/@${string}` | `${string}/@${string}`
+      : FormatOptionalPatternKeys<Extract<keyof SP, string>>)
+  : string;
+
+/**
+ * All known layout segment patterns in the application (e.g. "/", "/workspace/[org]"),
+ * including intermediate horizontal layouts that have no sibling `page.tsx`.
+ */
+export type DinouLayoutPattern = DinouRouter.Register extends { layoutParams: infer LP }
+  ? FormatPatternKeys<Extract<keyof LP, string>>
+  : DinouRoutePattern;
+
+/**
+ * All known error boundary segment patterns in the application (`error.tsx`),
+ * including page routes, intermediate folders, and parallel `@slot` folders.
+ */
+export type DinouErrorPattern = DinouRouter.Register extends { errorParams: infer EP }
+  ? FormatPatternKeys<Extract<keyof EP, string>>
+  : DinouRoutePattern;
+
+/**
+ * Union of all valid horizontal & hierarchical segment patterns (pages, layouts, parallel `@slots`, and error boundaries).
+ */
+export type DinouSegmentPattern =
+  | DinouRoutePattern
+  | DinouLayoutPattern
+  | DinouRegisteredSlotPattern
+  | DinouErrorPattern;
+
+/**
+ * Internal helper that resolves segment parameter dictionaries across generated maps
+ * (`params`, `layoutParams`, `slotParams`, `errorParams`) with template-literal fallback.
+ */
+export type LookupSingleSegmentParams<K extends string> =
+  DinouRouter.Register extends { params: infer P }
+    ? K extends keyof P
+      ? P[K]
+      : DinouRouter.Register extends { layoutParams: infer LP }
+        ? K extends keyof LP
+          ? LP[K]
+          : DinouRouter.Register extends { slotParams: infer SP }
+            ? K extends keyof SP
+              ? SP[K]
+              : DinouRouter.Register extends { errorParams: infer EP }
+                ? K extends keyof EP
+                  ? EP[K]
+                  : FallbackRouteParams<K>
+                : FallbackRouteParams<K>
+            : FallbackRouteParams<K>
+        : FallbackRouteParams<K>
+    : FallbackRouteParams<K>;
+
+export type LookupSegmentParams<T extends string> =
+  [string] extends [T]
+    ? Record<string, string | string[] | undefined>
+    : [`/@${string}`] extends [T]
+      ? Record<string, string | string[] | undefined>
+      : T extends string
+        ? LookupSingleSegmentParams<CleanRoutePath<T>>
+        : never;
+
+/**
+ * Resolved route parameter types for a route, layout, or parallel slot segment.
+ * Prioritizes the generated parameter maps from `.dinou/types/routes.d.ts`,
  * and falls back to template literal extraction.
  */
-export type RouteParams<T extends DinouRoutePattern = DinouRoutePattern> =
-  DinouRouter.Register extends { params: infer P }
-    ? (CleanRoutePath<T> extends keyof P
-        ? P[CleanRoutePath<T>]
-        : (T extends keyof P ? P[T] : ExtractRouteParams<T>))
-    : ExtractRouteParams<T>;
+export type RouteParams<T extends DinouSegmentPattern = DinouRoutePattern> =
+  LookupSegmentParams<T>;
 
 /**
- * Props for Dinou Page components.
- * 
+ * Resolved cumulative dynamic parameters for a Layout segment (`layout.tsx` / `layout_functions.ts`),
+ * including intermediate layouts without a sibling `page.tsx`.
+ */
+export type LayoutParams<T extends DinouLayoutPattern = DinouLayoutPattern> =
+  [string] extends [T]
+    ? Record<string, string | string[] | undefined>
+    : T extends string
+      ? DinouRouter.Register extends { layoutParams: infer LP }
+        ? CleanRoutePath<T> extends keyof LP
+          ? LP[CleanRoutePath<T>]
+          : LookupSegmentParams<T>
+        : LookupSegmentParams<T>
+      : never;
+
+/**
+ * Auto-inferred parallel `@slot` ReactNode props injected into a Layout at segment `T`
+ * (e.g. `{ sidebar?: ReactNode; analytics?: ReactNode }`).
+ */
+export type LayoutSlots<T extends string = string> =
+  [T] extends [never]
+    ? {}
+    : [string] extends [T]
+      ? {}
+      : true extends IsUnion<CleanRoutePath<T>>
+        ? {}
+        : DinouRouter.Register extends { layoutSlots: infer LS }
+          ? CleanRoutePath<T> extends keyof LS
+            ? SimplifyParams<LS[CleanRoutePath<T>]>
+            : {}
+          : {};
+
+/**
+ * Resolved cumulative dynamic parameters for a Parallel `@slot` page (`@slot/page.tsx`).
+ */
+export type SlotParams<T extends DinouSlotPattern = DinouSlotPattern> =
+  [string] extends [T]
+    ? Record<string, string | string[] | undefined>
+    : [`/@${string}`] extends [T]
+      ? Record<string, string | string[] | undefined>
+      : T extends string
+        ? DinouRouter.Register extends { slotParams: infer SP }
+          ? CleanRoutePath<T> extends keyof SP
+            ? SP[CleanRoutePath<T>]
+            : LookupSegmentParams<T>
+          : LookupSegmentParams<T>
+        : never;
+
+/**
+ * Resolved cumulative dynamic parameters for an Error boundary (`error.tsx`),
+ * including intermediate directory boundaries and `@slot/error.tsx`.
+ */
+export type ErrorParams<T extends DinouErrorPattern = DinouErrorPattern> =
+  [string] extends [T]
+    ? Record<string, string | string[] | undefined>
+    : T extends string
+      ? DinouRouter.Register extends { errorParams: infer EP }
+        ? CleanRoutePath<T> extends keyof EP
+          ? EP[CleanRoutePath<T>]
+          : LookupSegmentParams<T>
+        : LookupSegmentParams<T>
+      : never;
+
+/**
+ * Props for Dinou Page components (`page.tsx`, `not_found.tsx`, or `@slot/page.tsx`).
+ * Optionally accepts a second type argument `TProps` for custom props returned by `page_functions.ts` (`getProps`).
+ *
  * @example
  * export default function Page({ params }: PageProps<"/blog/[id]">) {
  *   return <h1>Post {params.id}</h1>;
  * }
  */
-export interface PageProps<T extends DinouRoutePattern = DinouRoutePattern> {
-  params: RouteParams<T>;
-}
+export type PageProps<
+  T extends DinouRoutePattern | DinouRegisteredSlotPattern = DinouRoutePattern,
+  TProps extends object = {}
+> = SimplifyParams<
+  {
+    params: RouteParams<T>;
+  } & TProps
+>;
 
 /**
- * Props for Dinou Layout components.
- * 
+ * Props for Dinou Parallel Slot Page components (`@slot/page.tsx`).
+ *
  * @example
- * export default function Layout({ children, params }: LayoutProps<"/blog/[id]">) {
- *   return <div>{children}</div>;
+ * export default function AnalyticsSlot({ params }: SlotProps<"/workspace/[org]/@analytics">) {
+ *   return <aside>Org: {params.org}</aside>;
  * }
  */
-export interface LayoutProps<T extends DinouRoutePattern = DinouRoutePattern> {
-  children: React.ReactNode;
-  params: RouteParams<T>;
+export interface SlotProps<T extends DinouSlotPattern = DinouSlotPattern> {
+  params: SlotParams<T>;
 }
 
 /**
- * Props for Dinou Error Page components (error.tsx).
- * 
+ * Props for Dinou Layout components (`layout.tsx`), including intermediate layouts without a sibling `page.tsx`.
+ * Automatically includes any sibling parallel `@slot` props (`ReactNode`) defined at that segment,
+ * and optionally accepts a second type argument `TProps` for custom props returned by `layout_functions.ts` (`getProps`).
+ *
+ * @example
+ * export default function WorkspaceLayout({ children, params, sidebar }: LayoutProps<"/workspace/[org]">) {
+ *   return <div>{sidebar}<main>{children}</main></div>;
+ * }
+ */
+export type LayoutProps<
+  T extends DinouLayoutPattern = DinouLayoutPattern,
+  TProps extends object = {}
+> = SimplifyParams<
+  {
+    children: ReactNode;
+    params: LayoutParams<T>;
+  } & LayoutSlots<T> &
+    TProps
+>;
+
+/**
+ * Props for Dinou Error Page components (`error.tsx`), including intermediate and `@slot/error.tsx` boundaries.
+ *
  * @example
  * export default function ErrorPage({ error, params }: ErrorProps<"/blog/[id]">) {
  *   return <h1>Error loading {params.id}: {error.message}</h1>;
  * }
  */
-export interface ErrorProps<T extends DinouRoutePattern = DinouRoutePattern> {
+export interface ErrorProps<T extends DinouErrorPattern = DinouErrorPattern> {
   error: Error;
-  params: RouteParams<T>;
+  params: ErrorParams<T>;
 }
 
 export declare function useRouter(): {

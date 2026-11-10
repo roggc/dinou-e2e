@@ -1040,6 +1040,7 @@ async function buildStaticPages(onProgress = null) {
                           true,
                           undefined,
                           segments.length,
+                          slotParams,
                         );
 
                       if (slotErrorPath) {
@@ -1424,6 +1425,7 @@ async function buildStaticPage(reqPath, isDynamic = null) {
                         true, // finalDestination
                         undefined, // lastFound
                         segments.length,
+                        slotParams,
                       );
 
                     if (slotErrorPath) {

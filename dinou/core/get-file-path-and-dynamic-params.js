@@ -9,7 +9,7 @@ function safeDecode(val) {
   }
 }
 
-function getSlots(currentPath, reqSegments, query) {
+function getSlots(currentPath, reqSegments, query, dParams = {}) {
   let slots = {};
 
   const entries = readdirSync(currentPath, { withFileTypes: true });
@@ -26,7 +26,8 @@ function getSlots(currentPath, reqSegments, query) {
         true,
         true,
         undefined,
-        reqSegments.length
+        reqSegments.length,
+        dParams
       );
 
       if (slotPath) {
@@ -39,7 +40,7 @@ function getSlots(currentPath, reqSegments, query) {
     } else if (entry.name.startsWith("(") && entry.name.endsWith(")")) {
       const groupPath = path.join(currentPath, entry.name);
 
-      const nestedSlots = getSlots(groupPath, reqSegments, query);
+      const nestedSlots = getSlots(groupPath, reqSegments, query, dParams);
 
       slots = { ...slots, ...nestedSlots };
     }
@@ -72,12 +73,12 @@ function getFilePathAndDynamicParams(
           if (index > reqSegments.length - 1) {
             isFound.value = true;
             if (!accumulative) return [candidatePath, dParams];
-            const slots = getSlots(currentPath, reqSegments, query);
+            const slots = getSlots(currentPath, reqSegments, query, dParams);
             accumulate.push([candidatePath, dParams, slots]);
             if (finalDestination) return accumulate;
           } else {
             if (accumulative) {
-              const slots = getSlots(currentPath, reqSegments, query);
+              const slots = getSlots(currentPath, reqSegments, query, dParams);
               accumulate.push([candidatePath, dParams, slots]);
             } else {
               foundInCurrentPath = candidatePath;
@@ -91,12 +92,12 @@ function getFilePathAndDynamicParams(
         if (index > reqSegments.length - 1) {
           isFound.value = true;
           if (!accumulative) return [candidatePath, dParams];
-          const slots = getSlots(currentPath, reqSegments, query);
+          const slots = getSlots(currentPath, reqSegments, query, dParams);
           accumulate.push([candidatePath, dParams, slots]);
           if (finalDestination) return accumulate;
         } else {
           if (accumulative) {
-            const slots = getSlots(currentPath, reqSegments, query);
+            const slots = getSlots(currentPath, reqSegments, query, dParams);
             accumulate.push([candidatePath, dParams, slots]);
           } else {
             foundInCurrentPath = candidatePath;
@@ -128,7 +129,7 @@ function getFilePathAndDynamicParams(
                 if (existsSync(candidatePath)) {
                   isFound.value = true;
                   if (accumulative) {
-                    const slots = getSlots(dynamicPath, reqSegments, query);
+                    const slots = getSlots(dynamicPath, reqSegments, query, newParams);
                     accumulate.push([candidatePath, newParams, slots]);
                     return accumulate;
                   }
@@ -140,7 +141,7 @@ function getFilePathAndDynamicParams(
               if (existsSync(candidatePath)) {
                 isFound.value = true;
                 if (accumulative) {
-                  const slots = getSlots(dynamicPath, reqSegments, query);
+                  const slots = getSlots(dynamicPath, reqSegments, query, newParams);
                   accumulate.push([candidatePath, newParams, slots]);
                   return accumulate;
                 }
@@ -171,7 +172,7 @@ function getFilePathAndDynamicParams(
                 if (existsSync(candidatePath)) {
                   isFound.value = true;
                   if (accumulative) {
-                    const slots = getSlots(dynamicPath, reqSegments, query);
+                    const slots = getSlots(dynamicPath, reqSegments, query, newParams);
                     accumulate.push([candidatePath, newParams, slots]);
                     return accumulate;
                   }
@@ -183,7 +184,7 @@ function getFilePathAndDynamicParams(
               if (existsSync(candidatePath)) {
                 isFound.value = true;
                 if (accumulative) {
-                  const slots = getSlots(dynamicPath, reqSegments, query);
+                  const slots = getSlots(dynamicPath, reqSegments, query, newParams);
                   accumulate.push([candidatePath, newParams, slots]);
                   return accumulate;
                 }
@@ -285,7 +286,7 @@ function getFilePathAndDynamicParams(
               if (existsSync(candidatePath)) {
                 isFound.value = true;
                 if (accumulative) {
-                  const slots = getSlots(dynamicPath, reqSegments, query);
+                  const slots = getSlots(dynamicPath, reqSegments, query, newParams);
                   accumulate.push([candidatePath, newParams, slots]);
                   return accumulate;
                 }
@@ -297,7 +298,7 @@ function getFilePathAndDynamicParams(
             if (existsSync(candidatePath)) {
               isFound.value = true;
               if (accumulative) {
-                const slots = getSlots(dynamicPath, reqSegments, query);
+                const slots = getSlots(dynamicPath, reqSegments, query, newParams);
                 accumulate.push([candidatePath, newParams, slots]);
                 return accumulate;
               }
@@ -322,7 +323,7 @@ function getFilePathAndDynamicParams(
               if (existsSync(candidatePath)) {
                 isFound.value = true;
                 if (accumulative) {
-                  const slots = getSlots(dynamicPath, reqSegments, query);
+                  const slots = getSlots(dynamicPath, reqSegments, query, newParams);
                   accumulate.push([candidatePath, newParams, slots]);
                   return accumulate;
                 }
@@ -334,7 +335,7 @@ function getFilePathAndDynamicParams(
             if (existsSync(candidatePath)) {
               isFound.value = true;
               if (accumulative) {
-                const slots = getSlots(dynamicPath, reqSegments, query);
+                const slots = getSlots(dynamicPath, reqSegments, query, newParams);
                 accumulate.push([candidatePath, newParams, slots]);
                 return accumulate;
               }

@@ -2060,7 +2060,10 @@ srcWatcher.on("all", (event, fullPath) => {
   globalThis.__TIMELINE_T0__ = Date.now();
   logTimeline(`File change detected: ${event} ${path.basename(fullPath)}`);
   pendingSrcChanges.set(path.resolve(fullPath), event);
-  if ((event === "add" || event === "unlink") && /(?:^|[\\/])page\.[jt]sx?$/i.test(fullPath)) {
+  if (
+    (event === "add" || event === "unlink") &&
+    /(?:^|[\\/])(?:page|page_functions|layout|layout_functions|layout\.functions|error|not_found)\.(?:[jt]sx?|mjs)$/i.test(fullPath)
+  ) {
     try {
       generateRouteTypes(projectRoot);
     } catch (e) {}
