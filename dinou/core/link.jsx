@@ -1,18 +1,23 @@
 "use client";
 
 import { useRouter, usePathname } from "./navigation.js";
-import { resolveUrl, isExternalUrl } from "./navigation-utils.js";
+import {
+  resolveUrl,
+  isExternalUrl,
+  interpolateRouteParams,
+} from "./navigation-utils.js";
 
 export function Link({
   href,
   to,
+  params,
   children,
   prefetch = true,
   fresh = false,
   onClick,
   ...props
 }) {
-  const targetHref = href || to || "";
+  const targetHref = interpolateRouteParams(href || to || "", params);
   const { push } = useRouter();
   const pathname = usePathname();
   const resolvedHref = resolveUrl(targetHref, pathname);

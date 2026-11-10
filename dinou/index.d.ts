@@ -773,20 +773,169 @@ export type NotFoundProps<
   } & TProps
 >;
 
+// ====================================================================
+// DYNAMIC ROUTE PATTERN AUTOCOMPLETE & PARAMS INTERPOLATION TYPES
+// ====================================================================
+
+export type ToLinkInputParamValue<V> =
+  [V] extends [never]
+    ? never
+    : [Exclude<V, undefined>] extends [ReadonlyArray<string>]
+      ? ReadonlyArray<string | number> | Extract<V, undefined>
+      : [Exclude<V, undefined>] extends [string]
+        ? string | number | Extract<V, undefined>
+        : V;
+
+export type ToLinkInputParams<P> = {
+  [K in keyof P]: ToLinkInputParamValue<P[K]>;
+};
+
+export type DinouNavigableRoutePatternMap =
+  DinouRouter.Register extends { navigableParams: infer NP }
+    ? NP
+    : DinouRouter.Register extends { params: infer P }
+      ? P
+      : never;
+
+export type DinouDynamicRoutePattern =
+  [DinouNavigableRoutePatternMap] extends [never]
+    ? never
+    : Extract<keyof DinouNavigableRoutePatternMap, `${string}[${string}]${string}`>;
+
+export type DinouDynamicRouteWithSuffix =
+  | DinouDynamicRoutePattern
+  | ((
+      | `${DinouDynamicRoutePattern}?${string}`
+      | `${DinouDynamicRoutePattern}#${string}`
+    ) & Record<never, never>);
+
+/**
+ * Union of all valid targets accepted by `<Link>`, `router.push()`, and `router.replace()`.
+ * Combines concrete/interpolated `DinouRoute` URLs with exact dynamic route patterns
+ * (e.g. `"/blog/[slug]"`) so IDEs surface dynamic routes in `Ctrl + Space` autocomplete
+ * while requiring a typed `params` object whenever a `[param]` pattern is selected.
+ */
+export type DinouLinkTarget = DinouRoute | DinouDynamicRouteWithSuffix;
+
+export type StripUrlSuffix<T extends string> =
+  T extends `${infer Base}?${string}`
+    ? StripUrlSuffix<Base>
+    : T extends `${infer Base}#${string}`
+      ? StripUrlSuffix<Base>
+      : T;
+
+export type IsExternalLinkHref<T extends string> =
+  T extends
+    | `http://${string}`
+    | `https://${string}`
+    | `//${string}`
+    | `mailto:${string}`
+    | `tel:${string}`
+    ? true
+    : false;
+
+export type IsInternalBracketPattern<T extends string> =
+  IsExternalLinkHref<T> extends true
+    ? false
+    : StripUrlSuffix<T> extends `${string}[${string}]${string}`
+      ? true
+      : false;
+
+export type ValidatedLinkHref<THref extends string> =
+  [string] extends [THref]
+    ? THref
+    : DinouRouter.Register extends { route: unknown }
+      ? THref extends any
+        ? IsInternalBracketPattern<THref> extends true
+          ? StripUrlSuffix<THref> extends DinouDynamicRoutePattern
+            ? THref
+            : never
+          : THref
+        : never
+      : THref;
+
+export type HasBracketPattern<THref extends string> =
+  [string] extends [THref]
+    ? never
+    : THref extends any
+      ? IsInternalBracketPattern<THref> extends true
+        ? true
+        : never
+      : never;
+
+export type UnionToIntersection<U> =
+  (U extends any ? (k: U) => void : never) extends (k: infer I) => void
+    ? I
+    : never;
+
+export type ResolveSingleLinkParams<Path extends string> =
+  [DinouNavigableRoutePatternMap] extends [never]
+    ? SimplifyParams<ToLinkInputParams<FallbackRouteParams<CleanRoutePath<Path>>>>
+    : CleanRoutePath<Path> extends keyof DinouNavigableRoutePatternMap
+      ? SimplifyParams<ToLinkInputParams<DinouNavigableRoutePatternMap[CleanRoutePath<Path>]>>
+      : SimplifyParams<ToLinkInputParams<FallbackRouteParams<CleanRoutePath<Path>>>>;
+
+export type ResolveLinkParams<THref extends string> = SimplifyParams<
+  UnionToIntersection<
+    THref extends any
+      ? IsInternalBracketPattern<THref> extends true
+        ? ResolveSingleLinkParams<StripUrlSuffix<THref>>
+        : {}
+      : never
+  >
+>;
+
+export type HasInvalidBracketPattern<THref extends string> =
+  [string] extends [THref]
+    ? never
+    : DinouRouter.Register extends { route: unknown }
+      ? THref extends any
+        ? IsInternalBracketPattern<THref> extends true
+          ? StripUrlSuffix<THref> extends DinouDynamicRoutePattern
+            ? never
+            : true
+          : never
+        : never
+      : never;
+
+export type LinkParamsProps<THref extends string> =
+  [HasInvalidBracketPattern<THref>] extends [never]
+    ? [HasBracketPattern<THref>] extends [never]
+      ? { params?: never }
+      : {} extends ResolveLinkParams<THref>
+        ? { params?: ResolveLinkParams<THref> }
+        : { params: ResolveLinkParams<THref> }
+    : { params: never };
+
+export type RouterNavigationArgs<THref extends string> =
+  [HasInvalidBracketPattern<THref>] extends [never]
+    ? [HasBracketPattern<THref>] extends [never]
+      ? [options?: NavigationOptions & { params?: never }]
+      : {} extends ResolveLinkParams<THref>
+        ? [options?: NavigationOptions & { params?: ResolveLinkParams<THref> }]
+        : [options: NavigationOptions & { params: ResolveLinkParams<THref> }]
+    : [options: never];
+
 export declare function useRouter(): {
   /**
    * Navigate to the provided href. Pushes a new entry into the history stack.
-   * @param href - The URL to navigate to (e.g., "/about").
-   * @param options - Optional configuration for the navigation (e.g., force fresh data).
+   * Supports both interpolated URLs (`/blog/${slug}`) and autocompleted dynamic route patterns
+   * with typed `params` (`router.push("/blog/[slug]", { params: { slug } })`).
    */
-  push: (href: DinouRoute, options?: NavigationOptions) => void;
+  push: <THref extends DinouLinkTarget = DinouRoute>(
+    href: THref,
+    ...args: RouterNavigationArgs<NoInfer<THref>>
+  ) => void;
 
   /**
    * Navigate to the provided href. Replaces the current entry in the history stack.
-   * @param href - The URL to navigate to.
-   * @param options - Optional configuration for the navigation.
+   * Supports both interpolated URLs (`/blog/${slug}`) and autocompleted dynamic route patterns
+   * with typed `params` (`router.replace("/blog/[slug]", { params: { slug } })`).
    */
-  replace: (href: DinouRoute, options?: NavigationOptions) => void;
+  replace: <THref extends DinouLinkTarget = DinouRoute>(
+    href: THref,
+    ...args: RouterNavigationArgs<NoInfer<THref>>
+  ) => void;
 
   /**
    * Navigate back in the browser's history.
@@ -848,21 +997,25 @@ import type { AnchorHTMLAttributes } from "react";
 
 /**
  * Props for the Dinou Link component.
- * It extends standard HTML <a> attributes, allowing className, style, etc.
+ * Extends standard HTML `<a>` attributes and supports both interpolated URLs (`/blog/${slug}`)
+ * and autocompleted dynamic route patterns with required `params` (`href="/blog/[slug]" params={{ slug }}`).
  */
-export interface LinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href"> {
+export type LinkProps<THref extends DinouLinkTarget = DinouRoute> = Omit<
+  AnchorHTMLAttributes<HTMLAnchorElement>,
+  "href"
+> & {
   /**
-   * The destination URL or path.
-   * * Autocompletes all known routes discovered by Dinou.
-   * * Supports absolute paths (e.g., `/dashboard`).
-   * * Supports relative paths (e.g., `../settings` or `details`).
+   * The destination URL or dynamic route pattern.
+   * * Autocompletes all static AND dynamic routes discovered by Dinou.
+   * * When selecting a dynamic pattern (e.g. `"/blog/[slug]"`), TypeScript requires the `params` prop.
+   * * Also supports interpolated URLs (`/blog/${slug}`), relative paths, and external URLs.
    */
-  href?: DinouRoute;
+  href?: THref;
 
   /**
    * Alias for `href` (React Router / Remix compatibility).
    */
-  to?: DinouRoute;
+  to?: THref;
 
   /**
    * Whether to prefetch the RSC payload when the mouse enters the link area (hover).
@@ -879,7 +1032,7 @@ export interface LinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>,
    * @default false
    */
   fresh?: boolean;
-}
+} & LinkParamsProps<NoInfer<THref>>;
 
 /**
  * A client-side navigation component that renders an `<a>` tag.
@@ -887,18 +1040,25 @@ export interface LinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>,
  * 1. **Soft Navigation:** Transitions between pages without a full browser reload.
  * 2. **Prefetching:** Loads the target route data on hover (if enabled).
  * 3. **Freshness:** Can force a re-fetch of data via the `fresh` prop.
- * 4. **Relative Routing:** Resolves paths like standard filesystem navigation.
- * 5. **Scroll Management:** Preserves or resets scroll position intelligently.
+ * 4. **Dynamic Params Interpolation:** Accepts `params={{ slug }}` when `href`/`to` uses a `[param]` pattern.
+ * 5. **Relative Routing:** Resolves paths like standard filesystem navigation.
+ * 6. **Scroll Management:** Preserves or resets scroll position intelligently.
  *
  * @example
  * <Link href="/about" className="text-blue-500">
- * Go to About
+ *   Go to About
+ * </Link>
+ *
+ * @example
+ * <Link href="/blog/[slug]" params={{ slug: post.slug }}>
+ *   Read Post
  * </Link>
  *
  * @example
  * <Link href="/dashboard" fresh>
- * Dashboard (Force Refresh)
+ *   Dashboard (Force Refresh)
  * </Link>
  */
-export declare function Link(props: LinkProps): ReactNode;
-
+export declare function Link<THref extends DinouLinkTarget = DinouRoute>(
+  props: LinkProps<THref>
+): ReactNode;

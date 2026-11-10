@@ -1,6 +1,7 @@
 // dinou/core/navigation.js
 "use client";
 import React from "react";
+import { interpolateRouteParams } from "./navigation-utils.js";
 
 // Defensive mocks
 const createContext =
@@ -75,9 +76,9 @@ export function useRouter() {
   }
 
   return {
-    push: (href, options) => context.navigate(href, options),
-    replace: (href, options) =>
-      context.navigate(href, { replace: true, ...options }),
+    push: (href, options) => { const { params, ...restOptions } = options || {}; return context.navigate(interpolateRouteParams(href, params), restOptions); },
+    replace: (href, options) => { const { params, ...restOptions } = options || {}; return context.navigate(interpolateRouteParams(href, params), { replace: true, ...restOptions }); },
+
 
     /**
      * Navigate back in the browser's history.

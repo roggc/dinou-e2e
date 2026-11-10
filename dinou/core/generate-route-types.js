@@ -291,14 +291,19 @@ function generateRouteDefinitions(routesOrTopology) {
 
   const staticRoutes = new Set();
   const dynamicTemplateRoutes = new Set();
+  const navigableParamsMap = {};
   const routeParamsMap = {};
   const layoutParamsMap = {};
   const slotParamsMap = {};
   const errorParamsMap = {};
 
-  // 1. Level 1 navigable URLs (strictly from `page.*` routes)
+  // 1. Level 1 navigable URLs & navigable pattern params (strictly from `page.*` routes)
   for (const route of routes) {
     const segments = route.segments;
+    navigableParamsMap[route.path] = {
+      ...(navigableParamsMap[route.path] || {}),
+      ...extractParamsFromSegments(segments),
+    };
     const isDynamic = segments.some((s) => s.startsWith("[") && s.endsWith("]"));
 
     if (!isDynamic) {
@@ -380,6 +385,7 @@ function generateRouteDefinitions(routesOrTopology) {
   return {
     staticRoutes: Array.from(staticRoutes).sort(),
     dynamicRoutes: Array.from(dynamicTemplateRoutes).sort(),
+    navigableParamsMap,
     routeParamsMap,
     layoutParamsMap,
     slotParamsMap,
@@ -400,6 +406,7 @@ function generateRouteTypes(projectRoot = process.cwd()) {
   const {
     staticRoutes,
     dynamicRoutes,
+    navigableParamsMap,
     routeParamsMap,
     layoutParamsMap,
     slotParamsMap,
@@ -417,6 +424,7 @@ function generateRouteTypes(projectRoot = process.cwd()) {
       ? dynamicRoutes.map((r) => `  | ${r}`).join("\n")
       : "  | never";
 
+  const navigableParamsEntries = formatParamsMapEntries(navigableParamsMap);
   const paramsEntries = formatParamsMapEntries(routeParamsMap);
   const layoutParamsEntries = formatParamsMapEntries(layoutParamsMap);
   const layoutSlotsEntries = formatLayoutSlotsEntries(
@@ -452,10 +460,15 @@ ${dynamicUnion};
     | \`?\${string}\`;
 
   export type DinouGeneratedRoute =
-    | DinouInternalRoute
-    | \`\${DinouInternalRoute}?\${string}\`
-    | \`\${DinouInternalRoute}#\${string}\`
-    | DinouRelativeOrExternalRoute;
+    | DinouStaticRoutes
+    | ((
+        | DinouDynamicRoutes
+        | \`\${DinouInternalRoute}?\${string}\`
+        | \`\${DinouInternalRoute}#\${string}\`
+        | DinouRelativeOrExternalRoute
+      ) & Record<never, never>);
+
+  export interface DinouNavigableParamsMap {${formatInterfaceBody(navigableParamsEntries)}}
 
   export interface DinouRouteParamsMap {${formatInterfaceBody(paramsEntries)}}
 
@@ -470,6 +483,7 @@ ${dynamicUnion};
   namespace DinouRouter {
     interface Register {
       route: DinouGeneratedRoute;
+      navigableParams: DinouNavigableParamsMap;
       params: DinouRouteParamsMap;
       layoutParams: DinouLayoutParamsMap;
       layoutSlots: DinouLayoutSlotsMap;
