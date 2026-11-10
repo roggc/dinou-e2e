@@ -8094,46 +8094,47 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         "true",
         { timeout: 15000 },
       );
-      await expect(page.getByTestId("sidebar-slot-nodynamic-resolved")).toBeVisible();
-      await expect(page.getByTestId("main-page-suspense-resolved")).toBeVisible();
-      await expect(page.getByTestId("sidebar-slot-dynamic-resolved")).toHaveAttribute(
+      const slotPprLayout = page.getByTestId("slot-ppr-layout-shell");
+      await expect(slotPprLayout.getByTestId("sidebar-slot-nodynamic-resolved")).toBeVisible();
+      await expect(slotPprLayout.getByTestId("main-page-suspense-resolved")).toBeVisible();
+      await expect(slotPprLayout.getByTestId("sidebar-slot-dynamic-resolved")).toHaveAttribute(
         "data-role",
         "browser-initial",
       );
-      await expect(page.getByTestId("sidebar-slot-dynamic-resolved")).toHaveAttribute(
+      await expect(slotPprLayout.getByTestId("sidebar-slot-dynamic-resolved")).toHaveAttribute(
         "data-sfilter",
         "browser-q",
       );
 
-      const sidebarShellBefore = await page
+      const sidebarShellBefore = await slotPprLayout
         .getByTestId("sidebar-slot-shell")
         .getAttribute("data-render-count");
 
-      await page.getByTestId("sidebar-client-inc").click();
-      await expect(page.getByTestId("sidebar-client-count")).toHaveText("1");
+      await slotPprLayout.getByTestId("sidebar-client-inc").click();
+      await expect(slotPprLayout.getByTestId("sidebar-client-count")).toHaveText("1");
 
       // Update cookie and refresh layout: @sidebar dynamic hole updates live while client state & static shell persist
       await context.addCookies([
         { name: "slot_role", value: "browser-refreshed", path: "/", domain: "localhost" },
       ]);
-      await page.getByTestId("slot-ppr-refresh-layout").click();
-      await expect(page.getByTestId("sidebar-slot-dynamic-resolved")).toHaveAttribute(
+      await slotPprLayout.getByTestId("slot-ppr-refresh-layout").click();
+      await expect(slotPprLayout.getByTestId("sidebar-slot-dynamic-resolved")).toHaveAttribute(
         "data-role",
         "browser-refreshed",
       );
-      await expect(page.getByTestId("sidebar-client-count")).toHaveText("1");
+      await expect(slotPprLayout.getByTestId("sidebar-client-count")).toHaveText("1");
       if (isProd) {
-        await expect(page.getByTestId("sidebar-slot-shell")).toHaveAttribute(
+        await expect(slotPprLayout.getByTestId("sidebar-slot-shell")).toHaveAttribute(
           "data-render-count",
           sidebarShellBefore!,
         );
       }
 
       // Soft-navigate to /t-ppr-slot/sub: outer @sidebar client state persists & nested @panel renders resolved
-      await page.getByTestId("slot-ppr-link-sub").click();
-      await expect(page.getByTestId("slot-ppr-sub-page")).toBeVisible();
-      await expect(page.getByTestId("sub-panel-suspense-resolved")).toBeVisible();
-      await expect(page.getByTestId("sidebar-client-count")).toHaveText("1");
+      await slotPprLayout.getByTestId("slot-ppr-link-sub").click();
+      await expect(slotPprLayout.getByTestId("slot-ppr-sub-page")).toBeVisible();
+      await expect(slotPprLayout.getByTestId("sub-panel-suspense-resolved")).toBeVisible();
+      await expect(slotPprLayout.getByTestId("sidebar-client-count")).toHaveText("1");
     });
 
     test("6. Universal useSearchParams() in PPR Segments: Client Static Shell vs Sync/noDynamic/Async RSC Dynamic Holes, Zero-#418 Hydration & Unwrapped Bailout (/t-new-ppr/search-params & /t-new-ppr/bailout-search-params)", async ({
@@ -8208,35 +8209,37 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // 6b. Browser hydration (zero #418) + post-hydration sync + SPA soft navigation
       await page.goto("/t-new-ppr/search-params?q=alpha&tab=docs");
       await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+      const spPageRoot = page.getByTestId("sp-ppr-page-root");
 
-      await expect(page.getByTestId("sp-client-shell-q")).toHaveText("alpha");
-      await expect(page.getByTestId("sp-client-shell-tab")).toHaveText("docs");
-      await expect(page.getByTestId("sp-client-hole-q")).toHaveText("alpha");
-      await expect(page.getByTestId("sp-client-hole-tab")).toHaveText("docs");
-      await expect(page.getByTestId("sp-sync-rsc-resolved")).toContainText("syncRsc:q=alpha|tab=docs");
-      await expect(page.getByTestId("sp-nodynamic-rsc-resolved")).toContainText("noDynamicRsc:q=alpha");
-      await expect(page.getByTestId("sp-async-hole-rsc-q")).toHaveText("asyncHoleRsc:q=alpha");
+      await expect(spPageRoot.getByTestId("sp-client-shell-q")).toHaveText("alpha");
+      await expect(spPageRoot.getByTestId("sp-client-shell-tab")).toHaveText("docs");
+      await expect(spPageRoot.getByTestId("sp-client-hole-q")).toHaveText("alpha");
+      await expect(spPageRoot.getByTestId("sp-client-hole-tab")).toHaveText("docs");
+      await expect(spPageRoot.getByTestId("sp-sync-rsc-resolved")).toContainText("syncRsc:q=alpha|tab=docs");
+      await expect(spPageRoot.getByTestId("sp-nodynamic-rsc-resolved")).toContainText("noDynamicRsc:q=alpha");
+      await expect(spPageRoot.getByTestId("sp-async-hole-rsc-q")).toHaveText("asyncHoleRsc:q=alpha");
 
-      await page.getByTestId("sp-client-shell-inc").click();
-      await expect(page.getByTestId("sp-client-shell-clicks")).toHaveText("1");
+      await spPageRoot.getByTestId("sp-client-shell-inc").click();
+      await expect(spPageRoot.getByTestId("sp-client-shell-clicks")).toHaveText("1");
 
-      await page.getByTestId("sp-client-shell-nav").click();
+      await spPageRoot.getByTestId("sp-client-shell-nav").click();
       await expect(page).toHaveURL(/\/t-new-ppr\/search-params\?q=updated&tab=settings/);
-      await expect(page.getByTestId("sp-client-shell-clicks")).toHaveText("1");
-      await expect(page.getByTestId("sp-client-shell-q")).toHaveText("updated");
-      await expect(page.getByTestId("sp-client-shell-tab")).toHaveText("settings");
-      await expect(page.getByTestId("sp-client-hole-q")).toHaveText("updated");
-      await expect(page.getByTestId("sp-client-hole-tab")).toHaveText("settings");
-      await expect(page.getByTestId("sp-sync-rsc-resolved")).toContainText("syncRsc:q=updated|tab=settings");
-      await expect(page.getByTestId("sp-nodynamic-rsc-resolved")).toContainText("noDynamicRsc:q=updated");
-      await expect(page.getByTestId("sp-async-hole-rsc-q")).toHaveText("asyncHoleRsc:q=updated");
+      await expect(spPageRoot.getByTestId("sp-client-shell-clicks")).toHaveText("1");
+      await expect(spPageRoot.getByTestId("sp-client-shell-q")).toHaveText("updated");
+      await expect(spPageRoot.getByTestId("sp-client-shell-tab")).toHaveText("settings");
+      await expect(spPageRoot.getByTestId("sp-client-hole-q")).toHaveText("updated");
+      await expect(spPageRoot.getByTestId("sp-client-hole-tab")).toHaveText("settings");
+      await expect(spPageRoot.getByTestId("sp-sync-rsc-resolved")).toContainText("syncRsc:q=updated|tab=settings");
+      await expect(spPageRoot.getByTestId("sp-nodynamic-rsc-resolved")).toContainText("noDynamicRsc:q=updated");
+      await expect(spPageRoot.getByTestId("sp-async-hole-rsc-q")).toHaveText("asyncHoleRsc:q=updated");
 
       // 6c. Unwrapped RSC useSearchParams() bailout (and dev live SSR): zero #418 with query string
       await page.goto("/t-new-ppr/bailout-search-params?q=livebailout&tab=bailtab");
       await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
-      await expect(page.getByTestId("bailout-sp-root")).toContainText("q=livebailout");
-      await expect(page.getByTestId("sp-client-shell-q")).toHaveText("livebailout");
-      await expect(page.getByTestId("sp-client-shell-tab")).toHaveText("bailtab");
+      const bailoutPage = page.getByTestId("bailout-sp-page");
+      await expect(bailoutPage.getByTestId("bailout-sp-root")).toContainText("q=livebailout");
+      await expect(bailoutPage.getByTestId("sp-client-shell-q")).toHaveText("livebailout");
+      await expect(bailoutPage.getByTestId("sp-client-shell-tab")).toHaveText("bailtab");
     });
   });
 
