@@ -8135,6 +8135,109 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.getByTestId("sub-panel-suspense-resolved")).toBeVisible();
       await expect(page.getByTestId("sidebar-client-count")).toHaveText("1");
     });
+
+    test("6. Universal useSearchParams() in PPR Segments: Client Static Shell vs Sync/noDynamic/Async RSC Dynamic Holes, Zero-#418 Hydration & Unwrapped Bailout (/t-new-ppr/search-params & /t-new-ppr/bailout-search-params)", async ({
+      page,
+      request,
+    }) => {
+      if (isProd && !isCloudflare && !isDeno) {
+        const spMetaPath = path.resolve(".dinou/dist2/t-new-ppr/search-params/metadata.json");
+        const spShellPath = path.resolve(".dinou/dist2/t-new-ppr/search-params/shell.html");
+        expect(fs.existsSync(spMetaPath)).toBe(true);
+        expect(fs.existsSync(spShellPath)).toBe(true);
+
+        const spMeta = JSON.parse(fs.readFileSync(spMetaPath, "utf8"));
+        expect(spMeta.ppr).toBe(true);
+        expect(spMeta.holes).toEqual(["ppr-hole-2", "ppr-hole-3", "ppr-hole-4"]);
+
+        const spShellDisk = fs.readFileSync(spShellPath, "utf8");
+        expect(spShellDisk).toContain('data-testid="sp-client-shell-widget"');
+        expect(spShellDisk).not.toContain('data-ppr-hole="ppr-hole-1"');
+        expect(spShellDisk).toContain('data-ppr-hole="ppr-hole-2"');
+        expect(spShellDisk).toContain('data-ppr-hole="ppr-hole-3"');
+        expect(spShellDisk).toContain('data-ppr-hole="ppr-hole-4"');
+
+        const bailShellPath = path.resolve(".dinou/dist2/t-new-ppr/bailout-search-params/shell.html");
+        const bailIndexPath = path.resolve(".dinou/dist2/t-new-ppr/bailout-search-params/index.html");
+        expect(fs.existsSync(bailShellPath)).toBe(false);
+        expect(fs.existsSync(bailIndexPath)).toBe(false);
+      }
+
+      const stripComments = (s: string) => s.replace(/<!--\s*-->/g, "");
+
+      // 6a. Raw HTTP wire check for /t-new-ppr/search-params
+      const raw1 = await (await request.get("/t-new-ppr/search-params?q=alpha&tab=docs")).text();
+      const raw2 = await (await request.get("/t-new-ppr/search-params?q=beta&tab=api")).text();
+      const clean1 = stripComments(raw1);
+      const clean2 = stripComments(raw2);
+
+      expect(clean1).toContain("syncRsc:q=alpha|tab=docs");
+      expect(clean1).toContain("noDynamicRsc:q=alpha");
+      expect(clean1).toContain("asyncHoleRsc:q=alpha");
+
+      expect(clean2).toContain("syncRsc:q=beta|tab=api");
+      expect(clean2).toContain("noDynamicRsc:q=beta");
+      expect(clean2).toContain("asyncHoleRsc:q=beta");
+
+      if (isProd) {
+        const { shellPart, streamPart } = splitNewPprWire(raw1);
+        expect(shellPart).toContain("window.__DINOU_PPR_RESUME__ = true");
+        expect(shellPart).not.toContain('data-ppr-hole="ppr-hole-1"');
+        expect(shellPart).toContain('data-ppr-hole="ppr-hole-2"');
+        expect(shellPart).toContain('data-ppr-hole="ppr-hole-3"');
+        expect(shellPart).toContain('data-ppr-hole="ppr-hole-4"');
+        expect(streamPart).not.toContain('<template id="ppr-content-ppr-hole-1">');
+        expect(streamPart).toContain('<template id="ppr-content-ppr-hole-2">');
+        expect(streamPart).toContain('<template id="ppr-content-ppr-hole-3">');
+        expect(streamPart).toContain('<template id="ppr-content-ppr-hole-4">');
+
+        expect(extractRenderCount(raw1, "sp-ppr-page-root")).toBe(
+          extractRenderCount(raw2, "sp-ppr-page-root"),
+        );
+        expect(extractRenderCount(raw2, "sp-sync-rsc-resolved")).toBeGreaterThan(
+          extractRenderCount(raw1, "sp-sync-rsc-resolved"),
+        );
+        expect(extractRenderCount(raw2, "sp-nodynamic-rsc-resolved")).toBeGreaterThan(
+          extractRenderCount(raw1, "sp-nodynamic-rsc-resolved"),
+        );
+        expect(extractRenderCount(raw2, "sp-async-hole-resolved")).toBeGreaterThan(
+          extractRenderCount(raw1, "sp-async-hole-resolved"),
+        );
+      }
+
+      // 6b. Browser hydration (zero #418) + post-hydration sync + SPA soft navigation
+      await page.goto("/t-new-ppr/search-params?q=alpha&tab=docs");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+
+      await expect(page.getByTestId("sp-client-shell-q")).toHaveText("alpha");
+      await expect(page.getByTestId("sp-client-shell-tab")).toHaveText("docs");
+      await expect(page.getByTestId("sp-client-hole-q")).toHaveText("alpha");
+      await expect(page.getByTestId("sp-client-hole-tab")).toHaveText("docs");
+      await expect(page.getByTestId("sp-sync-rsc-resolved")).toContainText("syncRsc:q=alpha|tab=docs");
+      await expect(page.getByTestId("sp-nodynamic-rsc-resolved")).toContainText("noDynamicRsc:q=alpha");
+      await expect(page.getByTestId("sp-async-hole-rsc-q")).toHaveText("asyncHoleRsc:q=alpha");
+
+      await page.getByTestId("sp-client-shell-inc").click();
+      await expect(page.getByTestId("sp-client-shell-clicks")).toHaveText("1");
+
+      await page.getByTestId("sp-client-shell-nav").click();
+      await expect(page).toHaveURL(/\/t-new-ppr\/search-params\?q=updated&tab=settings/);
+      await expect(page.getByTestId("sp-client-shell-clicks")).toHaveText("1");
+      await expect(page.getByTestId("sp-client-shell-q")).toHaveText("updated");
+      await expect(page.getByTestId("sp-client-shell-tab")).toHaveText("settings");
+      await expect(page.getByTestId("sp-client-hole-q")).toHaveText("updated");
+      await expect(page.getByTestId("sp-client-hole-tab")).toHaveText("settings");
+      await expect(page.getByTestId("sp-sync-rsc-resolved")).toContainText("syncRsc:q=updated|tab=settings");
+      await expect(page.getByTestId("sp-nodynamic-rsc-resolved")).toContainText("noDynamicRsc:q=updated");
+      await expect(page.getByTestId("sp-async-hole-rsc-q")).toHaveText("asyncHoleRsc:q=updated");
+
+      // 6c. Unwrapped RSC useSearchParams() bailout (and dev live SSR): zero #418 with query string
+      await page.goto("/t-new-ppr/bailout-search-params?q=livebailout&tab=bailtab");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+      await expect(page.getByTestId("bailout-sp-root")).toContainText("q=livebailout");
+      await expect(page.getByTestId("sp-client-shell-q")).toHaveText("livebailout");
+      await expect(page.getByTestId("sp-client-shell-tab")).toHaveText("bailtab");
+    });
   });
 
   test.describe("React 19 Server Component useId() & Stateless Hooks Suite (/t-use-id)", () => {

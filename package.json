@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test:contracts": "node --test tests/contracts-duality.test.js",
+    "test:ppr:search-params": "node --test tests/ppr-use-search-params.test.js",
     "test:hmr:ws": "node tests/hmr-websocket.test.mjs",
     "test:smoke:compile": "node tests/compile-and-export-smoke.mjs",
     "dev": "node dinou/cli.js dev",
