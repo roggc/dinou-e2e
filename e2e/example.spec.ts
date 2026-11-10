@@ -4581,6 +4581,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     test("Client Components: useSearchParams() updates reactively on SPA soft navigation without losing React state", async ({ page }) => {
       await page.goto("/t-params/t-spa-query?tab=overview&q=first");
       await page.waitForSelector('[data-testid="spa-query-container"]');
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
 
       await expect(page.getByTestId("current-tab")).toHaveText("overview");
       await expect(page.getByTestId("current-q")).toHaveText("first");
