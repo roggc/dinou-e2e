@@ -566,6 +566,19 @@ export type DinouErrorPattern = DinouRouter.Register extends { errorParams: infe
   : DinouRoutePattern;
 
 /**
+ * All known segment patterns valid for `not_found.tsx` boundaries (root, page routes,
+ * intermediate `not_found.tsx` folders, and intermediate layout folders), excluding `@slot` folders.
+ */
+export type DinouNotFoundPattern = DinouRouter.Register extends { params: infer P }
+  ? FormatPatternKeys<
+      | Extract<keyof P, string>
+      | (DinouRouter.Register extends { layoutParams: infer LP }
+          ? Extract<keyof LP, string>
+          : never)
+    >
+  : string;
+
+/**
  * Union of all valid horizontal & hierarchical segment patterns (pages, layouts, parallel `@slots`, and error boundaries).
  */
 export type DinouSegmentPattern =
@@ -740,6 +753,25 @@ export interface ErrorProps<T extends DinouErrorPattern = DinouErrorPattern> {
   error: Error;
   params: ErrorParams<T>;
 }
+
+/**
+ * Props for Dinou Not-Found Page components (`not_found.tsx`), including root, leaf,
+ * and intermediate directory 404 boundaries (with or without a sibling `page.tsx`).
+ * Optionally accepts a second type argument `TProps` for custom props returned by a sibling `page_functions.ts` (`getProps`).
+ *
+ * @example
+ * export default function WorkspaceNotFound({ params }: NotFoundProps<"/workspace/[org]">) {
+ *   return <h1>Nothing found in {params.org}</h1>;
+ * }
+ */
+export type NotFoundProps<
+  T extends DinouNotFoundPattern = DinouNotFoundPattern,
+  TProps extends object = {}
+> = SimplifyParams<
+  {
+    params: RouteParams<T>;
+  } & TProps
+>;
 
 export declare function useRouter(): {
   /**
