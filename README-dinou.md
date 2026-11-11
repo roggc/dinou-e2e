@@ -49,7 +49,7 @@ npm run dev
 
 ### Core CLI Commands (`npx dinou <command>`)
 
-All commands accept **`-u` / `--unvendorized`** (or `DINOU_UNVENDORIZED=true`) to resolve toolchain packages from `node_modules` instead of `dinou/compiled/`.
+All commands accept **`-u` / `--unvendorized`** (e.g. `npm run dev -- -u`, `npx dinou dev -u`, or `DINOU_UNVENDORIZED=true`) to resolve toolchain packages from `node_modules` instead of `dinou/compiled/`.
 
 | Command | Bundler Variants (`:esbuild` default, `:rollup`, `:webpack`) | Description |
 | :--- | :--- | :--- |
@@ -140,8 +140,8 @@ Dinou generates `.dinou/types/routes.d.ts` and per-folder `.dinou/routes/<relDir
 }
 ```
 
-#### 1. Zero-Boilerplate Route-Contextual Imports (`from "./dinou"` or `"../dinou"`)
-Inside any route or `@slot` folder in `src/`, import from `"./dinou"` (resolved via `rootDirs` in TS and bundler plugins in esbuild/Rollup/Webpack; defers to any user-created `dinou.*` file in `src/`). Segment contracts (`PageProps`, `LayoutProps` with auto-inferred `@slot` props, `SlotProps`, `ErrorProps`, `NotFoundProps`, `PageFunctions`, `LayoutFunctions`, `RouteParams`, `ROUTE`) and relative navigation (`<Link>`, `useRouter()`) are pre-bound to that folder:
+#### 1. Zero-Boilerplate Route-Contextual Imports (`from "./dinou"`)
+Inside any route or `@slot` folder in `src/`, import from `"./dinou"`—or `"../dinou"` from a nested helper subfolder like `_components/` (resolved via TS `rootDirs` and bundler plugins; defers to any user `dinou.*` file in `src/`). Segment contracts (`PageProps`, `LayoutProps` with auto-inferred `@slot` props, `SlotProps`, `ErrorProps`, `NotFoundProps`, `PageFunctions`, `LayoutFunctions`, `RouteParams`, `ROUTE`) and relative navigation (`<Link>`, `useRouter()`) are pre-bound to that folder:
 ```tsx
 // src/blog/[slug]/page_functions.ts
 import type { PageFunctions } from "./dinou";
@@ -485,7 +485,7 @@ Dinou provides 100% feature parity across three bundlers:
 
 ### Dual-Mode Vendoring (`--unvendorized` / `-u`)
 By default, Dinou runs in **Vendorized Mode**, resolving Babel, PostCSS, Tailwind, Rollup/Webpack plugins, `ws`, `chokidar`, etc. from pre-compiled zero-install bundles in `dinou/compiled/` via `package.json` `#imports`.
-Pass `-u` / `--unvendorized` (e.g. `npx dinou dev -u` or `DINOU_UNVENDORIZED=true`) to resolve those packages from standard `node_modules` via Node's `--conditions=unvendorized`.
+Pass `-u` / `--unvendorized` (e.g. `npm run dev -- -u`, `npx dinou build -u`, or `DINOU_UNVENDORIZED=true`) to resolve those packages from your `node_modules` via `--conditions=unvendorized`.
 
 ### Ejecting (`npx dinou eject`)
 Running `npx dinou eject` copies the complete Dinou framework into `./dinou` at your project root and rewrites `package.json` scripts and imports to use `./dinou/index.js`, `./dinou/server.js`, and `./dinou/cli.js`, giving you 100% ownership of the compiler and runtime.
@@ -510,7 +510,7 @@ Running `npx dinou eject` copies the complete Dinou framework into `./dinou` at 
 | `defineConfig` | Function | Type-safe helper for `dinou.config.mjs` |
 | `PageProps<T, P>`, `LayoutProps<T, P>`, `SlotProps<T>`, `ErrorProps<T>`, `NotFoundProps<T, P>`, `PageFunctions<T, P>`, `LayoutFunctions<T, P>`, `RouteSegmentConfig`, `PPRConfig`, `StaticPathItem`, `StaticPathsResult`, `RouteParams<T>`, `LayoutParams<T>`, `LayoutSlots<T>`, `SlotParams<T>`, `ErrorParams<T>`, `DinouRoute`, `DinouLinkTarget`, `DinouFromRoute`, `DinouRoutePattern`, `DinouLayoutPattern`, `DinouSlotPattern`, `DinouErrorPattern`, `DinouNotFoundPattern`, `DinouSegmentPattern`, `DinouRouter`, `CleanRoutePath`, `ExtractRouteParams`, `ExtractSegmentParam`, `LinkProps`, `ScopedLinkProps`, `ScopedLinkComponent`, `ScopedUseRouterHook`, `ClientRedirectProps`, `NavigationOptions`, `RequestContextStore`, `ResponseProxy`, `CookieOptions`, `Query`, `Cookies`, `Headers`, `DinouConfig`, `DinouPlugin`, `ServerHookContext`, `NodeMiddleware` | TypeScript Types | Complete compile-time routing, segment prop, slot, relative navigation, context, and plugin types |
 
-### Contextual Virtual Module `"./dinou"` (or `"../dinou"` Inside Route & `@slot` Folders)
+### Contextual Virtual Module `"./dinou"` (Inside `src/` Route & `@slot` Folders, or `"../dinou"` from Nested `_components/`)
 | Export | Kind | Description |
 | :--- | :--- | :--- |
 | `ROUTE` | Constant (`string`) | Exact URL route pattern of that folder (e.g. `"/blog/[slug]"`) |
