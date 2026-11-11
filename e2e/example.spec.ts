@@ -9118,6 +9118,182 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
   });
 
+  test.describe("Dinou Static Crawler (collectPages) & Runtime Router Parity (/t-collect-pages, /t-static, /t-optional-dynamic, /t-async-get-static-paths)", () => {
+    test("1. buildStaticPages (collectPages): pre-renders expected static paths, enforces No-Gap Rule, and matches HTTP wire responses", async ({
+      request,
+    }) => {
+      const dist2Root = path.resolve(process.cwd(), ".dinou/dist2");
+
+      if (isProd && !isCloudflare && fs.existsSync(dist2Root)) {
+        const expectedDist2Files = [
+          // t-collect-pages (12 subtrees)
+          "t-collect-pages/blog/es/hello-world/index.html",
+          "t-collect-pages/blog/fr/le-monde/index.html",
+          "t-collect-pages/docs/v1.0/intro/index.html",
+          "t-collect-pages/docs/v1.0/advanced/installation/index.html",
+          "t-collect-pages/docs/v2.0/migration/index.html",
+          "t-collect-pages/drive/personal-drive/index.html",
+          "t-collect-pages/drive/personal-drive/photos/vacation/index.html",
+          "t-collect-pages/drive/work-drive/index.html",
+          "t-collect-pages/drive/work-drive/projects/q4/report.pdf/index.html",
+          "t-collect-pages/drive/pete/foo/index.html",
+          "t-collect-pages/drive/pete2/index.html",
+          "t-collect-pages/inventory/index.html",
+          "t-collect-pages/inventory/main/index.html",
+          "t-collect-pages/inventory/main/A1/index.html",
+          "t-collect-pages/logs/index.html",
+          "t-collect-pages/logs/error/index.html",
+          "t-collect-pages/logs/sys/critical/index.html",
+          "t-collect-pages/metrics/index.html",
+          "t-collect-pages/metrics/daily/index.html",
+          "t-collect-pages/metrics/monthly/index.html",
+          "t-collect-pages/optional/index.html",
+          "t-collect-pages/optional/foo/index.html",
+          "t-collect-pages/reports/2024/r-001/index.html",
+          "t-collect-pages/shop/electronics/macbook-pro/index.html",
+          "t-collect-pages/shop/clothing/air-jordan/index.html",
+          "t-collect-pages/shop2/shoes/index.html",
+          "t-collect-pages/shop3/shoes/index.html",
+          // t-static (static bridges, multi-level dynamic, optional + catch-all, primitive getStaticPaths)
+          "t-static/case1/petazeta/normal/index.html",
+          "t-static/case1/petazeta/normal/zz/index.html",
+          "t-static/case2/chinese/normal/zz/index.html",
+          "t-static/case3/yuhu/index.html",
+          "t-static/case3/yuhu/v1/index.html",
+          "t-static/case4/prim-a/bridge1/bridge2/index.html",
+          "t-static/case4/prim-b/bridge1/bridge2/index.html",
+          "t-static/docs/v1/api/endpoints/users/details/index.html",
+          "t-static/docs/v2/api/endpoints/products/details/index.html",
+          "t-static/optional/foo/s1/bar/caca/index.html",
+          "t-static/optional/foo/s1/bar/index.html",
+          "t-static/optional/foo/s2/bar/products/index.html",
+          "t-static/optional2/foo/index.html",
+          "t-static/optional2/foo/s1x/index.html",
+          "t-static/optional2/foo/s1x/bar/index.html",
+          "t-static/optional2/foo/s1x/bar/productsx/index.html",
+          "t-static/optional2/foo/s1x/bar/producty/index.html",
+          // t-optional-dynamic & t-async-get-static-paths
+          "t-optional-dynamic/index.html",
+          "t-async-get-static-paths/slug1/index.html",
+          "t-async-get-static-paths/slug2/index.html",
+        ];
+
+        for (const relFile of expectedDist2Files) {
+          expect(
+            fs.existsSync(path.join(dist2Root, relFile)),
+            `Expected pre-rendered file to exist: .dinou/dist2/${relFile}`
+          ).toBe(true);
+        }
+
+        // Prohibited intermediate gaps & non-normalized key order must NOT be pre-generated
+        const forbiddenGapFiles = [
+          "t-collect-pages/blog/hello-world/index.html",
+          "t-collect-pages/inventory/B2/index.html",
+          "t-collect-pages/reports/r-002/index.html",
+          "t-collect-pages/shop/air-jordan/clothing/index.html",
+        ];
+        for (const relFile of forbiddenGapFiles) {
+          expect(
+            fs.existsSync(path.join(dist2Root, relFile)),
+            `Expected prohibited gap/misordered path NOT to be pre-rendered: .dinou/dist2/${relFile}`
+          ).toBe(false);
+        }
+      }
+
+      // HTTP wire checks across dev & prod runtimes
+      const wireChecks: Array<[string, string[]]> = [
+        ["/t-collect-pages/blog/es/hello-world", ["es", "hello-world"]],
+        ["/t-collect-pages/docs/v1.0/advanced/installation", ["v1.0", "advanced", "installation"]],
+        ["/t-collect-pages/drive/work-drive/projects/q4/report.pdf", ["work-drive", "report.pdf"]],
+        ["/t-collect-pages/logs/sys/critical", ["sys", "critical"]],
+        ["/t-collect-pages/metrics/monthly", ["monthly"]],
+        ["/t-collect-pages/optional/foo", ["foo"]],
+        ["/t-collect-pages/reports/2024/r-001", ["2024", "r-001"]],
+        ["/t-collect-pages/shop2/shoes", ["shoes"]],
+        ["/t-collect-pages/shop3/shoes", ["shoes"]],
+        ["/t-static/case3/yuhu/v1", ["yuhu", "v1"]],
+        ["/t-static/case4/prim-b/bridge1/bridge2", ["prim-b"]],
+        ["/t-static/docs/v2/api/endpoints/products/details", ["v2", "products"]],
+        ["/t-static/optional/foo/s1/bar/caca", ["s1", "caca"]],
+        ["/t-async-get-static-paths/slug1", ["slug1"]],
+        ["/t-async-get-static-paths/slug2", ["slug2"]],
+      ];
+
+      for (const [routeUrl, expectedTokens] of wireChecks) {
+        const res = await request.get(routeUrl);
+        expect(res.status(), `Expected 200 OK on ${routeUrl}`).toBe(200);
+        const html = await res.text();
+        for (const token of expectedTokens) {
+          expect(html, `Expected "${token}" in HTML of ${routeUrl}`).toContain(token);
+        }
+      }
+    });
+
+    test("2. Browser DOM & Hydration Parity across static bridges, optional chains, inverted param keys, primitive getStaticPaths, and async getStaticPaths", async ({
+      page,
+    }) => {
+      const jsonRouteChecks: Array<[string, Record<string, unknown>]> = [
+        [
+          "/t-collect-pages/shop/clothing/air-jordan",
+          { department: "clothing", product: "air-jordan" },
+        ],
+        [
+          "/t-collect-pages/drive/personal-drive",
+          { driveId: "personal-drive", path: [] },
+        ],
+        [
+          "/t-collect-pages/drive/pete/foo",
+          { driveId: "pete", path: ["foo"] },
+        ],
+        ["/t-collect-pages/inventory", {}],
+        ["/t-collect-pages/inventory/main", { warehouse: "main" }],
+        [
+          "/t-collect-pages/inventory/main/A1",
+          { warehouse: "main", aisle: "A1" },
+        ],
+        [
+          "/t-static/docs/v1/api/endpoints/users/details",
+          { version: "v1", slug: "users" },
+        ],
+        ["/t-static/optional2/foo", {}],
+        ["/t-static/optional2/foo/s1x", { slug: "s1x" }],
+        ["/t-static/optional2/foo/s1x/bar", { slug: "s1x", id: [] }],
+        [
+          "/t-static/optional2/foo/s1x/bar/producty",
+          { slug: "s1x", id: ["producty"] },
+        ],
+        ["/t-optional-dynamic", {}],
+        ["/t-optional-dynamic/42", { id: "42" }],
+      ];
+
+      for (const [routeUrl, expectedParams] of jsonRouteChecks) {
+        const res = await page.goto(routeUrl);
+        expect(res?.status(), `Expected 200 OK on ${routeUrl}`).toBe(200);
+        const rawJson = await page.locator("body > div").first().innerText();
+        expect(JSON.parse(rawJson), `Mismatch in params for ${routeUrl}`).toEqual(
+          expectedParams
+        );
+      }
+
+      // Static bridges with custom h1#res / data-testid
+      await page.goto("/t-static/case1/petazeta/normal/zz");
+      await expect(page.getByTestId("res")).toHaveText("petazeta zz");
+
+      await page.goto("/t-static/case2/chinese/normal/zz");
+      await expect(page.getByTestId("res")).toHaveText("chinese zz");
+
+      // Regression check: primitive string getStaticPaths() under dynamic + multi-static-bridge folder
+      await page.goto("/t-static/case4/prim-a/bridge1/bridge2");
+      const case4Raw = await page.getByTestId("case4-params").innerText();
+      expect(JSON.parse(case4Raw)).toEqual({ slug: "prim-a" });
+
+      // Async getStaticPaths() Server Component page
+      const asyncRes = await page.goto("/t-async-get-static-paths/slug2");
+      expect(asyncRes?.status()).toBe(200);
+      await expect(page.locator("body")).toContainText("slug2");
+    });
+  });
+
   test.describe("HMR & Fast Refresh automated verification", () => {
     // Run tests in serial mode so they do not collide on the same files on disk
     test.describe.configure({ mode: "serial" });
