@@ -1,7 +1,7 @@
 import { Link, ROUTE, type PageProps } from "./dinou";
 import type { ContactExtraProps } from "./page_functions";
 import { ClientActions } from "./client-actions";
-import { ColocatedCard } from "./_components/colocated-card";
+import { ColocatedCard } from "./components/colocated-card";
 
 export default function ContextualContactPage({
   params,

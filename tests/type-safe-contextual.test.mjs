@@ -85,7 +85,7 @@ async function main() {
   const forbiddenDirs = [
     "components",
     "demo/components",
-    "t-type-safe-contextual/[slug]/contact/_components",
+    "t-type-safe-contextual/[slug]/contact/components",
   ];
   for (const rel of forbiddenDirs) {
     assert(

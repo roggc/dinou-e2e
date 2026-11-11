@@ -1,6 +1,6 @@
 "use client";
 
-// Exercises parent relative "../dinou" resolution inside private `_components/`
+// Exercises parent relative "../dinou" resolution inside nested `components/`
 // across esbuild (+ .dinou/swc/), Rollup, Webpack, and Dual-Engine SSR!
 import { Link, ROUTE } from "../dinou";
 

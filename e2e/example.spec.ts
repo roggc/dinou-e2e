@@ -8984,7 +8984,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         "/t-type-safe-contextual/[slug]"
       );
 
-      // 4. Verify colocated `_components/colocated-card.tsx` resolved `../dinou` in client bundle
+      // 4. Verify colocated `components/colocated-card.tsx` resolved `../dinou` in client bundle
       await expect(page.getByTestId("ctx-colocated-card")).toHaveAttribute(
         "data-colocated-route",
         "/t-type-safe-contextual/[slug]/contact"
@@ -9025,7 +9025,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.getByTestId("sub-back-contact").click();
       await expect(page).toHaveURL(/\/t-type-safe-contextual\/acme\/contact$/);
 
-      // 10. Colocated `_components/colocated-card.tsx` <Link to="./sub"> (from "../dinou")
+      // 10. Colocated `components/colocated-card.tsx` <Link to="./sub"> (from "../dinou")
       await page.getByTestId("colocated-link-sub").click();
       await expect(page).toHaveURL(/\/t-type-safe-contextual\/acme\/contact\/sub$/);
       await page.getByTestId("sub-back-contact").click();
@@ -9582,6 +9582,194 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         // Always restore original file content
         fs.writeFileSync(serverPagePath, originalServerCode, "utf8");
         await expect(page.locator("#hmr-server-title")).toHaveText("Initial Server Title", { timeout: 15000 }).catch(() => {});
+      }
+    });
+  });
+
+  test.describe("Escaped `_folder` Routes, Bundler Exclusion & Security", () => {
+    test("1. Active app boots cleanly alongside broken/contextual files in `src/_t-escaped/` and allows `_file.ts`", async ({
+      page,
+    }) => {
+      const response = await page.goto("/t-escaped-probe");
+      expect(response?.status()).toBe(200);
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+      await expect(page.getByTestId("probe-heading")).toHaveText("Escaped Probe Active");
+      await expect(page.getByTestId("probe-underscore-file")).toHaveText(
+        "underscore-file-ok"
+      );
+
+      // Verify `src/_t-escaped/parked.css` was never bundled into any loaded stylesheet
+      const hasLeakedParkedCss = await page.evaluate(() => {
+        for (const sheet of Array.from(document.styleSheets)) {
+          try {
+            for (const rule of Array.from(sheet.cssRules || [])) {
+              if (rule.cssText.includes("parked-escaped-sentinel-selector-do-not-bundle")) {
+                return true;
+              }
+            }
+          } catch {
+            // Cross-origin stylesheet if any
+          }
+        }
+        return false;
+      });
+      expect(hasLeakedParkedCss).toBe(false);
+    });
+
+    test("2. Escaped routes return 404 under both `/_t-escaped` and `/t-escaped` URLs (HTML & RSC endpoints)", async ({
+      request,
+    }) => {
+      const candidatePaths = [
+        "/_t-escaped",
+        "/t-escaped",
+        "/_t-escaped/acme/contact",
+        "/t-escaped/acme/contact",
+        "/____rsc_page____/_t-escaped",
+        "/____rsc_page____/t-escaped",
+        "/____rsc_layout____/_t-escaped",
+        "/____rsc_layout____/t-escaped",
+      ];
+
+      for (const urlPath of candidatePaths) {
+        const res = await request.get(urlPath);
+        expect(res.status(), `Expected 404 for escaped route ${urlPath}`).toBe(404);
+      }
+    });
+
+    test("3. Crafted POST to `/____server_function____` targeting an escaped `_` directory is blocked with 403", async ({
+      request,
+    }) => {
+      const escapedTargetIds = [
+        "file:///src/_t-escaped/secret-actions.ts#dangerousParkedAction",
+        "file:///src/t-escaped-probe/_nested/secret.ts#dangerousNestedAction",
+      ];
+
+      for (const targetId of escapedTargetIds) {
+        const res = await request.post("/____server_function____", {
+          headers: {
+            "x-server-function-call": "1",
+            "content-type": "application/json",
+          },
+          data: JSON.stringify({
+            id: targetId,
+            args: [],
+          }),
+        });
+
+        expect(res.status(), `Expected 403 for escaped server function ${targetId}`).toBe(403);
+        const body = await res.json();
+        expect(body).toEqual({ error: "Forbidden access" });
+      }
+    });
+
+    test("4. Static Typegen, Strict tsc, Didactic Bundler Guard & Zero-Leak Manifest Suite (scripts/verify-escaped-ci.mjs)", async () => {
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        [path.resolve("scripts/verify-escaped-ci.mjs"), "--readonly-root"],
+        { encoding: "utf8", timeout: 90000 }
+      );
+      expect(output).toContain(
+        "RESULT: All 5 escaped `_folder` (A + B Radical) verification checks PASSED"
+      );
+    });
+  });
+
+  test.describe("Live Dev Watcher: Escape & Un-Escape Directory Rename", () => {
+    test.describe.configure({ mode: "serial" });
+    test.skip(!isDev || isProd, "Live directory rename watcher applies to dev mode");
+
+    async function renameDirWithRetry(fromDir: string, toDir: string, retries = 15) {
+      for (let attempt = 0; attempt < retries; attempt++) {
+        try {
+          await fs.promises.rename(fromDir, toDir);
+          return;
+        } catch (err: any) {
+          if (
+            attempt < retries - 1 &&
+            (err?.code === "EPERM" || err?.code === "EBUSY" || err?.code === "EACCES")
+          ) {
+            await new Promise((r) => setTimeout(r, 100));
+            continue;
+          }
+          throw err;
+        }
+      }
+    }
+
+    test("Renames `t-live-escape` -> `_t-live-escape` -> `t-live-escape` toggling 200 -> 404 -> 200 and updating `.dinou/routes`", async ({
+      request,
+    }, testInfo) => {
+      const projectRoot = process.cwd();
+      const routeSlug = `t-live-escape-${testInfo.project.name}`;
+      const activeDir = path.join(projectRoot, "src", routeSlug);
+      const escapedDir = path.join(projectRoot, "src", `_${routeSlug}`);
+      const activeShimDts = path.join(projectRoot, ".dinou/routes", routeSlug, "dinou.d.ts");
+      const escapedShimDts = path.join(projectRoot, ".dinou/routes", `_${routeSlug}`, "dinou.d.ts");
+
+      fs.rmSync(activeDir, { recursive: true, force: true });
+      fs.rmSync(escapedDir, { recursive: true, force: true });
+
+      try {
+        // Step A: Create active route importing `./dinou`
+        fs.mkdirSync(activeDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(activeDir, "page.tsx"),
+          `import { ROUTE } from "./dinou";\nexport default function LivePage() { return <div data-testid="live-escape-route">Live:{ROUTE}</div>; }\n`,
+          "utf8"
+        );
+
+        await expect
+          .poll(
+            async () => {
+              const res = await request.get(`/${routeSlug}`);
+              const text = await res.text().catch(() => "");
+              return res.status() === 200 && text.includes(`Live:/${routeSlug}`) ? 200 : res.status();
+            },
+            { timeout: 20000 }
+          )
+          .toBe(200);
+
+        await expect.poll(() => fs.existsSync(activeShimDts), { timeout: 10000 }).toBe(true);
+
+        // Step B: Escape route by renaming `t-live-escape-*` -> `_t-live-escape-*`
+        await renameDirWithRetry(activeDir, escapedDir);
+
+        await expect
+          .poll(async () => (await request.get(`/${routeSlug}`)).status(), {
+            timeout: 20000,
+          })
+          .toBe(404);
+
+        const underscoredRes = await request.get(`/_${routeSlug}`);
+        expect(underscoredRes.status()).toBe(404);
+
+        await expect.poll(() => fs.existsSync(escapedShimDts), { timeout: 10000 }).toBe(true);
+        expect(fs.existsSync(activeShimDts)).toBe(false);
+
+        // Step C: Un-escape route by renaming `_t-live-escape-*` -> `t-live-escape-*`
+        await renameDirWithRetry(escapedDir, activeDir);
+
+        await expect
+          .poll(
+            async () => {
+              const res = await request.get(`/${routeSlug}`);
+              const text = await res.text().catch(() => "");
+              return res.status() === 200 && text.includes(`Live:/${routeSlug}`) ? 200 : res.status();
+            },
+            { timeout: 20000 }
+          )
+          .toBe(200);
+
+        await expect.poll(() => fs.existsSync(activeShimDts), { timeout: 10000 }).toBe(true);
+        expect(fs.existsSync(escapedShimDts)).toBe(false);
+      } finally {
+        fs.rmSync(activeDir, { recursive: true, force: true });
+        fs.rmSync(escapedDir, { recursive: true, force: true });
+        await expect
+          .poll(async () => (await request.get(`/${routeSlug}`)).status(), { timeout: 15000 })
+          .toBe(404)
+          .catch(() => {});
       }
     });
   });

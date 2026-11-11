@@ -122,7 +122,7 @@ Create an empty file (no extension) inside any route folder to alter layout inhe
 | `[...slug]` | `src/docs/[...slug]/page.tsx` | `/docs/a/b/c` (1+ segments) | `{ slug: string[] }` |
 | `[[...slug]]` | `src/shop/[[...slug]]/page.tsx` | `/shop`, `/shop/a/b` (0+ segments) | `{ slug?: string[] }` |
 | `(group)` | `src/(marketing)/pricing/page.tsx` | `/pricing` | Organization group (omitted from URL). |
-| `_escaped` | `src/_legacy/page.tsx` | *(Ignored)* | Folders starting with `_` are ignored by the route scanner. |
+| `_escaped` | `src/_legacy/page.tsx` | *(Ignored)* | `_` folders escaped from routing/bundling (fallback `./dinou` shims; active imports blocked; `_file.ts` ok). |
 | `@slot` | `src/dashboard/@analytics/page.tsx` | `/dashboard` | **Parallel Route Slot:** injected as prop `analytics` into `src/dashboard/layout.tsx`. Isolated error boundary per slot. |
 
 > **Specificity, Backtracking & Pass-Through Folders:** The router resolves competing branches deterministically using full multi-branch and `(group)` backtracking ordered by specificity (`static` > `[slug]` > `[[slug]]` > `[...slug]` > `[[...slug]]`), rejects literal router-syntax segments (`(group)`, `[param]`, `@slot`, `_private`) in URLs, and supports pass-through folders without `page.tsx` (e.g. `src/api/v1/users/page.tsx`).
@@ -141,7 +141,7 @@ Dinou generates `.dinou/types/routes.d.ts` and per-folder `.dinou/routes/<relDir
 ```
 
 #### 1. Zero-Boilerplate Route-Contextual Imports (`from "./dinou"`)
-Inside any route or `@slot` folder in `src/`, import from `"./dinou"`—or `"../dinou"` from a nested helper subfolder like `_components/` (resolved via TS `rootDirs` and bundler plugins; defers to any user `dinou.*` file in `src/`). Segment contracts (`PageProps`, `LayoutProps` with auto-inferred `@slot` props, `SlotProps`, `ErrorProps`, `NotFoundProps`, `PageFunctions`, `LayoutFunctions`, `RouteParams`, `ROUTE`) and relative navigation (`<Link>`, `useRouter()`) are pre-bound to that folder:
+Inside any route or `@slot` folder in `src/`, import from `"./dinou"`—or `"../dinou"` from a nested helper subfolder like `components/` (via TS `rootDirs` & bundler plugins; defers to user `dinou.*` in `src/`). Segment contracts (`PageProps`, `LayoutProps` with auto-inferred `@slot` props, `SlotProps`, `ErrorProps`, `NotFoundProps`, `PageFunctions`, `LayoutFunctions`, `RouteParams`, `ROUTE`) and relative navigation (`<Link>`, `useRouter()`) are pre-bound to that folder:
 ```tsx
 // src/blog/[slug]/page_functions.ts
 import type { PageFunctions } from "./dinou";
@@ -510,7 +510,7 @@ Running `npx dinou eject` copies the complete Dinou framework into `./dinou` at 
 | `defineConfig` | Function | Type-safe helper for `dinou.config.mjs` |
 | `PageProps<T, P>`, `LayoutProps<T, P>`, `SlotProps<T>`, `ErrorProps<T>`, `NotFoundProps<T, P>`, `PageFunctions<T, P>`, `LayoutFunctions<T, P>`, `RouteSegmentConfig`, `PPRConfig`, `StaticPathItem`, `StaticPathsResult`, `RouteParams<T>`, `LayoutParams<T>`, `LayoutSlots<T>`, `SlotParams<T>`, `ErrorParams<T>`, `DinouRoute`, `DinouLinkTarget`, `DinouFromRoute`, `DinouRoutePattern`, `DinouLayoutPattern`, `DinouSlotPattern`, `DinouErrorPattern`, `DinouNotFoundPattern`, `DinouSegmentPattern`, `DinouRouter`, `CleanRoutePath`, `ExtractRouteParams`, `ExtractSegmentParam`, `LinkProps`, `ScopedLinkProps`, `ScopedLinkComponent`, `ScopedUseRouterHook`, `ClientRedirectProps`, `NavigationOptions`, `RequestContextStore`, `ResponseProxy`, `CookieOptions`, `Query`, `Cookies`, `Headers`, `DinouConfig`, `DinouPlugin`, `ServerHookContext`, `NodeMiddleware` | TypeScript Types | Complete compile-time routing, segment prop, slot, relative navigation, context, and plugin types |
 
-### Contextual Virtual Module `"./dinou"` (Inside `src/` Route & `@slot` Folders, or `"../dinou"` from Nested `_components/`)
+### Contextual Virtual Module `"./dinou"` (Inside `src/` Route & `@slot` Folders, or `"../dinou"` from Nested `components/`)
 | Export | Kind | Description |
 | :--- | :--- | :--- |
 | `ROUTE` | Constant (`string`) | Exact URL route pattern of that folder (e.g. `"/blog/[slug]"`) |
