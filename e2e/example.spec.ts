@@ -9616,23 +9616,43 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(hasLeakedParkedCss).toBe(false);
     });
 
-    test("2. Escaped routes return 404 under both `/_t-escaped` and `/t-escaped` URLs (HTML & RSC endpoints)", async ({
+    test("2. Escaped routes return 404 under both `/_t-escaped` and `/t-escaped` URLs (HTML & RSC page) and never leak escaped layouts", async ({
       request,
     }) => {
-      const candidatePaths = [
+      const notFoundPaths = [
         "/_t-escaped",
         "/t-escaped",
         "/_t-escaped/acme/contact",
         "/t-escaped/acme/contact",
         "/____rsc_page____/_t-escaped",
         "/____rsc_page____/t-escaped",
-        "/____rsc_layout____/_t-escaped",
-        "/____rsc_layout____/t-escaped",
+        "/____rsc_page____/_t-escaped/acme/contact",
+        "/____rsc_page____/t-escaped/acme/contact",
       ];
 
-      for (const urlPath of candidatePaths) {
+      for (const urlPath of notFoundPaths) {
         const res = await request.get(urlPath);
         expect(res.status(), `Expected 404 for escaped route ${urlPath}`).toBe(404);
+        const body = await res.text();
+        expect(body).not.toContain("Parked Route");
+        expect(body).not.toContain("parked-layout");
+      }
+
+      // `/____rsc_layout____/*` resolves the active ancestor `src/layout.tsx` (200) for SPA 404 pages,
+      // and must NEVER include the escaped `src/_t-escaped/layout.tsx` or `@sidebar` slot.
+      const layoutRscPaths = [
+        "/____rsc_layout____/_t-escaped",
+        "/____rsc_layout____/t-escaped",
+        "/____rsc_layout____/_t-escaped/acme/contact",
+        "/____rsc_layout____/t-escaped/acme/contact",
+      ];
+
+      for (const layoutUrl of layoutRscPaths) {
+        const res = await request.get(layoutUrl);
+        expect(res.status(), `Expected 200 (root layout fallback) for ${layoutUrl}`).toBe(200);
+        const body = await res.text();
+        expect(body).not.toContain("parked-layout");
+        expect(body).not.toContain("Sidebar for");
       }
     });
 
