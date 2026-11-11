@@ -76,31 +76,85 @@ runs:
           ~\AppData\Local\ms-playwright
         key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
 
-    - name: Configure APT mirror & timeouts (Linux)
+    - name: Detect Runner Image Version (Linux)
       if: runner.os == 'Linux'
       shell: bash
       run: |
-        # En Ubuntu 24.04 (Noble), los runners de GitHub usan mirror+file:/etc/apt/apt-mirrors.txt.
-        # Configuramos una lista de mirrors CDN de alta velocidad en EE. UU. con failover automático
-        # (evitando enviar los 19 jobs en paralelo únicamente a archive.ubuntu.com en UK, que aplica throttling a ~25 kB/s).
-        if [ -f /etc/apt/apt-mirrors.txt ]; then
-          printf '%s\n' \
-            "http://azure.archive.ubuntu.com/ubuntu/" \
-            "https://mirrors.edge.kernel.org/ubuntu/" \
-            "http://mirrors.ocf.berkeley.edu/ubuntu/" \
-            "http://us.archive.ubuntu.com/ubuntu/" \
-            "http://archive.ubuntu.com/ubuntu/" \
-            | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
+        IMG_VER="$(printf '%s' "${ImageVersion:-$(lsb_release -rs 2>/dev/null || echo ubuntu24)}" | tr -cd '[:alnum:]._-')"
+        echo "RUNNER_IMAGE_VERSION=${IMG_VER:-ubuntu24}" >> "$GITHUB_ENV"
+
+    - name: Cache Playwright OS Dependencies (Linux)
+      id: playwright-apt-cache
+      if: runner.os == 'Linux'
+      uses: actions/cache@v6
+      with:
+        path: ~/.cache/apt-playwright-debs
+        key: ${{ runner.os }}-playwright-debs-v1-${{ env.RUNNER_IMAGE_VERSION }}-${{ hashFiles('**/package-lock.json') }}
+        restore-keys: |
+          ${{ runner.os }}-playwright-debs-v1-${{ env.RUNNER_IMAGE_VERSION }}-
+          ${{ runner.os }}-playwright-debs-v1-
+
+    - name: Install Playwright OS Dependencies (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        # Evitar reconstrucción innecesaria de índices man-db (~10s) y escaneos de needrestart en CI
+        sudo rm -f /var/lib/man-db/auto-update
+        export DEBIAN_FRONTEND=noninteractive
+        export NEEDRESTART_MODE=a
+        export NEEDRESTART_SUSPEND=1
+
+        # 1) Precargar en /var/cache/apt/archives/ cualquier .deb restaurado desde caché (exacta o parcial)
+        sudo mkdir -p /var/cache/apt/archives/partial
+        shopt -s nullglob
+        CACHED_DEBS=(~/.cache/apt-playwright-debs/*.deb)
+        if [ "${#CACHED_DEBS[@]}" -gt 0 ]; then
+          echo "Precargando ${#CACHED_DEBS[@]} paquetes .deb desde caché en /var/cache/apt/archives/..."
+          sudo cp -n "${CACHED_DEBS[@]}" /var/cache/apt/archives/ || true
         fi
-        # Desactivar noble-backports (Playwright no lo necesita y suele colgarse en mirrors secundarios)
-        sudo sed -i 's/noble-backports//g' /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null || true
+
+        # 2) Fast-path 100% offline: si hay cache-hit exacto (misma imagen de runner + mismo package-lock.json),
+        #    instalar directamente con dpkg sin tocar la red ni mirrors externos (~8s).
+        if [ "${{ steps.playwright-apt-cache.outputs.cache-hit }}" = "true" ] && [ "${#CACHED_DEBS[@]}" -gt 0 ]; then
+          echo "Cache hit exacto (${#CACHED_DEBS[@]} paquetes .deb). Instalando dependencias offline vía dpkg..."
+          if (sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1 \
+                dpkg --force-confdef --force-confold -i "${CACHED_DEBS[@]}" \
+              || (sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1 dpkg --configure -a \
+                  && sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1 \
+                       dpkg --force-confdef --force-confold -i "${CACHED_DEBS[@]}")) \
+             && sudo DEBIAN_FRONTEND=noninteractive apt-get check; then
+            echo "Dependencias de Playwright instaladas offline desde caché correctamente."
+            exit 0
+          fi
+          echo "::warning::La instalación offline vía dpkg dejó dependencias pendientes; continuando con APT..."
+          sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1 dpkg --configure -a || true
+        fi
+
+        # 3) Configurar APT para máxima velocidad/fiabilidad y conservar los .deb descargados para la caché:
+        #    - Eliminar docker-clean para que APT no borre /var/cache/apt/archives/*.deb tras instalar
+        #    - Deshabilitar repositorios de terceros (packages.microsoft.com, github-cli, etc.) innecesarios aquí
+        #    - Desactivar descargas de traducciones (Translation-en) que provocan bloqueos 'delayed item'
+        sudo rm -f /etc/apt/apt.conf.d/docker-clean
+        sudo mkdir -p /etc/apt/sources.list.d.disabled
+        for src in /etc/apt/sources.list.d/*; do
+          [ -e "$src" ] || continue
+          if [ "$(basename "$src")" != "ubuntu.sources" ]; then
+            sudo mv -f "$src" /etc/apt/sources.list.d.disabled/ || true
+          fi
+        done
+        sudo truncate -s 0 /etc/apt/sources.list 2>/dev/null || true
+
         sudo tee /etc/apt/apt.conf.d/99custom >/dev/null << 'EOF'
         Acquire::Retries "3";
-        Acquire::http::Timeout "10";
-        Acquire::https::Timeout "10";
+        Acquire::http::Timeout "15";
+        Acquire::https::Timeout "15";
         Acquire::http::Pipeline-Depth "0";
         Acquire::ForceIPv4 "true";
+        Acquire::Languages "none";
         APT::Get::Assume-Yes "true";
+        APT::Install-Recommends "false";
+        APT::Keep-Downloaded-Packages "true";
+        Binary::apt::APT::Keep-Downloaded-Packages "true";
         DPkg::Lock::Timeout "60";
         Dpkg::Options {
           "--force-confdef";
@@ -108,28 +162,110 @@ runs:
         };
         EOF
 
-    - name: Install Playwright OS Dependencies (Linux)
-      if: runner.os == 'Linux'
-      shell: bash
-      run: |
-        for i in 1 2 3; do
-          echo "Intento $i: Instalando dependencias de Playwright para Linux..."
-          if timeout 420 npx playwright install-deps; then
-            echo "Dependencias de Playwright instaladas correctamente."
-            exit 0
+        # 4) Seleccionar mirrors CDN saludables mediante sonda real y escribir ubuntu.sources con URI directa,
+        #    evitando mirror+file:/etc/apt/apt-mirrors.txt (que balancea los 181 paquetes entre todos los mirrors
+        #    a la vez, falla al mezclar HTTP/HTTPS y sufría throttling severo en mirrors secundarios).
+        ARCH="$(dpkg --print-architecture)"
+        CODENAME="$(. /etc/os-release && echo "${VERSION_CODENAME:-noble}")"
+        HEALTHY_MIRRORS=()
+
+        if [ "$ARCH" = "amd64" ] || [ "$ARCH" = "i386" ]; then
+          CANDIDATE_MIRRORS=(
+            "https://mirrors.edge.kernel.org/ubuntu/"
+            "http://azure.archive.ubuntu.com/ubuntu/"
+            "https://mirrors.kernel.org/ubuntu/"
+            "http://archive.ubuntu.com/ubuntu/"
+          )
+          for m in "${CANDIDATE_MIRRORS[@]}"; do
+            SPEED1="$(LC_ALL=C curl -fsSL4 --connect-timeout 3 --max-time 6 -o /dev/null -w '%{speed_download}' "${m}dists/${CODENAME}-updates/InRelease" 2>/dev/null || echo 0)"
+            SPEED1_INT="${SPEED1%%.*}"
+            if [ "${SPEED1_INT:-0}" -ge 30000 ] && LC_ALL=C curl -fsSL4 --connect-timeout 3 --max-time 6 -o /dev/null "${m}dists/${CODENAME}-security/InRelease" 2>/dev/null; then
+              echo "Mirror saludable detectado: $m (~$((SPEED1_INT / 1024)) KB/s)"
+              HEALTHY_MIRRORS+=("$m")
+            else
+              echo "::warning::Descartando mirror lento o incompleto en sonda previa: $m"
+            fi
+          done
+          if [ "${#HEALTHY_MIRRORS[@]}" -eq 0 ]; then
+            HEALTHY_MIRRORS=(
+              "https://mirrors.edge.kernel.org/ubuntu/"
+              "http://azure.archive.ubuntu.com/ubuntu/"
+              "http://archive.ubuntu.com/ubuntu/"
+            )
           fi
-          echo "::warning::install-deps intento $i falló o se colgó; limpiando procesos apt/dpkg huérfanos y reintentando..."
-          # npx playwright install-deps lanza 'sudo -- sh -c "apt-get update && apt-get install ..."'.
-          # Cuando 'timeout' (usuario runner) mata a npx, NO tiene permisos para matar al hijo 'apt-get' (usuario root),
-          # dejándolo vivo en segundo plano y reteniendo /var/lib/dpkg/lock-frontend en los intentos 2 y 3.
+        else
+          sudo sed -i "s/${CODENAME}-backports//g" /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
+        fi
+
+        write_ubuntu_sources() {
+          local mirror_uri="$1"
+          [ -n "$mirror_uri" ] || return 0
+          echo "Configurando APT con mirror directo: $mirror_uri"
+          printf '%s\n' \
+            "Types: deb" \
+            "URIs: ${mirror_uri}" \
+            "Suites: ${CODENAME} ${CODENAME}-updates ${CODENAME}-security" \
+            "Components: main universe restricted multiverse" \
+            "Architectures: ${ARCH}" \
+            "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg" \
+            | sudo tee /etc/apt/sources.list.d/ubuntu.sources >/dev/null
+        }
+
+        NODE_BIN="$(command -v node)"
+        INSTALLED_OK=0
+
+        for i in 1 2 3; do
+          if [ "${#HEALTHY_MIRRORS[@]}" -gt 0 ]; then
+            MIRROR_IDX=$(( (i - 1) % ${#HEALTHY_MIRRORS[@]} ))
+            write_ubuntu_sources "${HEALTHY_MIRRORS[$MIRROR_IDX]}"
+          fi
+          sudo rm -rf /var/lib/apt/lists/*
+
+          echo "Intento $i: Instalando dependencias de Playwright para Linux..."
+          if sudo env "PATH=$PATH" \
+               DEBIAN_FRONTEND=noninteractive \
+               NEEDRESTART_MODE=a \
+               NEEDRESTART_SUSPEND=1 \
+               timeout --kill-after=15 360 "$NODE_BIN" ./node_modules/.bin/playwright install-deps; then
+            echo "Dependencias de Playwright instaladas correctamente."
+            INSTALLED_OK=1
+            break
+          fi
+
+          echo "::warning::install-deps intento $i falló o agotó el tiempo; reparando estado apt/dpkg y rotando mirror..."
           sudo killall -9 apt apt-get dpkg 2>/dev/null || true
           sleep 2
           sudo rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend
-          sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
-          sleep 10
+          sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1 dpkg --configure -a || true
+          sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1 apt-get -f install -y || true
+          sleep 5
         done
-        echo "Error: install-deps falló tras 3 intentos."
-        exit 1
+
+        if [ "$INSTALLED_OK" -ne 1 ]; then
+          echo "Error: install-deps falló tras 3 intentos."
+          exit 1
+        fi
+
+        # 5) Guardar en ~/.cache/apt-playwright-debs únicamente los .deb cuya versión exacta quedó instalada,
+        #    evitando acumular versiones duplicadas u obsoletas entre ejecuciones.
+        rm -rf ~/.cache/apt-playwright-debs
+        mkdir -p ~/.cache/apt-playwright-debs
+        SAVED_COUNT=0
+        for deb in /var/cache/apt/archives/*.deb; do
+          [ -f "$deb" ] || continue
+          IFS='|' read -r pkg ver arch <<< "$(dpkg-deb -W --showformat='${Package}|${Version}|${Architecture}' "$deb")"
+          if [ "$arch" = "all" ]; then
+            inst_state="$(dpkg-query -W -f='${Status}|${Version}' "$pkg" 2>/dev/null || true)"
+          else
+            inst_state="$(dpkg-query -W -f='${Status}|${Version}' "${pkg}:${arch}" 2>/dev/null || true)"
+          fi
+          if [ "$inst_state" = "install ok installed|${ver}" ]; then
+            cp -f "$deb" ~/.cache/apt-playwright-debs/
+            SAVED_COUNT=$((SAVED_COUNT + 1))
+          fi
+        done
+        sudo chown -R "$(id -u):$(id -g)" ~/.cache/apt-playwright-debs
+        echo "Guardados ${SAVED_COUNT} paquetes .deb en ~/.cache/apt-playwright-debs para caché de GitHub Actions."
 
     - name: Install Playwright Browsers
       if: steps.playwright-cache.outputs.cache-hit != 'true'
