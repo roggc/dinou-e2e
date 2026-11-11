@@ -1132,7 +1132,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
             clientPromise: (async () => {
               const apiCtx = await playwrightRequest.newContext();
               try {
-                const res = await safeApiGet(apiCtx, `http://localhost:3000/t-ssg/${slug}`);
+                const res = await safeApiGet(apiCtx, `http://localhost:${process.env.PORT || 3000}/t-ssg/${slug}`);
                 const status = res.status();
                 const body = await res.text();
                 return { status, body, slug };
@@ -1188,7 +1188,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const htmlTasks = Array.from({ length: HTML_USERS }).map(async () => {
         const apiCtx = await playwrightRequest.newContext();
         try {
-          const res = await safeApiGet(apiCtx, `http://localhost:3000${targetUrl}?mix_html=${Date.now()}_${Math.random()}`);
+          const res = await safeApiGet(apiCtx, `http://localhost:${process.env.PORT || 3000}${targetUrl}?mix_html=${Date.now()}_${Math.random()}`);
           return { type: "html", status: res.status(), body: await res.text() };
         } finally {
           await apiCtx.dispose();
@@ -1198,7 +1198,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const rscTasks = Array.from({ length: RSC_USERS }).map(async () => {
         const apiCtx = await playwrightRequest.newContext();
         try {
-          const res = await safeApiGet(apiCtx, `http://localhost:3000/____rsc_payload_static____${targetUrl}?mix_rsc=${Date.now()}_${Math.random()}`);
+          const res = await safeApiGet(apiCtx, `http://localhost:${process.env.PORT || 3000}/____rsc_payload_static____${targetUrl}?mix_rsc=${Date.now()}_${Math.random()}`);
           return { type: "rsc", status: res.status(), body: await res.text() };
         } finally {
           await apiCtx.dispose();
@@ -1260,7 +1260,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         const burstResults = await Promise.all(
           burstContexts.map(async (ctx) => {
             try {
-              const res = await safeApiGet(ctx, `http://localhost:3000${targetUrl}?burst_round=${round}&t=${Date.now()}_${Math.random()}`);
+              const res = await safeApiGet(ctx, `http://localhost:${process.env.PORT || 3000}${targetUrl}?burst_round=${round}&t=${Date.now()}_${Math.random()}`);
               return res.status();
             } finally {
               await ctx.dispose();
