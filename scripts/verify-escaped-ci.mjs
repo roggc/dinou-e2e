@@ -79,7 +79,13 @@ async function main() {
   const { generateRouteModulesCode } = await import(
     resolveDinouInternal("core/route-generator.js")
   );
+  await import(resolveDinouInternal("webpack/helpers/patch-webpack-internals.js"));
+  const { default: ReactServerWebpackPlugin } = await import(
+    "react-server-dom-webpack/plugin"
+  );
   const {
+    createWebpackUnderscoreDirExclude,
+    filterEscapedClientManifest,
     esbuildContextualDinouPlugin,
     rollupContextualDinouPlugin,
     webpackContextualDinouPlugin,
@@ -488,8 +494,144 @@ async function main() {
       !wpSerialized.includes("ClientWidget"),
     "Expected getWebpackEntries to exclude `_t-escaped` client, CSS, and server function entries"
   );
+
+  // 4b. Verify ReactServerWebpackPlugin clientReferences[].exclude & manifest filter
+  //     (Regression test for production Webpack leaking `src/_t-escaped/ClientWidget.tsx`
+  //      into `.dinou/dist3/react-client-manifest.json`, including when ancestor dirs above
+  //      `src/` contain leading underscores).
+  const tmpWpRscParent = fs.mkdtempSync(path.join(os.tmpdir(), "dinou-wp-rsc-"));
+  const tmpWpRscRoot = path.join(tmpWpRscParent, "_ancestor_with_underscore");
+  try {
+    const wpExcludeRe = createWebpackUnderscoreDirExclude(tmpWpRscRoot);
+    assert(
+      wpExcludeRe instanceof RegExp,
+      "Expected createWebpackUnderscoreDirExclude to return a native RegExp"
+    );
+    assert(
+      wpExcludeRe.test(path.join(tmpWpRscRoot, "src/_t-escaped")),
+      "Expected exclude RegExp to match top-level escaped directory immediately"
+    );
+    assert(
+      wpExcludeRe.test(path.join(tmpWpRscRoot, "src/_t-escaped/ClientWidget.tsx")),
+      "Expected exclude RegExp to match file inside top-level escaped directory"
+    );
+    assert(
+      wpExcludeRe.test(path.join(tmpWpRscRoot, "src/blog/_nested")),
+      "Expected exclude RegExp to match nested escaped directory immediately"
+    );
+    assert(
+      wpExcludeRe.test(path.join(tmpWpRscRoot, "src/_draft.tsx/ClientWidget.tsx")),
+      "Expected exclude RegExp to match files inside escaped directory even if folder ends in .tsx"
+    );
+    assert(
+      !wpExcludeRe.test(path.join(tmpWpRscRoot, "src/_AllowedRootClient.tsx")),
+      "Expected exclude RegExp to allow `_`-prefixed client file in src/ root"
+    );
+    assert(
+      !wpExcludeRe.test(path.join(tmpWpRscRoot, "src/active/_AllowedClient.tsx")),
+      "Expected exclude RegExp to allow `_`-prefixed client file in active subfolder"
+    );
+    assert(
+      !wpExcludeRe.test(path.join(tmpWpRscRoot, "src/my_feature/Button.tsx")),
+      "Expected exclude RegExp to allow non-leading underscores in active folder names"
+    );
+
+    const sampleManifest = {
+      [pathToFileURL(path.join(tmpWpRscRoot, "src/_t-escaped/ClientWidget.tsx")).href]: {
+        id: "leaked",
+      },
+      [pathToFileURL(path.join(tmpWpRscRoot, "src/active/_AllowedClient.tsx")).href]: {
+        id: "allowed",
+      },
+    };
+    const filteredManifest = filterEscapedClientManifest(sampleManifest, tmpWpRscRoot);
+    assert.equal(
+      Object.keys(filteredManifest).length,
+      1,
+      "Expected filterEscapedClientManifest to strip escaped entry and keep active entry"
+    );
+    assert(
+      Object.keys(filteredManifest)[0].includes("_AllowedClient.tsx"),
+      "Expected filterEscapedClientManifest to preserve _AllowedClient.tsx"
+    );
+
+    const writeRscFixture = (rel, code) => {
+      const full = path.join(tmpWpRscRoot, rel);
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, code, "utf8");
+      return full;
+    };
+    writeRscFixture(
+      "src/entry.js",
+      'import "react-server-dom-webpack/client.browser";\nexport default 1;\n'
+    );
+    writeRscFixture(
+      "src/_t-escaped/ClientWidget.js",
+      '"use client";\nexport default function EscapedWidget() { return "escaped"; }\n'
+    );
+    writeRscFixture(
+      "src/blog/_nested/HiddenClient.js",
+      '"use client";\nexport default function HiddenClient() { return "hidden"; }\n'
+    );
+    writeRscFixture(
+      "src/active/_AllowedClient.js",
+      '"use client";\nexport default function AllowedClient() { return "allowed"; }\n'
+    );
+
+    const wpOutDir = path.join(tmpWpRscRoot, "dist3");
+    const rscWpStats = await runWebpackCompile({
+      mode: "production",
+      context: tmpWpRscRoot,
+      entry: path.join(tmpWpRscRoot, "src/entry.js"),
+      output: {
+        path: wpOutDir,
+        filename: "[name].js",
+      },
+      resolve: {
+        modules: [path.join(root, "node_modules"), "node_modules"],
+      },
+      plugins: [
+        webpackContextualDinouPlugin({ projectRoot: tmpWpRscRoot }),
+        new ReactServerWebpackPlugin({
+          isServer: false,
+          clientReferences: [
+            {
+              directory: "./src",
+              recursive: true,
+              include: /\.(js|ts|jsx|tsx)$/,
+              exclude: wpExcludeRe,
+            },
+          ],
+        }),
+      ],
+    });
+    assert(
+      !rscWpStats.hasErrors(),
+      "Expected ReactServerWebpackPlugin compilation to succeed: " +
+        rscWpStats
+          .toJson({ all: false, errors: true })
+          .errors.map((e) => e.message)
+          .join("\n")
+    );
+    const emittedManifestRaw = fs.readFileSync(
+      path.join(wpOutDir, "react-client-manifest.json"),
+      "utf8"
+    );
+    assert(
+      !emittedManifestRaw.includes("_t-escaped") &&
+        !emittedManifestRaw.includes("_nested"),
+      `Expected ReactServerWebpackPlugin react-client-manifest.json to exclude _t-escaped and _nested, got:\n${emittedManifestRaw}`
+    );
+    assert(
+      emittedManifestRaw.includes("_AllowedClient.js"),
+      `Expected ReactServerWebpackPlugin react-client-manifest.json to include active _AllowedClient.js, got:\n${emittedManifestRaw}`
+    );
+  } finally {
+    fs.rmSync(tmpWpRscParent, { recursive: true, force: true });
+  }
+
   console.log(
-    "✅ [4/5] Piece B1: Core scanners (routeModules, VFS, esbuild entries, webpack entries) PASSED"
+    "✅ [4/5] Piece B1: Core scanners (routeModules, VFS, esbuild, webpack & ReactServerWebpackPlugin) PASSED"
   );
 
   // =========================================================================
