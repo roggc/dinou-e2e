@@ -103,7 +103,7 @@ async function pollUntilReady(request: APIRequestContext, maxRetries = 800) {
     try {
       // Hacemos petición al endpoint de estado
       const response = await request.get(
-        "http://localhost:3000/__DINOU_STATUS_PLAYWRIGHT__",
+        `http://localhost:${process.env.PORT || 3000}/__DINOU_STATUS_PLAYWRIGHT__`,
       );
       const json = await response.json();
 
@@ -8948,6 +8948,172 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         { encoding: "utf8" }
       );
       expect(output).toContain("RESULT: All 3 tests PASSED");
+    });
+  });
+
+  test.describe("Contextual './dinou' Module & Type-Safe Horizontal Routing (/t-type-safe-contextual)", () => {
+    test("1. Resolves './dinou' and '../dinou' across RSC, SSR, Client Components, @slots, and route groups", async ({
+      page,
+    }) => {
+      const pageErrors: string[] = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      // 1. Cold SSR/SSG load on Hub (/t-type-safe-contextual)
+      await page.goto("/t-type-safe-contextual");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+      await expect(page.getByTestId("hub-route")).toHaveText("/t-type-safe-contextual");
+
+      // 2. Dynamic relative <Link to="[slug]/contact" params={{ slug: "acme" }}>
+      await page.getByTestId("hub-to-acme-contact").click();
+      await expect(page).toHaveURL(/\/t-type-safe-contextual\/acme\/contact$/);
+      await expect(page.getByTestId("contact-heading")).toHaveText("Contact: acme");
+      await expect(page.getByTestId("contact-greeting")).toHaveText("Hello acme");
+      await expect(page.getByTestId("contact-route")).toHaveText(
+        "/t-type-safe-contextual/[slug]/contact"
+      );
+
+      // 3. Verify intermediate layout (layout_functions getProps + auto-inferred @sidebar) & parallel @sidebar slot
+      await expect(page.getByTestId("ctx-slug-layout")).toHaveAttribute("data-layout-slug", "acme");
+      await expect(page.getByTestId("ctx-slug-layout")).toHaveAttribute("data-layout-plan", "pro");
+      await expect(page.getByTestId("ctx-slug-layout")).toHaveAttribute(
+        "data-layout-route",
+        "/t-type-safe-contextual/[slug]"
+      );
+      await expect(page.getByTestId("sidebar-slug")).toHaveText("acme");
+      await expect(page.getByTestId("sidebar-route")).toHaveText(
+        "/t-type-safe-contextual/[slug]"
+      );
+
+      // 4. Verify colocated `_components/colocated-card.tsx` resolved `../dinou` in client bundle
+      await expect(page.getByTestId("ctx-colocated-card")).toHaveAttribute(
+        "data-colocated-route",
+        "/t-type-safe-contextual/[slug]/contact"
+      );
+
+      // 5. Server Component <Link to="sub"> (pre-bound from="./dinou", no explicit `from` prop)
+      await page.getByTestId("rsc-link-sub-bare").click();
+      await expect(page).toHaveURL(/\/t-type-safe-contextual\/acme\/contact\/sub$/);
+      await expect(page.getByTestId("sub-heading")).toHaveText("Subpage: acme");
+      await expect(page.getByTestId("sub-route")).toHaveText(
+        "/t-type-safe-contextual/[slug]/contact/sub"
+      );
+
+      // 6. CRITICAL: Standalone ?query and #hash links inside @sidebar (scoped to /t-type-safe-contextual/[slug])
+      //    must preserve the active deeper pathname (/t-type-safe-contextual/acme/contact/sub)!
+      await page.getByTestId("sidebar-link-query").click();
+      await expect(page).toHaveURL(
+        /\/t-type-safe-contextual\/acme\/contact\/sub\?panel=open$/
+      );
+      await expect(page.getByTestId("sub-panel-param")).toHaveText("open");
+
+      await page.getByTestId("sidebar-link-hash").click();
+      await expect(page).toHaveURL(
+        /\/t-type-safe-contextual\/acme\/contact\/sub#details-anchor$/
+      );
+
+      // 7. CRITICAL: Relative link <Link to="contact"> inside @sidebar while browser is deep on .../contact/sub
+      //    must slice base pathname back to /t-type-safe-contextual/acme -> /t-type-safe-contextual/acme/contact!
+      await page.getByTestId("sidebar-link-contact").click();
+      await expect(page).toHaveURL(/\/t-type-safe-contextual\/acme\/contact$/);
+      await expect(page.getByTestId("contact-heading")).toHaveText("Contact: acme");
+
+      // 8. Client Component `useRouter().push("sub")` imported from "./dinou" (no `{ from }` option!)
+      await page.getByTestId("client-btn-push-sub").click();
+      await expect(page).toHaveURL(/\/t-type-safe-contextual\/acme\/contact\/sub$/);
+
+      // 9. Navigate back one level via <Link to=".."> on subpage -> /t-type-safe-contextual/acme/contact
+      await page.getByTestId("sub-back-contact").click();
+      await expect(page).toHaveURL(/\/t-type-safe-contextual\/acme\/contact$/);
+
+      // 10. Colocated `_components/colocated-card.tsx` <Link to="./sub"> (from "../dinou")
+      await page.getByTestId("colocated-link-sub").click();
+      await expect(page).toHaveURL(/\/t-type-safe-contextual\/acme\/contact\/sub$/);
+      await page.getByTestId("sub-back-contact").click();
+      await expect(page).toHaveURL(/\/t-type-safe-contextual\/acme\/contact$/);
+
+      // 11. Client `router.push("/t-type-safe-contextual/[slug]/contact/sub", { params: { slug: "beta" } })`
+      await page.getByTestId("client-btn-push-beta-sub").click();
+      await expect(page).toHaveURL(/\/t-type-safe-contextual\/beta\/contact\/sub$/);
+      await expect(page.getByTestId("sub-heading")).toHaveText("Subpage: beta");
+      await expect(page.getByTestId("sidebar-slug")).toHaveText("beta");
+      await expect(page.getByTestId("ctx-slug-layout")).toHaveAttribute("data-layout-plan", "free");
+
+      // 12. Navigate back to contact, then test explicit `from="/t-type-safe-contextual"` override -> unwrapped (marketing)/pricing
+      await page.getByTestId("sub-back-contact").click();
+      await expect(page).toHaveURL(/\/t-type-safe-contextual\/beta\/contact$/);
+      await page.getByTestId("rsc-link-override-pricing").click();
+      await expect(page).toHaveURL(/\/t-type-safe-contextual\/pricing$/);
+      await expect(page.getByTestId("pricing-route")).toHaveText(
+        "/t-type-safe-contextual/pricing"
+      );
+
+      // 13. From (marketing)/pricing, <Link to=".."> returns to /t-type-safe-contextual
+      await page.getByTestId("pricing-back-hub").click();
+      await expect(page).toHaveURL(/\/t-type-safe-contextual$/);
+
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("2. Cold SSR / SSG direct entry on deep dynamic route hydrates cleanly", async ({
+      page,
+    }) => {
+      const pageErrors: string[] = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      await page.goto("/t-type-safe-contextual/acme/contact/sub");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+      await expect(page.getByTestId("sub-heading")).toHaveText("Subpage: acme");
+      await expect(page.getByTestId("sidebar-slug")).toHaveText("acme");
+      await expect(page.getByTestId("ctx-slug-layout")).toHaveAttribute("data-layout-plan", "pro");
+
+      // Verify client hydration works immediately after direct load
+      await page.getByTestId("sidebar-link-contact").click();
+      await expect(page).toHaveURL(/\/t-type-safe-contextual\/acme\/contact$/);
+      await page.getByTestId("client-btn-push-hub").click();
+      await expect(page).toHaveURL(/\/t-type-safe-contextual$/);
+
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("3. Intermediate NotFoundProps (without sibling page.tsx) & parallel @slot ErrorProps receive cumulative params", async ({
+      page,
+    }) => {
+      // 3a. Intermediate not_found.tsx at /t-type-safe-contextual/[slug]/not_found.tsx
+      const nfRes = await page.goto("/t-type-safe-contextual/acme/unknown-subroute");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+      expect(nfRes?.status()).toBe(404);
+      await expect(page.getByTestId("ctx-nf-slug")).toHaveText("acme");
+      await expect(page.getByTestId("ctx-slug-not-found")).toHaveAttribute(
+        "data-nf-route",
+        "/t-type-safe-contextual/[slug]"
+      );
+      await page.getByTestId("ctx-nf-back-hub").click();
+      await expect(page).toHaveURL(/\/t-type-safe-contextual$/);
+
+      // 3b. Parallel @sidebar/error.tsx receives params.slug while sibling page renders normally
+      await page.goto("/t-type-safe-contextual/crash-slot/contact");
+      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+      await expect(page.getByTestId("contact-heading")).toHaveText("Contact: crash-slot");
+      await expect(page.getByTestId("ctx-sidebar-error")).toHaveAttribute(
+        "data-error-route",
+        "/t-type-safe-contextual/[slug]"
+      );
+      await expect(page.getByTestId("ctx-sidebar-error-slug")).toHaveText("crash-slot");
+      await expect(page.getByTestId("ctx-sidebar-error-msg")).toContainText(
+        "Simulated sidebar slot failure"
+      );
+    });
+
+    test("4. Compile-Time TypeScript (tsc --noEmit), @ts-expect-error, TS2307 Non-Route Boundary & Pruning Suite (tests/type-safe-contextual.test.mjs)", async () => {
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        [path.resolve("tests/type-safe-contextual.test.mjs")],
+        { encoding: "utf8", timeout: 60000 }
+      );
+      expect(output).toContain(
+        "RESULT: All 4 contextual './dinou' typecheck & topology tests PASSED"
+      );
     });
   });
 

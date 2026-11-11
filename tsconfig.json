@@ -1,11 +1,17 @@
 {
   "compilerOptions": {
+    "target": "ES2022",
+    "rootDirs": [
+      "src",
+      ".dinou/routes"
+    ],
     "paths": {
       "@/*": [
         "./src/*"
       ]
     },
     "allowJs": true,
+    "skipLibCheck": true,
     "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,
@@ -14,6 +20,7 @@
   },
   "include": [
     "src",
-    "dinou-env.d.ts"
+    "dinou-env.d.ts",
+    ".dinou/types/**/*.d.ts"
   ]
 }
