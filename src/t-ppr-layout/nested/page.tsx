@@ -17,7 +17,7 @@ export default function PprNestedPage() {
   return (
     <div>
       <h2 id="ppr-nested-page-title">PPR Deep Nested Child Page</h2>
-      <p id="ppr-nested-page-desc">Inherits PPR across two levels of layouts.</p>
+      <p id="ppr-nested-page-desc">Enables PPR per-segment via page_functions.ts across two levels of layouts.</p>
       <Suspense fallback={<div id="ppr-nested-fallback">Loading nested dynamic user...</div>}>
         <DynamicNestedChild />
       </Suspense>

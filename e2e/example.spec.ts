@@ -5495,7 +5495,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("#ppr-user-name")).toHaveText("David");
     });
 
-    test("Child route inherits PPR from parent layout.tsx without explicit declaration", async ({ page }) => {
+    test("Child route with explicit page_functions.ts ppr = true streams holes inside PPR layout (/t-ppr-layout)", async ({ page }) => {
       await page.goto("/t-ppr-layout?user=InheritedChild");
 
       // 1. Static shell elements from layout and page
@@ -5516,7 +5516,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("#ppr-optout-desc")).toHaveText("This page opted out of PPR.");
     });
 
-    test("Deep nested child route inherits PPR across 2 levels of layouts", async ({ page }) => {
+    test("Deep nested child route with explicit page_functions.ts ppr = true streams holes across 2 levels of layouts (/t-ppr-layout/nested)", async ({ page }) => {
       await page.goto("/t-ppr-layout/nested?user=DeepNestedChild");
 
       // 1. Both parent and nested layout headers are rendered
@@ -5529,7 +5529,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("#ppr-nested-name")).toHaveText("DeepNestedChild");
     });
 
-    test("Nested layout with export function ppr() { return false; } opts out its entire subtree", async ({ page }) => {
+    test("Nested layout with export function ppr() { return false; } and unconfigured child page render non-PPR under PPR outer layout (/t-ppr-layout/nested-optout)", async ({ page }) => {
       await page.goto("/t-ppr-layout/nested-optout");
 
       await expect(page.locator("#ppr-layout-header")).toHaveText("PPR Inherited Layout Header");
@@ -5550,7 +5550,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
   });
 
-  test.describe("Partial Prerendering (PPR): dinou.config.js & Multi-Level Cascading Opt-Out", () => {
+  test.describe("Partial Prerendering (PPR): dinou.config.js & Multi-Level Per-Segment Opt-In / Opt-Out", () => {
     test("Subpage inside opted-out nested layout re-enables PPR via page_functions.ts ppr = true", async ({ page }) => {
       if (isProd) {
         const metaPath = path.resolve(".dinou/dist2/t-ppr-levels/nested-optout/page-optin/metadata.json");
@@ -5569,7 +5569,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("#ppr-nested-optin-page-title")).toHaveText("PPR Opt-In Subpage");
     });
 
-    test("Nested layout opt-out (layout_functions.ts ppr = false) disables PPR for subpages without explicit opt-in", async ({ page }) => {
+    test("Nested layout opt-out (layout_functions.ts ppr = false) and unconfigured subpage stay non-PPR (/t-ppr-levels/nested-optout)", async ({ page }) => {
       if (isProd) {
         const metaPath = path.resolve(".dinou/dist2/t-ppr-levels/nested-optout/metadata.json");
         const shellPath = path.resolve(".dinou/dist2/t-ppr-levels/nested-optout/shell.html");
@@ -9293,6 +9293,193 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("body")).toContainText("slug2");
     });
   });
+
+  test.describe.serial(
+    "Dinou Core: Per-Segment Mixed PPR & 3D Synergy Verification (/t-ppr-mixed-segments)",
+    () => {
+      test("1. Build Artifacts & Wire Verification across Mixed Per-Segment PPR Topologies (F->F, F->T->F, F->T->T, F->T->F->T, F->T->F->F)", async ({
+        page,
+      }) => {
+        if (isProd && !isCloudflare && !isDeno) {
+          const checkMeta = (
+            relDir: string,
+            expected: { ppr: boolean; pagePpr: boolean; holes: string[]; hasShell: boolean }
+          ) => {
+            const metaPath = path.resolve(".dinou/dist2", relDir, "metadata.json");
+            const shellPath = path.resolve(".dinou/dist2", relDir, "shell.html");
+            if (fs.existsSync(metaPath)) {
+              const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+              expect(meta.ppr, `${relDir} meta.ppr`).toBe(expected.ppr);
+              expect(meta.pagePpr, `${relDir} meta.pagePpr`).toBe(expected.pagePpr);
+              expect(meta.holes ?? [], `${relDir} meta.holes`).toEqual(expected.holes);
+              expect(fs.existsSync(shellPath), `${relDir} shell.html`).toBe(expected.hasShell);
+            }
+          };
+
+          checkMeta("t-ppr-mixed-segments", {
+            ppr: false,
+            pagePpr: false,
+            holes: [],
+            hasShell: false,
+          });
+          checkMeta("t-ppr-mixed-segments/l2-optin", {
+            ppr: true,
+            pagePpr: false,
+            holes: ["ppr-hole-2", "ppr-hole-3"],
+            hasShell: true,
+          });
+          checkMeta("t-ppr-mixed-segments/l2-optin/page-ppr", {
+            ppr: true,
+            pagePpr: true,
+            holes: ["ppr-hole-2", "ppr-hole-3", "ppr-hole-4"],
+            hasShell: true,
+          });
+          checkMeta("t-ppr-mixed-segments/l2-optin/l3-optout", {
+            ppr: true,
+            pagePpr: true,
+            holes: ["ppr-hole-2", "ppr-hole-3", "ppr-hole-4"],
+            hasShell: true,
+          });
+          checkMeta("t-ppr-mixed-segments/l2-optin/l3-optout/static-leaf", {
+            ppr: true,
+            pagePpr: false,
+            holes: ["ppr-hole-2", "ppr-hole-3"],
+            hasShell: true,
+          });
+        }
+
+        // Direct SSR & hydration check on F->T->F (Outer Layout ppr=false -> Nested Layout ppr=true + @badge -> Page ppr=false)
+        await page.goto("/t-ppr-mixed-segments/l2-optin?l2mode=direct-l2&bmode=direct-badge");
+        await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+        await expect(page.locator("#mppr-l1-static-suspense-resolved")).toBeVisible();
+        await expect(page.locator("#mppr-l2-nodynamic-resolved")).toBeVisible();
+        await expect(page.locator("#mppr-l2-hole-query")).toHaveText("direct-l2");
+        await expect(page.locator("#mppr-l2-badge-hole-query")).toHaveText("direct-badge");
+        await expect(page.locator("#mppr-ftf-page-suspense-resolved")).toBeVisible();
+      });
+
+      test("2. Full 7-Scenario Per-Segment Mixed PPR + HS + <DinouCacheSlot> Stress Suite & Zero-Mismatch F5 Reload", async ({
+        page,
+      }) => {
+        await page.goto("/t-ppr-mixed-segments/l2-optin/l3-optout?ftftmode=initial");
+        await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+        await expect(page.locator("#mppr-ftft-page-hole-resolved")).toBeVisible({ timeout: 15000 });
+        await expect(page.locator("#mppr-l1-mount-id")).not.toHaveText("ssr", { timeout: 15000 });
+
+        await page.click("#mppr-run-all-btn");
+        await page.waitForTimeout(300);
+        if ((await page.locator("#mppr-suite-summary").textContent())?.trim() === "READY") {
+          await page.click("#mppr-run-all-btn");
+        }
+
+        await expect
+          .poll(
+            async () => (await page.locator("#mppr-suite-summary").textContent())?.trim() ?? "",
+            { timeout: 90000 }
+          )
+          .toMatch(/^DONE:/);
+
+        for (let i = 1; i <= 7; i++) {
+          const status = (await page.locator(`#mppr-step-status-${i}`).textContent())?.trim();
+          const detail =
+            (await page
+              .locator(`#mppr-step-detail-${i}`)
+              .textContent()
+              .catch(() => "")) ?? "";
+          expect(status, `Step #${i} failed: ${detail}`).toBe("PASSED");
+        }
+        await expect(page.locator("#mppr-suite-summary")).toHaveText("DONE: 7/7 PASSED, 0 FAILED");
+
+        // F5 hard reload after mixed-chain revalidations: verifies lazy shell.html recomposition & zero hydration mismatch
+        await page.reload();
+        await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+        await expect(page.locator("#mppr-l1-seq")).toHaveText(isProd ? "103" : "103");
+        await expect(page.locator("#mppr-l2-shell-seq")).toHaveText("102");
+        await expect(page.locator("#mppr-ftft-page-shell-seq")).toHaveText("104");
+      });
+
+      test("3. Inverse Mixed Bailout: Outer Layout (ppr = false reading cookies in <Suspense>) Bails Out PPR Child Page & Nested PPR Layout (/t-ppr-mixed-segments-bailout)", async ({
+        page,
+        context,
+        request,
+      }) => {
+        if (isProd && !isCloudflare && !isDeno) {
+          for (const rel of [
+            "t-ppr-mixed-segments-bailout/shell.html",
+            "t-ppr-mixed-segments-bailout/index.html",
+            "t-ppr-mixed-segments-bailout/nested-ppr/shell.html",
+            "t-ppr-mixed-segments-bailout/nested-ppr/index.html",
+          ]) {
+            expect(
+              fs.existsSync(path.resolve(".dinou/dist2", rel)),
+              `Expected ${rel} NOT to exist after outer ppr=false layout cookie bailout`
+            ).toBe(false);
+          }
+        }
+
+        // Raw HTTP verification: per-request dynamic SSR without PPR <template> tail
+        const [resAlice, resBob, resNested] = await Promise.all([
+          request.get("/t-ppr-mixed-segments-bailout?bquery=q-alice", {
+            headers: { Cookie: "mppr_bailout_user=alice-raw" },
+          }),
+          request.get("/t-ppr-mixed-segments-bailout?bquery=q-bob", {
+            headers: { Cookie: "mppr_bailout_user=bob-raw" },
+          }),
+          request.get("/t-ppr-mixed-segments-bailout/nested-ppr?nmode=n-raw", {
+            headers: { Cookie: "mppr_bailout_user=nested-raw" },
+          }),
+        ]);
+        const [htmlAlice, htmlBob, htmlNested] = await Promise.all([
+          resAlice.text(),
+          resBob.text(),
+          resNested.text(),
+        ]);
+
+        expect(htmlAlice).not.toContain('<template id="ppr-content-');
+        expect(htmlAlice).toContain("alice-raw");
+        expect(htmlAlice).toContain("q-alice");
+
+        expect(htmlBob).not.toContain('<template id="ppr-content-');
+        expect(htmlBob).toContain("bob-raw");
+        expect(htmlBob).toContain("q-bob");
+
+        expect(htmlNested).not.toContain('<template id="ppr-content-');
+        expect(htmlNested).toContain("nested-raw");
+        expect(htmlNested).toContain("n-raw");
+
+        // Full browser hydration, router.refresh({ layout: true }), soft-nav & F5 reload on nested-ppr
+        await context.addCookies([
+          { name: "mppr_bailout_user", value: "browser-alice", path: "/", domain: "localhost" },
+        ]);
+        await page.goto("/t-ppr-mixed-segments-bailout?bquery=browser-q1");
+        await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+        await expect(page.locator("#mppr-bailout-layout-user")).toHaveText("browser-alice");
+        await expect(page.locator("#mppr-bailout-page-query")).toHaveText("browser-q1");
+
+        await page.click("#mppr-bailout-inc");
+        await expect(page.locator("#mppr-bailout-clicks")).toHaveText("1");
+
+        await context.addCookies([
+          { name: "mppr_bailout_user", value: "browser-charlie", path: "/", domain: "localhost" },
+        ]);
+        await page.click("#mppr-bailout-refresh-layout");
+        await expect(page.locator("#mppr-bailout-layout-user")).toHaveText("browser-charlie", {
+          timeout: 10000,
+        });
+        await expect(page.locator("#mppr-bailout-clicks")).toHaveText("1");
+
+        // Soft-navigate into nested-ppr (ppr=true layout under bailing-out ppr=false outer layout) & F5 reload
+        await page.click("#mppr-bailout-link-nested");
+        await expect(page.locator("#mppr-bailout-nested-page")).toBeVisible({ timeout: 10000 });
+        await expect(page.locator("#mppr-bailout-layout-user")).toHaveText("browser-charlie");
+
+        await page.reload();
+        await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+        await expect(page.locator("#mppr-bailout-layout-user")).toHaveText("browser-charlie");
+        await expect(page.locator("#mppr-bailout-nested-page")).toBeVisible();
+      });
+    }
+  );
 
   test.describe("HMR & Fast Refresh automated verification", () => {
     // Run tests in serial mode so they do not collide on the same files on disk

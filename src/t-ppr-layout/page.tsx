@@ -1,7 +1,7 @@
 import React, { Suspense } from "react";
 import { getContext } from "dinou";
 
-// Note: No "export const ppr = true" here! It inherits from parent layout.tsx
+// Note: PPR is configured per-segment in page_functions.ts (export const ppr = true)
 
 async function DynamicChild() {
   const ctx = getContext();

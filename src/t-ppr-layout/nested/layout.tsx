@@ -1,6 +1,6 @@
 import React from "react";
 
-// Inherits PPR from parent layout (/t-ppr-layout/layout.tsx)
+// Unconfigured nested layout defaults to non-PPR (no inheritance from parent layout)
 export default function PprNestedLayout({ children }: { children: React.ReactNode }) {
   return (
     <div style={{ margin: 16, padding: 16, border: "2px dashed #6366f1", borderRadius: 8 }}>
