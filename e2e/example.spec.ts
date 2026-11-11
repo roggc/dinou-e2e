@@ -166,8 +166,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     isDynamic = false,
   ) {
     if (isProd && !isDynamic) {
-      // 🟢 EN PROD (SSG): Esperamos el resultado final
-      const timeout = 18000;
+      // 🟢 EN PROD (SSG): En rutas invocadas desde Client Component, "bye!" ya viene
+      // pre-renderizado en el HTML estático del build (sin User-Agent), por lo que la
+      // primera aserción pasa al instante y la segunda debe cubrir la carga de módulos,
+      // hidratación + los 8000ms de serverFunction() en entornos lentos (p. ej. WebKit + Wrangler en CI).
+      const timeout = 45000;
       await expect(page.getByText("bye!")).toBeVisible({ timeout });
       await expect(page.getByText("Helper accessed User-Agent:")).toBeVisible({ timeout });
       await expect(page.getByText("loading...")).not.toBeVisible({ timeout });
@@ -233,7 +236,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.getByText("bye!")).toBeVisible({ timeout: 45000 });
       // El helper debe haber podido leer el User-Agent o una Cookie
       // y la server function lo devuelve al cliente.
-      await expect(page.getByText("Helper accessed User-Agent:")).toBeVisible();
+      await expect(page.getByText("Helper accessed User-Agent:")).toBeVisible({ timeout: 45000 });
 
       // 4. ESTADO FINAL
       // Una vez llega el componente, el "loading..." debe desaparecer.
