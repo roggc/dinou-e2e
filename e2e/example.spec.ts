@@ -9796,4 +9796,186 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       }
     });
   });
+
+  test.describe("Server Function Returning Async Server Component Calling getContext() (/t-sf-server-comp-context)", () => {
+    test("1. Async Server Component (and nested async child) returned by Server Function accesses getContext() across await without returning undefined", async ({
+      page,
+      context,
+    }) => {
+      await context.addCookies([
+        {
+          name: "sf_sc_user",
+          value: "SINGLE_USER_OK",
+          domain: "localhost",
+          path: "/",
+        },
+      ]);
+
+      await page.goto("/t-sf-server-comp-context");
+      await expect(page.locator("#sf-sc-page")).toHaveAttribute(
+        "data-ready",
+        "true",
+        { timeout: 25000 }
+      );
+
+      await page.locator("#sf-sc-invoke-fast").click();
+
+      await expect(page.locator("#sf-sc-card")).toBeVisible({ timeout: 25000 });
+      await expect(page.locator("#sf-sc-tag")).toHaveText("single-check");
+      await expect(page.locator("#sf-sc-context-defined")).toHaveText("defined");
+      await expect(page.locator("#sf-sc-als-status")).toHaveText("als-active");
+      await expect(page.locator("#sf-sc-current-path")).toHaveText(
+        "/t-sf-server-comp-context"
+      );
+      await expect(page.locator("#sf-sc-user-before")).toHaveText(
+        "SINGLE_USER_OK"
+      );
+      await expect(page.locator("#sf-sc-user-after")).toHaveText(
+        "SINGLE_USER_OK"
+      );
+      await expect(page.locator("#sf-sc-plugin-user")).toHaveText("Dinou Guest");
+
+      const uaText = (await page.locator("#sf-sc-ua").textContent()) ?? "";
+      expect(uaText).not.toBe("MISSING_UA");
+      expect(uaText.length).toBeGreaterThan(5);
+
+      await expect(page.locator("#sf-sc-nested-box")).toBeVisible({
+        timeout: 25000,
+      });
+      await expect(page.locator("#sf-sc-nested-als")).toHaveText("als-active");
+      await expect(page.locator("#sf-sc-nested-user")).toHaveText(
+        "SINGLE_USER_OK"
+      );
+      await expect(page.locator("#sf-sc-nested-plugin-user")).toHaveText(
+        "Dinou Guest"
+      );
+
+      await expect
+        .poll(
+          async () => {
+            const cookies = await context.cookies();
+            return cookies.find((c) => c.name === "sf_sc_echo")?.value ?? null;
+          },
+          { timeout: 10000 }
+        )
+        .toBe("single-check_SINGLE_USER_OK");
+    });
+
+    test("2. Concurrent invocations isolate AsyncLocalStorage getContext() across await boundaries inside returned async Server Components", async ({
+      browser,
+      baseURL,
+    }) => {
+      const origin = baseURL || `http://localhost:${process.env.PORT || 3000}`;
+      const userA = await browser.newContext({
+        baseURL: origin,
+        extraHTTPHeaders: { "x-test-user": "Plugin-ALICE" },
+      });
+      const userB = await browser.newContext({
+        baseURL: origin,
+        extraHTTPHeaders: { "x-test-user": "Plugin-BOB" },
+      });
+
+      try {
+        await userA.addCookies([
+          {
+            name: "sf_sc_user",
+            value: "ALICE",
+            domain: "localhost",
+            path: "/",
+          },
+        ]);
+        await userB.addCookies([
+          {
+            name: "sf_sc_user",
+            value: "BOB",
+            domain: "localhost",
+            path: "/",
+          },
+        ]);
+
+        const [pageA, pageB] = await Promise.all([
+          userA.newPage(),
+          userB.newPage(),
+        ]);
+
+        await Promise.all([
+          pageA.goto("/t-sf-server-comp-context"),
+          pageB.goto("/t-sf-server-comp-context"),
+        ]);
+
+        await Promise.all([
+          expect(pageA.locator("#sf-sc-page")).toHaveAttribute(
+            "data-ready",
+            "true",
+            { timeout: 25000 }
+          ),
+          expect(pageB.locator("#sf-sc-page")).toHaveAttribute(
+            "data-ready",
+            "true",
+            { timeout: 25000 }
+          ),
+        ]);
+
+        // Trigger both overlapping Server Functions so Request B overwrites global fallback
+        // while Request A's returned async Server Component is suspended at await.
+        await Promise.all([
+          pageA.locator("#sf-sc-invoke-overlap").click(),
+          (async () => {
+            await new Promise((r) => setTimeout(r, 35));
+            await pageB.locator("#sf-sc-invoke-overlap").click();
+          })(),
+        ]);
+
+        await Promise.all([
+          expect(pageA.locator("#sf-sc-nested-box")).toBeVisible({
+            timeout: 25000,
+          }),
+          expect(pageB.locator("#sf-sc-nested-box")).toBeVisible({
+            timeout: 25000,
+          }),
+        ]);
+
+        await expect(pageA.locator("#sf-sc-context-defined")).toHaveText(
+          "defined"
+        );
+        await expect(pageA.locator("#sf-sc-als-status")).toHaveText(
+          "als-active"
+        );
+        await expect(pageA.locator("#sf-sc-user-before")).toHaveText("ALICE");
+        await expect(pageA.locator("#sf-sc-user-after")).toHaveText("ALICE");
+        await expect(pageA.locator("#sf-sc-plugin-user")).toHaveText(
+          "Plugin-ALICE"
+        );
+        await expect(pageA.locator("#sf-sc-nested-als")).toHaveText(
+          "als-active"
+        );
+        await expect(pageA.locator("#sf-sc-nested-user")).toHaveText("ALICE");
+        await expect(pageA.locator("#sf-sc-nested-plugin-user")).toHaveText(
+          "Plugin-ALICE"
+        );
+
+        await expect(pageB.locator("#sf-sc-context-defined")).toHaveText(
+          "defined"
+        );
+        await expect(pageB.locator("#sf-sc-als-status")).toHaveText(
+          "als-active"
+        );
+        await expect(pageB.locator("#sf-sc-user-before")).toHaveText("BOB");
+        await expect(pageB.locator("#sf-sc-user-after")).toHaveText("BOB");
+        await expect(pageB.locator("#sf-sc-plugin-user")).toHaveText(
+          "Plugin-BOB"
+        );
+        await expect(pageB.locator("#sf-sc-nested-als")).toHaveText(
+          "als-active"
+        );
+        await expect(pageB.locator("#sf-sc-nested-user")).toHaveText("BOB");
+        await expect(pageB.locator("#sf-sc-nested-plugin-user")).toHaveText(
+          "Plugin-BOB"
+        );
+      } finally {
+        await userA.close();
+        await userB.close();
+      }
+    });
+  });
 });

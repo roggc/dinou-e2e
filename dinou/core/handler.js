@@ -3280,7 +3280,9 @@ async function handleRequest(request, platformContext = {}) {
               };
             }
 
-            const errorRscStream = renderRSCStream(errorJsx, clientManifest, { runtime: "edge" });
+            const errorRscStream = requestStorage.run(context, () =>
+              renderRSCStream(errorJsx, clientManifest, { runtime: "edge" })
+            );
             const errorClientEntry = getAssetFromManifest("main.js");
             const errorBootstrapModules = isDevelopment
               ? [
