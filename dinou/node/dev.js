@@ -33,6 +33,7 @@ import { resolveDevPorts } from "./port-selector.js";
 import { getDinouConfig } from "../core/load-dinou-config.js";
 import { resolveSetupFiles } from "../core/resolve-setup-files.js";
 import { generateRouteModulesCode, generateRouteTypes } from "../core/route-generator.js";
+import { esbuildContextualDinouPlugin } from "../core/resolve-contextual-dinou.js";
 import parseExports from "../core/parse-exports.js";
 import { useClientRegex, useServerRegex } from "../constants.js";
 import { transformServerFunctions, hasServerFunctions } from "../core/transform-server-functions.js";
@@ -1518,7 +1519,7 @@ const ctxA = await esbuild.context({
   external: externalList,
   banner,
   inject: setupFiles,
-  plugins: [clientReferencesPlugin, serverReferencesPlugin, serverAssetPlugin, createDevExternalPackagesPlugin(true)],
+  plugins: [esbuildContextualDinouPlugin({ projectRoot }), clientReferencesPlugin, serverReferencesPlugin, serverAssetPlugin, createDevExternalPackagesPlugin(true)],
   alias: commonAlias,
   loader: commonLoader,
   jsx: "automatic",
@@ -1546,7 +1547,7 @@ const ctxB = await esbuild.context({
   external: externalList,
   banner,
   inject: setupFiles,
-  plugins: [serverReferencesPluginSsr, serverAssetPlugin, createDevExternalPackagesPlugin(false)],
+  plugins: [esbuildContextualDinouPlugin({ projectRoot }), serverReferencesPluginSsr, serverAssetPlugin, createDevExternalPackagesPlugin(false)],
   alias: commonAlias,
   loader: commonLoader,
   jsx: "automatic",
@@ -2061,8 +2062,9 @@ srcWatcher.on("all", (event, fullPath) => {
   logTimeline(`File change detected: ${event} ${path.basename(fullPath)}`);
   pendingSrcChanges.set(path.resolve(fullPath), event);
   if (
-    (event === "add" || event === "unlink") &&
-    /(?:^|[\\/])(?:page|page_functions|layout|layout_functions|layout\.functions|error|not_found)\.(?:[jt]sx?|mjs)$/i.test(fullPath)
+    event === "unlinkDir" ||
+    ((event === "add" || event === "unlink") &&
+      /(?:^|[\\/])(?:page|page_functions|layout|layout_functions|layout\.functions|error|not_found|dinou)\.(?:[jt]sx?|mjs)$/i.test(fullPath))
   ) {
     try {
       generateRouteTypes(projectRoot);

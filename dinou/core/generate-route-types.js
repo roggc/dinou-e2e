@@ -6,6 +6,14 @@ const PAGE_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js", ".mjs"];
 const LAYOUT_FUNCTIONS_NAMES = ["layout_functions", "layout.functions"];
 const VALID_IDENTIFIER_RE = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
+function safeReaddir(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true });
+  } catch (e) {
+    return [];
+  }
+}
+
 function hasEntryFile(entries, baseNames) {
   const names = Array.isArray(baseNames) ? baseNames : [baseNames];
   return entries.some(
@@ -13,6 +21,25 @@ function hasEntryFile(entries, baseNames) {
       !e.isDirectory() &&
       names.some((base) => PAGE_EXTENSIONS.some((ext) => e.name === `${base}${ext}`))
   );
+}
+
+function hasDinouShadowInDir(dir, entries) {
+  if (hasEntryFile(entries, "dinou")) {
+    return true;
+  }
+  const dinouSubdir = entries.find((e) => e.isDirectory() && e.name === "dinou");
+  if (dinouSubdir) {
+    const subEntries = safeReaddir(path.join(dir, "dinou"));
+    if (hasEntryFile(subEntries, "index")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function normKey(p) {
+  const resolved = path.resolve(p).replace(/\\/g, "/");
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
 function formatTsKey(key) {
@@ -61,7 +88,8 @@ function formatParamsMapEntries(paramsMap) {
 }
 
 function formatLayoutSlotsEntries(layoutPaths, slotNamesBySegment) {
-  const sortedPaths = [...layoutPaths].sort();
+  const mergedPaths = new Set([...layoutPaths, ...slotNamesBySegment.keys()]);
+  const sortedPaths = [...mergedPaths].sort();
   return sortedPaths
     .map((lPath) => {
       const slotSet = slotNamesBySegment.get(lPath);
@@ -79,12 +107,19 @@ function formatLayoutSlotsEntries(layoutPaths, slotNamesBySegment) {
 
 /**
  * Inspects a parallel `@slot` folder (supporting nested route groups `(group)`
- * and optional trailing segments `[[opt]]` / `[[...opt]]`) for `page.*` and `error.*`.
+ * and optional trailing segments `[[opt]]` / `[[...opt]]`) for `page.*` and `error.*`,
+ * and records contextual `./dinou` directories for active slot segments.
  */
 function inspectSlotDirectory(
   slotDir,
   extraSegments = [],
-  state = { hasPage: false, hasError: false, extraSegments: [] }
+  state = {
+    hasPage: false,
+    hasError: false,
+    extraSegments: [],
+    contextualDirs: [],
+  },
+  context = null
 ) {
   if (!fs.existsSync(slotDir)) return state;
 
@@ -97,6 +132,7 @@ function inspectSlotDirectory(
 
   const foundPage = hasEntryFile(entries, "page");
   const foundError = hasEntryFile(entries, "error");
+  let hasChildSlotRoute = false;
 
   if (foundPage) {
     state.hasPage = true;
@@ -116,10 +152,39 @@ function inspectSlotDirectory(
     if (name.startsWith("_") || name.startsWith("@")) continue;
 
     if (name.startsWith("(") && name.endsWith(")")) {
-      inspectSlotDirectory(path.join(slotDir, name), extraSegments, state);
+      const prevCount = state.contextualDirs.length;
+      inspectSlotDirectory(path.join(slotDir, name), extraSegments, state, context);
+      if (state.contextualDirs.length > prevCount) {
+        hasChildSlotRoute = true;
+      }
     } else if (name.startsWith("[[") && name.endsWith("]]")) {
-      inspectSlotDirectory(path.join(slotDir, name), [...extraSegments, name], state);
+      const prevCount = state.contextualDirs.length;
+      inspectSlotDirectory(
+        path.join(slotDir, name),
+        [...extraSegments, name],
+        state,
+        context
+      );
+      if (state.contextualDirs.length > prevCount) {
+        hasChildSlotRoute = true;
+      }
     }
+  }
+
+  if (context && (foundPage || foundError || hasChildSlotRoute)) {
+    const relDir = path.relative(context.srcRoot, slotDir).replace(/\\/g, "/");
+    const lookupPath =
+      extraSegments.length > 0
+        ? `${context.baseSlotPath}/${extraSegments.join("/")}`
+        : context.baseSlotPath;
+    const hasShadowDinou = hasDinouShadowInDir(slotDir, entries);
+    state.contextualDirs.push({
+      relDir,
+      fromPath: context.parentSegmentPath,
+      lookupPath,
+      isSlot: true,
+      hasShadowDinou,
+    });
   }
 
   return state;
@@ -145,6 +210,7 @@ function collectRoutes(dir, segments = [], routes = []) {
  * - `layouts`: `layout.*` and `layout_functions.*` segments (including intermediate layouts without a sibling `page.*`)
  * - `slots`: parallel `@slot` segments (`@slot/page.*`) and parent layout slot injection map
  * - `errorSegments`: all segments capable of hosting an `error.*` boundary (including `@slot/error.*` and intermediate folders)
+ * - `contextualDirs`: physical directories inside `src/` that belong to the route tree (for `.dinou/routes/<relDir>/dinou.{d.ts,js}`)
  */
 function collectRouteTopology(
   dir,
@@ -156,121 +222,181 @@ function collectRouteTopology(
     slots: [],
     errorSegments: [],
     slotNamesBySegment: new Map(),
+    contextualDirs: [],
   }
 ) {
-  if (!fs.existsSync(dir)) return topology;
-
-  let entries;
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch (e) {
-    return topology;
+  if (!topology.contextualDirs) {
+    topology.contextualDirs = [];
   }
+  const srcRoot = path.resolve(dir);
 
-  const segmentPath = segments.length === 0 ? "/" : "/" + segments.join("/");
+  function scanDir(currentDir, currentSegments) {
+    if (!fs.existsSync(currentDir)) return false;
 
-  const hasPage = hasEntryFile(entries, "page");
-  const hasPageFunctions = hasEntryFile(entries, "page_functions");
-  const hasNotFound = hasEntryFile(entries, "not_found");
-  const hasLayout = hasEntryFile(entries, "layout");
-  const hasLayoutFunctions = hasEntryFile(entries, LAYOUT_FUNCTIONS_NAMES);
-  const hasError = hasEntryFile(entries, "error");
+    let entries;
+    try {
+      entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    } catch (e) {
+      return false;
+    }
 
-  if (hasPage) {
-    topology.routes.push({
-      path: segmentPath,
-      segments: [...segments],
-    });
-  }
+    const segmentPath =
+      currentSegments.length === 0 ? "/" : "/" + currentSegments.join("/");
 
-  if (hasPage || hasPageFunctions || hasNotFound) {
-    topology.pageSegments.push({
-      path: segmentPath,
-      segments: [...segments],
-    });
-  }
+    const hasPage = hasEntryFile(entries, "page");
+    const hasPageFunctions = hasEntryFile(entries, "page_functions");
+    const hasNotFound = hasEntryFile(entries, "not_found");
+    const hasLayout = hasEntryFile(entries, "layout");
+    const hasLayoutFunctions = hasEntryFile(entries, LAYOUT_FUNCTIONS_NAMES);
+    const hasError = hasEntryFile(entries, "error");
 
-  if (hasLayout || hasLayoutFunctions) {
-    topology.layouts.push({
-      path: segmentPath,
-      segments: [...segments],
-    });
-  }
+    const hasOwnRouteFile =
+      hasPage ||
+      hasPageFunctions ||
+      hasNotFound ||
+      hasLayout ||
+      hasLayoutFunctions ||
+      hasError;
 
-  if (hasError || hasPage || hasNotFound || hasLayout || hasLayoutFunctions) {
-    topology.errorSegments.push({
-      path: segmentPath,
-      segments: [...segments],
-    });
-  }
+    if (hasPage) {
+      topology.routes.push({
+        path: segmentPath,
+        segments: [...currentSegments],
+      });
+    }
 
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
+    if (hasPage || hasPageFunctions || hasNotFound) {
+      topology.pageSegments.push({
+        path: segmentPath,
+        segments: [...currentSegments],
+      });
+    }
 
-    const name = entry.name;
-    // Ignore private folders (_*)
-    if (name.startsWith("_")) continue;
+    if (hasLayout || hasLayoutFunctions) {
+      topology.layouts.push({
+        path: segmentPath,
+        segments: [...currentSegments],
+      });
+    }
 
-    // Parallel route slots: @slot
-    if (name.startsWith("@")) {
-      const slotName = name.slice(1);
-      if (!slotName) continue;
+    if (hasError || hasPage || hasNotFound || hasLayout || hasLayoutFunctions) {
+      topology.errorSegments.push({
+        path: segmentPath,
+        segments: [...currentSegments],
+      });
+    }
 
-      const slotState = inspectSlotDirectory(path.join(dir, name));
-      const slotPath =
-        (segments.length === 0 ? "" : "/" + segments.join("/")) + "/@" + slotName;
-      const slotDetailedPath =
-        slotState.extraSegments.length > 0
-          ? `${slotPath}/${slotState.extraSegments.join("/")}`
-          : null;
-      const slotCombinedSegments = [...segments, ...slotState.extraSegments];
+    let hasChildRoute = false;
 
-      if (slotState.hasPage) {
-        if (!topology.slotNamesBySegment.has(segmentPath)) {
-          topology.slotNamesBySegment.set(segmentPath, new Set());
-        }
-        topology.slotNamesBySegment.get(segmentPath).add(slotName);
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
 
-        topology.slots.push({
-          path: slotPath,
-          parentPath: segmentPath,
-          slotName,
-          segments: slotCombinedSegments,
-        });
-        if (slotDetailedPath) {
+      const name = entry.name;
+      // Ignore private folders (_*)
+      if (name.startsWith("_")) continue;
+
+      // Parallel route slots: @slot
+      if (name.startsWith("@")) {
+        const slotName = name.slice(1);
+        if (!slotName) continue;
+
+        const baseSlotPath =
+          (currentSegments.length === 0 ? "" : "/" + currentSegments.join("/")) +
+          "/@" +
+          slotName;
+        const slotState = inspectSlotDirectory(
+          path.join(currentDir, name),
+          [],
+          undefined,
+          {
+            srcRoot,
+            parentSegmentPath: segmentPath,
+            baseSlotPath,
+          }
+        );
+        const slotDetailedPath =
+          slotState.extraSegments.length > 0
+            ? `${baseSlotPath}/${slotState.extraSegments.join("/")}`
+            : null;
+        const slotCombinedSegments = [
+          ...currentSegments,
+          ...slotState.extraSegments,
+        ];
+
+        if (slotState.hasPage) {
+          hasChildRoute = true;
+          if (!topology.slotNamesBySegment.has(segmentPath)) {
+            topology.slotNamesBySegment.set(segmentPath, new Set());
+          }
+          topology.slotNamesBySegment.get(segmentPath).add(slotName);
+
           topology.slots.push({
-            path: slotDetailedPath,
+            path: baseSlotPath,
             parentPath: segmentPath,
             slotName,
             segments: slotCombinedSegments,
           });
+          if (slotDetailedPath) {
+            topology.slots.push({
+              path: slotDetailedPath,
+              parentPath: segmentPath,
+              slotName,
+              segments: slotCombinedSegments,
+            });
+          }
         }
-      }
 
-      if (slotState.hasPage || slotState.hasError) {
-        topology.errorSegments.push({
-          path: slotPath,
-          segments: slotCombinedSegments,
-        });
-        if (slotDetailedPath) {
+        if (slotState.hasPage || slotState.hasError) {
+          hasChildRoute = true;
           topology.errorSegments.push({
-            path: slotDetailedPath,
+            path: baseSlotPath,
             segments: slotCombinedSegments,
           });
+          if (slotDetailedPath) {
+            topology.errorSegments.push({
+              path: slotDetailedPath,
+              segments: slotCombinedSegments,
+            });
+          }
         }
+
+        if (slotState.contextualDirs.length > 0) {
+          hasChildRoute = true;
+          topology.contextualDirs.push(...slotState.contextualDirs);
+        }
+        continue;
       }
-      continue;
+
+      // Route groups: (group) - do not add to URL path
+      if (name.startsWith("(") && name.endsWith(")")) {
+        if (scanDir(path.join(currentDir, name), currentSegments)) {
+          hasChildRoute = true;
+        }
+        continue;
+      }
+
+      if (scanDir(path.join(currentDir, name), [...currentSegments, name])) {
+        hasChildRoute = true;
+      }
     }
 
-    // Route groups: (group) - do not add to URL path
-    if (name.startsWith("(") && name.endsWith(")")) {
-      collectRouteTopology(path.join(dir, name), segments, topology);
-      continue;
+    const hasAnyRouteInSubtree = hasOwnRouteFile || hasChildRoute;
+    if (hasAnyRouteInSubtree) {
+      const relDir = path.relative(srcRoot, currentDir).replace(/\\/g, "/");
+      const hasShadowDinou = hasDinouShadowInDir(currentDir, entries);
+      topology.contextualDirs.push({
+        relDir,
+        fromPath: segmentPath,
+        lookupPath: segmentPath,
+        isSlot: false,
+        hasShadowDinou,
+      });
     }
 
-    collectRouteTopology(path.join(dir, name), [...segments, name], topology);
+    return hasAnyRouteInSubtree;
   }
 
+  scanDir(srcRoot, segments);
   return topology;
 }
 
@@ -394,8 +520,343 @@ function generateRouteDefinitions(routesOrTopology) {
   };
 }
 
+function buildContextualDinouJs(fromPath) {
+  const routeLiteral = JSON.stringify(fromPath);
+  return `// This file is auto-generated by Dinou. Do not edit directly.
+import { createElement } from "react";
+import {
+  Link as BaseLink,
+  useRouter as useBaseRouter,
+  defineConfig,
+  getContext,
+  noDynamic,
+  usePathname,
+  useSearchParams,
+  refreshSlot,
+  useNavigationLoading,
+  redirect,
+  ClientRedirect,
+} from "dinou";
+
+export const ROUTE = ${routeLiteral};
+
+export function Link(props) {
+  return createElement(BaseLink, {
+    ...props,
+    from: props?.from ?? ROUTE,
+  });
+}
+
+export function useRouter() {
+  const router = useBaseRouter();
+  return {
+    ...router,
+    push: (href, options) =>
+      router.push(href, { ...options, from: options?.from ?? ROUTE }),
+    replace: (href, options) =>
+      router.replace(href, { ...options, from: options?.from ?? ROUTE }),
+  };
+}
+
+export {
+  defineConfig,
+  getContext,
+  noDynamic,
+  usePathname,
+  useSearchParams,
+  refreshSlot,
+  useNavigationLoading,
+  redirect,
+  ClientRedirect,
+};
+
+const dinou = {
+  ROUTE,
+  defineConfig,
+  getContext,
+  noDynamic,
+  usePathname,
+  useSearchParams,
+  useRouter,
+  refreshSlot,
+  useNavigationLoading,
+  redirect,
+  ClientRedirect,
+  Link,
+};
+
+export default dinou;
+`;
+}
+
+function buildContextualDinouDts({ fromPath, lookupPath, isSlot }) {
+  const routeLiteral = JSON.stringify(fromPath);
+  const lookupLiteral = JSON.stringify(lookupPath);
+  const slotPropsDecl = isSlot
+    ? `export interface SlotProps {\n  params: RouteParams;\n}`
+    : `export type SlotProps<T extends Dinou.DinouSlotPattern = Dinou.DinouSlotPattern> = Dinou.SlotProps<T>;`;
+
+  return `// This file is auto-generated by Dinou. Do not edit directly.
+import type { ReactNode } from "react";
+import type * as Dinou from "dinou";
+import {
+  defineConfig,
+  getContext,
+  noDynamic,
+  usePathname,
+  useSearchParams,
+  refreshSlot,
+  useNavigationLoading,
+  redirect,
+  ClientRedirect,
+} from "dinou";
+
 /**
- * Generates the .dinou/types/routes.d.ts ambient definitions file.
+ * URL route pattern associated with this directory (${routeLiteral}).
+ */
+export declare const ROUTE = ${routeLiteral};
+
+/**
+ * Resolved dynamic route parameters for this directory (${lookupLiteral}),
+ * or for an explicit segment pattern \`T\` if provided.
+ */
+export type RouteParams<
+  T extends Dinou.DinouSegmentPattern | undefined = undefined
+> = [T] extends [undefined]
+  ? Dinou.LookupSingleSegmentParams<${lookupLiteral}>
+  : Dinou.RouteParams<Extract<T, Dinou.DinouSegmentPattern>>;
+
+/**
+ * Zero-boilerplate Page component props pre-bound to this directory (${lookupLiteral}).
+ * Optionally accepts \`TProps\` for custom props returned by \`page_functions.ts\` (\`getProps\`).
+ */
+export type PageProps<TProps extends object = {}> = Dinou.SimplifyParams<
+  {
+    params: RouteParams;
+  } & TProps
+>;
+
+/**
+ * Zero-boilerplate Layout component props pre-bound to this directory (${routeLiteral}),
+ * including auto-inferred sibling \`@slot\` ReactNode props and optional \`TProps\` from \`layout_functions.ts\`.
+ */
+export type LayoutProps<TProps extends object = {}> = Dinou.SimplifyParams<
+  {
+    children: ReactNode;
+    params: Dinou.LookupSingleSegmentParams<typeof ROUTE>;
+  } & Dinou.LayoutSlots<typeof ROUTE> &
+    TProps
+>;
+
+${slotPropsDecl}
+
+/**
+ * Zero-boilerplate Error boundary props (\`error.tsx\`) pre-bound to this directory (${lookupLiteral}).
+ */
+export interface ErrorProps {
+  error: Error;
+  params: RouteParams;
+}
+
+/**
+ * Zero-boilerplate Not-Found boundary props (\`not_found.tsx\`) pre-bound to this directory (${lookupLiteral}).
+ */
+export type NotFoundProps<TProps extends object = {}> = Dinou.SimplifyParams<
+  {
+    params: RouteParams;
+  } & TProps
+>;
+
+/**
+ * Zero-boilerplate \`page_functions.ts\` contract pre-bound to this directory's \`RouteParams\`.
+ */
+export type PageFunctions<TProps = any> = Dinou.RouteSegmentConfig<
+  RouteParams,
+  TProps
+>;
+
+/**
+ * Zero-boilerplate \`layout_functions.ts\` contract pre-bound to this directory's layout \`params\`.
+ */
+export type LayoutFunctions<TProps = any> = Dinou.RouteSegmentConfig<
+  Dinou.LookupSingleSegmentParams<typeof ROUTE>,
+  TProps
+>;
+
+/**
+ * Props for the route-contextual \`<Link>\` component pre-bound to \`from=${routeLiteral}\`.
+ */
+export type LinkProps<
+  TFrom extends Dinou.DinouFromRoute | undefined = undefined,
+  THref extends Dinou.ScopedLinkTargetForFrom<
+    typeof ROUTE,
+    TFrom
+  > = Dinou.ScopedLinkTargetForFrom<typeof ROUTE, TFrom>
+> = Dinou.ScopedLinkProps<typeof ROUTE, TFrom, THref>;
+
+/**
+ * Route-contextual \`<Link>\` pre-bound to \`from=${routeLiteral}\`.
+ * Autocompletes and validates relative targets (\`"sub"\`, \`"./sub"\`, \`"../other"\`),
+ * absolute routes, and dynamic \`[param]\` routes without requiring a \`from\` prop.
+ */
+export declare const Link: Dinou.ScopedLinkComponent<typeof ROUTE>;
+
+/**
+ * Route-contextual \`useRouter()\` hook pre-bound to \`from=${routeLiteral}\`.
+ * Autocompletes and validates relative targets (\`router.push("sub")\`) and absolute/dynamic
+ * routes without requiring \`{ from }\`.
+ */
+export declare const useRouter: Dinou.ScopedUseRouterHook<typeof ROUTE>;
+
+export {
+  defineConfig,
+  getContext,
+  noDynamic,
+  usePathname,
+  useSearchParams,
+  refreshSlot,
+  useNavigationLoading,
+  redirect,
+  ClientRedirect,
+};
+
+export type {
+  Query,
+  Cookies,
+  Headers,
+  CookieOptions,
+  ResponseProxy,
+  RequestContextStore,
+  NodeMiddleware,
+  ServerHookContext,
+  DinouPlugin,
+  DinouConfig,
+  PPRConfig,
+  StaticPathItem,
+  StaticPathsResult,
+  RouteSegmentConfig,
+  ClientRedirectProps,
+  NavigationOptions,
+  DinouRouter,
+  DinouRoute,
+  DinouRoutePattern,
+  DinouRegisteredSlotPattern,
+  DinouSlotPattern,
+  DinouLayoutPattern,
+  DinouErrorPattern,
+  DinouNotFoundPattern,
+  DinouSegmentPattern,
+  LayoutParams,
+  LayoutSlots,
+  SlotParams,
+  ErrorParams,
+  DinouLinkTarget,
+  DinouFromRoute,
+  DinouRelativeLinkTarget,
+  DinouLinkTargetForFrom,
+  DinouScopedLinkTarget,
+  ScopedLinkProps,
+  ScopedLinkComponent,
+  ScopedUseRouterHook,
+} from "dinou";
+
+declare const dinou: {
+  ROUTE: typeof ROUTE;
+  defineConfig: typeof defineConfig;
+  getContext: typeof getContext;
+  noDynamic: typeof noDynamic;
+  usePathname: typeof usePathname;
+  useSearchParams: typeof useSearchParams;
+  useRouter: typeof useRouter;
+  refreshSlot: typeof refreshSlot;
+  useNavigationLoading: typeof useNavigationLoading;
+  redirect: typeof redirect;
+  ClientRedirect: typeof ClientRedirect;
+  Link: typeof Link;
+};
+
+export default dinou;
+`;
+}
+
+function writeFileIfChanged(targetPath, content) {
+  const current = fs.existsSync(targetPath)
+    ? fs.readFileSync(targetPath, "utf8")
+    : null;
+  if (current !== content) {
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    fs.writeFileSync(targetPath, content, "utf8");
+  }
+}
+
+function pruneContextualRoutesDir(routesOutRoot, expectedFiles) {
+  if (!fs.existsSync(routesOutRoot)) return;
+
+  function cleanDirRecursive(dir, isRoot = false) {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (e) {
+      return;
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        cleanDirRecursive(fullPath, false);
+      } else if (entry.name === "dinou.js" || entry.name === "dinou.d.ts") {
+        if (!expectedFiles.has(normKey(fullPath))) {
+          try {
+            fs.unlinkSync(fullPath);
+          } catch (e) {}
+        }
+      }
+    }
+
+    if (!isRoot) {
+      try {
+        const remaining = fs.readdirSync(dir);
+        if (remaining.length === 0) {
+          fs.rmdirSync(dir);
+        }
+      } catch (e) {}
+    }
+  }
+
+  cleanDirRecursive(routesOutRoot, true);
+}
+
+function syncContextualRouteModules(projectRoot, contextualDirs) {
+  const routesOutRoot = path.resolve(projectRoot, ".dinou/routes");
+  const expectedFiles = new Set();
+
+  for (const ctxEntry of contextualDirs) {
+    if (ctxEntry.hasShadowDinou) {
+      const shadowRel = ctxEntry.relDir ? `src/${ctxEntry.relDir}/dinou` : "src/dinou";
+      console.warn(
+        `[Dinou] Warning: "${shadowRel}" shadows the generated route-contextual "./dinou" module for segment "${ctxEntry.lookupPath}".`
+      );
+    }
+
+    const outDir = ctxEntry.relDir
+      ? path.resolve(routesOutRoot, ctxEntry.relDir)
+      : routesOutRoot;
+    const jsPath = path.join(outDir, "dinou.js");
+    const dtsPath = path.join(outDir, "dinou.d.ts");
+
+    expectedFiles.add(normKey(jsPath));
+    expectedFiles.add(normKey(dtsPath));
+
+    writeFileIfChanged(jsPath, buildContextualDinouJs(ctxEntry.fromPath));
+    writeFileIfChanged(dtsPath, buildContextualDinouDts(ctxEntry));
+  }
+
+  pruneContextualRoutesDir(routesOutRoot, expectedFiles);
+}
+
+/**
+ * Generates `.dinou/types/routes.d.ts` ambient definitions and `.dinou/routes/<relDir>/dinou.{js,d.ts}`
+ * route-contextual modules.
  * @param {string} projectRoot Root directory of the project (default process.cwd())
  */
 function generateRouteTypes(projectRoot = process.cwd()) {
@@ -492,20 +953,22 @@ ${dynamicUnion};
 }
 `;
 
-  // Write .dinou/types/routes.d.ts
+  // 1. Write .dinou/types/routes.d.ts
   const typesDir = path.resolve(projectRoot, ".dinou/types");
   try {
-    fs.mkdirSync(typesDir, { recursive: true });
-    const targetFile = path.join(typesDir, "routes.d.ts");
-    const currentContent = fs.existsSync(targetFile)
-      ? fs.readFileSync(targetFile, "utf8")
-      : "";
-    if (currentContent !== content) {
-      fs.writeFileSync(targetFile, content, "utf8");
-    }
+    writeFileIfChanged(path.join(typesDir, "routes.d.ts"), content);
   } catch (e) {
     if (process.env.DINOU_DEBUG) {
       console.warn("[Dinou] Could not write .dinou/types/routes.d.ts:", e.message);
+    }
+  }
+
+  // 2. Write & prune .dinou/routes/<relDir>/dinou.{js,d.ts}
+  try {
+    syncContextualRouteModules(projectRoot, topology.contextualDirs || []);
+  } catch (e) {
+    if (process.env.DINOU_DEBUG) {
+      console.warn("[Dinou] Could not sync .dinou/routes modules:", e.message);
     }
   }
 
@@ -515,6 +978,7 @@ ${dynamicUnion};
     totalRoutes: topology.routes.length,
     layoutCount: Object.keys(layoutParamsMap).length,
     slotCount: Object.keys(slotParamsMap).length,
+    contextualDirCount: (topology.contextualDirs || []).length,
   };
 }
 

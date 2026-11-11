@@ -23,6 +23,7 @@ import {
 } from "../core/scan-dependency-components.js";
 import { getDinouConfig } from "../core/load-dinou-config.js";
 import { resolveSetupFiles } from "../core/resolve-setup-files.js";
+import { esbuildContextualDinouPlugin } from "../core/resolve-contextual-dinou.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1101,7 +1102,7 @@ try {
     mainFields: ["module", "main"],
     conditions: ["deno", "worker", "react-server"],
     external: externalList,
-    plugins: [clientReferencesPlugin, serverReferencesPlugin],
+    plugins: [esbuildContextualDinouPlugin({ projectRoot }), clientReferencesPlugin, serverReferencesPlugin],
     alias: commonAlias,
     loader: commonLoader,
     jsx: "automatic",
@@ -1125,7 +1126,7 @@ try {
     mainFields: ["module", "main"],
     conditions: ["deno", "worker", "browser"],
     external: externalList,
-    plugins: [serverReferencesPluginSsr],
+    plugins: [esbuildContextualDinouPlugin({ projectRoot }), serverReferencesPluginSsr],
     alias: commonAlias,
     loader: commonLoader,
     jsx: "automatic",

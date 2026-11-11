@@ -522,13 +522,13 @@ program
 
 program
   .command("typegen")
-  .description("Generate .dinou/types/routes.d.ts type definitions from src/")
+  .description("Generate .dinou/types/routes.d.ts and .dinou/routes/**/dinou.{js,d.ts} from src/")
   .action(async () => {
     const { generateRouteTypes } = await import("./core/generate-route-types.js");
     const stats = generateRouteTypes(projectRoot);
     if (stats) {
       console.log(
-        `🦖 [Dinou] Generated .dinou/types/routes.d.ts (${stats.totalRoutes} routes, ${stats.layoutCount} layouts, ${stats.slotCount} slots)`
+        `🦖 [Dinou] Generated .dinou/types/routes.d.ts & contextual "./dinou" modules (${stats.totalRoutes} routes, ${stats.layoutCount} layouts, ${stats.slotCount} slots, ${stats.contextualDirCount} route dirs)`
       );
     }
   });

@@ -112,6 +112,8 @@ export type {
   DinouRelativeDynamicPattern,
   DinouRelativeLinkTarget,
   DinouLinkTargetForFrom,
+  DinouScopedLinkTarget,
+  ScopedLinkTargetForFrom,
   DinouRouter,
   CleanRoutePath,
   ExtractRouteParams,
@@ -140,6 +142,11 @@ export type {
   RouterNavigationArgs,
   RouterRelativeNavigationOptions,
   DinouRouterNavigateFn,
+  ScopedRouterNavigationArgs,
+  ScopedDinouRouterNavigateFn,
+  ScopedUseRouterHook,
+  ScopedLinkProps,
+  ScopedLinkComponent,
 } from "./index";
 
 export interface DinouCacheSlotProps {

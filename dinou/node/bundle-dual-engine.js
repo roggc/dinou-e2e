@@ -20,6 +20,7 @@ import {
 } from "../core/scan-dependency-components.js";
 import { getDinouConfig } from "../core/load-dinou-config.js";
 import { resolveSetupFiles } from "../core/resolve-setup-files.js";
+import { esbuildContextualDinouPlugin } from "../core/resolve-contextual-dinou.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -977,7 +978,7 @@ var __webpack_chunk_load__ = function(chunkId) {
     external: externalList,
     banner,
     inject: setupFiles,
-    plugins: [clientReferencesPlugin, serverReferencesPlugin, serverAssetPlugin],
+    plugins: [esbuildContextualDinouPlugin({ projectRoot }), clientReferencesPlugin, serverReferencesPlugin, serverAssetPlugin],
     alias: commonAlias,
     loader: commonLoader,
     jsx: "automatic",
@@ -1002,7 +1003,7 @@ var __webpack_chunk_load__ = function(chunkId) {
     external: externalList,
     banner,
     inject: setupFiles,
-    plugins: [serverReferencesPluginSsr, serverAssetPlugin],
+    plugins: [esbuildContextualDinouPlugin({ projectRoot }), serverReferencesPluginSsr, serverAssetPlugin],
     alias: commonAlias,
     loader: commonLoader,
     jsx: "automatic",

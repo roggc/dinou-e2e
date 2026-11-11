@@ -846,6 +846,12 @@ export type DinouFromSlashRoute =
   | (DinouRouter.Register extends { layoutParams: infer LP }
       ? Extract<keyof LP, string>
       : never)
+  | (DinouRouter.Register extends { layoutSlots: infer LS }
+      ? Extract<keyof LS, string>
+      : never)
+  | (DinouRouter.Register extends { errorParams: infer EP }
+      ? Exclude<Extract<keyof EP, string>, `${string}/@${string}`>
+      : never)
   | ExtractParentDirectories<DinouNavigableRouteKey>;
 
 /**
@@ -1053,6 +1059,23 @@ export type DinouLinkTargetForFrom<TFrom extends string | undefined> =
     ? DinouLinkTarget
     : DinouRelativeLinkTarget<Extract<TFrom, string>>;
 
+/**
+ * Unified target union for route-contextual `<Link>` and `useRouter()` imported from `"./dinou"`.
+ * Combines strictly validated relative paths from `TFrom` (`"sub"`, `"./sub"`, `"../..."`)
+ * with all valid absolute static routes, dynamic route patterns, queries, hashes, and external URLs.
+ */
+export type DinouScopedLinkTarget<TFrom extends string> =
+  | DinouRelativeLinkTarget<TFrom>
+  | DinouLinkTarget;
+
+export type ScopedLinkTargetForFrom<
+  TDefaultFrom extends string,
+  TFrom extends DinouFromRoute | undefined
+> =
+  [TFrom] extends [undefined]
+    ? DinouScopedLinkTarget<TDefaultFrom>
+    : DinouLinkTargetForFrom<TFrom>;
+
 export type StripUrlSuffix<T extends string> =
   T extends `${infer Base}?${string}`
     ? StripUrlSuffix<Base>
@@ -1105,9 +1128,13 @@ export type HasInvalidBracketPatternForFrom<
               : true
             : [string] extends [Extract<TFrom, string>]
               ? never
-              : StripUrlSuffix<THref> extends DinouRelativeDynamicPattern<Extract<TFrom, string>>
-                ? never
-                : true
+              : StripUrlSuffix<THref> extends `/${string}`
+                ? StripUrlSuffix<THref> extends DinouDynamicRoutePattern
+                  ? never
+                  : true
+                : StripUrlSuffix<THref> extends DinouRelativeDynamicPattern<Extract<TFrom, string>>
+                  ? never
+                  : true
           : never
         : never
       : never;
@@ -1202,6 +1229,50 @@ export interface DinouRouterNavigateFn {
     options: RouterRelativeNavigationOptions<TFrom, NoInfer<THref>>
   ): void;
 }
+
+export type ScopedRouterNavigationArgs<
+  TDefaultFrom extends string,
+  THref extends string
+> =
+  [HasInvalidBracketPatternForFrom<TDefaultFrom, THref>] extends [never]
+    ? [HasBracketPattern<THref>] extends [never]
+      ? [options?: NavigationOptions & { from?: never; params?: never }]
+      : {} extends ResolveLinkParams<THref>
+        ? [options?: NavigationOptions & { from?: never; params?: ResolveLinkParams<THref> }]
+        : [options: NavigationOptions & { from?: never; params: ResolveLinkParams<THref> }]
+    : [options: never];
+
+export interface ScopedDinouRouterNavigateFn<TDefaultFrom extends string> {
+  /**
+   * Navigate to a strictly validated relative route from this folder (`"sub"`, `"./sub"`, `"../other"`),
+   * an absolute route, a dynamic route pattern (with `{ params }`), query/hash, or external URL —
+   * without needing to pass `{ from }`.
+   */
+  <THref extends DinouScopedLinkTarget<TDefaultFrom> = DinouScopedLinkTarget<TDefaultFrom>>(
+    href: THref,
+    ...args: ScopedRouterNavigationArgs<TDefaultFrom, NoInfer<THref>>
+  ): void;
+
+  /**
+   * Navigate to a strictly validated relative route from an explicit `options.from` origin override.
+   */
+  <
+    TFrom extends DinouFromRoute,
+    THref extends DinouRelativeLinkTarget<TFrom> = DinouRelativeLinkTarget<TFrom>
+  >(
+    href: THref,
+    options: RouterRelativeNavigationOptions<TFrom, NoInfer<THref>>
+  ): void;
+}
+
+export type ScopedUseRouterHook<TDefaultFrom extends string> = () => {
+  push: ScopedDinouRouterNavigateFn<TDefaultFrom>;
+  replace: ScopedDinouRouterNavigateFn<TDefaultFrom>;
+  back: () => void;
+  forward: () => void;
+  refresh: (options?: { layout?: boolean }) => void;
+  refreshSlot: (slotId: string, options?: { fresh?: boolean }) => Promise<void>;
+};
 
 export declare function useRouter(): {
   /**
@@ -1334,3 +1405,37 @@ export declare function Link<
   TFrom extends DinouFromRoute | undefined = undefined,
   THref extends DinouLinkTargetForFrom<TFrom> = DinouLinkTargetForFrom<TFrom>
 >(props: LinkProps<TFrom, THref>): ReactNode;
+
+/**
+ * Props for a route-contextual `<Link>` imported from `"./dinou"`.
+ * Pre-binds `from` to `TDefaultFrom` so relative targets (`"sub"`, `"./sub"`, `"../other"`)
+ * autocomplete and validate automatically without passing `from`, while also accepting
+ * absolute/dynamic routes and optional `from` overrides.
+ */
+export type ScopedLinkProps<
+  TDefaultFrom extends string,
+  TFrom extends DinouFromRoute | undefined = undefined,
+  THref extends ScopedLinkTargetForFrom<TDefaultFrom, TFrom> = ScopedLinkTargetForFrom<
+    TDefaultFrom,
+    TFrom
+  >
+> = Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href"> & {
+  from?: TFrom;
+  href?: THref;
+  to?: THref;
+  prefetch?: boolean;
+  fresh?: boolean;
+} & LinkParamsPropsForFrom<
+  [NoInfer<TFrom>] extends [undefined] ? TDefaultFrom : NoInfer<TFrom>,
+  NoInfer<THref>
+>;
+
+export type ScopedLinkComponent<TDefaultFrom extends string> = <
+  TFrom extends DinouFromRoute | undefined = undefined,
+  THref extends ScopedLinkTargetForFrom<TDefaultFrom, TFrom> = ScopedLinkTargetForFrom<
+    TDefaultFrom,
+    TFrom
+  >
+>(
+  props: ScopedLinkProps<TDefaultFrom, TFrom, THref>
+) => ReactNode;

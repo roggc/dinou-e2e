@@ -175,8 +175,12 @@ export function resolveUrl(href, currentPathname, from) {
     return normalize(url.pathname + url.search + url.hash);
   }
 
-  let base = from ? resolveBasePathname(from, currentPathname) : currentPathname;
-  if (!base.endsWith("/")) base += "/";
+  const isQueryOrHashOnly = href.startsWith("?") || href.startsWith("#");
+  let base =
+    (!isQueryOrHashOnly && from
+      ? resolveBasePathname(from, currentPathname)
+      : currentPathname) || "/";
+  if (!isQueryOrHashOnly && !base.endsWith("/")) base += "/";
 
   const resolved = new URL(href, origin + base);
   return normalize(resolved.pathname + resolved.search + resolved.hash);
