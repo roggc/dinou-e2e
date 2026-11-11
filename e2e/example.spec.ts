@@ -9046,6 +9046,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.getByTestId("pricing-route")).toHaveText(
         "/t-type-safe-contextual/pricing"
       );
+      await expect(page.getByTestId("ctx-slug-layout")).toHaveCount(0);
 
       // 13. From (marketing)/pricing, <Link to=".."> returns to /t-type-safe-contextual
       await page.getByTestId("pricing-back-hub").click();
@@ -9112,7 +9113,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         { encoding: "utf8", timeout: 60000 }
       );
       expect(output).toContain(
-        "RESULT: All 4 contextual './dinou' typecheck & topology tests PASSED"
+        "RESULT: All 5 contextual './dinou' & router tests PASSED"
       );
     });
   });

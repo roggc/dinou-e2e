@@ -33,6 +33,7 @@ import { resolveDevPorts } from "./port-selector.js";
 import { getDinouConfig } from "../core/load-dinou-config.js";
 import { resolveSetupFiles } from "../core/resolve-setup-files.js";
 import { generateRouteModulesCode, generateRouteTypes } from "../core/route-generator.js";
+import { discoverLayoutsFromFs } from "../core/discover-layouts.js";
 import { esbuildContextualDinouPlugin } from "../core/resolve-contextual-dinou.js";
 import parseExports from "../core/parse-exports.js";
 import { useClientRegex, useServerRegex } from "../constants.js";
@@ -785,21 +786,7 @@ function generateEntryFiles() {
   const routeModulesCode = generateRouteModulesCode(projectRoot, "../..");
   fs.writeFileSync(path.join(devDir, "route-modules.mjs"), routeModulesCode, "utf8");
 
-  const discoveredLayouts = [];
-  function findLayoutRoutes(dir, rel = "") {
-    if (!fs.existsSync(dir)) return;
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        findLayoutRoutes(path.join(dir, entry.name), rel ? `${rel}/${entry.name}` : entry.name);
-      } else if (/^layout\.[jt]sx?$/.test(entry.name)) {
-        discoveredLayouts.push(rel);
-      } else if (entry.name === "no_layout") {
-        discoveredLayouts.push("!" + rel);
-      }
-    }
-  }
-  findLayoutRoutes(srcDir);
+  const discoveredLayouts = discoverLayoutsFromFs(srcDir, fs);
   globalThis.__DINOU_LAYOUTS__ = discoveredLayouts;
 
   const envSetupContent = `// Auto-generated Dev Environment Setup

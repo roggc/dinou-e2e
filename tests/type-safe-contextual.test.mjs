@@ -97,7 +97,7 @@ async function main() {
       `Expected NO contextual dinou.js for non-route/private dir: ${rel}`
     );
   }
-  console.log("✅ [1/4] Topology & .dinou/routes boundary generation PASSED");
+  console.log("✅ [1/5] Topology & .dinou/routes boundary generation PASSED");
 
   // 3. Parse root tsconfig.json (verifying rootDirs) and run strict TypeScript check
   const tsconfigPath = path.join(root, "tsconfig.json");
@@ -129,7 +129,7 @@ async function main() {
     );
   }
   console.log(
-    `✅ [2/4] Strict tsc check (${fixtureFiles.length} contextual files + @ts-expect-error assertions) PASSED`
+    `✅ [2/5] Strict tsc check (${fixtureFiles.length} contextual files + @ts-expect-error assertions) PASSED`
   );
 
   // 4. In-memory virtual probe: importing "./dinou" inside src/components/ MUST fail with TS2307
@@ -174,7 +174,7 @@ async function main() {
       probeDiagnostics
     )}`
   );
-  console.log('✅ [3/4] Non-route src/components "./dinou" TS2307 rejection PASSED');
+  console.log('✅ [3/5] Non-route src/components "./dinou" TS2307 rejection PASSED');
 
   // 5. Isolated temp-workspace check: hot route addition, pruning & physical shadow warning
   const tmpWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "dinou-ctx-prune-"));
@@ -219,8 +219,150 @@ async function main() {
   } finally {
     fs.rmSync(tmpWorkspace, { recursive: true, force: true });
   }
-  console.log("✅ [4/4] Hot route generation, pruning & shadow warning PASSED");
-  console.log("RESULT: All 4 contextual './dinou' typecheck & topology tests PASSED");
+  console.log("✅ [4/5] Hot route generation, pruning & shadow warning PASSED");
+
+  // 6. Router specificity & Linux ext4 directory-order regression check:
+  //    Even when VFS lists `[slug]` BEFORE `(marketing)` (as on Linux ext4 under Bun),
+  //    `/t-type-safe-contextual/pricing` MUST resolve to `(marketing)/pricing/page.tsx`
+  //    AND its layouts MUST NOT include sibling `[slug]/layout.tsx`.
+  const routerModPath = path.resolve(
+    root,
+    "dinou/core/get-file-path-and-dynamic-params.js"
+  );
+  const vfsModPath = path.resolve(root, "dinou/core/vfs.js");
+  const discoverLayoutsModPath = path.resolve(
+    root,
+    "dinou/core/discover-layouts.js"
+  );
+  const { getFilePathAndDynamicParams } = await import(
+    pathToFileURL(routerModPath).href
+  );
+  const { buildVfs } = await import(pathToFileURL(vfsModPath).href);
+  const { discoverLayoutsFromFs } = await import(
+    pathToFileURL(discoverLayoutsModPath).href
+  );
+
+  const srcDir = path.resolve(root, "src");
+  const prevVfs = globalThis.__DINOU_VFS__;
+  try {
+    globalThis.__DINOU_VFS__ = {};
+    buildVfs(srcDir, srcDir);
+
+    // Force reversed Linux ext4 htree directory order (`[slug]` BEFORE `(marketing)`) on all VFS keys for `src/t-type-safe-contextual`
+    for (const [k, entry] of Object.entries(globalThis.__DINOU_VFS__)) {
+      if (
+        entry?.type === "directory" &&
+        Array.isArray(entry.children) &&
+        k.endsWith("t-type-safe-contextual")
+      ) {
+        entry.children = [
+          { name: "[slug]", isDirectory: true },
+          { name: "page.tsx", isDirectory: false },
+          { name: "(marketing)", isDirectory: true },
+        ];
+      }
+    }
+
+    const [pricingPage, pricingParams] = getFilePathAndDynamicParams(
+      ["t-type-safe-contextual", "pricing"],
+      {},
+      srcDir
+    );
+    assert(
+      pricingPage &&
+        pricingPage.replace(/\\/g, "/").endsWith("src/t-type-safe-contextual/(marketing)/pricing/page.tsx"),
+      `Expected /t-type-safe-contextual/pricing to resolve to (marketing)/pricing/page.tsx even when [slug] precedes (marketing), got: ${pricingPage}`
+    );
+    assert.deepEqual(pricingParams, {});
+
+    const pricingLayouts = getFilePathAndDynamicParams(
+      ["t-type-safe-contextual", "pricing"],
+      {},
+      srcDir,
+      "layout",
+      true,
+      false,
+      undefined,
+      0,
+      {},
+      true
+    );
+    const pricingLayoutPaths = pricingLayouts.map(([p]) => p.replace(/\\/g, "/"));
+    assert(
+      !pricingLayoutPaths.some((p) => p.includes("[slug]/layout.tsx")),
+      `Expected [slug]/layout.tsx NOT to leak onto (marketing)/pricing, got: ${JSON.stringify(
+        pricingLayoutPaths
+      )}`
+    );
+
+    // Backtracking check: /t-type-safe-contextual/pricing/contact has no subroute inside (marketing)/pricing,
+    // so it MUST backtrack to [slug]/contact/page.tsx with { slug: "pricing" } and include [slug]/layout.tsx!
+    const [pricingContactPage, pricingContactParams] = getFilePathAndDynamicParams(
+      ["t-type-safe-contextual", "pricing", "contact"],
+      {},
+      srcDir
+    );
+    assert(
+      pricingContactPage &&
+        pricingContactPage
+          .replace(/\\/g, "/")
+          .endsWith("src/t-type-safe-contextual/[slug]/contact/page.tsx"),
+      `Expected /t-type-safe-contextual/pricing/contact to backtrack to [slug]/contact/page.tsx, got: ${pricingContactPage}`
+    );
+    assert.deepEqual(pricingContactParams, { slug: "pricing" });
+
+    // Standalone layout & 404 under [slug] must still resolve [slug]/layout.tsx and [slug]/not_found.tsx
+    const acmeLayouts = getFilePathAndDynamicParams(
+      ["t-type-safe-contextual", "acme"],
+      {},
+      srcDir,
+      "layout",
+      true,
+      false,
+      undefined,
+      0,
+      {},
+      true
+    );
+    assert(
+      acmeLayouts.some(([p]) => p.replace(/\\/g, "/").endsWith("[slug]/layout.tsx")),
+      "Expected standalone /t-type-safe-contextual/acme layout lookup to include [slug]/layout.tsx"
+    );
+
+    const [acmeNotFound, acmeNotFoundParams] = getFilePathAndDynamicParams(
+      ["t-type-safe-contextual", "acme", "unknown-subroute"],
+      {},
+      srcDir,
+      "not_found",
+      true,
+      false
+    );
+    assert(
+      acmeNotFound &&
+        acmeNotFound.replace(/\\/g, "/").endsWith("[slug]/not_found.tsx"),
+      `Expected 404 under /t-type-safe-contextual/acme/unknown-subroute to resolve [slug]/not_found.tsx, got: ${acmeNotFound}`
+    );
+    assert.deepEqual(acmeNotFoundParams, { slug: "acme" });
+
+    // Client layout discovery rule check
+    const discovered = discoverLayoutsFromFs(srcDir, fs);
+    assert(
+      discovered.includes("=t-type-safe-contextual/pricing:0"),
+      `Expected discoverLayoutsFromFs to emit '=t-type-safe-contextual/pricing:0', got: ${JSON.stringify(
+        discovered.filter((x) => x.includes("t-type-safe-contextual"))
+      )}`
+    );
+  } finally {
+    if (prevVfs === undefined) {
+      delete globalThis.__DINOU_VFS__;
+    } else {
+      globalThis.__DINOU_VFS__ = prevVfs;
+    }
+  }
+  console.log(
+    "✅ [5/5] Router specificity, backtracking, sibling layout isolation & Linux ext4 VFS order PASSED"
+  );
+  console.log("RESULT: All 5 contextual './dinou' & router tests PASSED");
 }
 
 main().catch((err) => {
