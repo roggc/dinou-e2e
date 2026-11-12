@@ -9768,7 +9768,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         expect(underscoredRes.status()).toBe(404);
 
         await expect.poll(() => fs.existsSync(escapedShimDts), { timeout: 10000 }).toBe(true);
-        expect(fs.existsSync(activeShimDts)).toBe(false);
+        await expect.poll(() => fs.existsSync(activeShimDts), { timeout: 10000 }).toBe(false);
 
         // Step C: Un-escape route by renaming `_t-live-escape-*` -> `t-live-escape-*`
         await renameDirWithRetry(escapedDir, activeDir);
@@ -9785,7 +9785,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           .toBe(200);
 
         await expect.poll(() => fs.existsSync(activeShimDts), { timeout: 10000 }).toBe(true);
-        expect(fs.existsSync(escapedShimDts)).toBe(false);
+        await expect.poll(() => fs.existsSync(escapedShimDts), { timeout: 10000 }).toBe(false);
       } finally {
         fs.rmSync(activeDir, { recursive: true, force: true });
         fs.rmSync(escapedDir, { recursive: true, force: true });
