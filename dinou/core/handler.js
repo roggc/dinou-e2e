@@ -121,7 +121,19 @@ if (typeof globalThis !== "undefined" && globalThis.__DINOU_CONFIG__) {
 function copyCustomContextProperties(source, target) {
   if (!source || !target) return;
   for (const key of Object.keys(source)) {
-    if (!["req", "res", "env", "ctx", "platformContext", "_markDynamic", "_dynamicState"].includes(key)) {
+    if (
+      ![
+        "req",
+        "res",
+        "env",
+        "ctx",
+        "platformContext",
+        "_markDynamic",
+        "_dynamicState",
+        "_isStaticHtmlRender",
+        "_isPprRuntimeResume",
+      ].includes(key)
+    ) {
       target[key] = source[key];
     }
   }
@@ -2627,6 +2639,7 @@ async function handleRequest(request, platformContext = {}) {
                 ? { ...simReq, query: {}, cookies: {} }
                 : { query: {}, cookies: {}, headers: {}, path: reqPath, method: "GET" };
               const recomposeCtx = createRequestContext(recomposeSimReq, bridge, platformContext);
+              recomposeCtx._isStaticHtmlRender = true;
               copyCustomContextProperties(rootContext, recomposeCtx);
               let htmlStream;
               await requestStorage.run(recomposeCtx, async () => {
@@ -2714,7 +2727,11 @@ async function handleRequest(request, platformContext = {}) {
               return;
             }
             const revalBridge = new WebResponseBridge();
-            const context = createRequestContext(simReq, revalBridge, platformContext);
+            const revalSimReq = simReq
+              ? { ...simReq, query: {}, cookies: {} }
+              : { query: {}, cookies: {}, headers: {}, path: reqPath, method: "GET" };
+            const context = createRequestContext(revalSimReq, revalBridge, platformContext);
+            context._isStaticHtmlRender = true;
             const isNotFound = {};
             let jsx;
             await requestStorage.run(context, async () => {
@@ -3198,6 +3215,7 @@ async function handleRequest(request, platformContext = {}) {
           }
 
           let htmlStream;
+          context._isStaticHtmlRender = Boolean(shouldCacheISG);
           try {
             await requestStorage.run(context, async () => {
               if (precomputedLayoutRscText && precomputedPageRscText) {
@@ -3235,6 +3253,7 @@ async function handleRequest(request, platformContext = {}) {
               }
             });
           } catch (ssrErr) {
+            context._isStaticHtmlRender = false;
             if (!platformContext?.isSSG || process.env.DINOU_DEBUG) {
               console.error("[Edge Native SSR] SSR render threw error, falling back to getErrorJSX:", ssrErr.message);
             }
@@ -3367,14 +3386,18 @@ async function handleRequest(request, platformContext = {}) {
             let fullHtml = "";
             let rscPayload = "";
             try {
-              const [rsc, html] = await Promise.all([
-                new Response(streamForCache).text(),
-                new Response(htmlStream).text(),
-              ]);
+              const [rsc, html] = await requestStorage.run(context, () =>
+                Promise.all([
+                  new Response(streamForCache).text(),
+                  new Response(htmlStream).text(),
+                ])
+              );
               rscPayload = rsc;
               fullHtml = html;
             } catch (drainErr) {
               console.error("[Edge ISG] Error reading streams:", drainErr);
+            } finally {
+              context._isStaticHtmlRender = false;
             }
 
             if (fullHtml) {

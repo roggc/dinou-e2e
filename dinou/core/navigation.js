@@ -125,6 +125,7 @@ export function refreshSlot(slotId, options) {
 }
 
 const DINOU_CONTEXT_KEY = Symbol.for("dinou.request.context.storage");
+const BAILOUT_RAW_TARGET = Symbol.for("dinou.bailout.raw");
 
 export function usePathname() {
   // 🟢 1. SERVER LOGIC (SSR)
@@ -171,7 +172,22 @@ export function useSearchParams() {
         typeof React.useState === "function" &&
         Boolean(clientH) &&
         !clientH._dinouIsServerHooksDispatcher;
-      if (ctx && ctx._isPprRuntimeResume && isClientSsrRender) {
+      if (isClientSsrRender) {
+        if (!ctx || ctx._isPprRuntimeResume || ctx._isStaticHtmlRender) {
+          return new URLSearchParams();
+        }
+        const rawQuery =
+          ctx.req && ctx.req.query
+            ? ctx.req.query[BAILOUT_RAW_TARGET] || ctx.req.query
+            : null;
+        if (rawQuery) {
+          const params = new URLSearchParams();
+          Object.entries(rawQuery).forEach(([key, val]) => {
+            if (Array.isArray(val)) val.forEach((v) => params.append(key, v));
+            else if (val) params.append(key, val);
+          });
+          return params;
+        }
         return new URLSearchParams();
       }
       if (ctx && ctx.req && ctx.req.query) {
