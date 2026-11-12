@@ -8,6 +8,7 @@
     "test:ppr:search-params": "node --test tests/ppr-use-search-params.test.js",
     "test:typecheck:contextual": "node tests/type-safe-contextual.test.mjs",
     "test:escaped": "node scripts/verify-escaped-ci.mjs",
+    "test:bailout": "node scripts/verify-bailout-ci.mjs",
     "test:hmr:ws": "node tests/hmr-websocket.test.mjs",
     "test:smoke:compile": "node tests/compile-and-export-smoke.mjs",
     "dev": "node dinou/cli.js dev",

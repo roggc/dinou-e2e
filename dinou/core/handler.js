@@ -1368,7 +1368,19 @@ async function handleRequest(request, platformContext = {}) {
     headersObj[k.toLowerCase()] = v;
   }
   const cookiesObj = parseCookieHeader(headersObj["cookie"] || "");
-  const queryObj = Object.fromEntries(url.searchParams.entries());
+  const queryObj = {};
+  for (const [k, v] of url.searchParams.entries()) {
+    if (k === "__proto__") continue;
+    if (Object.prototype.hasOwnProperty.call(queryObj, k)) {
+      if (Array.isArray(queryObj[k])) {
+        queryObj[k].push(v);
+      } else {
+        queryObj[k] = [queryObj[k], v];
+      }
+    } else {
+      queryObj[k] = v;
+    }
+  }
   const internalBuildId = queryObj.____build_id____;
   const internalRefreshVersion = queryObj.____v____;
   delete queryObj.____build_id____;

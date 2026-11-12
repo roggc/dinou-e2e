@@ -9978,4 +9978,219 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       }
     });
   });
+
+  test.describe("Client useSearchParams() vs. Server Static Bailout Semantics (/t-bailout-search)", () => {
+    test("1. Pure SSG with Client useSearchParams() stays static at build time and hydrates ?q=... with zero hydration errors", async ({
+      page,
+    }) => {
+      if (isProd && !isCloudflare && !isDeno) {
+        const ssgDiskPath = path.resolve(
+          ".dinou/dist2/t-bailout-search/ssg/index.html"
+        );
+        expect(
+          fs.existsSync(ssgDiskPath),
+          "Pure SSG page with Client useSearchParams() must be pre-rendered to disk"
+        ).toBe(true);
+      }
+
+      await page.goto(
+        "/t-bailout-search/ssg?q=hydration-safe&tag=rsc&tag=isg&empty="
+      );
+      await expect(page.getByTestId("client-search-value")).toHaveText(
+        "ClientSearch:hydration-safe"
+      );
+      await expect(page.getByTestId("client-search-tags")).toHaveText(
+        "ClientTags:rsc,isg"
+      );
+      await expect(page.getByTestId("client-search-empty")).toHaveText(
+        "ClientEmpty:"
+      );
+      const firstSsgCount = await page
+        .getByTestId("ssg-render-count")
+        .textContent();
+
+      await page.goto("/t-bailout-search/ssg?q=second-query");
+      await expect(page.getByTestId("client-search-value")).toHaveText(
+        "ClientSearch:second-query"
+      );
+      const secondSsgCount = await page
+        .getByTestId("ssg-render-count")
+        .textContent();
+
+      if (isProd) {
+        expect(secondSsgCount).toBe(firstSsgCount);
+      } else {
+        expect(secondSsgCount).not.toBe(firstSsgCount);
+      }
+    });
+
+    test("2. Server Component calling useSearchParams() triggers Automatic Static Bailout (Live Dynamic SSR)", async ({
+      page,
+    }) => {
+      if (isProd && !isCloudflare && !isDeno) {
+        const serverDiskPath = path.resolve(
+          ".dinou/dist2/t-bailout-search/server/index.html"
+        );
+        expect(
+          fs.existsSync(serverDiskPath),
+          "Server Component calling useSearchParams() must bail out of SSG"
+        ).toBe(false);
+      }
+
+      await page.goto("/t-bailout-search/server?q=first");
+      const firstCount = await page
+        .getByTestId("server-render-count")
+        .textContent();
+      await expect(page.getByTestId("server-search-value")).toHaveText(
+        "ServerSearch:first"
+      );
+
+      await page.goto("/t-bailout-search/server?q=second");
+      const secondCount = await page
+        .getByTestId("server-render-count")
+        .textContent();
+      await expect(page.getByTestId("server-search-value")).toHaveText(
+        "ServerSearch:second"
+      );
+
+      expect(secondCount).not.toBe(firstCount);
+    });
+
+    test("3. On-demand ISG route with Client useSearchParams() caches on clean visit (even after an uncached ?q=... visit) and hydrates ?q=... without mismatch", async ({
+      page,
+    }, testInfo) => {
+      test.skip(
+        !isProd,
+        "On-demand ISG caching applies exclusively to production builds"
+      );
+
+      // 3a. Clean first visit -> caches ISG -> subsequent visit with ?q=... serves cached ISG & hydrates query
+      const cleanFirstId = `clean-${testInfo.project.name}-${Date.now()}`;
+      await page.goto(`/t-bailout-search/isg/${cleanFirstId}`);
+      await expect(page.getByTestId("isg-render-count")).toHaveText(
+        `ISG:${cleanFirstId}:1`
+      );
+      await expect(page.getByTestId("client-search-value")).toHaveText(
+        "ClientSearch:EMPTY"
+      );
+
+      await page.goto(`/t-bailout-search/isg/${cleanFirstId}?q=cached-ok`);
+      await expect(page.getByTestId("isg-render-count")).toHaveText(
+        `ISG:${cleanFirstId}:1`
+      );
+      await expect(page.getByTestId("client-search-value")).toHaveText(
+        "ClientSearch:cached-ok"
+      );
+
+      // 3b. Uncached visit WITH ?q=... (including repeated + empty params) first -> zero hydration mismatch + does NOT poison route as dynamic -> next clean visit caches ISG!
+      const queryFirstId = `qfirst-${testInfo.project.name}-${Date.now()}`;
+      await page.goto(
+        `/t-bailout-search/isg/${queryFirstId}?q=boots&tag=rsc&tag=isg&empty=`
+      );
+      await expect(page.getByTestId("isg-render-count")).toHaveText(
+        `ISG:${queryFirstId}:1`
+      );
+      await expect(page.getByTestId("client-search-value")).toHaveText(
+        "ClientSearch:boots"
+      );
+      await expect(page.getByTestId("client-search-tags")).toHaveText(
+        "ClientTags:rsc,isg"
+      );
+      await expect(page.getByTestId("client-search-empty")).toHaveText(
+        "ClientEmpty:"
+      );
+
+      await page.goto(`/t-bailout-search/isg/${queryFirstId}`);
+      await expect(page.getByTestId("isg-render-count")).toHaveText(
+        `ISG:${queryFirstId}:2`
+      );
+      await expect(page.getByTestId("client-search-value")).toHaveText(
+        "ClientSearch:EMPTY"
+      );
+
+      await page.goto(`/t-bailout-search/isg/${queryFirstId}?q=sneakers`);
+      await expect(page.getByTestId("isg-render-count")).toHaveText(
+        `ISG:${queryFirstId}:2`
+      );
+      await expect(page.getByTestId("client-search-value")).toHaveText(
+        "ClientSearch:sneakers"
+      );
+    });
+
+    test("4. Background ISR route with Client useSearchParams() refreshes after TTL without de-optimizing to Dynamic SSR", async ({
+      page,
+      request,
+    }, testInfo) => {
+      test.skip(
+        !isProd,
+        "Background ISR caching applies exclusively to production builds"
+      );
+
+      const slot = ["chromium", "firefox", "webkit"].includes(
+        testInfo.project.name
+      )
+        ? testInfo.project.name
+        : "default";
+      const isrPath = `/t-bailout-search/isr/${slot}`;
+      const isrRegex = new RegExp(`ISR:${slot}:\\d+`);
+      const extractIsrCount = (rawHtml: string) =>
+        rawHtml.replace(/<!--[\s\S]*?-->/g, "").match(isrRegex)?.[0] ?? null;
+
+      await page.goto(`${isrPath}?q=initial`);
+      const initialRenderText = await page
+        .getByTestId("isr-render-count")
+        .textContent();
+      expect(initialRenderText).toMatch(isrRegex);
+      await expect(page.getByTestId("client-search-value")).toHaveText(
+        "ClientSearch:initial"
+      );
+
+      // Wait for revalidate = 3s TTL to expire, then trigger background SWR
+      await page.waitForTimeout(3200);
+      await request.get(`${isrPath}?q=swr-trigger`);
+
+      // Poll until background regeneration commits the new static snapshot
+      let refreshedSnapshot: string | null = null;
+      await expect
+        .poll(
+          async () => {
+            const res = await request.get(isrPath);
+            const html = await res.text();
+            const matched = extractIsrCount(html);
+            refreshedSnapshot = matched;
+            return Boolean(matched && matched !== initialRenderText);
+          },
+          { timeout: 15000 }
+        )
+        .toBe(true);
+
+      // Verify route is STILL cached static ISR (two immediate requests return the exact same render count!)
+      const check1Html = await (await request.get(`${isrPath}?q=check1`)).text();
+      const check2Html = await (await request.get(`${isrPath}?q=check2`)).text();
+      const count1 = extractIsrCount(check1Html);
+      const count2 = extractIsrCount(check2Html);
+      expect(count1).toBeTruthy();
+      expect(count1).not.toBe(initialRenderText);
+      expect(count1).toBe(refreshedSnapshot);
+      expect(count1).toBe(count2);
+
+      // And verify full browser hydration with live query parameter has zero hydration errors
+      await page.goto(`${isrPath}?q=still-static`);
+      await expect(page.getByTestId("client-search-value")).toHaveText(
+        "ClientSearch:still-static"
+      );
+    });
+
+    test("5. Unit & Dual-Engine Bailout Verification Suite (scripts/verify-bailout-ci.mjs)", async () => {
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        [path.resolve("scripts/verify-bailout-ci.mjs")],
+        { encoding: "utf8", timeout: 90000 }
+      );
+      expect(output).toContain(
+        "RESULT: All 4 bailout & useSearchParams verification checks PASSED"
+      );
+    });
+  });
 });
