@@ -37,14 +37,20 @@ function formatDiagnostics(diagnostics) {
   });
 }
 
-async function main() {
-  const genModulePath = fs.existsSync(
-    path.resolve(root, "dinou/core/generate-route-types.js")
-  )
-    ? path.resolve(root, "dinou/core/generate-route-types.js")
-    : path.resolve(root, "node_modules/dinou/dinou/core/generate-route-types.js");
+function resolveDinouCoreUrl(fileName) {
+  const candidates = [
+    path.resolve(root, "dinou/core", fileName),
+    path.resolve(root, "node_modules/dinou/dinou/core", fileName),
+    path.resolve(root, "node_modules/dinou/core", fileName),
+  ];
+  const found = candidates.find((c) => fs.existsSync(c)) ?? candidates[0];
+  return pathToFileURL(found).href;
+}
 
-  const { generateRouteTypes } = await import(pathToFileURL(genModulePath).href);
+async function main() {
+  const { generateRouteTypes } = await import(
+    resolveDinouCoreUrl("generate-route-types.js")
+  );
 
   // 1. Ensure route types & contextual "./dinou" modules are up to date (writeFileIfChanged is idempotent)
   generateRouteTypes(root);
@@ -225,21 +231,12 @@ async function main() {
   //    Even when VFS lists `[slug]` BEFORE `(marketing)` (as on Linux ext4 under Bun),
   //    `/t-type-safe-contextual/pricing` MUST resolve to `(marketing)/pricing/page.tsx`
   //    AND its layouts MUST NOT include sibling `[slug]/layout.tsx`.
-  const routerModPath = path.resolve(
-    root,
-    "dinou/core/get-file-path-and-dynamic-params.js"
-  );
-  const vfsModPath = path.resolve(root, "dinou/core/vfs.js");
-  const discoverLayoutsModPath = path.resolve(
-    root,
-    "dinou/core/discover-layouts.js"
-  );
   const { getFilePathAndDynamicParams } = await import(
-    pathToFileURL(routerModPath).href
+    resolveDinouCoreUrl("get-file-path-and-dynamic-params.js")
   );
-  const { buildVfs } = await import(pathToFileURL(vfsModPath).href);
+  const { buildVfs } = await import(resolveDinouCoreUrl("vfs.js"));
   const { discoverLayoutsFromFs } = await import(
-    pathToFileURL(discoverLayoutsModPath).href
+    resolveDinouCoreUrl("discover-layouts.js")
   );
 
   const srcDir = path.resolve(root, "src");
