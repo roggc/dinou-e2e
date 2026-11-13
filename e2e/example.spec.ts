@@ -10202,4 +10202,217 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
     });
   });
+
+  // =========================================================================
+  // <Suspense> + <DinouCacheSlot> ON NON-PPR ISG ROUTES (/t-cache-slot-isg)
+  // =========================================================================
+  test.describe("<Suspense> + <DinouCacheSlot> on Non-PPR ISG Routes (/t-cache-slot-isg)", () => {
+    test("1. <DinouCacheSlot revalidate={0}> inside <Suspense> on ppr=false bails out to Live Dynamic SSR", async ({
+      page,
+    }) => {
+      if (isProd && !isCloudflare && !isDeno) {
+        const distLiveZeroHtml = path.resolve(
+          ".dinou/dist2/t-cache-slot-isg/live-zero/index.html"
+        );
+        expect(fs.existsSync(distLiveZeroHtml)).toBe(false);
+      }
+
+      await page.goto("/t-cache-slot-isg/live-zero");
+      const c1 =
+        (await page.getByTestId("live-zero-count").textContent())?.trim() ?? "";
+      const s1 =
+        (await page.getByTestId("live-zero-slot").textContent())?.trim() ?? "";
+      expect(c1).toMatch(/^LiveZero:\d+$/);
+      const n1 = Number(c1.split(":")[1]);
+      expect(s1).toBe(`LivePayload:${n1}`);
+
+      await page.goto("/t-cache-slot-isg/live-zero");
+      const c2 =
+        (await page.getByTestId("live-zero-count").textContent())?.trim() ?? "";
+      const s2 =
+        (await page.getByTestId("live-zero-slot").textContent())?.trim() ?? "";
+      expect(c2).toMatch(/^LiveZero:\d+$/);
+      const n2 = Number(c2.split(":")[1]);
+      expect(n2).toBeGreaterThan(n1);
+      expect(s2).toBe(`LivePayload:${n2}`);
+    });
+
+    test("2. Pre-rendered SSG route (/t-cache-slot-isg/products/1) with <Suspense> + <DinouCacheSlot> stays static without hydration mismatch", async ({
+      page,
+    }) => {
+      if (isProd && !isCloudflare && !isDeno) {
+        const distProduct1Html = path.resolve(
+          ".dinou/dist2/t-cache-slot-isg/products/1/index.html"
+        );
+        expect(fs.existsSync(distProduct1Html)).toBe(true);
+      }
+
+      await page.goto("/t-cache-slot-isg/products/1");
+      const p1 =
+        (await page.getByTestId("page-render-count").textContent())?.trim() ??
+        "";
+      const sl1 =
+        (await page.getByTestId("slot-render-count").textContent())?.trim() ??
+        "";
+      expect(p1).toMatch(/^Page:1:\d+$/);
+      expect(sl1).toMatch(/^Slot:1:[a-z0-9]+-[a-z0-9]+:\d+$/);
+      await expect(page.getByTestId("slot-fn-child")).toHaveText("FnSlot:1");
+
+      await page.goto("/t-cache-slot-isg/products/1");
+      const p2 =
+        (await page.getByTestId("page-render-count").textContent())?.trim() ??
+        "";
+      const sl2 =
+        (await page.getByTestId("slot-render-count").textContent())?.trim() ??
+        "";
+      await expect(page.getByTestId("slot-fn-child")).toHaveText("FnSlot:1");
+
+      if (isProd) {
+        expect(p2).toBe(p1);
+        expect(sl2).toBe(sl1);
+      } else {
+        expect(Number(p2.split(":")[2])).toBeGreaterThan(
+          Number(p1.split(":")[2])
+        );
+      }
+    });
+
+    test("3. On-demand ISG route with <Suspense> + <DinouCacheSlot> caches after unread query and refreshes ONLY expired Micro-ISR slots", async ({
+      page,
+      request,
+    }, testInfo) => {
+      test.skip(
+        !isProd,
+        "ISG & Micro-ISR caching only applies in production builds"
+      );
+
+      // Part A: Unread marketing query non-poisoning + on-demand ISG caching (revalidate = 3600s, immune to slow CI browser latency)
+      const isgSlug = `isg-${testInfo.project.name}-${Date.now()}`;
+      const isgPath = `/t-cache-slot-isg/products/${isgSlug}`;
+
+      await page.goto(`${isgPath}?utm_source=campaign`);
+      await expect(page.getByTestId("page-render-count")).toHaveText(
+        `Page:${isgSlug}:1`
+      );
+      await expect(page.getByTestId("slot-render-count")).toHaveText(
+        new RegExp(`^Slot:${isgSlug}:[a-z0-9]+-[a-z0-9]+:\\d+$`)
+      );
+      await expect(page.getByTestId("slot-fn-child")).toHaveText(
+        `FnSlot:${isgSlug}`
+      );
+
+      // Clean visit -> generates and persists static ISG page + cached slot
+      await page.goto(isgPath);
+      await expect(page.getByTestId("page-render-count")).toHaveText(
+        `Page:${isgSlug}:2`
+      );
+      const cachedIsgSlot =
+        (await page.getByTestId("slot-render-count").textContent())?.trim() ??
+        "";
+      expect(cachedIsgSlot).toMatch(
+        new RegExp(`^Slot:${isgSlug}:[a-z0-9]+-[a-z0-9]+:\\d+$`)
+      );
+      await expect(page.getByTestId("slot-fn-child")).toHaveText(
+        `FnSlot:${isgSlug}`
+      );
+
+      // Repeat browser navigations (clean & unread query) -> served from static ISG cache (Page stays :2, zero hydration mismatch)
+      await page.goto(isgPath);
+      await expect(page.getByTestId("page-render-count")).toHaveText(
+        `Page:${isgSlug}:2`
+      );
+      await expect(page.getByTestId("slot-render-count")).toHaveText(
+        cachedIsgSlot
+      );
+
+      await page.goto(`${isgPath}?utm_source=repeat`);
+      await expect(page.getByTestId("page-render-count")).toHaveText(
+        `Page:${isgSlug}:2`
+      );
+      await expect(page.getByTestId("slot-render-count")).toHaveText(
+        cachedIsgSlot
+      );
+
+      // Part B: Micro-ISR slot expiry (swr-* uses slot revalidate = 2s while page revalidate = 3600s)
+      const swrSlug = `swr-${testInfo.project.name}-${Date.now()}`;
+      const swrPath = `/t-cache-slot-isg/products/${swrSlug}`;
+      const extractSlotCount = (raw: string) => {
+        const clean = raw.replace(/<!--[\s\S]*?-->/g, "");
+        const m = clean.match(
+          new RegExp(`Slot:${swrSlug}:[a-z0-9]+-[a-z0-9]+:\\d+`)
+        );
+        return m ? m[0] : "";
+      };
+      const extractPageCount = (raw: string) => {
+        const clean = raw.replace(/<!--[\s\S]*?-->/g, "");
+        const m = clean.match(new RegExp(`Page:${swrSlug}:\\d+`));
+        return m ? m[0] : "";
+      };
+
+      const seedHtml = await (await request.get(swrPath)).text();
+      expect(extractPageCount(seedHtml)).toBe(`Page:${swrSlug}:1`);
+      const initialSwrSlot = extractSlotCount(seedHtml);
+      expect(initialSwrSlot).toMatch(
+        new RegExp(`^Slot:${swrSlug}:[a-z0-9]+-[a-z0-9]+:\\d+$`)
+      );
+
+      const hitBeforeExpiryHtml = await (await request.get(swrPath)).text();
+      expect(extractPageCount(hitBeforeExpiryHtml)).toBe(`Page:${swrSlug}:1`);
+      expect(extractSlotCount(hitBeforeExpiryHtml)).toBe(initialSwrSlot);
+
+      await page.waitForTimeout(2300);
+
+      const triggerRes = await request.get(swrPath);
+      expect(triggerRes.status()).toBe(200);
+      const slotAtTrigger = extractSlotCount(await triggerRes.text());
+
+      let refreshedSlot = "";
+      await expect
+        .poll(
+          async () => {
+            const res = await request.get(swrPath);
+            const html = await res.text();
+            const currentSlot = extractSlotCount(html);
+            if (
+              currentSlot &&
+              currentSlot !== initialSwrSlot &&
+              currentSlot !== slotAtTrigger
+            ) {
+              refreshedSlot = currentSlot;
+              return true;
+            }
+            return false;
+          },
+          {
+            timeout: 15000,
+            intervals: [250, 400, 600],
+          }
+        )
+        .toBe(true);
+
+      // Browser navigation renders refreshed slot while parent Page render count stays frozen at :1 with zero hydration errors
+      await page.goto(swrPath);
+      await expect(page.getByTestId("page-render-count")).toHaveText(
+        `Page:${swrSlug}:1`
+      );
+      await expect(page.getByTestId("slot-render-count")).toHaveText(
+        refreshedSlot
+      );
+      await expect(page.getByTestId("slot-fn-child")).toHaveText(
+        `FnSlot:${swrSlug}`
+      );
+    });
+
+    test("4. Unit, Strict TypeScript & Dual-Engine Slot Bailout Suite (scripts/verify-cache-slot-bailout-ci.mjs)", async () => {
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        [path.resolve("scripts/verify-cache-slot-bailout-ci.mjs")],
+        { encoding: "utf8", timeout: 90000 }
+      );
+      expect(output).toContain(
+        "RESULT: All <Suspense> + <DinouCacheSlot> ISG bailout & type checks PASSED"
+      );
+    });
+  });
 });
