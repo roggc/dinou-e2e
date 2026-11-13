@@ -10415,4 +10415,173 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
     });
   });
+
+  // =========================================================================
+  // SERVER FUNCTIONS ENGINE FIXES (/t-sf-fixes/[itemId])
+  // =========================================================================
+  test.describe("Server Functions Engine Fixes: Streamed JSX callServer, export default & Path Casing (/t-sf-fixes)", () => {
+    test("1. Pre-rendered SSG (/t-sf-fixes/item-1) & mixed-case route (/t-sf-fixes/cardAlpha): export default Server Functions, inline [itemId] closure & manifest casing", async ({
+      page,
+    }) => {
+      if (isProd && !isCloudflare && !isDeno) {
+        const distItem1Html = path.resolve(
+          ".dinou/dist2/t-sf-fixes/item-1/index.html"
+        );
+        expect(fs.existsSync(distItem1Html)).toBe(true);
+      }
+
+      const manifestPath = path.resolve(
+        ".dinou/server_functions_manifest/server-functions-manifest.json"
+      );
+      if (fs.existsSync(manifestPath)) {
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+        const normKeys = Object.keys(manifest).map((k) =>
+          k.replace(/\\/g, "/")
+        );
+
+        expect(normKeys).toContain("src/t-sf-fixes/[itemId]/page.tsx");
+        expect(normKeys).toContain("src/t-sf-fixes/[itemId]/defaultModAction.ts");
+        expect(normKeys).toContain("src/t-sf-fixes/[itemId]/defaultFnAction.ts");
+        expect(normKeys).toContain(
+          "src/t-sf-fixes/[itemId]/defaultAnonModAction.ts"
+        );
+        expect(normKeys).toContain("src/t-sf-fixes/[itemId]/streamActions.tsx");
+
+        const pageKey = Object.keys(manifest).find(
+          (k) => k.replace(/\\/g, "/") === "src/t-sf-fixes/[itemId]/page.tsx"
+        )!;
+        expect(manifest[pageKey]).not.toContain("default");
+        expect(
+          manifest[pageKey].some((fn: string) =>
+            fn.includes("updateItemInline")
+          )
+        ).toBe(true);
+
+        for (const rel of [
+          "src/t-sf-fixes/[itemId]/defaultModAction.ts",
+          "src/t-sf-fixes/[itemId]/defaultFnAction.ts",
+          "src/t-sf-fixes/[itemId]/defaultAnonModAction.ts",
+        ]) {
+          const k = Object.keys(manifest).find(
+            (key) => key.replace(/\\/g, "/") === rel
+          )!;
+          expect(manifest[k]).toContain("default");
+        }
+      }
+
+      for (const targetId of ["item-1", "cardAlpha"]) {
+        await page.goto(`/t-sf-fixes/${targetId}`);
+        await expect(page.getByTestId("sf-fixes-heading")).toHaveText(
+          `SfFixes:${targetId}`
+        );
+
+        // A. Default-exported Server Functions passed as props from Server Component
+        await page.getByTestId("btn-server-passed-defaults").click();
+        await expect(
+          page.getByTestId("server-passed-defaults-result")
+        ).toHaveText(
+          `ModDefault:${targetId}:SRV|FnDefault:${targetId}:21|AnonModDefault:${targetId}:anon-srv`,
+          { timeout: 10000 }
+        );
+
+        // B. Default-exported Server Functions imported directly in Client Component
+        await page.getByTestId("btn-client-imported-defaults").click();
+        await expect(
+          page.getByTestId("client-imported-defaults-result")
+        ).toHaveText(
+          `ModDefault:${targetId}:CLI|FnDefault:${targetId}:27|AnonModDefault:${targetId}:anon-cli|NamedHelper:${targetId}`,
+          { timeout: 10000 }
+        );
+
+        // C. Inline closure Server Function inside mixed-case [itemId]/page.tsx
+        await page.getByTestId("btn-mixed-case-inline").click();
+        await expect(page.getByTestId("mixed-case-inline-result")).toHaveText(
+          `Inline:${targetId}:closure-ok`,
+          { timeout: 10000 }
+        );
+      }
+    });
+
+    test("2. Streamed JSX returned by Server Function preserves callServer across nested actions, useActionState forms, pure DOM forms & recursive Level-2 UI", async ({
+      page,
+    }, testInfo) => {
+      const runtimeErrors: string[] = [];
+      page.on("pageerror", (err) => runtimeErrors.push(err.message));
+
+      const itemId = `stream_${testInfo.project.name}_${Date.now()}`;
+      await page.goto(`/t-sf-fixes/${itemId}`);
+      await expect(page.getByTestId("sf-fixes-heading")).toHaveText(
+        `SfFixes:${itemId}`
+      );
+
+      // 1. Load streamed JSX (with async Server Component + nested Server References)
+      await page.getByTestId("btn-load-streamed-card").click();
+      await expect(page.getByTestId("streamed-card")).toBeVisible({
+        timeout: 10000,
+      });
+      await expect(page.getByTestId("async-stream-banner")).toHaveText(
+        `StreamedBanner:${itemId}`
+      );
+
+      // 2. Invoke nested Server Function prop inside streamed JSX
+      await page.getByTestId("btn-nested-confirm").click();
+      await expect(page.getByTestId("nested-confirm-result")).toHaveText(
+        `NestedConfirmed:${itemId}:confirmed`,
+        { timeout: 10000 }
+      );
+
+      // 3. Submit React 19 useActionState <form action={...}> inside streamed JSX
+      await page.getByTestId("input-nested-note").fill("note-42");
+      await page.getByTestId("btn-nested-form").click();
+      await expect(page.getByTestId("nested-form-result")).toHaveText(
+        `StreamForm:${itemId}:note-42`,
+        { timeout: 10000 }
+      );
+
+      // 4. Submit pure Server Component <form action={...}> inside streamed JSX & verify cookie streaming
+      const sfResponsePromise = page.waitForResponse(
+        (res) =>
+          res.url().includes("/____server_function____") &&
+          res.request().method() === "POST"
+      );
+      await page.getByTestId("btn-pure-dom-form").click();
+      const sfRes = await sfResponsePromise;
+      expect(sfRes.status()).toBe(200);
+      await expect
+        .poll(
+          async () =>
+            await page.evaluate(
+              (cookieKey) => document.cookie.includes(`${cookieKey}=dom-verified`),
+              `sf_stream_${itemId}`
+            ),
+          { timeout: 10000 }
+        )
+        .toBe(true);
+
+      // 5. Recursive Level-2 streamed UI -> invoke Level-2 nested Server Function via callServer
+      await page.getByTestId("btn-load-level2").click();
+      await expect(page.getByTestId("streamed-level2-card")).toBeVisible({
+        timeout: 10000,
+      });
+      await page.getByTestId("btn-level2-confirm").click();
+      await expect(page.getByTestId("level2-confirm-result")).toHaveText(
+        `Level2Confirmed:${itemId}`,
+        { timeout: 10000 }
+      );
+
+      expect(runtimeErrors).toEqual([]);
+    });
+
+    test("3. Unit & Dual-Engine Server Functions Fixes Suite (scripts/verify-sf-fixes-ci.mjs)", async () => {
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        [path.resolve("scripts/verify-sf-fixes-ci.mjs")],
+        { encoding: "utf8", timeout: 90000 }
+      );
+      expect(output).toContain(
+        "RESULT: All Server Functions fixes verification checks PASSED"
+      );
+    });
+  });
 });
