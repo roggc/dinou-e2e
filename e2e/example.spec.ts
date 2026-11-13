@@ -10132,7 +10132,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         ? testInfo.project.name
         : "default";
       const isrPath = `/t-bailout-search/isr/${slot}`;
-      const isrRegex = new RegExp(`ISR:${slot}:\\d+`);
+      const isrRegex = new RegExp(`ISR:${slot}:[a-z0-9-]+:\\d+`);
       const extractIsrCount = (rawHtml: string) =>
         rawHtml.replace(/<!--[\s\S]*?-->/g, "").match(isrRegex)?.[0] ?? null;
 
@@ -10145,11 +10145,15 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         "ClientSearch:initial"
       );
 
-      // Wait for revalidate = 3s TTL to expire, then trigger background SWR
-      await page.waitForTimeout(3200);
-      await request.get(`${isrPath}?q=swr-trigger`);
+      // Wait past revalidate = 3s TTL (including any SWR kicked off by the initial visit when build snapshot was already expired)
+      await page.waitForTimeout(3600);
+      const swrTriggerHtml = await (
+        await request.get(`${isrPath}?q=swr-trigger`)
+      ).text();
+      const snapshotAtTrigger = extractIsrCount(swrTriggerHtml);
+      expect(snapshotAtTrigger).toMatch(isrRegex);
 
-      // Poll until background regeneration commits the new static snapshot
+      // Poll until background regeneration commits the new static snapshot (distinct from both initial & trigger-time stale snapshot)
       let refreshedSnapshot: string | null = null;
       await expect
         .poll(
@@ -10158,7 +10162,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
             const html = await res.text();
             const matched = extractIsrCount(html);
             refreshedSnapshot = matched;
-            return Boolean(matched && matched !== initialRenderText);
+            return Boolean(
+              matched &&
+                matched !== initialRenderText &&
+                matched !== snapshotAtTrigger
+            );
           },
           { timeout: 15000 }
         )
@@ -10171,6 +10179,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const count2 = extractIsrCount(check2Html);
       expect(count1).toBeTruthy();
       expect(count1).not.toBe(initialRenderText);
+      expect(count1).not.toBe(snapshotAtTrigger);
       expect(count1).toBe(refreshedSnapshot);
       expect(count1).toBe(count2);
 
