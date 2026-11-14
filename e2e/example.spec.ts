@@ -10471,6 +10471,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       for (const targetId of ["item-1", "cardAlpha"]) {
         await page.goto(`/t-sf-fixes/${targetId}`);
+        await page.waitForSelector('body[data-hydrated="true"]', {
+          state: "attached",
+          timeout: 15000,
+        });
         await expect(page.getByTestId("sf-fixes-heading")).toHaveText(
           `SfFixes:${targetId}`
         );
@@ -10510,6 +10514,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       const itemId = `stream_${testInfo.project.name}_${Date.now()}`;
       await page.goto(`/t-sf-fixes/${itemId}`);
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
       await expect(page.getByTestId("sf-fixes-heading")).toHaveText(
         `SfFixes:${itemId}`
       );
