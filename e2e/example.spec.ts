@@ -11547,13 +11547,14 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         timeout: 15000,
       });
 
-      // 2A. Initial client <Suspense> mount resolved Pass A fetchPatternTasks(liveScope) exactly once
+      // 2A. Initial client <Suspense> mount resolves Pass A fetchPatternTasks(liveScope)
+      // (1 call in prod; 1-2 in dev because React <StrictMode> double-invokes useState(() => ...))
       await expect(page.getByTestId("tasks-empty")).toHaveText(
         "No tasks yet. Add one above!",
         { timeout: 15000 }
       );
       await expect(page.getByTestId("pass-a-read-count")).toHaveText(
-        "PassAReads:1"
+        isDev ? /^PassAReads:[12]$/ : "PassAReads:1"
       );
 
       // 2B. Verify "use client" CodeSnippetViewer ("use server" string literal) is interactive
@@ -11606,7 +11607,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         "Verify Rollup #default",
       ]);
       await expect(page.getByTestId("pass-a-read-count")).toHaveText(
-        "PassAReads:3"
+        isDev ? /^PassAReads:[34]$/ : "PassAReads:3"
       );
       await expect(page.getByTestId("unrelated-draft-input")).toHaveValue(
         "Keep my local draft intact"
@@ -11623,7 +11624,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         "Verify Rollup #default",
       ]);
       await expect(page.getByTestId("pass-a-read-count")).toHaveText(
-        "PassAReads:4"
+        isDev ? /^PassAReads:[456]$/ : "PassAReads:4"
       );
 
       // 2H. Reset tasks cleanly
