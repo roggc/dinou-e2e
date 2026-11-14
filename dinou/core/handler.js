@@ -60,6 +60,7 @@ import {
   getPprHoleCounter,
   runInPageSegment,
   runInLayoutSegment,
+  isSlotDiscoveryActive,
 } from "./ppr-context.js";
 import { asyncRenderJSXToClientJSX } from "./render-jsx-to-client-jsx.js";
 
@@ -1137,6 +1138,7 @@ function createRequestContext(simReq, resBridge, platformContext = {}, dynamicSt
   let hasRedirected = false;
 
   const markDynamic = () => {
+    if (isSlotDiscoveryActive()) return;
     if (dynamicState) {
       dynamicState.value = true;
     }

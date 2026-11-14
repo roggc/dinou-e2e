@@ -20,6 +20,7 @@ import {
   getPprHoleCounter,
   runInPageSegment,
   runInLayoutSegment,
+  isSlotDiscoveryActive,
 } from "./ppr-context.js";
 import { asyncRenderJSXToClientJSX } from "./render-jsx-to-client-jsx.js";
 import {
@@ -428,6 +429,7 @@ async function revalidatePage(reqPath, internalOptions = {}) {
         "x-forwarded-proto": "http",
       };
       const markRevalDynamic = () => {
+        if (isSlotDiscoveryActive()) return;
         revalDynamicState.value = true;
       };
       const outerCtx = getContext();
@@ -884,6 +886,7 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
           "x-forwarded-proto": "http",
         };
         const markRevalDynamic = () => {
+          if (isSlotDiscoveryActive()) return;
           revalDynamicState.value = true;
         };
         const outerCtx = getContext();

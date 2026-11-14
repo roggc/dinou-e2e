@@ -721,6 +721,9 @@ console.log(
   fs.mkdirSync(path.join(tmpApp, "src/posts/[slug]"), {
     recursive: true,
   });
+  fs.mkdirSync(path.join(tmpApp, "src/dynamic-probe"), {
+    recursive: true,
+  });
 
   fs.writeFileSync(
     path.join(tmpApp, "package.json"),
@@ -910,6 +913,37 @@ export function getCacheTags(params: { slug: string }) {
 `
   );
 
+  fs.writeFileSync(
+    path.join(tmpApp, "src/dynamic-probe/page.tsx"),
+    `import { DinouCacheSlot, getContext } from "dinou/server";
+
+export default async function DynamicProbePage() {
+  return (
+    <main>
+      <DinouCacheSlot id="dynamic-probe-slot" revalidate={0}>
+        {async () => {
+          const ctx = getContext();
+          const ua = ctx?.req?.headers?.["user-agent"] ?? "";
+          const ck = Object.keys(ctx?.req?.cookies ?? {}).length;
+          const qk = Object.keys(ctx?.req?.query ?? {}).length;
+          ctx?.res?.setHeader?.("x-probe-slot", "1");
+          return <div>{\`Probe:\${ua}:\${ck}:\${qk}\`}</div>;
+        }}
+      </DinouCacheSlot>
+    </main>
+  );
+}
+`
+  );
+
+  fs.writeFileSync(
+    path.join(tmpApp, "src/dynamic-probe/page_functions.ts"),
+    `export function dynamic() {
+  return true;
+}
+`
+  );
+
   try {
     process.chdir(tmpApp);
 
@@ -948,14 +982,36 @@ export function getCacheTags(params: { slug: string }) {
       "Redis must remain completely empty after SSG build"
     );
 
-    // 6.2 Boot compiled Dual-Bundle runtime against cold RedisStorage
+    // 6.2 Boot compiled Dual-Bundle runtime against cold RedisStorage & cold slotRegistry
+    //     (simulating a fresh production server process after `dinou build`)
     globalThis.__TEST_REVAL_COUNTERS__.ssgActive = false;
+    globalThis[Symbol.for("dinou.slot.registry")]?.clear();
     const rscMod = await import(
       pathToFileURL(path.join(tmpApp, ".dinou/node/rsc-engine.mjs")).href
     );
     const ssrMod = await import(
       pathToFileURL(path.join(tmpApp, ".dinou/node/ssr-engine.mjs")).href
     );
+
+    // Hit an unrelated dynamic route whose <DinouCacheSlot> reads req.headers, req.cookies,
+    // req.query, and calls res.setHeader, populating slotRegistry BEFORE any static route's
+    // slots are registered in memory (plus an unscoped entry to test discovery isolation).
+    const resProbe = await rscMod.handleRequest(
+      new Request("http://localhost/dynamic-probe?probe=1", {
+        headers: { "user-agent": "RevalProbeAgent", cookie: "sid=abc" },
+      }),
+      { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml }
+    );
+    const htmlProbe = await resProbe.text();
+    assert.ok(htmlProbe.includes("Probe:RevalProbeAgent:1:1"), htmlProbe);
+    const activeSlotRegistry = globalThis[Symbol.for("dinou.slot.registry")];
+    assert.equal(activeSlotRegistry?.has("dynamic-probe-slot"), true);
+    assert.equal(activeSlotRegistry?.has("quota-slot"), false);
+    const probeEntry = activeSlotRegistry.get("dynamic-probe-slot");
+    activeSlotRegistry.set("unscoped-dynamic-probe-slot", {
+      ...probeEntry,
+      routeKeys: new Set(),
+    });
 
     // Bump all versions to v2 BEFORE first request to prove cold RedisStorage hydrates v1 from .dinou/dist2
     globalThis.__TEST_REVAL_COUNTERS__.dashLayoutVersion = 2;

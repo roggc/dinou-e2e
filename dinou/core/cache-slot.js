@@ -12,8 +12,8 @@ import {
 } from "./storage-adapter.js";
 import { asyncRenderJSXToClientJSX } from "./render-jsx-to-client-jsx.js";
 import { DinouCacheSlotBoundary as RawDinouCacheSlotBoundary } from "./slot.js";
-import { getContext } from "./request-context.js";
-import { unwrapBailoutProxy } from "./bailout-proxy.js";
+import { getContext, requestStorage } from "./request-context.js";
+import { createBailoutProxy, unwrapBailoutProxy } from "./bailout-proxy.js";
 import { getJSX } from "./get-jsx.js";
 import {
   isPprBuildActive,
@@ -80,6 +80,87 @@ if (!globalThis[PRE_EVAL_ROUTES_KEY] || !(globalThis[PRE_EVAL_ROUTES_KEY] instan
   globalThis[PRE_EVAL_ROUTES_KEY] = new Map();
 }
 const preEvaluatingRoutes = globalThis[PRE_EVAL_ROUTES_KEY];
+
+function normalizeSlotRouteKey(rawPath) {
+  if (typeof rawPath !== "string" || rawPath.trim() === "") return null;
+  const clean = rawPath.split("?")[0].split("#")[0].replace(/\\/g, "/");
+  if (
+    clean.includes("____rsc_") ||
+    clean.includes("____server_function____")
+  ) {
+    return null;
+  }
+  return clean.replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+function doesSlotEntryMatchRoute(entry, targetRouteKey) {
+  if (targetRouteKey === null || targetRouteKey === undefined) return true;
+  const keys = entry?.routeKeys;
+  if (!(keys instanceof Set) || keys.size === 0) return true;
+  if (targetRouteKey === "") return true;
+  for (const k of keys) {
+    if (
+      k === "" ||
+      k === targetRouteKey ||
+      targetRouteKey.startsWith(k + "/") ||
+      k.startsWith(targetRouteKey + "/")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function createDiscoveryContext(currentPath) {
+  const outerCtx = getContext();
+  const rawQuery = unwrapBailoutProxy(outerCtx?.req?.query);
+  const rawCookies = unwrapBailoutProxy(outerCtx?.req?.cookies);
+  const rawHeaders = unwrapBailoutProxy(outerCtx?.req?.headers);
+  const activeEnv =
+    outerCtx?.env ||
+    outerCtx?.platformContext?.env ||
+    outerCtx?.req?.env ||
+    (typeof globalThis !== "undefined" ? globalThis.__DINOU_ENV__ : undefined) ||
+    {};
+  let reqPath =
+    typeof currentPath === "string" && currentPath
+      ? currentPath.split("?")[0]
+      : outerCtx?.req?.path || "/";
+  if (!reqPath.startsWith("/")) reqPath = "/" + reqPath;
+  return {
+    req: {
+      query: createBailoutProxy(
+        rawQuery && typeof rawQuery === "object" ? { ...rawQuery } : {},
+        "req.query"
+      ),
+      cookies: createBailoutProxy(
+        rawCookies && typeof rawCookies === "object" ? { ...rawCookies } : {},
+        "req.cookies"
+      ),
+      headers: createBailoutProxy(
+        rawHeaders && typeof rawHeaders === "object" ? { ...rawHeaders } : {},
+        "req.headers"
+      ),
+      path: reqPath,
+      url: reqPath,
+      method: "GET",
+      env: activeEnv,
+    },
+    res: {
+      status() {},
+      setHeader() {},
+      cookie() {},
+      clearCookie() {},
+      redirect() {},
+    },
+    env: activeEnv,
+    platformContext: outerCtx?.platformContext
+      ? { ...outerCtx.platformContext, isSSG: false }
+      : { env: activeEnv },
+    _isStaticHtmlRender: Boolean(outerCtx?._isStaticHtmlRender),
+    _isSlotDiscovery: true,
+  };
+}
 
 let _registerServerRefFn = null;
 function getRegisterServerReference() {
@@ -633,6 +714,15 @@ async function DinouCacheSlot(props) {
   }
 
   // Register in slotRegistry for on-demand endpoint re-rendering and nested slot discovery
+  const prevSlotEntry = slotRegistry.get(slotId);
+  const slotRouteKeys =
+    prevSlotEntry?.routeKeys instanceof Set
+      ? prevSlotEntry.routeKeys
+      : new Set();
+  const currentSlotRouteKey = normalizeSlotRouteKey(reqCtxInitial?.req?.path);
+  if (currentSlotRouteKey !== null) {
+    slotRouteKeys.add(currentSlotRouteKey);
+  }
   slotRegistry.set(slotId, {
     render: async () => {
       return await runSlotScope(async () => {
@@ -640,16 +730,31 @@ async function DinouCacheSlot(props) {
         return await asyncRenderJSXToClientJSX(childElement);
       });
     },
-    discover: async () => {
+    discover: async (discoverPath) => {
       if (discoveringSlots.has(slotId)) return;
       discoveringSlots.add(slotId);
       try {
-        await runInSlotDiscovery(async () => {
-          await runSlotScope(async () => {
-            const childElement = typeof children === "function" ? await children() : children;
-            await asyncRenderJSXToClientJSX(childElement);
-          });
-        });
+        const fallbackRoute =
+          discoverPath ||
+          (slotRouteKeys.size > 0
+            ? "/" + Array.from(slotRouteKeys)[0]
+            : undefined);
+        await requestStorage.run(
+          createDiscoveryContext(fallbackRoute),
+          async () => {
+            await runWithPprContext({ isPpr: true }, async () => {
+              await runInSlotDiscovery(async () => {
+                await runSlotScope(async () => {
+                  const childElement =
+                    typeof children === "function"
+                      ? await children()
+                      : children;
+                  await asyncRenderJSXToClientJSX(childElement);
+                });
+              });
+            });
+          }
+        );
       } catch (e) {
       } finally {
         discoveringSlots.delete(slotId);
@@ -657,6 +762,7 @@ async function DinouCacheSlot(props) {
     },
     tags: allTags,
     revalidate: typeof revalidate === "number" ? revalidate : undefined,
+    routeKeys: slotRouteKeys,
   });
 
   // When running inside a nested slot discovery pass, recursively discover any child slots
@@ -1028,17 +1134,24 @@ async function getSlotJSX(slotId, options = {}) {
     }
   }
 
-  async function discoverFromRegisteredSlots() {
-    const attempted = new Set();
+  const attemptedDiscoveryKeys = new Set();
+  async function discoverFromRegisteredSlots(filterRouteKey = undefined) {
     let progressed = true;
     while (!slotRegistry.has(targetId) && progressed) {
       progressed = false;
       for (const [regKey, entry] of Array.from(slotRegistry.entries())) {
-        if (attempted.has(regKey)) continue;
-        attempted.add(regKey);
+        if (attemptedDiscoveryKeys.has(regKey)) continue;
+        if (
+          filterRouteKey !== undefined &&
+          filterRouteKey !== null &&
+          !doesSlotEntryMatchRoute(entry, filterRouteKey)
+        ) {
+          continue;
+        }
+        attemptedDiscoveryKeys.add(regKey);
         progressed = true;
         if (typeof entry.discover === "function") {
-          await entry.discover();
+          await entry.discover(options.currentPath);
           targetId = await resolveCanonicalSlotId(slotId, storage);
           if (slotRegistry.has(targetId)) return;
         }
@@ -1046,9 +1159,13 @@ async function getSlotJSX(slotId, options = {}) {
     }
   }
 
-  // 2. First try discovering nested slots from already-registered outer slots
+  const cleanCurrentRouteKey = options.currentPath
+    ? normalizeSlotRouteKey(options.currentPath)
+    : null;
+
+  // 2. First try discovering nested slots from already-registered outer slots matching this route
   if (!slotRegistry.has(targetId)) {
-    await discoverFromRegisteredSlots();
+    await discoverFromRegisteredSlots(cleanCurrentRouteKey);
   }
 
   // 3. If still not in slotRegistry (e.g., cold server start), pre-evaluate the route once
@@ -1062,24 +1179,45 @@ async function getSlotJSX(slotId, options = {}) {
       const preEvalPromise = (async () => {
         try {
           const isNotFound = { value: false };
-          await runWithPprContext({ isPpr: true }, async () => {
-            await runInSlotDiscovery(async () => {
-              const pageJsx = await getJSX(options.currentPath, {}, isNotFound, false, false, {
-                segment: "page",
-              });
-              if (pageJsx) {
-                await asyncRenderJSXToClientJSX(pageJsx);
-              }
-              const resolvedId = await resolveCanonicalSlotId(slotId, storage);
+          await requestStorage.run(
+            createDiscoveryContext(options.currentPath),
+            async () => {
+              await runWithPprContext({ isPpr: true }, async () => {
+                await runInSlotDiscovery(async () => {
+                  const pageJsx = await getJSX(
+                    options.currentPath,
+                    {},
+                    isNotFound,
+                    false,
+                    false,
+                    {
+                      segment: "page",
+                    }
+                  );
+                  if (pageJsx) {
+                    await asyncRenderJSXToClientJSX(pageJsx);
+                  }
+                  const resolvedId = await resolveCanonicalSlotId(
+                    slotId,
+                    storage
+                  );
 
-              if (!slotRegistry.has(resolvedId)) {
-                const fullJsx = await getJSX(options.currentPath, {}, isNotFound, false, false);
-                if (fullJsx) {
-                  await asyncRenderJSXToClientJSX(fullJsx);
-                }
-              }
-            });
-          });
+                  if (!slotRegistry.has(resolvedId)) {
+                    const fullJsx = await getJSX(
+                      options.currentPath,
+                      {},
+                      isNotFound,
+                      false,
+                      false
+                    );
+                    if (fullJsx) {
+                      await asyncRenderJSXToClientJSX(fullJsx);
+                    }
+                  }
+                });
+              });
+            }
+          );
         } catch (e) {
           console.warn(
             `[getSlotJSX] Could not pre-evaluate route "${options.currentPath}" to register slot "${slotId}":`,
@@ -1095,8 +1233,13 @@ async function getSlotJSX(slotId, options = {}) {
     }
 
     if (!slotRegistry.has(targetId)) {
-      await discoverFromRegisteredSlots();
+      await discoverFromRegisteredSlots(cleanCurrentRouteKey);
     }
+  }
+
+  // 4. Final global fallback across any remaining registered slots if route-scoped lookup missed
+  if (!slotRegistry.has(targetId)) {
+    await discoverFromRegisteredSlots(null);
   }
 
   storageKey = `slots/${targetId}/slot.json`;
