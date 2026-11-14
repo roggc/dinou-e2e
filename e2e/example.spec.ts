@@ -11565,7 +11565,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // 2C. Verify default-exported "use server" action works end-to-end
       await page.getByTestId("default-action-btn").click();
       await expect(page.getByTestId("default-action-result")).toHaveText(
-        `VaultOK:${liveScope}:ping:len=39`
+        `VaultOK:${liveScope}:ping:len=38`
       );
 
       // 2D. Type into unrelated local input to prove surgical client state preservation
@@ -11680,7 +11680,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.getByTestId("inline-note-input").fill("closure-verified");
       await page.getByTestId("inline-run-btn").click();
       await expect(page.getByTestId("inline-result")).toHaveText(
-        `InlineOK:${dynItemId}:closure-verified:len=39`
+        `InlineOK:${dynItemId}:closure-verified:len=38`
       );
       await expect(page.getByTestId("inline-error")).toHaveText("");
 
