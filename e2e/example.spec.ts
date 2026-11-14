@@ -11729,4 +11729,133 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
     });
   });
+
+  test.describe("React Compiler Multi-Bundler Subgraph Memoization, 'use server' Isolation & DinouConfig.reactCompiler (/t-react-compiler)", () => {
+    test("1. Automatically memoizes child components & custom hooks without 'use client' across Esbuild/Rollup/Webpack while honoring 'use no memo', import.meta & module/inline 'use server' isolation", async ({
+      page,
+      request,
+    }) => {
+      // 1A. Raw SSR/SSG HTML & client bundle secret isolation check
+      const htmlRes = await safeApiGet(request, "/t-react-compiler");
+      expect(htmlRes.status()).toBe(200);
+      const html = await htmlRes.text();
+      expect(html).toContain("React Compiler E2E");
+      expect(html).toContain("draft:PRO-");
+      expect(html).toContain("pro-analytics,pro-billing");
+      expect(html).toContain("meta:ok");
+      expect(html).not.toContain("sk_live_RC_ACTION_VAULT_2026");
+      expect(html).not.toContain("sk_live_RC_INLINE_VAULT_2026");
+
+      const dist3Dir = path.resolve(process.cwd(), ".dinou/dist3");
+      if (isProd && fs.existsSync(dist3Dir)) {
+        const distFiles = fs
+          .readdirSync(dist3Dir)
+          .filter((f) => f.endsWith(".js") || f.endsWith(".mjs"));
+        for (const f of distFiles) {
+          const content = fs.readFileSync(path.join(dist3Dir, f), "utf8");
+          expect(content).not.toContain("sk_live_RC_ACTION_VAULT_2026");
+          expect(content).not.toContain("sk_live_RC_INLINE_VAULT_2026");
+        }
+      }
+
+      // 1B. Live browser verification of child component + custom hook automatic memoization & "use no memo" opt-out
+      const pageErrors: string[] = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      await page.goto("/t-react-compiler");
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+
+      await expect(page.getByTestId("summary-heading")).toHaveText("draft:PRO-");
+      await expect(page.getByTestId("summary-items")).toHaveText(
+        "pro-analytics,pro-billing"
+      );
+      await expect(page.getByTestId("summary-import-meta")).toHaveText(
+        "meta:ok"
+      );
+
+      // Trigger 3 unrelated parent renders AND 3 unrelated child-internal renders:
+      // Child-internal renders execute OrderSummary (no "use client") and useCatalogFilter (no "use client") directly!
+      const bumpParent = page.getByTestId("bump-parent-unrelated");
+      const bumpChild = page.getByTestId("bump-child-unrelated");
+      await bumpParent.click();
+      await bumpParent.click();
+      await bumpParent.click();
+      await expect(bumpParent).toHaveText("Parent Unrelated: 3");
+
+      await bumpChild.click();
+      await bumpChild.click();
+      await bumpChild.click();
+      await expect(bumpChild).toHaveText("Child Unrelated: 3");
+
+      await page.getByTestId("read-compiler-stats").click();
+      await page.getByTestId("read-no-memo-stats").click();
+
+      if (isProd) {
+        // In production builds (Esbuild, Rollup & Webpack), React Compiler memoized both
+        // OrderSummary.tsx and use-catalog-filter.ts -> 0 object reallocations across all 6 unrelated updates!
+        await expect(page.getByTestId("child-memo-reallocs")).toHaveText("0");
+        // Meanwhile LegacyNoMemoProbe ("use no memo") opted out -> reallocated on all 3 parent updates!
+        await expect(page.getByTestId("no-memo-reallocs")).toHaveText("3");
+      } else {
+        // In dev mode (fast SWC/esbuild without React Compiler), objects reallocate naturally on re-renders
+        await expect(page.getByTestId("child-memo-reallocs")).toHaveText(
+          /^([3-9]|\d{2,})$/
+        );
+        await expect(page.getByTestId("no-memo-reallocs")).toHaveText(
+          /^([3-9]|\d{2,})$/
+        );
+      }
+
+      // 1C. Changing `prefix` ("pro-" -> "vip-") invalidates memo slot cleanly and updates UI
+      await page.getByTestId("switch-prefix-btn").click();
+      await expect(page.getByTestId("summary-heading")).toHaveText("draft:VIP-");
+      await expect(page.getByTestId("summary-items")).toHaveText(
+        "vip-enterprise"
+      );
+      await page.getByTestId("read-compiler-stats").click();
+      if (isProd) {
+        await expect(page.getByTestId("child-memo-reallocs")).toHaveText("1");
+      }
+
+      // 1D. Changing `parentLabel` ("draft" -> "confirmed") invalidates badge memo slot cleanly
+      await page.getByTestId("change-parent-label").click();
+      await expect(page.getByTestId("summary-heading")).toHaveText(
+        "confirmed:VIP-"
+      );
+      await page.getByTestId("read-compiler-stats").click();
+      if (isProd) {
+        await expect(page.getByTestId("child-memo-reallocs")).toHaveText("2");
+      }
+
+      // 1E. Both module-level "use server" and inline "use server" actions imported into compiled client components execute via RPC proxy
+      await page.getByTestId("call-mod-action").click();
+      await expect(page.getByTestId("mod-action-reply")).toHaveText(
+        "ack:confirmed:3:len=28",
+        { timeout: 15000 }
+      );
+
+      await page.getByTestId("call-inline-action").click();
+      await expect(page.getByTestId("inline-action-reply")).toHaveText(
+        "inline-ack:confirmed:len=28",
+        { timeout: 15000 }
+      );
+
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("2. Standalone Multi-Bundler React Compiler, 'use server' Ordering & DinouConfig.reactCompiler Suite (scripts/verify-react-compiler-ci.mjs)", async () => {
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        [path.resolve("scripts/verify-react-compiler-ci.mjs")],
+        { encoding: "utf8", timeout: 90000 }
+      );
+      expect(output).toContain(
+        "RESULT: All React Compiler multi-bundler, 'use server' isolation, vendor resolution & DinouConfig.reactCompiler checks PASSED"
+      );
+    });
+  });
 });
