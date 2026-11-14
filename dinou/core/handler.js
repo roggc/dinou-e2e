@@ -1360,6 +1360,7 @@ function createServerFunctionContext(simReq, resBridge, platformContext = {}) {
     env: platformContext.env || {},
     ctx: platformContext.ctx || null,
     platformContext,
+    _dynamicState: { value: true },
   };
   setCurrentContext(context);
   return context;
