@@ -16,6 +16,17 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const projectRoot = process.cwd();
+process.env.DINOU_WRITE_TO_DISK = "false";
+
+const rootSfManifestPath = path.join(
+  projectRoot,
+  ".dinou/server_functions_manifest/server-functions-manifest.json"
+);
+const rootSfManifestExistedBefore = existsSync(rootSfManifestPath);
+const rootSfManifestContentBefore = rootSfManifestExistedBefore
+  ? readFileSync(rootSfManifestPath, "utf8")
+  : null;
+
 const dinouRootCandidates = [
   path.resolve(projectRoot, "dinou"),
   path.resolve(projectRoot, "node_modules/dinou/dinou"),
@@ -196,8 +207,10 @@ console.log(
   "2️⃣ Verifying Esbuild skips Dinou internal runtime files AND never intercepts module-level or inline 'use server' modules..."
 );
 {
+  const origCwd = process.cwd();
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "dinou-rc-sf-"));
   try {
+    process.chdir(tmpDir);
     const actionPath = path.join(tmpDir, "actions.ts");
     const inlineActionPath = path.join(tmpDir, "inline-actions.ts");
     const clientPath = path.join(tmpDir, "ClientForm.tsx");
@@ -286,6 +299,7 @@ export function ClientForm({ orderId }: { orderId: string }) {
       "Dinou internal core/slot.js must not be compiled through user React Compiler Babel bridge"
     );
   } finally {
+    process.chdir(origCwd);
     await fs.rm(tmpDir, { recursive: true, force: true });
   }
 }
@@ -344,8 +358,10 @@ console.log(
     "Rollup serverFunctionsPlugin.transform must declare order: 'pre'"
   );
 
+  const origCwd = process.cwd();
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "dinou-rc-rollup-"));
   try {
+    process.chdir(tmpDir);
     const actionPath = path.join(tmpDir, "inlineAction.ts");
     const modActionPath = path.join(tmpDir, "modAction.ts");
     const entryPath = path.join(tmpDir, "Entry.tsx");
@@ -480,10 +496,10 @@ export function Entry({ label }: { label: string }) {
       assert.match(code, /createServerFunctionProxy/);
       assert.match(code, /react\/compiler-runtime/);
     } finally {
-      if (prevWriteEnv === undefined) delete process.env.DINOU_WRITE_TO_DISK;
-      else process.env.DINOU_WRITE_TO_DISK = prevWriteEnv;
+      process.env.DINOU_WRITE_TO_DISK = prevWriteEnv ?? "false";
     }
   } finally {
+    process.chdir(origCwd);
     await fs.rm(tmpDir, { recursive: true, force: true });
   }
 }
@@ -558,8 +574,7 @@ console.log(
     process.chdir(origCwd);
     if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = prevNodeEnv;
-    if (prevWrite === undefined) delete process.env.DINOU_WRITE_TO_DISK;
-    else process.env.DINOU_WRITE_TO_DISK = prevWrite;
+    process.env.DINOU_WRITE_TO_DISK = prevWrite ?? "false";
     if (prevConfig === undefined) delete globalThis.__DINOU_CONFIG__;
     else globalThis.__DINOU_CONFIG__ = prevConfig;
     await fs.rm(tmpDir, { recursive: true, force: true });
@@ -576,6 +591,20 @@ console.log(
     /interface DinouConfig[\s\S]*?reactCompiler\?:\s*boolean;/,
     "dinou/index.d.ts must declare reactCompiler?: boolean inside DinouConfig"
   );
+
+  // Guard: standalone verification must never create or mutate projectRoot's server-functions-manifest.json
+  assert.equal(
+    existsSync(rootSfManifestPath),
+    rootSfManifestExistedBefore,
+    "verify-react-compiler-ci.mjs must not create or delete projectRoot/.dinou/server_functions_manifest/server-functions-manifest.json"
+  );
+  if (rootSfManifestExistedBefore) {
+    assert.equal(
+      readFileSync(rootSfManifestPath, "utf8"),
+      rootSfManifestContentBefore,
+      "verify-react-compiler-ci.mjs must not overwrite projectRoot/.dinou/server_functions_manifest/server-functions-manifest.json"
+    );
+  }
 }
 
 console.log(
