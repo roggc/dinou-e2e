@@ -718,6 +718,9 @@ console.log(
   fs.mkdirSync(path.join(tmpApp, "src/dashboard/settings"), {
     recursive: true,
   });
+  fs.mkdirSync(path.join(tmpApp, "src/dashboard/billing"), {
+    recursive: true,
+  });
   fs.mkdirSync(path.join(tmpApp, "src/posts/[slug]"), {
     recursive: true,
   });
@@ -734,6 +737,7 @@ console.log(
     dashLayoutVersion: 1,
     dashSlotVersion: 1,
     settingsLayoutVersion: 1,
+    billingLayoutVersion: 1,
     pageVersion: 1,
     quotaSlotVersion: 1,
     redisWritesDuringSsg: 0,
@@ -762,9 +766,11 @@ console.log(
     },
     async keys(pattern) {
       const prefix = String(pattern || "").replace(/\*$/, "");
-      return [...globalThis.__TEST_REVAL_REDIS_MAP__.keys()].filter((k) =>
-        k.startsWith(prefix)
-      );
+      // Intentionally return keys in reverse order (child paths before parent paths,
+      // mimicking ext4 htree hash ordering on Linux) to verify ancestor-first sorting.
+      return [...globalThis.__TEST_REVAL_REDIS_MAP__.keys()]
+        .filter((k) => k.startsWith(prefix))
+        .reverse();
     },
   };
 
@@ -896,6 +902,38 @@ export function getCacheTags() {
   );
 
   fs.writeFileSync(
+    path.join(tmpApp, "src/dashboard/billing/layout.tsx"),
+    `import type { ReactNode } from "react";
+export default function BillingLayout({ children }: { children: ReactNode }) {
+  const blv = (globalThis as any).__TEST_REVAL_COUNTERS__.billingLayoutVersion;
+  return (
+    <div data-billing-layout={blv}>
+      <header>{\`BillingLayout-v\${blv}\`}</header>
+      {children}
+    </div>
+  );
+}
+`
+  );
+
+  fs.writeFileSync(
+    path.join(tmpApp, "src/dashboard/billing/layout_functions.ts"),
+    `export function getCacheTags() {
+  return ["billing-layout-tag"];
+}
+`
+  );
+
+  fs.writeFileSync(
+    path.join(tmpApp, "src/dashboard/billing/page.tsx"),
+    `export default function BillingPage() {
+  const pv = (globalThis as any).__TEST_REVAL_COUNTERS__.pageVersion;
+  return <section><h1>{\`BillingPage-v\${pv}\`}</h1></section>;
+}
+`
+  );
+
+  fs.writeFileSync(
     path.join(tmpApp, "src/posts/[slug]/page.tsx"),
     `export default function PostPage({ params }: { params: { slug: string } }) {
   const pv = (globalThis as any).__TEST_REVAL_COUNTERS__.pageVersion;
@@ -1017,6 +1055,7 @@ export default async function DynamicProbePage() {
     globalThis.__TEST_REVAL_COUNTERS__.dashLayoutVersion = 2;
     globalThis.__TEST_REVAL_COUNTERS__.dashSlotVersion = 2;
     globalThis.__TEST_REVAL_COUNTERS__.settingsLayoutVersion = 2;
+    globalThis.__TEST_REVAL_COUNTERS__.billingLayoutVersion = 2;
     globalThis.__TEST_REVAL_COUNTERS__.pageVersion = 2;
     globalThis.__TEST_REVAL_COUNTERS__.quotaSlotVersion = 2;
 
@@ -1030,6 +1069,16 @@ export default async function DynamicProbePage() {
     assert.ok(htmlDash1.includes("DashLayout-v1"), htmlDash1);
     assert.ok(htmlDash1.includes("DashBannerSlot-v1"), htmlDash1);
     assert.ok(htmlDash1.includes("DashOverviewPage-v1"), htmlDash1);
+
+    const resBilling1 = await rscMod.handleRequest(
+      new Request("http://localhost/dashboard/billing"),
+      { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml }
+    );
+    const htmlBilling1 = stripComments(await resBilling1.text());
+    assert.ok(htmlBilling1.includes("DashLayout-v1"), htmlBilling1);
+    assert.ok(htmlBilling1.includes("DashBannerSlot-v1"), htmlBilling1);
+    assert.ok(htmlBilling1.includes("BillingLayout-v1"), htmlBilling1);
+    assert.ok(htmlBilling1.includes("BillingPage-v1"), htmlBilling1);
 
     const res1 = await rscMod.handleRequest(
       new Request("http://localhost/dashboard/settings"),
@@ -1114,8 +1163,11 @@ export default async function DynamicProbePage() {
     assert.ok(html3.includes("QuotaSlot-v2"), html3);
     assert.ok(html3.includes("SettingsPage-v1"), html3);
 
-    // 6.5 revalidateTag("dash-banner-tag") on layout slot -> splices DashBannerSlot-v2 from shell.layout.json,
-    //     keeps DashLayout-v1 on /dashboard AND preserves layout.metadata.json's layoutGeneratedAt!
+    // 6.5 revalidateTag("dash-banner-tag") on parent layout slot -> splices DashBannerSlot-v2 from shell.layout.json,
+    //     keeps DashLayout-v1 on /dashboard, keeps child SettingsLayout-v2 & BillingLayout-v1 frozen (even when
+    //     storage keys arrive child-before-parent like Ubuntu ext4 or alphabetical "billing" < "layout.metadata.json"),
+    //     AND preserves layout.metadata.json's layoutGeneratedAt!
+    globalThis.__TEST_REVAL_COUNTERS__.settingsLayoutVersion = 3;
     const dashLayoutMetaDisk = JSON.parse(
       fs.readFileSync(
         path.join(tmpApp, ".dinou/dist2/dashboard/layout.metadata.json"),
@@ -1148,6 +1200,99 @@ export default async function DynamicProbePage() {
     assert.ok(htmlDashAfterSlot.includes("DashBannerSlot-v2"), htmlDashAfterSlot);
     assert.ok(htmlDashAfterSlot.includes("DashLayout-v1"), htmlDashAfterSlot);
     assert.ok(htmlDashAfterSlot.includes("DashOverviewPage-v1"), htmlDashAfterSlot);
+
+    const resSettingsAfterParentSlot = await rscMod.handleRequest(
+      new Request("http://localhost/dashboard/settings"),
+      { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml }
+    );
+    const htmlSettingsAfterParentSlot = stripComments(
+      await resSettingsAfterParentSlot.text()
+    );
+    assert.ok(
+      htmlSettingsAfterParentSlot.includes("DashBannerSlot-v2"),
+      htmlSettingsAfterParentSlot
+    );
+    assert.ok(
+      htmlSettingsAfterParentSlot.includes("SettingsLayout-v2"),
+      `Child SettingsLayout must remain v2 (not re-execute to v3) after parent layout slot tag invalidation, got: ${htmlSettingsAfterParentSlot}`
+    );
+    assert.ok(
+      htmlSettingsAfterParentSlot.includes("SettingsPage-v1"),
+      htmlSettingsAfterParentSlot
+    );
+
+    const resBillingAfterParentSlot = await rscMod.handleRequest(
+      new Request("http://localhost/dashboard/billing"),
+      { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml }
+    );
+    const htmlBillingAfterParentSlot = stripComments(
+      await resBillingAfterParentSlot.text()
+    );
+    assert.ok(
+      htmlBillingAfterParentSlot.includes("DashBannerSlot-v2"),
+      htmlBillingAfterParentSlot
+    );
+    assert.ok(
+      htmlBillingAfterParentSlot.includes("BillingLayout-v1"),
+      `Child BillingLayout must remain v1 (not re-execute to v2) after parent layout slot tag invalidation, got: ${htmlBillingAfterParentSlot}`
+    );
+    assert.ok(
+      htmlBillingAfterParentSlot.includes("BillingPage-v1"),
+      htmlBillingAfterParentSlot
+    );
+
+    // 6.5b Parent-only slot refresh (simulating parent layout slot TTL expiry where ONLY /dashboard
+    //      runs revalidateLayout("/dashboard", { onlyRefreshSlots: true }) so parent.generatedAt > child.generatedAt
+    //      while parent.layoutGeneratedAt <= child.layoutGeneratedAt): child layouts must splice slots WITHOUT re-executing!
+    globalThis.__TEST_REVAL_COUNTERS__.dashSlotVersion = 3;
+    const activeStorage = getStorageAdapter();
+    await activeStorage.delete("slots/dash-banner-slot/slot.json");
+    await activeStorage.delete("slots/dash-banner-slot/slot.metadata.json");
+    await activeStorage.delete("slots/dash-banner-slot");
+    await revalidateLayout("/dashboard", { onlyRefreshSlots: true });
+
+    const resSettingsAfterParentOnlySlot = await rscMod.handleRequest(
+      new Request("http://localhost/dashboard/settings"),
+      { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml }
+    );
+    const htmlSettingsAfterParentOnlySlot = stripComments(
+      await resSettingsAfterParentOnlySlot.text()
+    );
+    assert.ok(
+      htmlSettingsAfterParentOnlySlot.includes("DashBannerSlot-v3"),
+      htmlSettingsAfterParentOnlySlot
+    );
+    assert.ok(
+      htmlSettingsAfterParentOnlySlot.includes("SettingsLayout-v2"),
+      `Child SettingsLayout must remain v2 on parent-only slot refresh, got: ${htmlSettingsAfterParentOnlySlot}`
+    );
+    assert.ok(
+      htmlSettingsAfterParentOnlySlot.includes("SettingsPage-v1"),
+      htmlSettingsAfterParentOnlySlot
+    );
+
+    // 6.5c Full parent layout revalidation (revalidateLayout("/dashboard")) MUST still propagate
+    //      ancestor layout re-execution to child layouts while keeping child pages cached!
+    await revalidateLayout("/dashboard");
+    const resSettingsAfterFullParent = await rscMod.handleRequest(
+      new Request("http://localhost/dashboard/settings"),
+      { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml }
+    );
+    const htmlSettingsAfterFullParent = stripComments(
+      await resSettingsAfterFullParent.text()
+    );
+    assert.ok(
+      htmlSettingsAfterFullParent.includes("DashLayout-v2"),
+      htmlSettingsAfterFullParent
+    );
+    assert.ok(
+      htmlSettingsAfterFullParent.includes("SettingsLayout-v3"),
+      htmlSettingsAfterFullParent
+    );
+    assert.ok(
+      htmlSettingsAfterFullParent.includes("SettingsPage-v1"),
+      htmlSettingsAfterFullParent
+    );
 
     // 6.6 revalidateTag("settings-page-tag") -> advances SettingsPage to v2 while DashOverviewPage stays v1
     await revalidateTag("settings-page-tag");

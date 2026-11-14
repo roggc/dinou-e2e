@@ -10860,6 +10860,15 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           await page.getByTestId("dash-index-page-stamp").textContent()
         )?.trim() ?? "";
 
+      await gotoHydrated(page, `/t-reval-fixes/${ws}/dashboard/billing`);
+      const billingLayoutBefore =
+        (
+          await page.getByTestId("billing-layout-stamp").textContent()
+        )?.trim() ?? "";
+      const billingPageBefore =
+        (await page.getByTestId("billing-page-stamp").textContent())?.trim() ??
+        "";
+
       await gotoHydrated(page, `/t-reval-fixes/${ws}/dashboard/settings`);
       const settingsLayoutBefore =
         (
@@ -10930,6 +10939,17 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
       await expect(page.getByTestId("dash-index-page-stamp")).toHaveText(
         dashIndexPageBefore
+      );
+
+      await gotoHydrated(page, `/t-reval-fixes/${ws}/dashboard/billing`);
+      await expect(page.getByTestId("billing-layout-stamp")).toHaveText(
+        billingLayoutBefore
+      );
+      await expect(page.getByTestId("dash-layout-slot-stamp")).toHaveText(
+        dashSlotAfter
+      );
+      await expect(page.getByTestId("billing-page-stamp")).toHaveText(
+        billingPageBefore
       );
 
       // A3. revalidateTag on SettingsPage tag -> updates SettingsPage while SettingsLayout stays frozen

@@ -1827,11 +1827,27 @@ async function handleRequest(request, platformContext = {}) {
                 !isLayoutTtlExpired &&
                 entry.slotTags.length > 0 &&
                 (await hasExpiredSlots(entry.slotTags));
+              const ancestors =
+                i < activeChain.length - 1 ? activeChain.slice(i + 1) : [];
               const maxAncestorGen =
-                i < activeChain.length - 1
-                  ? Math.max(0, ...activeChain.slice(i + 1).map((l) => l.generatedAt || 0))
+                ancestors.length > 0
+                  ? Math.max(0, ...ancestors.map((l) => l.generatedAt || 0))
                   : 0;
-              const isAncestorNewer = entry.generatedAt > 0 && maxAncestorGen > entry.generatedAt;
+              const maxAncestorOwnGen =
+                ancestors.length > 0
+                  ? Math.max(
+                      0,
+                      ...ancestors.map((l) => l.layoutGeneratedAt || l.generatedAt || 0)
+                    )
+                  : 0;
+              const entryOwnGen = entry.layoutGeneratedAt || entry.generatedAt || 0;
+              const isAncestorOwnNewer =
+                entryOwnGen > 0 && maxAncestorOwnGen > entryOwnGen;
+              const isAncestorSlotOnlyNewer =
+                !isAncestorOwnNewer &&
+                entry.generatedAt > 0 &&
+                maxAncestorGen > entry.generatedAt;
+              const isAncestorNewer = isAncestorOwnNewer || isAncestorSlotOnlyNewer;
               if (isLayoutSlotTtlExpired && !isLayoutTtlExpired && !(isLayoutReq && isAncestorNewer)) {
                 const layoutSlotRevalKey = `layout-slot:${entry.layoutRoutePath}`;
                 const layoutSlotRevalPromise = (async () => {
@@ -1851,7 +1867,10 @@ async function handleRequest(request, platformContext = {}) {
                 }
               } else if (isLayoutTtlExpired || (isLayoutReq && isAncestorNewer)) {
                 const { revalidateLayout } = await import("./cache-revalidate.js");
-                await revalidateLayout(entry.layoutRoutePath, {});
+                await revalidateLayout(entry.layoutRoutePath, {
+                  onlyRefreshSlots:
+                    !isLayoutTtlExpired && !isAncestorOwnNewer && isAncestorSlotOnlyNewer,
+                });
                 const lMetaKey = entry.cleanLayoutKey
                   ? `${entry.cleanLayoutKey}/layout.metadata.json`
                   : "layout.metadata.json";
@@ -1867,6 +1886,11 @@ async function handleRequest(request, platformContext = {}) {
                 );
                 if (refreshedMeta?.generatedAt) {
                   entry.generatedAt = Number(refreshedMeta.generatedAt);
+                }
+                if (refreshedMeta?.layoutGeneratedAt || refreshedMeta?.generatedAt) {
+                  entry.layoutGeneratedAt = Number(
+                    refreshedMeta.layoutGeneratedAt || refreshedMeta.generatedAt
+                  );
                 }
                 if (refreshedMeta?.suspenseCount !== undefined) {
                   entry.suspenseCount = Number(refreshedMeta.suspenseCount || 0);
@@ -2656,15 +2680,27 @@ async function handleRequest(request, platformContext = {}) {
               !isLayoutTtlExpired &&
               entry.slotTags.length > 0 &&
               (await hasExpiredSlots(entry.slotTags));
+            const ancestors =
+              i < activeLayoutChain.length - 1 ? activeLayoutChain.slice(i + 1) : [];
             const maxAncestorGen =
-              i < activeLayoutChain.length - 1
+              ancestors.length > 0
+                ? Math.max(0, ...ancestors.map((l) => l.generatedAt || 0))
+                : 0;
+            const maxAncestorOwnGen =
+              ancestors.length > 0
                 ? Math.max(
                     0,
-                    ...activeLayoutChain.slice(i + 1).map((l) => l.generatedAt || 0)
+                    ...ancestors.map((l) => l.layoutGeneratedAt || l.generatedAt || 0)
                   )
                 : 0;
-            const isAncestorNewer =
-              entry.generatedAt > 0 && maxAncestorGen > entry.generatedAt;
+            const entryOwnGen = entry.layoutGeneratedAt || entry.generatedAt || 0;
+            const isAncestorOwnNewer =
+              entryOwnGen > 0 && maxAncestorOwnGen > entryOwnGen;
+            const isAncestorSlotOnlyNewer =
+              !isAncestorOwnNewer &&
+              entry.generatedAt > 0 &&
+              maxAncestorGen > entry.generatedAt;
+            const isAncestorNewer = isAncestorOwnNewer || isAncestorSlotOnlyNewer;
             if (isLayoutSlotTtlExpired && !isLayoutTtlExpired && !isAncestorNewer) {
               const layoutSlotRevalKey = `layout-slot:${entry.layoutRoutePath}`;
               const layoutSlotRevalPromise = (async () => {
@@ -2684,7 +2720,10 @@ async function handleRequest(request, platformContext = {}) {
               }
             } else if (isLayoutTtlExpired || isAncestorNewer) {
               const { revalidateLayout } = await import("./cache-revalidate.js");
-              await revalidateLayout(entry.layoutRoutePath, {});
+              await revalidateLayout(entry.layoutRoutePath, {
+                onlyRefreshSlots:
+                  !isLayoutTtlExpired && !isAncestorOwnNewer && isAncestorSlotOnlyNewer,
+              });
               const refreshedMeta = await readMetaFromStorage(
                 storage,
                 entry.cleanLayoutKey
@@ -2698,6 +2737,11 @@ async function handleRequest(request, platformContext = {}) {
               );
               if (refreshedMeta?.generatedAt) {
                 entry.generatedAt = Number(refreshedMeta.generatedAt);
+              }
+              if (refreshedMeta?.layoutGeneratedAt || refreshedMeta?.generatedAt) {
+                entry.layoutGeneratedAt = Number(
+                  refreshedMeta.layoutGeneratedAt || refreshedMeta.generatedAt
+                );
               }
             }
           }
