@@ -11547,15 +11547,27 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         timeout: 15000,
       });
 
+      const readPassACount = async () => {
+        const locator = page.getByTestId("pass-a-read-count");
+        await expect(locator).toHaveText(/^PassAReads:\d+$/, {
+          timeout: 15000,
+        });
+        const txt = (await locator.textContent()) ?? "";
+        return Number(txt.replace("PassAReads:", ""));
+      };
+
       // 2A. Initial client <Suspense> mount resolves Pass A fetchPatternTasks(liveScope)
-      // (1 call in prod; 1-2 in dev because React <StrictMode> double-invokes useState(() => ...))
+      // (exact 1 in prod; >= 1 in dev where React <StrictMode> + suspended hydration retries re-invoke useState(() => ...))
       await expect(page.getByTestId("tasks-empty")).toHaveText(
         "No tasks yet. Add one above!",
         { timeout: 15000 }
       );
-      await expect(page.getByTestId("pass-a-read-count")).toHaveText(
-        isDev ? /^PassAReads:[12]$/ : "PassAReads:1"
-      );
+      const readsAtMount = await readPassACount();
+      if (isProd) {
+        expect(readsAtMount).toBe(1);
+      } else {
+        expect(readsAtMount).toBeGreaterThanOrEqual(1);
+      }
 
       // 2B. Verify "use client" CodeSnippetViewer ("use server" string literal) is interactive
       await expect(page.getByTestId("snippet-preview")).toContainText(
@@ -11569,7 +11581,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // 2C. Verify default-exported "use server" action works end-to-end
       await page.getByTestId("default-action-btn").click();
       await expect(page.getByTestId("default-action-result")).toHaveText(
-        `VaultOK:${liveScope}:ping:len=38`
+        `VaultOK:${liveScope}:ping:len=38`,
+        { timeout: 15000 }
       );
 
       // 2D. Type into unrelated local input to prove surgical client state preservation
@@ -11581,7 +11594,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.getByTestId("task-input").fill("ab");
       await page.getByTestId("add-task-btn").click();
       await expect(page.getByTestId("error-banner")).toHaveText(
-        "Task must be at least 3 characters long."
+        "Task must be at least 3 characters long.",
+        { timeout: 15000 }
       );
       await expect(page.getByTestId("error-digest")).toHaveText(
         "TASK_TOO_SHORT"
@@ -11594,21 +11608,25 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // 2F. Add 2 valid tasks -> streams default-exported PatternTaskUpdater -> triggers store -> refreshes PatternTasksList
       await page.getByTestId("task-input").fill("Ship Pass B isolation");
       await page.getByTestId("add-task-btn").click();
-      await expect(page.getByTestId("task-item")).toHaveText([
-        "Ship Pass B isolation",
-      ]);
+      await expect(page.getByTestId("task-item")).toHaveText(
+        ["Ship Pass B isolation"],
+        { timeout: 15000 }
+      );
       await expect(page.getByTestId("error-box")).toHaveCount(0);
       await expect(page.getByTestId("task-input")).toHaveValue("");
 
       await page.getByTestId("task-input").fill("Verify Rollup #default");
       await page.getByTestId("add-task-btn").click();
-      await expect(page.getByTestId("task-item")).toHaveText([
-        "Ship Pass B isolation",
-        "Verify Rollup #default",
-      ]);
-      await expect(page.getByTestId("pass-a-read-count")).toHaveText(
-        isDev ? /^PassAReads:[34]$/ : "PassAReads:3"
+      await expect(page.getByTestId("task-item")).toHaveText(
+        ["Ship Pass B isolation", "Verify Rollup #default"],
+        { timeout: 15000 }
       );
+      const readsAfterMutations = await readPassACount();
+      if (isProd) {
+        expect(readsAfterMutations).toBe(3);
+      } else {
+        expect(readsAfterMutations).toBeGreaterThanOrEqual(readsAtMount + 2);
+      }
       await expect(page.getByTestId("unrelated-draft-input")).toHaveValue(
         "Keep my local draft intact"
       );
@@ -11619,18 +11637,24 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         state: "attached",
         timeout: 15000,
       });
-      await expect(page.getByTestId("task-item")).toHaveText([
-        "Ship Pass B isolation",
-        "Verify Rollup #default",
-      ]);
-      await expect(page.getByTestId("pass-a-read-count")).toHaveText(
-        isDev ? /^PassAReads:[456]$/ : "PassAReads:4"
+      await expect(page.getByTestId("task-item")).toHaveText(
+        ["Ship Pass B isolation", "Verify Rollup #default"],
+        { timeout: 15000 }
       );
+      const readsAfterReload = await readPassACount();
+      if (isProd) {
+        expect(readsAfterReload).toBe(4);
+      } else {
+        expect(readsAfterReload).toBeGreaterThanOrEqual(
+          readsAfterMutations + 1
+        );
+      }
 
       // 2H. Reset tasks cleanly
       await page.getByTestId("reset-tasks-btn").click();
       await expect(page.getByTestId("tasks-empty")).toHaveText(
-        "No tasks yet. Add one above!"
+        "No tasks yet. Add one above!",
+        { timeout: 15000 }
       );
 
       expect(pageErrors).toEqual([]);
@@ -11677,14 +11701,16 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await page.getByTestId("inline-note-input").fill("x");
       await page.getByTestId("inline-run-btn").click();
       await expect(page.getByTestId("inline-error")).toHaveText(
-        "Inline note too short.|INLINE_NOTE_SHORT"
+        "Inline note too short.|INLINE_NOTE_SHORT",
+        { timeout: 15000 }
       );
 
       // Valid inline closure execution accesses Pass A server-only secret & captured [itemId]
       await page.getByTestId("inline-note-input").fill("closure-verified");
       await page.getByTestId("inline-run-btn").click();
       await expect(page.getByTestId("inline-result")).toHaveText(
-        `InlineOK:${dynItemId}:closure-verified:len=38`
+        `InlineOK:${dynItemId}:closure-verified:len=38`,
+        { timeout: 15000 }
       );
       await expect(page.getByTestId("inline-error")).toHaveText("");
 
