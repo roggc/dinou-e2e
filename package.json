@@ -12,6 +12,7 @@
     "test:cache-slot-bailout": "node scripts/verify-cache-slot-bailout-ci.mjs",
     "test:sf-fixes": "node scripts/verify-sf-fixes-ci.mjs",
     "test:reval-fixes": "node scripts/verify-revalidation-fixes-ci.mjs",
+    "test:streaming-suspense": "node scripts/verify-streaming-suspense-ci.mjs",
     "test:hmr:ws": "node tests/hmr-websocket.test.mjs",
     "test:smoke:compile": "node tests/compile-and-export-smoke.mjs",
     "dev": "node dinou/cli.js dev",

@@ -11030,4 +11030,407 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
     });
   });
+
+  // =========================================================================
+  // PRODUCTION PROGRESSIVE <Suspense> STREAMING & DIRECT Promise<ReactNode> CHILDREN (/t-streaming-suspense)
+  // =========================================================================
+  test.describe("Production Progressive <Suspense> Streaming & Direct Promise<ReactNode> Children (/t-streaming-suspense)", () => {
+    const streamBaseUrl = `http://localhost:${process.env.PORT || 3000}`;
+
+    async function readProgressiveHtmlStream(
+      urlPath: string,
+      markerText: string
+    ) {
+      const t0 = Date.now();
+      const res = await fetch(`${streamBaseUrl}${urlPath}`, {
+        headers: { connection: "close" },
+      });
+      expect(res.status).toBe(200);
+      expect(res.body).not.toBeNull();
+
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let firstChunkHtml = "";
+      let firstChunkTime = -1;
+      let fullHtml = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          fullHtml += decoder.decode();
+          break;
+        }
+        fullHtml += decoder.decode(value, { stream: true });
+        if (firstChunkTime < 0 && fullHtml.includes(markerText)) {
+          firstChunkTime = Date.now() - t0;
+          firstChunkHtml = fullHtml;
+        }
+      }
+      const totalTime = Date.now() - t0;
+      return { firstChunkHtml, firstChunkTime, fullHtml, totalTime };
+    }
+
+    test("1. Dynamic SSR (revalidate = 0) progressive <Suspense> HTTP chunk streaming, Client Flight use(promise), Server Function RPC streaming & soft navigation (/t-streaming-suspense/dynamic-ssr -> /t-streaming-suspense/soft-target)", async ({
+      page,
+    }) => {
+      // 1A. Raw HTTP progressive chunk streaming: Chunk 1 flushes shell + fallback BEFORE 750ms promise resolves
+      const { firstChunkHtml, firstChunkTime, fullHtml, totalTime } =
+        await readProgressiveHtmlStream(
+          "/t-streaming-suspense/dynamic-ssr",
+          "Executive Dashboard"
+        );
+
+      expect(firstChunkTime).toBeGreaterThanOrEqual(0);
+      expect(firstChunkHtml).toContain("Executive Dashboard");
+      expect(firstChunkHtml).toContain(
+        '<div data-testid="metrics-skeleton">Loading metrics...</div>'
+      );
+      expect(firstChunkHtml).not.toContain("Live Revenue: $128,400");
+
+      expect(fullHtml).toContain("Live Revenue: $128,400");
+      expect(fullHtml).toContain("MetricsReady");
+      expect(fullHtml).toContain("ClientFlightPlan:Enterprise:50");
+      expect(fullHtml).toContain("ServerChildInsideClientOK");
+      expect(fullHtml.indexOf('data-testid="metrics-skeleton"')).toBeLessThan(
+        fullHtml.indexOf('data-testid="streamed-metrics"')
+      );
+      expect(totalTime - firstChunkTime).toBeGreaterThanOrEqual(350);
+
+      // 1B. Browser DOM swap, clean hydration, Client Flight use(promise), Server Function RPC <Suspense> streaming & soft navigation
+      const runtimeErrors: string[] = [];
+      page.on("console", (msg) => {
+        if (msg.type() === "error" || msg.type() === "warning") {
+          const text = msg.text();
+          if (
+            /hydration|did not match|server-rendered HTML|expected server HTML|unsupported type was passed to use/i.test(
+              text
+            )
+          ) {
+            runtimeErrors.push(text);
+          }
+        }
+      });
+      page.on("pageerror", (err) => runtimeErrors.push(err.message));
+
+      await page.goto("/t-streaming-suspense/dynamic-ssr", {
+        waitUntil: "commit",
+      });
+      await expect(page.getByTestId("instant-header")).toHaveText(
+        "Executive Dashboard",
+        { timeout: 15000 }
+      );
+      await expect(page.getByTestId("streamed-metrics")).toContainText(
+        "Live Revenue: $128,400",
+        { timeout: 10000 }
+      );
+      await expect(page.getByTestId("streamed-metrics-uid")).toHaveText(
+        "MetricsReady"
+      );
+      await expect(page.getByTestId("metrics-skeleton")).toHaveCount(0);
+
+      await expect(page.getByTestId("client-flight-resolved")).toHaveText(
+        "ClientFlightPlan:Enterprise:50",
+        { timeout: 10000 }
+      );
+      await expect(page.getByTestId("client-flight-fallback")).toHaveCount(0);
+      await expect(page.getByTestId("client-prop-server-child")).toHaveText(
+        "ServerChildInsideClientOK"
+      );
+
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+
+      // Trigger POST /____server_function____ returning JSX with <Suspense>{buildRpcPromisePayload()}</Suspense>
+      await page.getByTestId("btn-rpc-stream").click();
+      await expect(page.getByTestId("rpc-stream-heading")).toHaveText(
+        "RpcShell:OK",
+        { timeout: 10000 }
+      );
+      await expect(page.getByTestId("rpc-stream-resolved")).toContainText(
+        "RpcStreamResolved:OK",
+        { timeout: 10000 }
+      );
+      await expect(page.getByTestId("rpc-stream-fallback")).toHaveCount(0);
+
+      // Soft client navigation (/____rsc_page____) to dynamic route with <Suspense>{getDelayedSoftReport()}</Suspense>
+      await page.getByTestId("link-to-soft-target").click();
+      await expect(page).toHaveURL(/\/t-streaming-suspense\/soft-target/, {
+        timeout: 10000,
+      });
+      await expect(page.getByTestId("soft-instant-header")).toHaveText(
+        "Soft Streamed Target"
+      );
+      await expect(page.getByTestId("soft-streamed-report")).toContainText(
+        "SoftReport:Ready",
+        { timeout: 10000 }
+      );
+      await expect(page.getByTestId("soft-skeleton")).toHaveCount(0);
+
+      expect(runtimeErrors).toEqual([]);
+    });
+
+    test("2. PPR (ppr = true) + <DinouCacheSlot> with direct Promise<ReactNode> children & Client Flight Promise prop hole (/t-streaming-suspense/ppr-promise)", async ({
+      page,
+    }) => {
+      // 2A. Verify SSG disk artifacts for PPR shell & direct-Promise <DinouCacheSlot> (zero "{}" corruption)
+      if (isProd && !isCloudflare && !isDeno) {
+        const shellHtmlPath = path.resolve(
+          process.cwd(),
+          ".dinou/dist2/t-streaming-suspense/ppr-promise/shell.html"
+        );
+        const shellPageJsonPath = path.resolve(
+          process.cwd(),
+          ".dinou/dist2/t-streaming-suspense/ppr-promise/shell.page.json"
+        );
+        const slotJsonPath = path.resolve(
+          process.cwd(),
+          ".dinou/dist2/slots/ppr-direct-promise-slot/slot.json"
+        );
+
+        expect(fs.existsSync(shellHtmlPath)).toBe(true);
+        expect(fs.existsSync(shellPageJsonPath)).toBe(true);
+        expect(fs.existsSync(slotJsonPath)).toBe(true);
+
+        const shellPageJson = fs.readFileSync(shellPageJsonPath, "utf8");
+        expect(shellPageJson).toContain("ppr-hole-1");
+        expect(shellPageJson).toContain("ppr-hole-2");
+        expect(shellPageJson).not.toContain("{}");
+
+        const slotJson = fs.readFileSync(slotJsonPath, "utf8");
+        expect(slotJson.trim()).not.toBe("{}");
+        expect(slotJson).toContain("WarehouseSlot:Cached");
+        expect(slotJson).toContain("_slot_ppr-direct-promise-slot_dS_");
+      }
+
+      // 2B. Verify raw HTTP PPR Resume flushes static shell + cached slot + fallbacks before 600ms live hole
+      if (isProd) {
+        const { firstChunkHtml, firstChunkTime, fullHtml, totalTime } =
+          await readProgressiveHtmlStream(
+            "/t-streaming-suspense/ppr-promise",
+            "Order Tracker"
+          );
+
+        expect(firstChunkTime).toBeGreaterThanOrEqual(0);
+        expect(firstChunkHtml).toContain("Order Tracker");
+        expect(firstChunkHtml).toContain("WarehouseSlot:Cached");
+        expect(firstChunkHtml).toContain("StaticPromiseBanner:OK");
+        expect(firstChunkHtml).toContain("Fetching live status...");
+        expect(firstChunkHtml).not.toContain("Order #9042: Shipped");
+
+        expect(fullHtml).toContain("Order #9042: Shipped");
+        expect(fullHtml).toContain("ClientFlightPlan:Express:19");
+        expect(totalTime - firstChunkTime).toBeGreaterThanOrEqual(250);
+      }
+
+      // 2C. Browser hydration & PPR static shell/slot immutability vs live hole freshness
+      const runtimeErrors: string[] = [];
+      page.on("console", (msg) => {
+        if (msg.type() === "error" || msg.type() === "warning") {
+          const text = msg.text();
+          if (
+            /hydration|did not match|server-rendered HTML|expected server HTML|unsupported type was passed to use/i.test(
+              text
+            )
+          ) {
+            runtimeErrors.push(text);
+          }
+        }
+      });
+      page.on("pageerror", (err) => runtimeErrors.push(err.message));
+
+      await page.goto("/t-streaming-suspense/ppr-promise", {
+        waitUntil: "commit",
+      });
+      await expect(page.getByTestId("ppr-shell-heading")).toHaveText(
+        "Order Tracker",
+        { timeout: 15000 }
+      );
+      await expect(page.getByTestId("ppr-static-promise-banner")).toHaveText(
+        "StaticPromiseBanner:OK"
+      );
+      await expect(page.getByTestId("ppr-slot-uid")).toHaveText(
+        "WarehouseSlot:Cached"
+      );
+      await expect(page.getByTestId("ppr-promise-resolved")).toContainText(
+        "Order #9042: Shipped",
+        { timeout: 10000 }
+      );
+      await expect(page.getByTestId("ppr-hole-uid")).toHaveText(
+        "OrderHoleReady"
+      );
+      await expect(page.getByTestId("ppr-client-quote-resolved")).toHaveText(
+        "ClientFlightPlan:Express:19",
+        { timeout: 10000 }
+      );
+      await expect(page.getByTestId("ppr-promise-fallback")).toHaveCount(0);
+      await expect(page.getByTestId("ppr-client-promise-fallback")).toHaveCount(
+        0
+      );
+
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+
+      if (isProd) {
+        const slotUid = await page
+          .getByTestId("ppr-slot-uid")
+          .getAttribute("data-uid");
+        const holeUid = await page
+          .getByTestId("ppr-hole-uid")
+          .getAttribute("data-uid");
+        expect(slotUid).toMatch(/^_slot_ppr-direct-promise-slot_dS_/);
+        expect(holeUid).toMatch(/^_hole_ppr-hole-1_dS_/);
+
+        const shellStamp1 = (
+          await page.getByTestId("ppr-shell-stamp").textContent()
+        )?.trim();
+        const slotStamp1 = (
+          await page.getByTestId("ppr-slot-stamp").textContent()
+        )?.trim();
+        const holeStamp1 = (
+          await page.getByTestId("ppr-live-hole-stamp").textContent()
+        )?.trim();
+
+        await page.goto("/t-streaming-suspense/ppr-promise");
+        await page.waitForSelector('body[data-hydrated="true"]', {
+          state: "attached",
+          timeout: 15000,
+        });
+        await expect(page.getByTestId("ppr-promise-resolved")).toContainText(
+          "Order #9042: Shipped",
+          { timeout: 10000 }
+        );
+        await expect(page.getByTestId("ppr-client-quote-resolved")).toHaveText(
+          "ClientFlightPlan:Express:19",
+          { timeout: 10000 }
+        );
+
+        const shellStamp2 = (
+          await page.getByTestId("ppr-shell-stamp").textContent()
+        )?.trim();
+        const slotStamp2 = (
+          await page.getByTestId("ppr-slot-stamp").textContent()
+        )?.trim();
+        const holeStamp2 = (
+          await page.getByTestId("ppr-live-hole-stamp").textContent()
+        )?.trim();
+
+        expect(shellStamp2).toBe(shellStamp1);
+        expect(slotStamp2).toBe(slotStamp1);
+        expect(holeStamp2).not.toBe(holeStamp1);
+      }
+
+      expect(runtimeErrors).toEqual([]);
+    });
+
+    test("3. Non-PPR ISG route (/t-streaming-suspense/isg-query/[slug]): ?query progressive <Suspense> streaming without BailoutProxy poisoning vs. clean ISG eager <Suspense> settlement", async ({
+      page,
+      request,
+    }, testInfo) => {
+      test.skip(
+        !isProd,
+        "SSG/ISG static settlement vs ?query streaming applies to production builds"
+      );
+
+      // 3A. Pre-rendered SSG slug settled <Suspense> eagerly at build time without skeleton DOM
+      const prebuiltRes = await safeApiGet(
+        request,
+        "/t-streaming-suspense/isg-query/prebuilt"
+      );
+      expect(prebuiltRes.status()).toBe(200);
+      const prebuiltHtml = await prebuiltRes.text();
+      expect(prebuiltHtml).toContain('data-testid="isg-catalog-resolved"');
+      expect(prebuiltHtml).toContain("CatalogDetails:prebuilt");
+      expect(prebuiltHtml).not.toContain(
+        '<div data-testid="isg-query-skeleton">'
+      );
+      expect(prebuiltHtml).not.toContain("<!--$?-->");
+
+      // 3B. Uncached slug hit FIRST with ?utm_source=stream streams progressively without poisoning clean ISG
+      const safeProj = testInfo.project.name.replace(/[^a-zA-Z0-9_-]/g, "");
+      const slug = `slow-${safeProj}-${Date.now()}`;
+
+      const queryStream = await readProgressiveHtmlStream(
+        `/t-streaming-suspense/isg-query/${slug}?utm_source=stream`,
+        `IsgQueryPage:${slug}:`
+      );
+      expect(queryStream.firstChunkTime).toBeGreaterThanOrEqual(0);
+      expect(queryStream.firstChunkHtml).toContain(
+        '<div data-testid="isg-query-skeleton">Loading catalog...</div>'
+      );
+      expect(queryStream.firstChunkHtml).toContain("<!--$?-->");
+      expect(queryStream.firstChunkHtml).not.toContain(
+        `CatalogDetails:${slug}`
+      );
+      expect(queryStream.fullHtml).toContain(`CatalogDetails:${slug}`);
+      expect(
+        queryStream.totalTime - queryStream.firstChunkTime
+      ).toBeGreaterThanOrEqual(300);
+
+      const firstStampMatch = queryStream.firstChunkHtml.match(
+        new RegExp(`IsgQueryPage:${slug}:[a-z0-9-]+:(\\d+)`)
+      );
+      expect(firstStampMatch).not.toBeNull();
+      const firstRenderNum = Number(firstStampMatch![1]);
+
+      // Clean ISG visit settles <Suspense> eagerly on the server and caches the route
+      const cleanRes = await safeApiGet(
+        request,
+        `/t-streaming-suspense/isg-query/${slug}`
+      );
+      expect(cleanRes.status()).toBe(200);
+      const cleanHtml = await cleanRes.text();
+      expect(cleanHtml).toContain('data-testid="isg-catalog-resolved"');
+      expect(cleanHtml).toContain(`CatalogDetails:${slug}`);
+      expect(cleanHtml).not.toContain(
+        '<div data-testid="isg-query-skeleton">'
+      );
+      expect(cleanHtml).not.toContain("<!--$?-->");
+
+      const cleanStampMatch = cleanHtml.match(
+        new RegExp(`(IsgQueryPage:${slug}:[a-z0-9-]+:(\\d+))`)
+      );
+      expect(cleanStampMatch).not.toBeNull();
+      const cachedStamp = cleanStampMatch![1];
+      expect(Number(cleanStampMatch![2])).toBe(firstRenderNum + 1);
+
+      // Subsequent browser visits (both clean and ?utm_source=cached) serve the cached ISG snapshot cleanly
+      await page.goto(`/t-streaming-suspense/isg-query/${slug}`);
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+      await expect(page.getByTestId("isg-query-stamp")).toHaveText(cachedStamp);
+      await expect(page.getByTestId("isg-catalog-resolved")).toContainText(
+        `CatalogDetails:${slug}`
+      );
+
+      await page.goto(
+        `/t-streaming-suspense/isg-query/${slug}?utm_source=cached`
+      );
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+      await expect(page.getByTestId("isg-query-stamp")).toHaveText(cachedStamp);
+      await expect(page.getByTestId("isg-catalog-resolved")).toContainText(
+        `CatalogDetails:${slug}`
+      );
+    });
+
+    test("4. Unit & Dual-Engine Streaming <Suspense> + Direct Promise<ReactNode> Suite (scripts/verify-streaming-suspense-ci.mjs)", async () => {
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        [path.resolve("scripts/verify-streaming-suspense-ci.mjs")],
+        { encoding: "utf8", timeout: 90000 }
+      );
+      expect(output).toContain(
+        "RESULT: All Streaming <Suspense> & Direct Promise<ReactNode> verification checks PASSED"
+      );
+    });
+  });
 });
