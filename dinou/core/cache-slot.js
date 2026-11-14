@@ -5,7 +5,11 @@
 import path from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import React from "react";
-import { getStorageAdapter } from "./storage-adapter.js";
+import {
+  getStorageAdapter,
+  FileSystemStorage,
+  readDist2Fallback,
+} from "./storage-adapter.js";
 import { asyncRenderJSXToClientJSX } from "./render-jsx-to-client-jsx.js";
 import { DinouCacheSlotBoundary as RawDinouCacheSlotBoundary } from "./slot.js";
 import { getContext } from "./request-context.js";
@@ -342,7 +346,9 @@ async function getSlotFromStorage(storage, storageKey, knownTags = []) {
   }
 
   const isDeleted =
-    typeof storage.isDeleted === "function" && storage.isDeleted(storageKey);
+    typeof storage.isKeyDeleted === "function"
+      ? await storage.isKeyDeleted(storageKey)
+      : typeof storage.isDeleted === "function" && storage.isDeleted(storageKey);
   if (isDeleted) {
     return null;
   }
@@ -378,12 +384,15 @@ async function getSlotFromStorage(storage, storageKey, knownTags = []) {
             ...(Array.isArray(metadata?.tags) ? metadata.tags : []),
             ...(Array.isArray(knownTags) ? knownTags : []),
           ]);
-          if (typeof storage.getTagInvalidatedAt === "function") {
-            for (const t of combinedTags) {
-              const invAt = storage.getTagInvalidatedAt(t);
-              if (invAt > 0 && invAt >= generatedAt) {
-                return null;
-              }
+          for (const t of combinedTags) {
+            const invAt =
+              typeof storage.getTagInvalidatedAtAsync === "function"
+                ? await storage.getTagInvalidatedAtAsync(t)
+                : typeof storage.getTagInvalidatedAt === "function"
+                ? storage.getTagInvalidatedAt(t)
+                : 0;
+            if (invAt > 0 && invAt >= generatedAt) {
+              return null;
             }
           }
           cached = { content, metadata };
@@ -393,6 +402,11 @@ async function getSlotFromStorage(storage, storageKey, knownTags = []) {
       }
     }
   } catch (e) {}
+
+  const dist2Item = await readDist2Fallback(storage, storageKey, knownTags);
+  if (dist2Item && dist2Item.content) {
+    return dist2Item;
+  }
 
   return cached;
 }
@@ -404,7 +418,11 @@ async function readMetaFromStorageOrAssets(storage, key) {
     if (item?.metadata && typeof item.metadata === "object") return item.metadata;
     if (item?.content) return JSON.parse(item.content);
   } catch (e) {}
-  if (typeof storage.isDeleted === "function" && storage.isDeleted(key)) return null;
+  const isDeleted =
+    typeof storage.isKeyDeleted === "function"
+      ? await storage.isKeyDeleted(key)
+      : typeof storage.isDeleted === "function" && storage.isDeleted(key);
+  if (isDeleted) return null;
   try {
     const reqContext = getContext();
     const assets =
@@ -425,6 +443,17 @@ async function readMetaFromStorageOrAssets(storage, key) {
       }
     }
   } catch (e) {}
+  const dist2Item = await readDist2Fallback(storage, key);
+  if (dist2Item) {
+    if (dist2Item.metadata && typeof dist2Item.metadata === "object") {
+      return dist2Item.metadata;
+    }
+    if (dist2Item.content && dist2Item.content.trimStart().startsWith("{")) {
+      try {
+        return JSON.parse(dist2Item.content);
+      } catch (e) {}
+    }
+  }
   return null;
 }
 
@@ -892,23 +921,34 @@ async function resolveCanonicalSlotId(slotIdOrTag, storage) {
       if (direct && direct.content) {
         return slotIdOrTag;
       }
+      const candidateKeySet = new Set();
       if (typeof storage.keys === "function") {
         const keys = await storage.keys("slots/");
-        for (const rawKey of keys) {
-          const key = String(rawKey || "").replace(/\\/g, "/");
-          if (key.endsWith("/slot.json") || key.endsWith("/slot.metadata.json")) {
-            const item = await storage.get(key);
-            let meta = item?.metadata;
-            if (!meta && key.endsWith("/slot.metadata.json") && item?.content) {
-              try {
-                meta = JSON.parse(item.content);
-              } catch (e) {}
-            }
-            if (meta && Array.isArray(meta.tags) && meta.tags.includes(slotIdOrTag)) {
-              if (meta.slotId) return meta.slotId;
-              const match = key.match(/^slots\/([^/]+)\//);
-              if (match) return match[1];
-            }
+        for (const k of keys) candidateKeySet.add(String(k || "").replace(/\\/g, "/"));
+      }
+      if (!storage.baseDir && storage.hydrateFromDisk !== false) {
+        try {
+          const dist2SlotsFs = new FileSystemStorage();
+          const diskSlotKeys = await dist2SlotsFs.keys("slots/");
+          for (const k of diskSlotKeys) {
+            candidateKeySet.add(String(k || "").replace(/\\/g, "/"));
+          }
+        } catch (e) {}
+      }
+      for (const key of candidateKeySet) {
+        if (key.endsWith("/slot.json") || key.endsWith("/slot.metadata.json")) {
+          const item =
+            (await storage.get(key)) || (await readDist2Fallback(storage, key));
+          let meta = item?.metadata;
+          if (!meta && key.endsWith("/slot.metadata.json") && item?.content) {
+            try {
+              meta = JSON.parse(item.content);
+            } catch (e) {}
+          }
+          if (meta && Array.isArray(meta.tags) && meta.tags.includes(slotIdOrTag)) {
+            if (meta.slotId) return meta.slotId;
+            const match = key.match(/^slots\/([^/]+)\//);
+            if (match) return match[1];
           }
         }
       }
