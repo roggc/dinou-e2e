@@ -16,11 +16,22 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const projectRoot = process.cwd();
-const dinouRoot = existsSync(path.resolve(projectRoot, "dinou/package.json"))
-  ? path.resolve(projectRoot, "dinou")
-  : path.resolve(projectRoot, "node_modules/dinou");
+const dinouRootCandidates = [
+  path.resolve(projectRoot, "dinou"),
+  path.resolve(projectRoot, "node_modules/dinou/dinou"),
+  path.resolve(projectRoot, "node_modules/dinou"),
+];
+const dinouRoot =
+  dinouRootCandidates.find((dir) => existsSync(path.join(dir, "core"))) ??
+  dinouRootCandidates[0];
+const dinouPkgJson =
+  [
+    path.join(dinouRoot, "package.json"),
+    path.resolve(projectRoot, "node_modules/dinou/package.json"),
+    path.resolve(projectRoot, "package.json"),
+  ].find((p) => existsSync(p)) ?? path.join(dinouRoot, "package.json");
 
-const dinouRequire = createRequire(path.join(dinouRoot, "package.json"));
+const dinouRequire = createRequire(dinouPkgJson);
 const esbuild = dinouRequire("esbuild");
 const { rollup } = dinouRequire("rollup");
 
