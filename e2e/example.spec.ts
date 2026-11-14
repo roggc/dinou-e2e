@@ -11453,4 +11453,250 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
     });
   });
+
+  test.describe("Pass B SSR Server Reference Isolation, Server Function Error Propagation & Rollup #default Client Manifest (/t-ssr-server-refs)", () => {
+    test("1. Raw SSG & Dynamic SSR HTML isolation: <Suspense> fallback without Pass A execution, canonical $ACTION_ID_ (zero machine paths), zero server secret leaks & 'use client' snippet immunity", async ({
+      request,
+    }, testInfo) => {
+      const safeProj = testInfo.project.name.replace(/[^a-z0-9]/gi, "-");
+      const rawScope = `raw-ssr-${safeProj}-${Date.now()}`;
+      const cwdSlash = process.cwd().replace(/\\/g, "/");
+
+      for (const targetScope of ["ssg-prebuilt", rawScope]) {
+        const res = await safeApiGet(
+          request,
+          `/t-ssr-server-refs/pattern/${targetScope}`
+        );
+        expect(res.status()).toBe(200);
+        const html = await res.text();
+
+        // 1A. Pass B deferred fetchPatternTasks(scope) cleanly to client <Suspense> mount
+        expect(html).toContain(`The Dinou Pattern (${targetScope})`);
+        expect(html).toContain(
+          '<p data-testid="tasks-fallback">Loading tasks...</p>'
+        );
+        expect(html).not.toContain('data-testid="tasks-empty"');
+        expect(html).not.toContain("PassAReads:");
+
+        // 1B. Zero server-only secret leaks or Pass B leak crashes
+        expect(html).not.toContain("sk_live_DINOU_SSR_ISOLATION_VAULT_9402");
+        expect(html).not.toContain("FATAL_PASS_B_LEAK");
+
+        // 1C. Canonical project-relative $ACTION_ID_ on direct & bound <form action={...}>
+        expect(html).toContain(
+          'name="$ACTION_ID_file:///src/t-ssr-server-refs/actions/pattern-actions.tsx#formStampAction"'
+        );
+        expect(html).toContain("$ACTION_REF_");
+        expect(html).toContain(
+          "file:///src/t-ssr-server-refs/actions/pattern-actions.tsx#boundFormStampAction"
+        );
+        expect(html).not.toContain(`$ACTION_ID_file:///${cwdSlash}`);
+        expect(html).not.toMatch(/\$ACTION_ID_file:\/\/\/[a-zA-Z]:\//);
+        expect(html).not.toContain("$ACTION_ID_file:///Users/");
+        expect(html).not.toContain("$ACTION_ID_file:///home/");
+
+        // 1D. "use client" component containing "use server" literal rendered intact
+        expect(html).toContain('data-testid="snippet-preview"');
+        expect(html).toContain("exampleServerAction");
+      }
+
+      // 1E. Verify Pass A read counter for both SSG and raw SSR scopes remained 0
+      for (const targetScope of ["ssg-prebuilt", rawScope]) {
+        const countRes = await request.post("/____server_function____", {
+          headers: {
+            "content-type": "application/json",
+            "x-server-function-call": "1",
+          },
+          data: {
+            id: "file:///src/t-ssr-server-refs/actions/pattern-actions.tsx#getScopePassAReadCount",
+            args: [targetScope],
+          },
+        });
+        expect(countRes.status()).toBe(200);
+        const flightBody = await countRes.text();
+        expect(flightBody).toMatch(/:0\b/);
+      }
+
+      // 1F. When Node AOT ssr-engine.mjs exists on disk, verify zero server vault secret inside Pass B bundle
+      const ssrEnginePath = path.resolve(
+        process.cwd(),
+        ".dinou/node/ssr-engine.mjs"
+      );
+      if (fs.existsSync(ssrEnginePath)) {
+        const ssrEngineCode = fs.readFileSync(ssrEnginePath, "utf8");
+        expect(ssrEngineCode).not.toContain(
+          "sk_live_DINOU_SSR_ISOLATION_VAULT_9402"
+        );
+      }
+    });
+
+    test("2. Full Dinou Pattern browser lifecycle: clean hydration, surgical client state preservation, thrown err.message + err.digest propagation, Rollup #default client Flight components & zero split-brain on reload", async ({
+      page,
+    }, testInfo) => {
+      const safeProj = testInfo.project.name.replace(/[^a-z0-9]/gi, "-");
+      const liveScope = `live-${safeProj}-${Date.now()}`;
+      const pageErrors: string[] = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      await page.goto(`/t-ssr-server-refs/pattern/${liveScope}`);
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+
+      // 2A. Initial client <Suspense> mount resolved Pass A fetchPatternTasks(liveScope) exactly once
+      await expect(page.getByTestId("tasks-empty")).toHaveText(
+        "No tasks yet. Add one above!",
+        { timeout: 15000 }
+      );
+      await expect(page.getByTestId("pass-a-read-count")).toHaveText(
+        "PassAReads:1"
+      );
+
+      // 2B. Verify "use client" CodeSnippetViewer ("use server" string literal) is interactive
+      await expect(page.getByTestId("snippet-preview")).toContainText(
+        'import "server-only";'
+      );
+      await page.getByTestId("snippet-toggle-btn").click();
+      await expect(page.getByTestId("snippet-preview")).toHaveCount(0);
+      await page.getByTestId("snippet-toggle-btn").click();
+      await expect(page.getByTestId("snippet-preview")).toBeVisible();
+
+      // 2C. Verify default-exported "use server" action works end-to-end
+      await page.getByTestId("default-action-btn").click();
+      await expect(page.getByTestId("default-action-result")).toHaveText(
+        `VaultOK:${liveScope}:ping:len=39`
+      );
+
+      // 2D. Type into unrelated local input to prove surgical client state preservation
+      await page
+        .getByTestId("unrelated-draft-input")
+        .fill("Keep my local draft intact");
+
+      // 2E. Validation failure (< 3 chars) propagates BOTH exact err.message AND err.digest
+      await page.getByTestId("task-input").fill("ab");
+      await page.getByTestId("add-task-btn").click();
+      await expect(page.getByTestId("error-banner")).toHaveText(
+        "Task must be at least 3 characters long."
+      );
+      await expect(page.getByTestId("error-digest")).toHaveText(
+        "TASK_TOO_SHORT"
+      );
+      await expect(page.getByTestId("task-input")).toHaveValue("ab");
+      await expect(page.getByTestId("unrelated-draft-input")).toHaveValue(
+        "Keep my local draft intact"
+      );
+
+      // 2F. Add 2 valid tasks -> streams default-exported PatternTaskUpdater -> triggers store -> refreshes PatternTasksList
+      await page.getByTestId("task-input").fill("Ship Pass B isolation");
+      await page.getByTestId("add-task-btn").click();
+      await expect(page.getByTestId("task-item")).toHaveText([
+        "Ship Pass B isolation",
+      ]);
+      await expect(page.getByTestId("error-box")).toHaveCount(0);
+      await expect(page.getByTestId("task-input")).toHaveValue("");
+
+      await page.getByTestId("task-input").fill("Verify Rollup #default");
+      await page.getByTestId("add-task-btn").click();
+      await expect(page.getByTestId("task-item")).toHaveText([
+        "Ship Pass B isolation",
+        "Verify Rollup #default",
+      ]);
+      await expect(page.getByTestId("pass-a-read-count")).toHaveText(
+        "PassAReads:3"
+      );
+      await expect(page.getByTestId("unrelated-draft-input")).toHaveValue(
+        "Keep my local draft intact"
+      );
+
+      // 2G. Full browser reload: Pass B re-renders <Suspense> fallback cleanly, client re-fetches persisted Pass A state
+      await page.reload();
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+      await expect(page.getByTestId("task-item")).toHaveText([
+        "Ship Pass B isolation",
+        "Verify Rollup #default",
+      ]);
+      await expect(page.getByTestId("pass-a-read-count")).toHaveText(
+        "PassAReads:4"
+      );
+
+      // 2H. Reset tasks cleanly
+      await page.getByTestId("reset-tasks-btn").click();
+      await expect(page.getByTestId("tasks-empty")).toHaveText(
+        "No tasks yet. Add one above!"
+      );
+
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("3. Server Component with server-only guard + inline 'use server' closure: Pass B ssr-client-manifest isolation, closure execution & inline digest error propagation (/t-ssr-server-refs/inline-sc/[itemId])", async ({
+      page,
+      request,
+    }, testInfo) => {
+      const safeProj = testInfo.project.name.replace(/[^a-z0-9]/gi, "-");
+      const cwdSlash = process.cwd().replace(/\\/g, "/");
+
+      // 3A. Raw SSG HTML check on pre-rendered Server Component with inline "use server"
+      const staticRes = await safeApiGet(
+        request,
+        "/t-ssr-server-refs/inline-sc/alpha-static"
+      );
+      expect(staticRes.status()).toBe(200);
+      const staticHtml = await staticRes.text();
+      expect(staticHtml).toContain("InlineSC:alpha-static");
+      expect(staticHtml).not.toContain("sk_live_DINOU_SSR_ISOLATION_VAULT_9402");
+      expect(staticHtml).not.toContain("FATAL_PASS_B_LEAK");
+      expect(staticHtml).toContain(
+        "file:///src/t-ssr-server-refs/inline-sc/[itemId]/page.tsx#$$dinou_action_inlineFormAction_"
+      );
+      expect(staticHtml).not.toContain(`$ACTION_ID_file:///${cwdSlash}`);
+      expect(staticHtml).not.toMatch(/\$ACTION_ID_file:\/\/\/[a-zA-Z]:\//);
+
+      // 3B. Browser execution of inline "use server" closure capturing dynamic [itemId] + server-only vault secret
+      const dynItemId = `dyn-${safeProj}-${Date.now()}`;
+      const pageErrors: string[] = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      await page.goto(`/t-ssr-server-refs/inline-sc/${dynItemId}`);
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+      await expect(page.getByTestId("inline-sc-heading")).toHaveText(
+        `InlineSC:${dynItemId}`
+      );
+
+      // Validation error on inline "use server" preserves err.message + err.digest
+      await page.getByTestId("inline-note-input").fill("x");
+      await page.getByTestId("inline-run-btn").click();
+      await expect(page.getByTestId("inline-error")).toHaveText(
+        "Inline note too short.|INLINE_NOTE_SHORT"
+      );
+
+      // Valid inline closure execution accesses Pass A server-only secret & captured [itemId]
+      await page.getByTestId("inline-note-input").fill("closure-verified");
+      await page.getByTestId("inline-run-btn").click();
+      await expect(page.getByTestId("inline-result")).toHaveText(
+        `InlineOK:${dynItemId}:closure-verified:len=39`
+      );
+      await expect(page.getByTestId("inline-error")).toHaveText("");
+
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("4. Standalone Pass B Isolation, Proxy Error/Digest & Rollup #default Verification Suite (scripts/verify-ssr-server-references-ci.mjs)", async () => {
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        [path.resolve("scripts/verify-ssr-server-references-ci.mjs")],
+        { encoding: "utf8", timeout: 90000 }
+      );
+      expect(output).toContain(
+        "RESULT: All Pass B SSR Server Reference Isolation, Error Propagation & Rollup #default checks PASSED"
+      );
+    });
+  });
 });
