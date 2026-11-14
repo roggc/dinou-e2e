@@ -365,9 +365,11 @@ async function revalidatePage(reqPath, internalOptions = {}) {
     let maxActiveLayoutGenTime = 0;
     let leafSuspenseCount = 0;
     let leafHoles = [];
+    let hasActiveLayoutChain = false;
     try {
       const activeChain = getActiveLayoutChain(reqSegments, {}, srcFolder);
       if (activeChain.length > 0) {
+        hasActiveLayoutChain = true;
         for (const entry of activeChain) {
           const lMetaKey = entry.cleanLayoutKey
             ? `${entry.cleanLayoutKey}/layout.metadata.json`
@@ -389,49 +391,67 @@ async function revalidatePage(reqPath, internalOptions = {}) {
           }
         }
         const leafLayout = activeChain[0];
-        if (activeChain.length > 1) {
-          const ancestors = activeChain.slice(1);
-          const maxAncestorGen = Math.max(0, ...ancestors.map((l) => l.generatedAt || 0));
-          const maxAncestorOwnGen = Math.max(
-            0,
-            ...ancestors.map((l) => l.layoutGeneratedAt || l.generatedAt || 0)
-          );
-          const leafGen = leafLayout.generatedAt || 0;
-          const leafOwnGen = leafLayout.layoutGeneratedAt || leafGen;
-          const isAncestorOwnNewer = leafOwnGen > 0 && maxAncestorOwnGen > leafOwnGen;
-          const isAncestorSlotOnlyNewer =
-            !isAncestorOwnNewer && leafGen > 0 && maxAncestorGen > leafGen;
-          if (isAncestorOwnNewer || isAncestorSlotOnlyNewer) {
-            await revalidateLayout(leafLayout.layoutRoutePath, {
-              onlyRefreshSlots: isAncestorSlotOnlyNewer,
-            });
-            const refreshedMetaKey = leafLayout.cleanLayoutKey
-              ? `${leafLayout.cleanLayoutKey}/layout.metadata.json`
-              : "layout.metadata.json";
-            const refreshedItem = await readEdgeStorageOrAsset(storage, refreshedMetaKey);
-            if (refreshedItem?.content) {
-              try {
-                const parsed = JSON.parse(refreshedItem.content);
-                leafLayout.generatedAt = Number(parsed?.generatedAt || leafLayout.generatedAt || 0);
-                leafLayout.layoutGeneratedAt = Number(
-                  parsed?.layoutGeneratedAt || leafLayout.generatedAt || 0
-                );
-                leafLayout.suspenseCount = Number(parsed?.suspenseCount || 0);
-                leafLayout.holes = Array.isArray(parsed?.holes) ? parsed.holes : [];
-                if (leafLayout.generatedAt > maxActiveLayoutGenTime) {
-                  maxActiveLayoutGenTime = leafLayout.generatedAt;
-                }
-              } catch (e) {}
-            }
-          }
-        }
-        leafSuspenseCount = Number(leafLayout.suspenseCount || 0);
-        leafHoles = Array.isArray(leafLayout.holes) ? leafLayout.holes : [];
         const leafRscKey = leafLayout.cleanLayoutKey
           ? `${leafLayout.cleanLayoutKey}/layout.rsc`
           : "layout.rsc";
-        const leafRscItem = await readEdgeStorageOrAsset(storage, leafRscKey);
-        if (leafRscItem && leafRscItem.content && !leafRscItem.content.trimStart().startsWith("<")) {
+        let leafRscItem = await readEdgeStorageOrAsset(storage, leafRscKey);
+        let hasValidLeafRsc = Boolean(
+          leafRscItem &&
+            leafRscItem.content &&
+            !leafRscItem.content.trimStart().startsWith("<")
+        );
+        const ancestors = activeChain.length > 1 ? activeChain.slice(1) : [];
+        const maxAncestorGen =
+          ancestors.length > 0
+            ? Math.max(0, ...ancestors.map((l) => l.generatedAt || 0))
+            : 0;
+        const maxAncestorOwnGen =
+          ancestors.length > 0
+            ? Math.max(
+                0,
+                ...ancestors.map((l) => l.layoutGeneratedAt || l.generatedAt || 0)
+              )
+            : 0;
+        const leafGen = leafLayout.generatedAt || 0;
+        const leafOwnGen = leafLayout.layoutGeneratedAt || leafGen;
+        const isLeafMissing =
+          !hasValidLeafRsc && (isEdgeRuntime() || maxAncestorGen > 0 || onlyRefreshSlots);
+        const isAncestorOwnNewer = leafOwnGen > 0 && maxAncestorOwnGen > leafOwnGen;
+        const isAncestorSlotOnlyNewer =
+          !isAncestorOwnNewer && leafGen > 0 && maxAncestorGen > leafGen;
+        if (isLeafMissing || isAncestorOwnNewer || isAncestorSlotOnlyNewer) {
+          await revalidateLayout(leafLayout.layoutRoutePath, {
+            onlyRefreshSlots:
+              !isAncestorOwnNewer && (isAncestorSlotOnlyNewer || isLeafMissing),
+          });
+          const refreshedMetaKey = leafLayout.cleanLayoutKey
+            ? `${leafLayout.cleanLayoutKey}/layout.metadata.json`
+            : "layout.metadata.json";
+          const refreshedItem = await readEdgeStorageOrAsset(storage, refreshedMetaKey);
+          if (refreshedItem?.content) {
+            try {
+              const parsed = JSON.parse(refreshedItem.content);
+              leafLayout.generatedAt = Number(parsed?.generatedAt || leafLayout.generatedAt || 0);
+              leafLayout.layoutGeneratedAt = Number(
+                parsed?.layoutGeneratedAt || leafLayout.generatedAt || 0
+              );
+              leafLayout.suspenseCount = Number(parsed?.suspenseCount || 0);
+              leafLayout.holes = Array.isArray(parsed?.holes) ? parsed.holes : [];
+              if (leafLayout.generatedAt > maxActiveLayoutGenTime) {
+                maxActiveLayoutGenTime = leafLayout.generatedAt;
+              }
+            } catch (e) {}
+          }
+          leafRscItem = await readEdgeStorageOrAsset(storage, leafRscKey);
+          hasValidLeafRsc = Boolean(
+            leafRscItem &&
+              leafRscItem.content &&
+              !leafRscItem.content.trimStart().startsWith("<")
+          );
+        }
+        leafSuspenseCount = Number(leafLayout.suspenseCount || 0);
+        leafHoles = Array.isArray(leafLayout.holes) ? leafLayout.holes : [];
+        if (hasValidLeafRsc) {
           activeLayoutRscText = leafRscItem.content;
         }
       }
@@ -645,6 +665,25 @@ async function revalidatePage(reqPath, internalOptions = {}) {
                 console.warn(`⚠️ [Edge Revalidate] Layout+Page composition fallback for ${cleanPath}:`, composeErr?.message || composeErr);
               }
             }
+          } else if (
+            !hasActiveLayoutChain &&
+            didSpliceOnlyPageSlots &&
+            renderedRsc &&
+            typeof renderHtmlStream === "function"
+          ) {
+            try {
+              const htmlStream = await renderHtmlStream(toStream(renderedRsc), {
+                bootstrapModules: [clientEntry],
+                bootstrapScriptContent,
+                waitForAll: true,
+              });
+              const htmlText = await new Response(htmlStream).text();
+              if (htmlText) {
+                renderedFullRsc = renderedRsc;
+                newHtml = htmlText;
+                composedFromCachedLayout = true;
+              }
+            } catch (composeErr) {}
           }
 
           if (!composedFromCachedLayout) {

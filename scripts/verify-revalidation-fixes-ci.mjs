@@ -727,6 +727,9 @@ console.log(
   fs.mkdirSync(path.join(tmpApp, "src/dynamic-probe"), {
     recursive: true,
   });
+  fs.mkdirSync(path.join(tmpApp, "src/workspaces/[ws]/isr-ttl"), {
+    recursive: true,
+  });
 
   fs.writeFileSync(
     path.join(tmpApp, "package.json"),
@@ -978,6 +981,59 @@ export default async function DynamicProbePage() {
     path.join(tmpApp, "src/dynamic-probe/page_functions.ts"),
     `export function dynamic() {
   return true;
+}
+`
+  );
+
+  fs.writeFileSync(
+    path.join(tmpApp, "src/workspaces/[ws]/layout.tsx"),
+    `import type { ReactNode } from "react";
+export default function WorkspaceLayout({
+  children,
+  params,
+}: {
+  children: ReactNode;
+  params: { ws: string };
+}) {
+  return <div data-ws-shell={params.ws}>{children}</div>;
+}
+`
+  );
+
+  fs.writeFileSync(
+    path.join(tmpApp, "src/workspaces/[ws]/isr-ttl/page.tsx"),
+    `import { DinouCacheSlot } from "dinou/server";
+
+export default async function WorkspaceIsrTtlPage({
+  params,
+}: {
+  params: { ws: string };
+}) {
+  const pv = (globalThis as any).__TEST_REVAL_COUNTERS__.pageVersion;
+  return (
+    <main>
+      <h1>{\`WsTtlPage-\${params.ws}-v\${pv}\`}</h1>
+      <DinouCacheSlot
+        id={\`ws-ttl-slot-\${params.ws}\`}
+        tags={[\`ws-ttl-slot-\${params.ws}\`]}
+        revalidate={3600}
+      >
+        {async () => {
+          const sv = (globalThis as any).__TEST_REVAL_COUNTERS__.quotaSlotVersion;
+          return <span>{\`WsTtlSlot-\${params.ws}-v\${sv}\`}</span>;
+        }}
+      </DinouCacheSlot>
+    </main>
+  );
+}
+`
+  );
+
+  fs.writeFileSync(
+    path.join(tmpApp, "src/workspaces/[ws]/isr-ttl/page_functions.ts"),
+    `export const revalidate = 60;
+export function getCacheTags(params?: { ws?: string }) {
+  return [\`ws-ttl-page-\${params?.ws ?? "default"}\`];
 }
 `
   );
@@ -1330,6 +1386,63 @@ export default async function DynamicProbePage() {
     assert.ok(
       html6.includes("SettingsPage-v3") && html6.includes("QuotaSlot-v3"),
       `Cold Redis pod after revalidateTag must serve v3 and never resurrect disk v1, got: ${html6}`
+    );
+
+    // 6.8 Dynamic-param ISG route (/workspaces/[ws]/isr-ttl) with unmaterialized dynamic [ws]/layout.rsc:
+    //     revalidateTag on page <DinouCacheSlot> MUST materialize [ws]/layout.rsc and splice shell.page.json
+    //     WITHOUT falling back to full getJSX() and re-executing WorkspaceIsrTtlPage!
+    const resWsInitial = await rscMod.handleRequest(
+      new Request("http://localhost/workspaces/dyn-alpha/isr-ttl"),
+      { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml }
+    );
+    const htmlWsInitial = stripComments(await resWsInitial.text());
+    assert.ok(htmlWsInitial.includes("WsTtlPage-dyn-alpha-v3"), htmlWsInitial);
+    assert.ok(htmlWsInitial.includes("WsTtlSlot-dyn-alpha-v3"), htmlWsInitial);
+    assert.equal(
+      globalThis.__TEST_REVAL_REDIS_MAP__.has(
+        "cluster:workspaces/dyn-alpha/layout.rsc"
+      ),
+      false,
+      "Dynamic [ws]/layout.rsc is not yet materialized after initial ISG HTML visit"
+    );
+
+    const wsMetaBefore = JSON.parse(
+      JSON.parse(
+        globalThis.__TEST_REVAL_REDIS_MAP__.get(
+          "cluster:workspaces/dyn-alpha/isr-ttl/metadata.json"
+        )
+      ).content
+    );
+    const wsPageGenBefore = wsMetaBefore.pageGeneratedAt || wsMetaBefore.generatedAt;
+
+    globalThis.__TEST_REVAL_COUNTERS__.pageVersion = 4;
+    globalThis.__TEST_REVAL_COUNTERS__.quotaSlotVersion = 4;
+    await revalidateTag("ws-ttl-slot-dyn-alpha");
+
+    const resWsAfterSlot = await rscMod.handleRequest(
+      new Request("http://localhost/workspaces/dyn-alpha/isr-ttl"),
+      { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml }
+    );
+    const htmlWsAfterSlot = stripComments(await resWsAfterSlot.text());
+    assert.ok(
+      htmlWsAfterSlot.includes("WsTtlSlot-dyn-alpha-v4"),
+      `Expected spliced WsTtlSlot-dyn-alpha-v4, got: ${htmlWsAfterSlot}`
+    );
+    assert.ok(
+      htmlWsAfterSlot.includes("WsTtlPage-dyn-alpha-v3"),
+      `Host dynamic ISG page must stay at v3 (never re-execute to v4) on slot-only refresh, got: ${htmlWsAfterSlot}`
+    );
+    const wsMetaAfter = JSON.parse(
+      JSON.parse(
+        globalThis.__TEST_REVAL_REDIS_MAP__.get(
+          "cluster:workspaces/dyn-alpha/isr-ttl/metadata.json"
+        )
+      ).content
+    );
+    assert.equal(
+      wsMetaAfter.pageGeneratedAt,
+      wsPageGenBefore,
+      "Dynamic ISG slot-only refresh must preserve host pageGeneratedAt"
     );
   } finally {
     process.chdir(prevCwd);
