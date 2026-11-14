@@ -7,10 +7,9 @@ import { useCatalogFilter } from "./use-catalog-filter";
 
 export function OrderSummary({ parentLabel }: { parentLabel: string }) {
   const [childClicks, setChildClicks] = useState(0);
-  const [prefix, setPrefix] = useState("pro-");
   const [reportedReallocs, setReportedReallocs] = useState(0);
 
-  const filterResult = useCatalogFilter(prefix);
+  const filterResult = useCatalogFilter("pro-");
   const summaryBadgeSpec = {
     heading: `${parentLabel}:${filterResult.normalizedPrefix}`,
     count: filterResult.matchingItems.length,
@@ -52,7 +51,7 @@ export function OrderSummary({ parentLabel }: { parentLabel: string }) {
       <button
         type="button"
         data-testid="switch-prefix-btn"
-        onClick={() => setPrefix("vip-")}
+        onClick={() => filterResult.setPrefix("vip-")}
       >
         Switch Prefix to VIP
       </button>
