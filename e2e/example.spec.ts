@@ -4887,8 +4887,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Click server function crash trigger
       await page.click("text=5. Call Server Function Action");
 
-      // Message should show in target element
-      await expect(page.locator("body")).toContainText("Action Rejected: Server function failed", { timeout: 15000 });
+      // Message should show in target element (Bug #2 fix now propagates the actual thrown err.message)
+      await expect(page.locator("body")).toContainText(
+        "Action Rejected: 💥 Rejection from 'use server' Server Function action!",
+        { timeout: 15000 }
+      );
       // Main page should not crash
       await expect(page.locator("h2")).toContainText("Error Handling Lab", { timeout: 15000 });
     });
