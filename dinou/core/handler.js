@@ -929,11 +929,26 @@ function __noopMarker() {
   return discovered;
 }
 
+function applyStreamingResponseHeaders(headers) {
+  if (!headers.has("Content-Encoding")) {
+    headers.set("Content-Encoding", "identity");
+  }
+  if (!headers.has("X-Accel-Buffering")) {
+    headers.set("X-Accel-Buffering", "no");
+  }
+  const cacheControl = headers.get("Cache-Control");
+  if (!cacheControl) {
+    headers.set("Cache-Control", "no-store, no-cache, must-revalidate, no-transform");
+  } else if (!/\bno-transform\b/i.test(cacheControl)) {
+    headers.set("Cache-Control", `${cacheControl}, no-transform`);
+  }
+}
+
 /**
  * Bridges Node.js style response methods to a WHATWG Web Response.
  */
 class WebResponseBridge extends PassThrough {
-  constructor() {
+  constructor(platformContext = null) {
     super();
     this.statusCode = 200;
     this.statusMessage = "";
@@ -941,6 +956,7 @@ class WebResponseBridge extends PassThrough {
     this.cookies = [];
     this.headersSent = false;
     this._resolved = false;
+    this._platformContext = platformContext;
     this._responsePromise = new Promise((resolve) => {
       this._resolveResponse = resolve;
     });
@@ -1021,11 +1037,13 @@ class WebResponseBridge extends PassThrough {
       for (const c of this.cookies) {
         this.headers.append("Set-Cookie", c);
       }
+      applyStreamingResponseHeaders(this.headers);
       const webStream = Readable.toWeb(this);
       const res = new Response(webStream, {
         status: this.statusCode,
         statusText: this.statusMessage || undefined,
         headers: this.headers,
+        encodeBody: "manual",
       });
       this._resolved = true;
       this._resolveResponse(res);
@@ -1075,6 +1093,7 @@ class WebResponseBridge extends PassThrough {
     for (const c of this.cookies) {
       this.headers.append("Set-Cookie", c);
     }
+    applyStreamingResponseHeaders(this.headers);
 
     const textEncoder = new TextEncoder();
     const { readable, writable } = new TransformStream();
@@ -1088,7 +1107,7 @@ class WebResponseBridge extends PassThrough {
     };
     this.on("data", onBridgeData);
 
-    (async () => {
+    const pumpPromise = (async () => {
       let reader;
       try {
         reader = readableStream.getReader();
@@ -1117,10 +1136,19 @@ class WebResponseBridge extends PassThrough {
       } catch (e) {}
     })();
 
+    if (
+      this._platformContext &&
+      this._platformContext.ctx &&
+      typeof this._platformContext.ctx.waitUntil === "function"
+    ) {
+      this._platformContext.ctx.waitUntil(pumpPromise);
+    }
+
     const res = new Response(readable, {
       status: this.statusCode,
       statusText: this.statusMessage || undefined,
       headers: this.headers,
+      encodeBody: "manual",
     });
     this._resolved = true;
     this._resolveResponse(res);
@@ -1441,7 +1469,7 @@ async function handleRequest(request, platformContext = {}) {
     method: request.method,
   };
 
-  const bridge = new WebResponseBridge();
+  const bridge = new WebResponseBridge(platformContext);
   const rootContext = createRequestContext(simReq, bridge, platformContext);
 
   // 4. Plugin onRequest Hook (Universal Middlewares & Webhooks)

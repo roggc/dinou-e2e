@@ -880,11 +880,18 @@ async function handlePprResume({
 
   const headers = new Headers(bridge.headers);
   headers.set("Content-Type", "text/html; charset=utf-8");
-  headers.set("Cache-Control", "no-store, no-cache, must-revalidate");
+  headers.set("Cache-Control", "no-store, no-cache, must-revalidate, no-transform");
+  if (!headers.has("Content-Encoding")) {
+    headers.set("Content-Encoding", "identity");
+  }
+  if (!headers.has("X-Accel-Buffering")) {
+    headers.set("X-Accel-Buffering", "no");
+  }
 
   return new Response(readable, {
     status: metadata?.status || 200,
     headers,
+    encodeBody: "manual",
   });
 }
 

@@ -838,11 +838,18 @@ export default function IsgCatalogPage({ params }: { params: { slug: string } })
   assert.ok(!alphaStatic.content.includes('<div data-testid="catalog-skeleton">'));
   assert.ok(!alphaStatic.content.includes("<!--$?-->"));
 
-  // 5c. Verify Dynamic SSR progressive HTTP chunk streaming
+  // 5c. Verify Dynamic SSR progressive HTTP chunk streaming & Cloudflare/proxy anti-buffering headers
   const dynStreamRes = await rscModule.handleRequest(
     new Request("http://localhost/streaming-ssr"),
     { runtime: "node-bundle", renderHtmlStream: ssrModule.renderHtml }
   );
+  assert.equal(
+    dynStreamRes.headers.get("content-encoding"),
+    "identity",
+    "Streaming SSR response must set Content-Encoding: identity to bypass Cloudflare FL / workerd Brotli/Gzip block buffering"
+  );
+  assert.equal(dynStreamRes.headers.get("x-accel-buffering"), "no");
+  assert.match(dynStreamRes.headers.get("cache-control") ?? "", /\bno-transform\b/i);
   const dynChunks = await readStreamChunksUntilMarker(
     dynStreamRes,
     "Executive Dashboard"
@@ -859,11 +866,26 @@ export default function IsgCatalogPage({ params }: { params: { slug: string } })
     `Expected >=220ms streaming gap between Chunk 1 (${dynChunks.firstChunkTime}ms) and completion (${dynChunks.totalTime}ms)`
   );
 
+  // Verify dynamic RSC Flight stream also sets anti-buffering headers (Cloudflare FL compresses text/x-component otherwise)
+  const dynRscStreamRes = await rscModule.handleRequest(
+    new Request("http://localhost/____rsc_page____/streaming-ssr"),
+    { runtime: "edge", renderHtmlStream: ssrModule.renderHtml }
+  );
+  assert.equal(dynRscStreamRes.headers.get("content-encoding"), "identity");
+  assert.equal(dynRscStreamRes.headers.get("x-accel-buffering"), "no");
+  assert.match(dynRscStreamRes.headers.get("cache-control") ?? "", /\bno-transform\b/i);
+  const dynRscText = await dynRscStreamRes.text();
+  assert.ok(dynRscText.includes("Executive Dashboard"));
+  assert.ok(dynRscText.includes("Live Revenue: $128,400"));
+
   // 5d. Verify PPR Runtime Resume progressive HTTP chunk streaming with direct Promise<ReactNode> hole
   const pprStreamRes = await rscModule.handleRequest(
     new Request("http://localhost/ppr-promise"),
     { runtime: "node-bundle", renderHtmlStream: ssrModule.renderHtml }
   );
+  assert.equal(pprStreamRes.headers.get("content-encoding"), "identity");
+  assert.equal(pprStreamRes.headers.get("x-accel-buffering"), "no");
+  assert.match(pprStreamRes.headers.get("cache-control") ?? "", /\bno-transform\b/i);
   const pprChunks = await readStreamChunksUntilMarker(
     pprStreamRes,
     "Order Tracker"
@@ -883,6 +905,9 @@ export default function IsgCatalogPage({ params }: { params: { slug: string } })
     new Request("http://localhost/isg-catalog/beta?utm_source=stream"),
     { runtime: "node-bundle", renderHtmlStream: ssrModule.renderHtml }
   );
+  assert.equal(queryIsgRes.headers.get("content-encoding"), "identity");
+  assert.equal(queryIsgRes.headers.get("x-accel-buffering"), "no");
+  assert.match(queryIsgRes.headers.get("cache-control") ?? "", /\bno-transform\b/i);
   const queryIsgChunks = await readStreamChunksUntilMarker(
     queryIsgRes,
     "IsgCatalog:beta:1"
@@ -898,13 +923,17 @@ export default function IsgCatalogPage({ params }: { params: { slug: string } })
   assert.ok(queryIsgChunks.totalTime - queryIsgChunks.firstChunkTime >= 180);
   assert.equal(await fsStorage.get("isg-catalog/beta/index.html"), null);
 
-  // Clean ISG request settles <Suspense> eagerly into final HTML and persists to disk
-  const cleanIsgHtml = await (
-    await rscModule.handleRequest(
-      new Request("http://localhost/isg-catalog/beta"),
-      { runtime: "node-bundle", renderHtmlStream: ssrModule.renderHtml }
-    )
-  ).text();
+  // Clean ISG request settles <Suspense> eagerly into final HTML and persists to disk (preserving normal CDN compression eligibility)
+  const cleanIsgRes = await rscModule.handleRequest(
+    new Request("http://localhost/isg-catalog/beta"),
+    { runtime: "node-bundle", renderHtmlStream: ssrModule.renderHtml }
+  );
+  assert.equal(
+    cleanIsgRes.headers.get("content-encoding"),
+    null,
+    "Non-streaming cached ISG HTML must remain eligible for CDN Brotli/Gzip compression"
+  );
+  const cleanIsgHtml = await cleanIsgRes.text();
   assert.match(cleanIsgHtml, /IsgCatalog:beta:2/);
   assert.ok(cleanIsgHtml.includes('<div data-testid="catalog-resolved">'));
   assert.ok(cleanIsgHtml.includes("CatalogDetails:beta"));
