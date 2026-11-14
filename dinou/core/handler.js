@@ -581,16 +581,6 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
 
         const isDynamic = typeof revalidateVal === "number" && revalidateVal < 1;
         const rawTags = pageFunctionsModule.getCacheTags ?? defaultExport?.getCacheTags;
-        let tagsVal = [];
-        if (typeof rawTags === "function") {
-          try {
-            tagsVal = await rawTags(dynamicParams);
-          } catch (e) {
-            console.error("Error running getCacheTags in handler:", e);
-          }
-        } else if (Array.isArray(rawTags)) {
-          tagsVal = rawTags;
-        }
 
         cachedConfig = {
           allowISG: resolvedAllowISG,
@@ -598,7 +588,8 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
           validateParams: pageFunctionsModule.validateParams || defaultExport?.validateParams || null,
           isDynamic,
           revalidate: revalidateVal,
-          tags: tagsVal,
+          getCacheTagsFn: typeof rawTags === "function" ? rawTags : null,
+          staticTags: Array.isArray(rawTags) ? rawTags : [],
           ppr: isPpr,
           pagePpr: isPagePpr,
         };
@@ -609,7 +600,8 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
           validateParams: null,
           isDynamic: false,
           revalidate: undefined,
-          tags: [],
+          getCacheTagsFn: null,
+          staticTags: [],
           ppr: isPpr,
           pagePpr: isPagePpr,
         };
@@ -666,12 +658,22 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
     }
   }
 
+  let resolvedTags = cachedConfig?.staticTags || [];
+  if (typeof cachedConfig?.getCacheTagsFn === "function") {
+    try {
+      const dynamicTags = await cachedConfig.getCacheTagsFn(dynamicParams);
+      resolvedTags = Array.isArray(dynamicTags) ? dynamicTags : [];
+    } catch (e) {
+      console.error("Error running getCacheTags in handler:", e);
+    }
+  }
+
   return {
     isPathBlocked,
     allowISGValue,
     isDynamicConfig,
     revalidate: cachedConfig?.revalidate,
-    tags: cachedConfig?.tags || [],
+    tags: resolvedTags,
     ppr: Boolean(cachedConfig?.ppr),
     pagePpr: Boolean(cachedConfig?.pagePpr),
     staticPathsSet: cachedConfig?.staticPathsSet || null,

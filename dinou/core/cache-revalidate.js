@@ -260,7 +260,7 @@ function normalizeRevalidatePath(reqPath) {
         rawReqHeaders?.["X-Dinou-Current-Path"];
       const referer = rawReqHeaders?.referer;
       if (headerPath) {
-        currentPathname = headerPath;
+        currentPathname = String(headerPath).split("?")[0].split("#")[0] || "/";
       } else if (referer) {
         try {
           currentPathname = new URL(referer).pathname;

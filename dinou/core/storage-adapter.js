@@ -32,8 +32,8 @@ class StorageAdapter {
 
   _normalizeTrackKey(key) {
     return String(key || "")
-      .replace(/^\/+/, "")
       .replace(/\\/g, "/")
+      .replace(/^\/+/, "")
       .replace(/\/+$/, "");
   }
 
@@ -106,8 +106,8 @@ class FileSystemStorage extends StorageAdapter {
 
   _resolve(key) {
     let cleanKey = String(key || "")
-      .replace(/^\/+/, "")
       .replace(/\\/g, "/")
+      .replace(/^\/+/, "")
       .replace(/\/+$/, "");
     if (!cleanKey) {
       return path.join(this.baseDir, "index.html");
@@ -246,7 +246,7 @@ class CloudflareKVStorage extends StorageAdapter {
   }
 
   _cleanKey(key) {
-    return String(key).replace(/^\/+/, "").replace(/\\/g, "/").replace(/\/+$/, "");
+    return String(key).replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
   }
 
   async get(key) {
@@ -327,7 +327,7 @@ class MemoryStorage extends StorageAdapter {
   }
 
   _cleanKey(key) {
-    return String(key || "").replace(/^\/+/, "").replace(/\\/g, "/").replace(/\/+$/, "");
+    return String(key || "").replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
   }
 
   async get(key) {
@@ -407,8 +407,8 @@ class RedisStorage extends StorageAdapter {
 
   _cleanKey(key) {
     return String(key || "")
-      .replace(/^\/+/, "")
       .replace(/\\/g, "/")
+      .replace(/^\/+/, "")
       .replace(/\/+$/, "");
   }
 
@@ -578,7 +578,7 @@ class RedisStorage extends StorageAdapter {
     const normPrefix =
       !prefix || prefix === "dinou_cache"
         ? ""
-        : String(prefix).replace(/^\/+/, "").replace(/\\/g, "/");
+        : String(prefix).replace(/\\/g, "/").replace(/^\/+/, "");
     const matchPattern = `${this.prefix}${normPrefix}*`;
     const rawKeys = [];
 
@@ -675,7 +675,7 @@ class DenoKVStorage extends StorageAdapter {
   }
 
   _cleanKey(key) {
-    return String(key).replace(/^\/+/, "").replace(/\\/g, "/");
+    return String(key).replace(/\\/g, "/").replace(/^\/+/, "");
   }
 
   async get(key) {

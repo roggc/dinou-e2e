@@ -10584,4 +10584,442 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
     });
   });
+
+  // =========================================================================
+  // REVALIDATION, DISTRIBUTED STORAGE & 3D CACHE LIFECYCLE FIXES (/t-reval-fixes)
+  // =========================================================================
+  test.describe("Revalidation, Distributed Storage & 3D Cache Lifecycle Fixes (/t-reval-fixes)", () => {
+    test.describe.configure({ mode: "serial" });
+
+    const gotoHydrated = async (page: any, url: string) => {
+      await page.goto(url);
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 10000,
+      });
+    };
+
+    const reloadHydrated = async (page: any) => {
+      await page.reload();
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 10000,
+      });
+    };
+
+    test("1. Relative revalidateLayout('./'), revalidateLayout('..') & revalidateLayout('../billing') from Server Functions surgically update targeted layouts with zero hydration mismatch", async ({
+      page,
+      request,
+    }, testInfo) => {
+      const ws = testInfo.project.name;
+
+      if (isProd && !isCloudflare && !isDeno) {
+        for (const relArtifact of [
+          `.dinou/dist2/t-reval-fixes/${ws}/dashboard/settings/index.html`,
+          `.dinou/dist2/t-reval-fixes/${ws}/dashboard/settings/layout.rsc`,
+          `.dinou/dist2/t-reval-fixes/${ws}/dashboard/layout.rsc`,
+          `.dinou/dist2/t-reval-fixes/${ws}/dashboard/billing/layout.rsc`,
+        ]) {
+          expect(fs.existsSync(path.resolve(relArtifact))).toBe(true);
+        }
+      }
+
+      const stripHtmlComments = (raw: string) =>
+        raw.replace(/<!--[\s\S]*?-->/g, "");
+      const extractStamp = (raw: string, prefix: string, scope: string) => {
+        const clean = stripHtmlComments(raw);
+        const m = clean.match(
+          new RegExp(`${prefix}:${scope}:[a-z0-9]+-[a-z0-9]+:\\d+`)
+        );
+        return m ? m[0] : "";
+      };
+
+      await gotoHydrated(page, `/t-reval-fixes/${ws}/dashboard`);
+      const dashIndexLayout0 =
+        (await page.getByTestId("dash-layout-stamp").textContent())?.trim() ??
+        "";
+      const dashIndexPage0 =
+        (
+          await page.getByTestId("dash-index-page-stamp").textContent()
+        )?.trim() ?? "";
+      expect(dashIndexLayout0).toMatch(
+        new RegExp(`^DashLayout:${ws}:[a-z0-9]+-[a-z0-9]+:\\d+$`)
+      );
+      expect(dashIndexPage0).toMatch(
+        new RegExp(`^DashIndexPage:${ws}:[a-z0-9]+-[a-z0-9]+:\\d+$`)
+      );
+
+      await gotoHydrated(page, `/t-reval-fixes/${ws}/dashboard/billing`);
+      const billingLayout0 =
+        (
+          await page.getByTestId("billing-layout-stamp").textContent()
+        )?.trim() ?? "";
+      const billingPage0 =
+        (await page.getByTestId("billing-page-stamp").textContent())?.trim() ??
+        "";
+      expect(billingLayout0).toMatch(
+        new RegExp(`^BillingLayout:${ws}:[a-z0-9]+-[a-z0-9]+:\\d+$`)
+      );
+      expect(billingPage0).toMatch(
+        new RegExp(`^BillingPage:${ws}:[a-z0-9]+-[a-z0-9]+:\\d+$`)
+      );
+
+      const settingsUrl = `/t-reval-fixes/${ws}/dashboard/settings?tab=general#top`;
+      await gotoHydrated(page, settingsUrl);
+      const settingsLayout0 =
+        (
+          await page.getByTestId("settings-layout-stamp").textContent()
+        )?.trim() ?? "";
+      const settingsPage0 =
+        (await page.getByTestId("settings-page-stamp").textContent())?.trim() ??
+        "";
+      const quotaSlot0 =
+        (
+          await page.getByTestId("settings-quota-slot-stamp").textContent()
+        )?.trim() ?? "";
+      const dashSlot0 =
+        (
+          await page.getByTestId("dash-layout-slot-stamp").textContent()
+        )?.trim() ?? "";
+
+      expect(settingsLayout0).toMatch(
+        new RegExp(`^SettingsLayout:${ws}:[a-z0-9]+-[a-z0-9]+:\\d+$`)
+      );
+      expect(settingsPage0).toMatch(
+        new RegExp(`^SettingsPage:${ws}:[a-z0-9]+-[a-z0-9]+:\\d+$`)
+      );
+      expect(quotaSlot0).toMatch(
+        new RegExp(`^QuotaSlot:${ws}:[a-z0-9]+-[a-z0-9]+:\\d+$`)
+      );
+      expect(dashSlot0).toMatch(
+        new RegExp(`^DashSlot:${ws}:[a-z0-9]+-[a-z0-9]+:\\d+$`)
+      );
+
+      if (!isProd) {
+        await page.getByTestId("btn-reval-current-layout").click();
+        await expect(page.getByTestId("reval-action-status")).toHaveText(
+          "done:1:layout-self:true",
+          { timeout: 10000 }
+        );
+        await page.getByTestId("btn-reval-parent-layout").click();
+        await expect(page.getByTestId("reval-action-status")).toHaveText(
+          "done:2:layout-parent:true",
+          { timeout: 10000 }
+        );
+        await page.getByTestId("btn-reval-billing-layout").click();
+        await expect(page.getByTestId("reval-action-status")).toHaveText(
+          "done:3:layout-billing:true",
+          { timeout: 10000 }
+        );
+        await reloadHydrated(page);
+        const devSettingsLayout =
+          (
+            await page.getByTestId("settings-layout-stamp").textContent()
+          )?.trim() ?? "";
+        expect(devSettingsLayout).not.toBe(settingsLayout0);
+        return;
+      }
+
+      // Baseline cache hit before any revalidation
+      await reloadHydrated(page);
+      await expect(page.getByTestId("settings-layout-stamp")).toHaveText(
+        settingsLayout0
+      );
+      await expect(page.getByTestId("settings-page-stamp")).toHaveText(
+        settingsPage0
+      );
+      await expect(page.getByTestId("settings-quota-slot-stamp")).toHaveText(
+        quotaSlot0
+      );
+      await expect(page.getByTestId("dash-layout-slot-stamp")).toHaveText(
+        dashSlot0
+      );
+
+      // A. revalidateLayout("./") inside Server Function on ?tab=general#top
+      await page.getByTestId("btn-reval-current-layout").click();
+      await expect(page.getByTestId("reval-action-status")).toHaveText(
+        "done:1:layout-self:true",
+        { timeout: 10000 }
+      );
+
+      await reloadHydrated(page);
+      const settingsLayout1 =
+        (
+          await page.getByTestId("settings-layout-stamp").textContent()
+        )?.trim() ?? "";
+      expect(settingsLayout1).not.toBe(settingsLayout0);
+      await expect(page.getByTestId("settings-page-stamp")).toHaveText(
+        settingsPage0
+      );
+      await expect(page.getByTestId("settings-quota-slot-stamp")).toHaveText(
+        quotaSlot0
+      );
+      await expect(page.getByTestId("dash-layout-slot-stamp")).toHaveText(
+        dashSlot0
+      );
+
+      // Parent /dashboard and sibling /dashboard/billing remain untouched
+      const dashCheckHtml = await (
+        await request.get(`/t-reval-fixes/${ws}/dashboard`)
+      ).text();
+      expect(extractStamp(dashCheckHtml, "DashLayout", ws)).toBe(
+        dashIndexLayout0
+      );
+      expect(extractStamp(dashCheckHtml, "DashIndexPage", ws)).toBe(
+        dashIndexPage0
+      );
+      const billingCheckHtml = await (
+        await request.get(`/t-reval-fixes/${ws}/dashboard/billing`)
+      ).text();
+      expect(extractStamp(billingCheckHtml, "BillingLayout", ws)).toBe(
+        billingLayout0
+      );
+
+      // B. revalidateLayout("..") inside Server Function -> updates parent /dashboard layout, preserves child pages
+      await page.getByTestId("btn-reval-parent-layout").click();
+      await expect(page.getByTestId("reval-action-status")).toHaveText(
+        "done:1:layout-parent:true",
+        { timeout: 10000 }
+      );
+
+      await gotoHydrated(page, `/t-reval-fixes/${ws}/dashboard`);
+      const dashIndexLayout1 =
+        (await page.getByTestId("dash-layout-stamp").textContent())?.trim() ??
+        "";
+      expect(dashIndexLayout1).not.toBe(dashIndexLayout0);
+      await expect(page.getByTestId("dash-index-page-stamp")).toHaveText(
+        dashIndexPage0
+      );
+
+      // C. revalidateLayout("../billing") from /settings -> updates sibling BillingLayout, preserves BillingPage
+      await gotoHydrated(page, settingsUrl);
+      await expect(page.getByTestId("settings-page-stamp")).toHaveText(
+        settingsPage0
+      );
+      await page.getByTestId("btn-reval-billing-layout").click();
+      await expect(page.getByTestId("reval-action-status")).toHaveText(
+        "done:1:layout-billing:true",
+        { timeout: 10000 }
+      );
+
+      // Verify both soft client navigation (<Link to="../billing">) and full document reload
+      await page.getByTestId("link-to-billing").click();
+      await expect(page.getByTestId("billing-page-stamp")).toHaveText(
+        billingPage0
+      );
+      const billingLayoutSoft =
+        (
+          await page.getByTestId("billing-layout-stamp").textContent()
+        )?.trim() ?? "";
+      expect(billingLayoutSoft).not.toBe(billingLayout0);
+
+      await reloadHydrated(page);
+      await expect(page.getByTestId("billing-layout-stamp")).toHaveText(
+        billingLayoutSoft
+      );
+      await expect(page.getByTestId("billing-page-stamp")).toHaveText(
+        billingPage0
+      );
+    });
+
+    test("2. Surgical 3D <DinouCacheSlot> tag invalidation (page & layout slots) & host page ISR TTL preservation under repeated slot refreshes", async ({
+      page,
+      request,
+    }, testInfo) => {
+      test.skip(
+        !isProd,
+        "3D cache slot splicing & ISR TTL preservation only apply in production builds"
+      );
+
+      const ws = testInfo.project.name;
+      const stripHtmlComments = (raw: string) =>
+        raw.replace(/<!--[\s\S]*?-->/g, "");
+      const extractStamp = (raw: string, prefix: string, scope: string) => {
+        const clean = stripHtmlComments(raw);
+        const m = clean.match(
+          new RegExp(`${prefix}:${scope}:[a-z0-9]+-[a-z0-9]+:\\d+`)
+        );
+        return m ? m[0] : "";
+      };
+
+      // Part A: Surgical page-slot, layout-slot, and page-tag invalidations
+      await gotoHydrated(page, `/t-reval-fixes/${ws}/dashboard`);
+      const dashLayoutBefore =
+        (await page.getByTestId("dash-layout-stamp").textContent())?.trim() ??
+        "";
+      const dashIndexPageBefore =
+        (
+          await page.getByTestId("dash-index-page-stamp").textContent()
+        )?.trim() ?? "";
+
+      await gotoHydrated(page, `/t-reval-fixes/${ws}/dashboard/settings`);
+      const settingsLayoutBefore =
+        (
+          await page.getByTestId("settings-layout-stamp").textContent()
+        )?.trim() ?? "";
+      const settingsPageBefore =
+        (await page.getByTestId("settings-page-stamp").textContent())?.trim() ??
+        "";
+      const quotaSlotBefore =
+        (
+          await page.getByTestId("settings-quota-slot-stamp").textContent()
+        )?.trim() ?? "";
+      const dashSlotBefore =
+        (
+          await page.getByTestId("dash-layout-slot-stamp").textContent()
+        )?.trim() ?? "";
+
+      // A1. revalidateTag on page <DinouCacheSlot> -> splices ONLY QuotaSlot
+      await page.getByTestId("btn-reval-quota-slot").click();
+      await expect(page.getByTestId("reval-action-status")).toHaveText(
+        `done:1:tag:reval-quota-slot-${ws}`,
+        { timeout: 10000 }
+      );
+      await reloadHydrated(page);
+      const quotaSlotAfter =
+        (
+          await page.getByTestId("settings-quota-slot-stamp").textContent()
+        )?.trim() ?? "";
+      expect(quotaSlotAfter).not.toBe(quotaSlotBefore);
+      await expect(page.getByTestId("settings-page-stamp")).toHaveText(
+        settingsPageBefore
+      );
+      await expect(page.getByTestId("settings-layout-stamp")).toHaveText(
+        settingsLayoutBefore
+      );
+      await expect(page.getByTestId("dash-layout-slot-stamp")).toHaveText(
+        dashSlotBefore
+      );
+
+      // A2. revalidateTag on layout <DinouCacheSlot> -> splices ONLY DashSlot in shell.layout.json without re-running layouts/pages
+      await page.getByTestId("btn-reval-dash-slot").click();
+      await expect(page.getByTestId("reval-action-status")).toHaveText(
+        `done:1:tag:reval-dash-slot-${ws}`,
+        { timeout: 10000 }
+      );
+      await reloadHydrated(page);
+      const dashSlotAfter =
+        (
+          await page.getByTestId("dash-layout-slot-stamp").textContent()
+        )?.trim() ?? "";
+      expect(dashSlotAfter).not.toBe(dashSlotBefore);
+      await expect(page.getByTestId("settings-layout-stamp")).toHaveText(
+        settingsLayoutBefore
+      );
+      await expect(page.getByTestId("settings-page-stamp")).toHaveText(
+        settingsPageBefore
+      );
+      await expect(page.getByTestId("settings-quota-slot-stamp")).toHaveText(
+        quotaSlotAfter
+      );
+
+      await gotoHydrated(page, `/t-reval-fixes/${ws}/dashboard`);
+      await expect(page.getByTestId("dash-layout-stamp")).toHaveText(
+        dashLayoutBefore
+      );
+      await expect(page.getByTestId("dash-layout-slot-stamp")).toHaveText(
+        dashSlotAfter
+      );
+      await expect(page.getByTestId("dash-index-page-stamp")).toHaveText(
+        dashIndexPageBefore
+      );
+
+      // A3. revalidateTag on SettingsPage tag -> updates SettingsPage while SettingsLayout stays frozen
+      await gotoHydrated(page, `/t-reval-fixes/${ws}/dashboard/settings`);
+      await page.getByTestId("btn-reval-settings-page").click();
+      await expect(page.getByTestId("reval-action-status")).toHaveText(
+        `done:1:tag:reval-settings-page-${ws}`,
+        { timeout: 10000 }
+      );
+      await reloadHydrated(page);
+      const settingsPageAfter =
+        (await page.getByTestId("settings-page-stamp").textContent())?.trim() ??
+        "";
+      expect(settingsPageAfter).not.toBe(settingsPageBefore);
+      await expect(page.getByTestId("settings-layout-stamp")).toHaveText(
+        settingsLayoutBefore
+      );
+
+      // Part B: Host page time-based ISR TTL (revalidate = 6s) is NOT starved by slot-only refreshes every ~3.2s
+      const ttlScope = `ttl-${ws}-${Date.now()}`;
+      const ttlPath = `/t-reval-fixes/${ttlScope}/isr-ttl`;
+
+      await gotoHydrated(page, ttlPath);
+      const ttlPage0 =
+        (await page.getByTestId("ttl-page-stamp").textContent())?.trim() ?? "";
+      const ttlSlot0 =
+        (await page.getByTestId("ttl-slot-stamp").textContent())?.trim() ?? "";
+      expect(ttlPage0).toMatch(
+        new RegExp(`^TtlPage:${ttlScope}:[a-z0-9]+-[a-z0-9]+:\\d+$`)
+      );
+      expect(ttlSlot0).toMatch(
+        new RegExp(`^TtlSlot:${ttlScope}:[a-z0-9]+-[a-z0-9]+:\\d+$`)
+      );
+
+      // Slot refresh #1 at ~3.2s (< 6s host TTL)
+      await page.waitForTimeout(3200);
+      await page.getByTestId("btn-reval-ttl-slot").click();
+      await expect(page.getByTestId("reval-action-status")).toHaveText(
+        `done:1:tag:reval-ttl-slot-${ttlScope}`,
+        { timeout: 10000 }
+      );
+
+      const midHtml = await (await request.get(ttlPath)).text();
+      const ttlSlot1 = extractStamp(midHtml, "TtlSlot", ttlScope);
+      expect(ttlSlot1).toBeTruthy();
+      expect(ttlSlot1).not.toBe(ttlSlot0);
+      expect(extractStamp(midHtml, "TtlPage", ttlScope)).toBe(ttlPage0);
+
+      // Slot refresh #2 after another ~3.2s (total >= 6.4s > 6s host TTL, yet only ~3.2s since refresh #1!)
+      await page.waitForTimeout(3200);
+      await page.getByTestId("btn-reval-ttl-slot").click();
+      await expect(page.getByTestId("reval-action-status")).toHaveText(
+        `done:2:tag:reval-ttl-slot-${ttlScope}`,
+        { timeout: 10000 }
+      );
+
+      // Immediate GET right after refresh #2: generatedAt is ~0ms old, but preserved pageGeneratedAt is >6s old,
+      // so background ISR for TtlPage must trigger right now rather than being starved for another 6s!
+      const triggerHtml = await (await request.get(ttlPath)).text();
+      const ttlSlot2 = extractStamp(triggerHtml, "TtlSlot", ttlScope);
+      expect(ttlSlot2).toBeTruthy();
+      expect(ttlSlot2).not.toBe(ttlSlot1);
+
+      let refreshedTtlPage = "";
+      await expect
+        .poll(
+          async () => {
+            const html = await (await request.get(ttlPath)).text();
+            const currentPage = extractStamp(html, "TtlPage", ttlScope);
+            if (currentPage && currentPage !== ttlPage0) {
+              refreshedTtlPage = currentPage;
+              return true;
+            }
+            return false;
+          },
+          {
+            timeout: 5200,
+            intervals: [200, 350, 500],
+          }
+        )
+        .toBe(true);
+
+      await gotoHydrated(page, ttlPath);
+      await expect(page.getByTestId("ttl-page-stamp")).toHaveText(
+        refreshedTtlPage
+      );
+    });
+
+    test("3. Unit, Multi-Pod RedisStorage, Standalone Worker & Dual-Bundle SSG Revalidation Suite (scripts/verify-revalidation-fixes-ci.mjs)", async () => {
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        [path.resolve("scripts/verify-revalidation-fixes-ci.mjs")],
+        { encoding: "utf8", timeout: 90000 }
+      );
+      expect(output).toContain(
+        "RESULT: All Revalidation & Distributed Storage fixes verification checks PASSED"
+      );
+    });
+  });
 });
