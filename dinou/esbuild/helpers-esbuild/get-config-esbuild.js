@@ -165,6 +165,7 @@ export default function getConfigEsbuild({
       "/__SERVER_FUNCTION_PROXY__",
       "/serverFunctionProxy.js",
       "/__hmr_client__.js",
+      "/runtime.js",
       "/react-refresh-entry.js",
     ],
     plugins,

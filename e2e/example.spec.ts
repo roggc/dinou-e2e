@@ -7370,13 +7370,34 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Hard reload (F5) after revalidateLayout & revalidatePage to verify lazy shell.html re-composition & zero hydration mismatch
       const layoutSeqBeforeReload = Number(await page.locator("#hsppr-l1-layout-seq").textContent());
       const pageSeqBeforeReload = Number(await page.locator("#hsppr-page-a-shell-seq").textContent());
-      await page.reload();
-      await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
-      const layoutSeqAfterReload = Number(await page.locator("#hsppr-l1-layout-seq").textContent());
-      const pageSeqAfterReload = Number(await page.locator("#hsppr-page-a-shell-seq").textContent());
-      expect(layoutSeqAfterReload).toBeGreaterThanOrEqual(layoutSeqBeforeReload);
-      expect(pageSeqAfterReload).toBeGreaterThanOrEqual(pageSeqBeforeReload);
-      expect(hydrationErrors).toEqual([]);
+      const reloadRuntimeErrors: string[] = [];
+      const onReloadConsole = (msg: any) => {
+        if (msg.type() === "error" && /\[Dinou\] (?:ErrorBoundary|Page Error|Inner Error)/i.test(msg.text())) {
+          reloadRuntimeErrors.push(msg.text());
+        }
+      };
+      const onReloadPageError = (err: Error) => {
+        reloadRuntimeErrors.push(err.stack || err.message);
+      };
+      page.on("console", onReloadConsole);
+      page.on("pageerror", onReloadPageError);
+      try {
+        await page.reload();
+        await page.waitForSelector('body[data-hydrated="true"]', { timeout: 15000 });
+        expect(reloadRuntimeErrors, "Expected zero client ErrorBoundary/pageerror crashes on F5 reload").toEqual([]);
+        const layoutSeqAfterReload = Number(
+          await page.locator("#hsppr-l1-layout-seq").textContent({ timeout: 15000 })
+        );
+        const pageSeqAfterReload = Number(
+          await page.locator("#hsppr-page-a-shell-seq").textContent({ timeout: 15000 })
+        );
+        expect(layoutSeqAfterReload).toBeGreaterThanOrEqual(layoutSeqBeforeReload);
+        expect(pageSeqAfterReload).toBeGreaterThanOrEqual(pageSeqBeforeReload);
+        expect(hydrationErrors).toEqual([]);
+      } finally {
+        page.off("console", onReloadConsole);
+        page.off("pageerror", onReloadPageError);
+      }
     });
   });
 

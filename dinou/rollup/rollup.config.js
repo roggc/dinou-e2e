@@ -147,6 +147,7 @@ export default async function () {
     perf: isDevelopment,
     treeshake: isDevelopment ? false : true,
     external: [
+      "/runtime.js",
       "/refresh.js",
       "/__hmr_client__.js",
       "/__SERVER_FUNCTION_PROXY__",

@@ -7,6 +7,7 @@
 // 5. Incremental Esbuild dev CSS HMR: live Tailwind v4 utility refresh on Server Component .tsx edits + globals.css preservation on .module.css edits
 // 6. Full 3-bundler (Esbuild, Rollup, Webpack) + 4-runtime (Node, Cloudflare, Bun, Deno) + export-static CSS, minification, assets & CSS Modules parity
 // 7. public/styles.css coexistence (zero src/ CSS) & collision protection (compiled src/ CSS wins with warning & preserves nested public/*/styles.css)
+// 8. Dev Fast Refresh ESM evaluation-order (import "/runtime.js" in main.js) & defensive $RefreshSig$/$RefreshReg$ guards (Esbuild + Rollup)
 
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -15,6 +16,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import vm from "node:vm";
 
 const projectRoot = process.cwd();
 const origCwd = projectRoot;
@@ -1375,6 +1377,302 @@ export default function Layout({ children }: { children: any }) {
   } finally {
     process.chdir(origCwd);
     fs.rmSync(tmpAppCollision, { recursive: true, force: true });
+    try {
+      if (
+        fs.existsSync(fixturesBase) &&
+        fs.readdirSync(fixturesBase).length === 0
+      ) {
+        fs.rmdirSync(fixturesBase);
+      }
+    } catch {}
+  }
+}
+
+console.log(
+  '8️⃣ Verifying Dev Fast Refresh ESM evaluation-order (import "/runtime.js") & defensive $RefreshSig$/$RefreshReg$ guards (Esbuild + Rollup)...'
+);
+{
+  const fixturesBase = path.join(projectRoot, ".dinou", "tmp-styles-fixtures");
+  fs.mkdirSync(fixturesBase, { recursive: true });
+  const tmpRefreshApp = fs.mkdtempSync(
+    path.join(fixturesBase, "dinou-dev-refresh-")
+  );
+
+  try {
+    const dinouShimDir = path.join(tmpRefreshApp, "node_modules", "dinou");
+    fs.mkdirSync(dinouShimDir, { recursive: true });
+    const dinouRootUrl = pathToFileURL(dinouRoot).href;
+    fs.writeFileSync(
+      path.join(dinouShimDir, "package.json"),
+      JSON.stringify(
+        {
+          name: "dinou",
+          version: "9.4.0",
+          type: "module",
+          main: "./index.js",
+          exports: {
+            ".": "./index.js",
+            "./server": "./server.js",
+            "./config": "./config.js",
+          },
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(dinouShimDir, "index.js"),
+      `export * from ${JSON.stringify(`${dinouRootUrl}/index.js`)};\n`,
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(dinouShimDir, "server.js"),
+      `export * from ${JSON.stringify(`${dinouRootUrl}/server.js`)};\n`,
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(dinouShimDir, "config.js"),
+      `export * from ${JSON.stringify(`${dinouRootUrl}/core/config.js`)};\nexport { default } from ${JSON.stringify(`${dinouRootUrl}/core/config.js`)};\n`,
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(tmpRefreshApp, "package.json"),
+      JSON.stringify(
+        { name: "dinou-dev-refresh-fixture", version: "1.0.0", type: "module" },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(tmpRefreshApp, "tsconfig.json"),
+      JSON.stringify(
+        {
+          compilerOptions: {
+            baseUrl: ".",
+            paths: { "@/*": ["./src/*"] },
+          },
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    fs.mkdirSync(path.join(tmpRefreshApp, "src"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpRefreshApp, "src", "layout.tsx"),
+      `export default function Layout({ children }: { children: any }) {
+  return <html lang="en"><body>{children}</body></html>;
+}
+`,
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(tmpRefreshApp, "src", "HookClientBox.tsx"),
+      `"use client";
+import { useEffect, useState } from "react";
+
+export function HookClientBox({ initial }: { initial: number }) {
+  const [count, setCount] = useState(initial);
+  useEffect(() => {
+    setCount((c) => c + 1);
+  }, []);
+  return <div data-count={count}>{count}</div>;
+}
+`,
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(tmpRefreshApp, "src", "page.tsx"),
+      `import { HookClientBox } from "./HookClientBox";
+export default function Page() {
+  return <HookClientBox initial={1} />;
+}
+`,
+      "utf8"
+    );
+
+    const verifyDevScriptPath = path.join(tmpRefreshApp, "verify-dev-refresh.mjs");
+    fs.writeFileSync(
+      verifyDevScriptPath,
+      `import assert from "node:assert/strict";
+import path from "node:path";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
+import vm from "node:vm";
+
+const dinouRoot = ${JSON.stringify(dinouRoot)};
+const dinouPkgJson = ${JSON.stringify(dinouPkgJson)};
+const tmpRefreshApp = process.cwd();
+const dinouRequire = createRequire(dinouPkgJson);
+const esbuild = dinouRequire("esbuild");
+const importDinou = (rel) => import(pathToFileURL(path.join(dinouRoot, rel)).href);
+
+const { default: getConfigEsbuild } = await importDinou("esbuild/helpers-esbuild/get-config-esbuild.js");
+const { default: getEsbuildEntries } = await importDinou("esbuild/helpers-esbuild/get-esbuild-entries.js");
+const { syncAllSwcFiles, getMirrorPath } = await importDinou("esbuild/helpers-esbuild/swc-disk-cache.js");
+const { default: getRollupConfig } = await importDinou("rollup/rollup.config.js");
+const { esmHmrPlugin: rollupEsmHmrPlugin } = await importDinou("rollup/react-refresh/rollup-plugin-esm-hmr.js");
+const { default: reactRefreshWrapModules } = await importDinou("rollup/react-refresh/react-refresh-wrap-modules.js");
+
+globalThis.__DINOU_MEM_FILES__ = new Map();
+const manifest = {};
+const [esbuildEntries, , , serverFiles] = await getEsbuildEntries({ manifest });
+await syncAllSwcFiles(path.join(tmpRefreshApp, "src"), tmpRefreshApp);
+
+const componentEntryPoints = [...esbuildEntries].reduce(
+  (acc, entry) => ({
+    ...acc,
+    [entry.outfileName]: getMirrorPath(entry.absPath, tmpRefreshApp),
+  }),
+  {}
+);
+const entryPoints = {
+  main: path.join(dinouRoot, "core", "client.jsx"),
+  serverFunctionProxy: path.join(dinouRoot, "core", "server-function-proxy.js"),
+  runtime: path.join(dinouRoot, "esbuild", "react-refresh", "react-refresh-runtime.js"),
+  "react-refresh-entry": path.join(dinouRoot, "esbuild", "react-refresh", "react-refresh-entry.js"),
+  dinouClientRedirect: path.join(dinouRoot, "core", "client-redirect.jsx"),
+  dinouLink: path.join(dinouRoot, "core", "link.jsx"),
+  dinouSlot: path.join(dinouRoot, "core", "slot.js"),
+  ...componentEntryPoints,
+};
+const mockHmrEngine = {
+  value: {
+    setEntry() {},
+    getEntry() { return null; },
+    broadcastMessage() {},
+  },
+};
+await esbuild.build({
+  ...getConfigEsbuild({
+    entryPoints,
+    manifest,
+    changedIds: new Set(),
+    hmrEngine: mockHmrEngine,
+    cssRefreshRef: { refresh: null },
+    serverFiles: new Set(serverFiles),
+  }),
+  absWorkingDir: tmpRefreshApp,
+});
+
+const esbuildMainCode = globalThis.__DINOU_MEM_FILES__.get("/main.js")?.toString("utf8");
+assert.ok(esbuildMainCode, "[8A] Esbuild dev must emit /main.js in memory");
+assert.match(
+  esbuildMainCode,
+  /^\\s*import\\s+["']\\/runtime\\.js["'];/,
+  '[8A] Esbuild dev main.js must start with \`import "/runtime.js";\` so Fast Refresh initializes before main.js & client chunks'
+);
+
+const hookMemKey = [...globalThis.__DINOU_MEM_FILES__.keys()].find((k) =>
+  /HookClientBox(?:-[a-f0-9]+)?\\.js$/i.test(k)
+);
+assert.ok(hookMemKey, "[8A] Esbuild dev must emit wrapped HookClientBox-*.js client chunk");
+const esbuildHookCode = globalThis.__DINOU_MEM_FILES__.get(hookMemKey).toString("utf8");
+assert.match(esbuildHookCode, /\\$RefreshSig\\$\\(\\)/, "[8A] SWC dev transform must emit $RefreshSig$() for HookClientBox hooks");
+assert.match(esbuildHookCode, /actualRuntime\\?\\.register\\(type,\\s*fullId\\)/, "[8A] Esbuild HMR wrapper must guard register() with optional chaining");
+assert.match(
+  esbuildHookCode,
+  /prevRefreshSig\\s*\\|\\|\\s*\\(\\(\\)\\s*=>\\s*\\(type\\)\\s*=>\\s*type\\)/,
+  "[8A] Esbuild HMR wrapper must preserve a safe $RefreshSig$ fallback when window.__reactRefreshRuntime is not yet loaded"
+);
+
+const cjsCache = new Map();
+const evalMemModule = (code, vmContext) => {
+  const cjsCode = esbuild.transformSync(
+    code.replace(/\\bimport\\.meta\\b/g, "__importMeta"),
+    { loader: "js", format: "cjs", target: "es2022" }
+  ).code;
+  const mod = { exports: {} };
+  const fn = vm.runInNewContext(
+    \`(function(exports, require, module, __importMeta) {\\n\${cjsCode}\\n})\`,
+    vmContext
+  );
+  fn(mod.exports, vmContext.require, mod, {});
+  return mod.exports;
+};
+const prevRegStub = () => {};
+const prevSigStub = () => (type) => type;
+const vmContext = {
+  __reactRefreshRuntime: undefined,
+  $RefreshReg$: prevRegStub,
+  $RefreshSig$: prevSigStub,
+  console,
+  process: { env: { NODE_ENV: "development" } },
+};
+vmContext.window = vmContext;
+vmContext.globalThis = vmContext;
+vmContext.require = (spec) => {
+  if (cjsCache.has(spec)) return cjsCache.get(spec);
+  const cleanKey = spec.replace(/^\\.\\//, "");
+  const buf =
+    globalThis.__DINOU_MEM_FILES__.get(cleanKey) ||
+    globalThis.__DINOU_MEM_FILES__.get("/" + cleanKey);
+  if (buf) {
+    const placeholder = {};
+    cjsCache.set(spec, placeholder);
+    const evaluated = evalMemModule(buf.toString("utf8"), vmContext);
+    Object.assign(placeholder, evaluated);
+    cjsCache.set(spec, evaluated);
+    return evaluated;
+  }
+  return {};
+};
+const hookExports = evalMemModule(esbuildHookCode, vmContext);
+assert.equal(typeof hookExports.HookClientBox, "function");
+assert.equal(vmContext.$RefreshReg$, prevRegStub);
+assert.equal(vmContext.$RefreshSig$, prevSigStub);
+
+const rollupClientConfig = await getRollupConfig();
+assert.ok(
+  Array.isArray(rollupClientConfig.external) &&
+    rollupClientConfig.external.includes("/runtime.js"),
+  '[8B] Rollup dev config must mark "/runtime.js" as external'
+);
+const rollupMainRendered = rollupEsmHmrPlugin().renderChunk(
+  'import { hydrateRoot } from "react-dom/client";\\n',
+  { fileName: "main.js" }
+);
+assert.ok(rollupMainRendered?.code);
+assert.match(rollupMainRendered.code, /^\\s*import\\s+["']\\/runtime\\.js["'];/);
+
+const rollupWrappedHook = reactRefreshWrapModules().renderChunk(
+  'var _s = $RefreshSig$();\\nexport function HookClientBox() { _s(); return null; }\\n$RefreshReg$(HookClientBox, "HookClientBox");\\n',
+  {
+    fileName: "HookClientBox.js",
+    modules: { [path.join(tmpRefreshApp, "src", "HookClientBox.tsx")]: {} },
+  }
+);
+assert.ok(rollupWrappedHook?.code);
+assert.match(rollupWrappedHook.code, /actualRuntime\\?\\.register\\(type,\\s*fullId\\)/);
+assert.match(rollupWrappedHook.code, /prevRefreshSig\\s*\\|\\|\\s*\\(\\(\\)\\s*=>\\s*\\(type\\)\\s*=>\\s*type\\)/);
+`,
+      "utf8"
+    );
+
+    const refreshRes = spawnSync(process.execPath, [verifyDevScriptPath], {
+      cwd: tmpRefreshApp,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        NODE_ENV: "development",
+        DINOU_WRITE_TO_DISK: "false",
+      },
+    });
+    assert.equal(
+      refreshRes.status,
+      0,
+      `[Section 8] Dev Fast Refresh verification failed:\n${refreshRes.stdout}\n${refreshRes.stderr}`
+    );
+  } finally {
+    fs.rmSync(tmpRefreshApp, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 50,
+    });
     try {
       if (
         fs.existsSync(fixturesBase) &&
