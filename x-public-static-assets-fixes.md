@@ -26,9 +26,14 @@ During the `v9.4.0` audit of `/docs/public`, seven interconnected architectural,
    - **Root Cause**: `dinou/rollup/rollup.config.js` used `rollup-plugin-copy` with `targets: [{ src: "public/**/*", dest: outputDirectory }]` where `flatten` defaults to `true` (destroying all nested subdirectories such as `public/images/og-image.png` into root `og-image.png`!) and `globby` defaults to `dot: false` (silently dropping `public/.well-known/*` and `public/.nojekyll`). Webpack's `CopyWebpackPlugin` also lacked `globOptions: { dot: true }`.
    - **Fix**: Created `dinou/core/copy-static-dirs.js` (`copyStaticDirectoriesToOutdir` using `fs.cpSync` with `recursive: true`, preserving nested directories and `.well-known/*` while filtering `.DS_Store` and `Thumbs.db`), wired it into Esbuild (dev disk mode & prod) and Rollup, and configured `CopyWebpackPlugin` with `globOptions: { dot: true, ignore: ["**/.DS_Store", "**/Thumbs.db"] }`.
 
-4. **Incomplete Cloudflare Workers Static Asset Routing (`env.ASSETS`)**:
-   - **Root Cause**: `dinou/cloudflare/build.js` and `dinou/adapters/cloudflare.js` matched static assets using a narrow 14-extension regex (`/\.([a-z0-9]+)$/i`), causing requests for `/.well-known/apple-app-site-association` (extensionless), `/.well-known/assetlinks.json`, `/sitemap.xml`, `/site.webmanifest`, `/google12345.html`, `/brochure.pdf`, `/video.mp4`, `/font.ttf`, `/hero.avif`, or `/module.wasm` to bypass `env.ASSETS` and 404 inside RSC route resolution.
-   - **Fix**: Centralized `isPublicStaticAssetRequest(pathname)` and `getStaticContentType(pathname)` in universal `dinou/core/static-assets.js` (zero `node:fs` dependency; safe in Node, Bun, Deno, and Cloudflare `workerd`), including automatic `application/json; charset=utf-8` normalization for extensionless `/.well-known/apple-app-site-association`.
+4. **Incomplete Cloudflare Workers Static Asset Routing & `.dinou/dist3` Pollution (`env.ASSETS`)**:
+   - **Root Cause**:
+     1. `dinou/cloudflare/build.js` previously copied `.dinou/dist2` directly into the root of `.dinou/dist3`, polluting `.dinou/dist3` with internal SSG/ISR/PPR/Slot cache files and creating root naming collisions with user files in `public/` (e.g., `public/metadata.json` or `public/slots/*`).
+     2. `dinou/cloudflare/build.js` and `dinou/adapters/cloudflare.js` matched static assets using a narrow 14-extension regex (`/\.([a-z0-9]+)$/i`), causing requests for `/.well-known/apple-app-site-association` (extensionless), `/.well-known/assetlinks.json`, `/sitemap.xml`, `/site.webmanifest`, `/google12345.html`, `/brochure.pdf`, `/video.mp4`, `/font.ttf`, `/hero.avif`, or `/module.wasm` to bypass `env.ASSETS` and 404 inside RSC route resolution.
+   - **Fix**:
+     1. `dinou/cloudflare/build.js` now leaves `.dinou/dist3` **100% untouched** and assembles a dedicated `.dinou/cloudflare/assets/` directory (`[assets] directory = ".dinou/cloudflare/assets"` in `wrangler.toml`): public static files from `.dinou/dist3` sit at `.dinou/cloudflare/assets/*`, while internal `.dinou/dist2` SSG/ISR/PPR/Slot cache files are isolated under `.dinou/cloudflare/assets/__dinou_dist2/*`.
+     2. External HTTP requests targeting `/__dinou_dist2/*` (including URL-encoded variants) are rejected with `404` at the Worker edge (`isReservedCloudflareDist2RequestPath`), while internal readers (`handler.js`, `ppr-runtime.js`, `cache-slot.js`, `cache-revalidate.js`) fetch pre-rendered cache artifacts via `fetchCloudflareDist2Asset(assets, key, baseUrl)` (including automatic Cloudflare `index.html` canonicalization handling).
+     3. Centralized `isPublicStaticAssetRequest(pathname)` and `getStaticContentType(pathname)` in universal `dinou/core/static-assets.js` (zero `node:fs` dependency; safe in Node, Bun, Deno, and Cloudflare `workerd`), including automatic `application/json; charset=utf-8` normalization for extensionless `/.well-known/apple-app-site-association`.
 
 5. **Aggressive `immutable` Caching on Unhashed `public/*` Files**:
    - **Root Cause**: Production servers (`node/build.js`, `bun/build.js`, `deno/build.js`) previously stamped `Cache-Control: public, max-age=31536000, immutable` on *every* file in `.dinou/dist3`, pinning mutable unhashed files like `/robots.txt`, `/sitemap.xml`, `/manifest.json`, `/favicon.ico`, and `/styles.css` in browser/CDN caches for 1 year.
@@ -66,6 +71,11 @@ During the `v9.4.0` audit of `/docs/public`, seven interconnected architectural,
 │       └── package.json
 ├── dist2/                              # Pre-rendered SSG / ISR / PPR HTML, RSC & slot cache store
 ├── dist3/                              # 100% PURE public static webroot (client chunks, /assets/*, public/*)
+├── cloudflare/                         # Cloudflare Workers build output (when running dinou build:cloudflare)
+│   ├── worker.js                       # Compiled workerd Dual-Bundle orchestrator
+│   └── assets/                         # Wrangler [assets] directory = ".dinou/cloudflare/assets"
+│       ├── <public & client chunks>    # Clean copy of .dinou/dist3 (served publicly via env.ASSETS)
+│       └── __dinou_dist2/              # Isolated copy of .dinou/dist2 (internal Worker-only cache; 404 externally)
 └── node-dev/                           # Dev-only workspace & optional DINOU_WRITE_TO_DISK=true manifests
 ```
 
@@ -79,7 +89,7 @@ During the `v9.4.0` audit of `/docs/public`, seven interconnected architectural,
 1. `dinou/core/static-assets.js`
 2. `dinou/core/copy-static-dirs.js`
 
-### Modified Files (30)
+### Modified Files (34)
 3. `dinou/esbuild/build.js`
 4. `dinou/esbuild/dev.js`
 5. `dinou/esbuild/helpers-esbuild/get-config-esbuild.js`
@@ -102,14 +112,18 @@ During the `v9.4.0` audit of `/docs/public`, seven interconnected architectural,
 22. `dinou/core/export-static.js`
 23. `dinou/core/client.jsx`
 24. `dinou/core/client-webpack.jsx`
-25. `dinou/cli.js`
-26. `dinou/node/dev.js`
-27. `dinou/node/build.js`
-28. `dinou/node/bundle-dual-engine.js`
-29. `dinou/bun/build.js`
-30. `dinou/deno/build.js`
-31. `dinou/cloudflare/build.js`
-32. `dinou/adapters/cloudflare.js`
+25. `dinou/core/handler.js`
+26. `dinou/core/ppr-runtime.js`
+27. `dinou/core/cache-slot.js`
+28. `dinou/core/cache-revalidate.js`
+29. `dinou/cli.js`
+30. `dinou/node/dev.js`
+31. `dinou/node/build.js`
+32. `dinou/node/bundle-dual-engine.js`
+33. `dinou/bun/build.js`
+34. `dinou/deno/build.js`
+35. `dinou/cloudflare/build.js`
+36. `dinou/adapters/cloudflare.js`
 
 ---
 
@@ -186,19 +200,10 @@ export const PUBLIC_STATIC_EXT_REGEX =
 const IMMUTABLE_CHUNK_REGEX =
   /^[^/]+-(?:[A-Z0-9]{8}|[a-f0-9]{16,32}|(?=[A-Za-z0-9_-]{8}\.)(?=[A-Za-z0-9_-]*[A-Z0-9])[A-Za-z0-9_-]{8})\.(?:js|mjs|cjs|css)(?:\.map)?$/;
 
-// Pre-rendered SSG/ISR/PPR cache artifacts from `.dinou/dist2` (synchronized into
-// `.dinou/dist3` during Cloudflare Workers builds so `handler.js` can read them via
-// `env.ASSETS`). They must never bypass `handleRequest` as raw static files.
-const DIST2_INTERNAL_BASENAMES = new Set([
-  "index.html",
-  "shell.html",
-  "metadata.json",
-  "layout.metadata.json",
-  "slot.metadata.json",
-  "shell.layout.json",
-  "shell.page.json",
-  "slot.json",
-]);
+// Reserved internal subdirectory inside `.dinou/cloudflare/assets/` where
+// `dinou build:cloudflare` places pre-rendered `.dinou/dist2` SSG/ISR/PPR/Slot
+// cache files so `.dinou/dist3` stays 100% pure and never collides with `public/`.
+export const CLOUDFLARE_DIST2_NAMESPACE = "__dinou_dist2";
 
 const DIST2_EXPORTABLE_BASENAMES = new Set([
   "index.html",
@@ -231,9 +236,24 @@ export function getStaticContentType(pathnameOrFilePath) {
 }
 
 /**
- * Returns true when a normalized POSIX path refers to an internal `.dinou/dist2`
- * SSG/ISR/PPR cache artifact (synchronized into `.dinou/dist3` on Cloudflare Workers)
- * that must never bypass `handleRequest` as a raw static asset.
+ * Returns true when an incoming URL pathname targets the reserved internal
+ * `/__dinou_dist2/*` namespace inside Cloudflare's `env.ASSETS` directory.
+ */
+export function isReservedCloudflareDist2RequestPath(pathname) {
+  if (!pathname || typeof pathname !== "string") return false;
+  let decoded = pathname;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {}
+  const firstSeg =
+    decoded.replace(/\\/g, "/").replace(/^\/+/, "").split("/")[0] || "";
+  return firstSeg.toLowerCase() === CLOUDFLARE_DIST2_NAMESPACE;
+}
+
+/**
+ * Returns true when a normalized POSIX path refers to an OS metadata file or
+ * Dinou's reserved internal `/__dinou_dist2/*` Cloudflare asset namespace,
+ * ensuring it is never served publicly.
  */
 export function isInternalDinouAssetPath(relPosixPath) {
   if (!relPosixPath || typeof relPosixPath !== "string") return true;
@@ -243,20 +263,12 @@ export function isInternalDinouAssetPath(relPosixPath) {
   const segments = clean.split("/").filter(Boolean);
   if (segments.length === 0) return true;
 
-  if (segments[0].toLowerCase() === "slots") {
-    return true;
-  }
-
-  const relLower = segments.join("/").toLowerCase();
-  if (relLower === "status-manifest.json") {
+  if (segments[0].toLowerCase() === CLOUDFLARE_DIST2_NAMESPACE) {
     return true;
   }
 
   const baseLower = segments[segments.length - 1].toLowerCase();
-  if (DIST2_INTERNAL_BASENAMES.has(baseLower)) {
-    return true;
-  }
-  if (baseLower.endsWith(".rsc") || baseLower.includes("._old.")) {
+  if (baseLower === ".ds_store" || baseLower === "thumbs.db") {
     return true;
   }
 
@@ -394,9 +406,9 @@ export function isPublicStaticAssetRequest(pathname) {
 }
 
 /**
- * Filter predicate for `dinou export-static` (`export-static.js`) when copying `.dinou/dist3`
- * into `out/`. Excludes OS metadata and any `.dinou/dist2` internal cache metadata
- * (in case `build:cloudflare` previously synchronized `dist2` into `dist3`), while
+ * Filter predicate when copying public static assets from `.dinou/dist3` into
+ * `out/` (`dinou export-static`) or `.dinou/cloudflare/assets/` (`dinou build:cloudflare`).
+ * Excludes OS metadata junk and the reserved `__dinou_dist2` namespace while
  * preserving all `public/` files (including `.well-known/*` and `.nojekyll`) and client chunks.
  */
 export function shouldExportDist3Entry(relPosixPath) {
@@ -407,31 +419,12 @@ export function shouldExportDist3Entry(relPosixPath) {
   const segments = clean.split("/").filter(Boolean);
   if (segments.length === 0) return false;
 
+  if (segments[0].toLowerCase() === CLOUDFLARE_DIST2_NAMESPACE) {
+    return false;
+  }
+
   const baseLower = segments[segments.length - 1].toLowerCase();
   if (baseLower === ".ds_store" || baseLower === "thumbs.db") {
-    return false;
-  }
-
-  if (segments[0].toLowerCase() === "slots") {
-    return false;
-  }
-
-  const relLower = segments.join("/").toLowerCase();
-  if (relLower === "status-manifest.json") {
-    return false;
-  }
-
-  if (
-    baseLower === "shell.html" ||
-    baseLower === "metadata.json" ||
-    baseLower === "layout.metadata.json" ||
-    baseLower === "slot.metadata.json" ||
-    baseLower === "shell.layout.json" ||
-    baseLower === "shell.page.json" ||
-    baseLower === "slot.json" ||
-    baseLower.endsWith(".rsc") ||
-    baseLower.includes("._old.")
-  ) {
     return false;
   }
 
@@ -460,6 +453,51 @@ export function shouldExportDist2File(relPosixPath) {
 
   const baseLower = segments[segments.length - 1].toLowerCase();
   return DIST2_EXPORTABLE_BASENAMES.has(baseLower);
+}
+
+/**
+ * Reads an internal `.dinou/dist2` SSG/ISR/PPR/Slot artifact from Cloudflare's
+ * `env.ASSETS` binding under the isolated `/__dinou_dist2/<key>` namespace.
+ * Handles Cloudflare Static Assets HTML canonicalization for `index.html` keys.
+ */
+export async function fetchCloudflareDist2Asset(
+  assetsBinding,
+  key,
+  baseUrl = "http://localhost"
+) {
+  if (!assetsBinding || typeof assetsBinding.fetch !== "function" || !key) {
+    return null;
+  }
+  const cleanKey = String(key).replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!cleanKey) return null;
+
+  const namespacedKey = `${CLOUDFLARE_DIST2_NAMESPACE}/${cleanKey}`;
+  const lowerKey = cleanKey.toLowerCase();
+  const isIndexHtml =
+    lowerKey === "index.html" || lowerKey.endsWith("/index.html");
+
+  if (!isIndexHtml) {
+    const res = await assetsBinding.fetch(
+      new Request(new URL(`/${namespacedKey}`, baseUrl))
+    );
+    return res && res.status === 200 ? res : null;
+  }
+
+  const dirRel = cleanKey.slice(0, -"index.html".length).replace(/\/+$/, "");
+  const dirNamespace = dirRel
+    ? `/${CLOUDFLARE_DIST2_NAMESPACE}/${dirRel}`
+    : `/${CLOUDFLARE_DIST2_NAMESPACE}`;
+  const candidates = [`${dirNamespace}/`, `/${namespacedKey}`, dirNamespace];
+
+  for (const candidatePath of candidates) {
+    const res = await assetsBinding.fetch(
+      new Request(new URL(candidatePath, baseUrl))
+    );
+    if (res && res.status === 200) {
+      return res;
+    }
+  }
+  return null;
 }
 
 /**
@@ -1622,6 +1660,14 @@ And in `dinou/cli.js`:
 ```diff
 --- a/dinou/cli.js
 +++ b/dinou/cli.js
+@@ -270,7 +270,7 @@
+ program
+   .command("build:cloudflare:rollup")
+   .description("Build the app for Cloudflare Workers with Rollup")
+   .action(() => {
+-    runCommand(`cross-env NODE_ENV=production npx rollup -c ${p("rollup/rollup.config.js")} && node ${p("cloudflare/build.js")}`);
++    runCommand(`cross-env NODE_ENV=production npx rollup -c ${p("rollup/rollup.config.js")} && cross-env DINOU_BUILD_TOOL=rollup node ${p("cloudflare/build.js")}`);
+   });
 @@ -498,13 +498,13 @@
  program
    .command("export-static:rollup")
@@ -1850,22 +1896,77 @@ Both `dinou/bun/build.js` and `dinou/deno/build.js` received the following upgra
 2. Generated orchestrator `fetch(req)` imports `{ getStaticContentType, getStaticCacheControl, normalizePublicRequestPath, resolveConfinedStaticFile }` from `${dinouDirSlash}/core/static-assets.js` and serves `GET`/`HEAD` static files from `.dinou/dist3` (`Bun.file(filePath)` on Bun, `Deno.readFile(filePath)` on Deno) with confined paths, smart `Cache-Control`, and full MIME coverage (including extensionless `/.well-known/apple-app-site-association` and PWA `/manifest.json`).
 3. Removed the redundant `copyRecursive(dist2Dir, dist3Dir)` step in `dinou/deno/build.js` (Deno already hydrates `.dinou/dist2` via `readDist2Fallback`, so only Cloudflare Workers needs `dist2` synchronized into `dist3` for `env.ASSETS`).
 
-#### `dinou/cloudflare/build.js` & `dinou/adapters/cloudflare.js`
+#### `dinou/cloudflare/build.js`, `dinou/adapters/cloudflare.js` & Internal `env.ASSETS` Readers (`handler.js`, `ppr-runtime.js`, `cache-slot.js`, `cache-revalidate.js`)
 
 ```diff
 --- a/dinou/cloudflare/build.js
 +++ b/dinou/cloudflare/build.js
-@@ -101,17 +101,6 @@
+@@ -35,6 +35,10 @@
+ import { discoverLayoutsFromFs, sortEntriesByName } from "../core/discover-layouts.js";
++import {
++  CLOUDFLARE_DIST2_NAMESPACE,
++  shouldExportDist3Entry,
++} from "../core/static-assets.js";
+@@ -77,31 +81,55 @@
+-function copyRecursive(src, dest) { ... }
++function copyRecursive(src, dest, filterFile = null, relPrefix = "") {
++  if (!fs.existsSync(src)) return 0;
++  let count = 0;
++  const entries = fs.readdirSync(src, { withFileTypes: true });
++  for (const entry of entries) {
++    const relPosix = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
++    const srcPath = path.join(src, entry.name);
++    const destPath = path.join(dest, entry.name);
++    if (entry.isDirectory()) {
++      count += copyRecursive(srcPath, destPath, filterFile, relPosix);
++    } else {
++      if (filterFile && !filterFile(relPosix)) {
++        continue;
++      }
++      fs.mkdirSync(path.dirname(destPath), { recursive: true });
++      fs.copyFileSync(srcPath, destPath);
++      count++;
++    }
++  }
++  return count;
++}
+ 
+ const dist2Dir = path.resolve(projectRoot, ".dinou/dist2");
+ const dist3Dir = path.resolve(projectRoot, ".dinou/dist3");
++const cloudflareAssetsDir = path.join(cloudflareDir, "assets");
++const cloudflareDist2AssetsDir = path.join(
++  cloudflareAssetsDir,
++  CLOUDFLARE_DIST2_NAMESPACE
++);
++
  console.log(`\n🦖 Dinou (Cloudflare Workers • ${bundlerName})`);
- if (fs.existsSync(dist2Dir)) {
-   const copiedCount = copyRecursive(dist2Dir, dist3Dir);
-   console.log(`  📄 Synchronized ${copiedCount} pre-rendered static route(s) to .dinou/dist3`);
- }
+-if (fs.existsSync(dist2Dir)) {
+-  const copiedCount = copyRecursive(dist2Dir, dist3Dir);
+-  console.log(`  📄 Synchronized ${copiedCount} pre-rendered static route(s) to .dinou/dist3`);
+-}
 -// Ensure Cloudflare Assets never exposes internal server bundles or raw RSC slot payloads publicly
 -const assetsIgnorePath = path.join(dist3Dir, ".assetsignore");
 -...
--  // (Removed: /server and all internal manifests now live in .dinou/dist1!)
-@@ -111,23 +111,12 @@
++fs.rmSync(cloudflareAssetsDir, { recursive: true, force: true });
++fs.mkdirSync(cloudflareAssetsDir, { recursive: true });
++
++if (fs.existsSync(dist3Dir)) {
++  const staticCount = copyRecursive(
++    dist3Dir,
++    cloudflareAssetsDir,
++    shouldExportDist3Entry
++  );
++  console.log(
++    `  📦 Synchronized ${staticCount} public static asset(s) to .dinou/cloudflare/assets`
++  );
++}
++if (fs.existsSync(dist2Dir)) {
++  const copiedCount = copyRecursive(dist2Dir, cloudflareDist2AssetsDir);
++  console.log(
++    `  📄 Synchronized ${copiedCount} internal SSG cache file(s) to .dinou/cloudflare/assets/${CLOUDFLARE_DIST2_NAMESPACE}`
++  );
++}
+@@ -111,23 +135,12 @@
 -function findManifest(filename, standardFolder) { ... }
 +function findManifest(filename, folder) {
 +  const candidate = path.resolve(projectRoot, ".dinou", folder, filename);
@@ -1879,15 +1980,24 @@ Both `dinou/bun/build.js` and `dinou/deno/build.js` received the following upgra
 +const assetManifestPath = findManifest("manifest.json", "dist1");
 ```
 
-And in both `dinou/cloudflare/build.js` (generated `worker-entry.js`) and `dinou/adapters/cloudflare.js`:
+In both `dinou/cloudflare/build.js` (generated `worker-entry.js`) and `dinou/adapters/cloudflare.js`:
 
 ```javascript
 import {
   getStaticContentType,
   isPublicStaticAssetRequest,
+  isReservedCloudflareDist2RequestPath,
 } from "../core/static-assets.js";
 
 // Inside fetch(request, env, ctx):
+const url = new URL(request.url);
+if (
+  url.pathname.startsWith("/cdn-cgi/") ||
+  isReservedCloudflareDist2RequestPath(url.pathname)
+) {
+  return new Response(null, { status: 404 });
+}
+
 const isStaticAsset = isPublicStaticAssetRequest(url.pathname);
 
 if (!isRSCPayload && !isServerFunction && isStaticAsset && env && env.ASSETS && (request.method === "GET" || request.method === "HEAD")) {
@@ -1912,13 +2022,31 @@ if (!isRSCPayload && !isServerFunction && isStaticAsset && env && env.ASSETS && 
 }
 ```
 
-> **Note on Netlify Deployment Config (`netlify.toml`)**:
-> Because the server bundle (`handler.js` + `netlify.js` + `package.json`) now outputs to `.dinou/dist1/server` instead of `.dinou/dist3/server`, projects deploying via Netlify Functions should set:
-> ```toml
-> [functions]
->   directory = ".dinou/dist1/server"
->   node_bundler = "esbuild"
-> ```
+And all internal `env.ASSETS` cache readers (`dinou/core/handler.js`, `dinou/core/ppr-runtime.js`, `dinou/core/cache-slot.js`, and `dinou/core/cache-revalidate.js`) import `fetchCloudflareDist2Asset` (plus `isReservedCloudflareDist2RequestPath` in `handler.js`) from `./static-assets.js`:
+- **`dinou/core/handler.js`**:
+  - Guards `isReservedCloudflareDist2RequestPath(pathname)` at the top of `handleRequest` (`return new Response("Not Found", { status: 404 })`).
+  - Replaces direct `platformContext.env.ASSETS.fetch(...)` calls in `readMetaFromStorage` (`metaKey`), `readRscFromStorage` (`rscKey`), segmented static RSC lookup (`rscKey`), and Edge SSG HTML/metadata hydration (`metaKey`, `htmlKey`, `layoutMetaKey`) with `fetchCloudflareDist2Asset(platformContext.env.ASSETS, key, requestUrl)`.
+- **`dinou/core/ppr-runtime.js`**:
+  - Replaces `platformContext.env.ASSETS.fetch(...)` in `readShellJsonFromStorage` with `fetchCloudflareDist2Asset(platformContext.env.ASSETS, key, reqUrl)`.
+- **`dinou/core/cache-slot.js`**:
+  - Replaces `assets.fetch(...)` in `readSlotFromStorageOrAssets` (`cleanKey` & `metaKey`) and `readMetaFromStorageOrAssets` (`cleanKey`) with `fetchCloudflareDist2Asset(assets, key)`.
+- **`dinou/core/cache-revalidate.js`**:
+  - Replaces `assets.fetch(...)` in `readFromStorageOrAssets` (`cleanKey`) with `fetchCloudflareDist2Asset(assets, cleanKey)`.
+
+> **Note on Deployment Configs (`netlify.toml` & `wrangler.toml`)**:
+> - **Netlify (`netlify.toml`)**: Because server bundles (`handler.js` + `netlify.js` + `package.json`) now output to `.dinou/dist1/server` instead of `.dinou/dist3/server`, set:
+>   ```toml
+>   [functions]
+>     directory = ".dinou/dist1/server"
+>     node_bundler = "none"
+>   ```
+> - **Cloudflare Workers (`wrangler.toml`)**: Because Cloudflare assets (`.dinou/dist3` public files + isolated `__dinou_dist2` SSG cache) are now assembled into `.dinou/cloudflare/assets` while keeping `.dinou/dist3` pure, set:
+>   ```toml
+>   [assets]
+>   directory = ".dinou/cloudflare/assets"
+>   binding = "ASSETS"
+>   run_worker_first = true
+>   ```
 > Both `src/docs/deployment/page.tsx` and `src/components/landing/deploy-matrix.tsx` in `dinou-docs` have already been updated accordingly.
 
 ---
@@ -1927,7 +2055,9 @@ if (!isRSCPayload && !isServerFunction && isStaticAsset && env && env.ASSETS && 
 
 ```markdown
 ### Changed
-- **Physical Static Webroot Isolation (`.dinou/dist1` vs `.dinou/dist3`)**: Isolated `.dinou/dist3` exclusively for publicly servable static assets (`public/*`, imported `/assets/*`, hashed client JS chunks, and `styles.css`). Consolidated compiled server bundles (`.dinou/dist1/server/handler.js`, `netlify.js`, `package.json`) and **all** internal bundler/RSC manifests (`manifest.json`, `react-client-manifest.json`, `server-functions-manifest.json`, and Webpack `react-ssr-manifest.json`) directly into `.dinou/dist1` across Esbuild, Rollup, and Webpack (eliminating `.dinou/react_client_manifest` and `.dinou/server_functions_manifest`, and using `.dinou/node-dev` for optional disk manifests in dev mode). Note: Netlify deployments using `[functions]` in `netlify.toml` should point `directory = ".dinou/dist1/server"`.
+- **Physical Static Webroot Isolation (`.dinou/dist1`, `.dinou/dist3` & `.dinou/cloudflare/assets`)**:
+  - Isolated `.dinou/dist3` exclusively for publicly servable static assets (`public/*`, imported `/assets/*`, hashed client JS chunks, and `styles.css`). Consolidated compiled server bundles (`.dinou/dist1/server/handler.js`, `netlify.js`, `package.json`) and **all** internal bundler/RSC manifests (`manifest.json`, `react-client-manifest.json`, `server-functions-manifest.json`, and Webpack `react-ssr-manifest.json`) directly into `.dinou/dist1` across Esbuild, Rollup, and Webpack (eliminating `.dinou/react_client_manifest` and `.dinou/server_functions_manifest`, and using `.dinou/node-dev` for optional disk manifests in dev mode). Note: Netlify deployments using `[functions]` in `netlify.toml` should point `directory = ".dinou/dist1/server"`.
+  - Isolated Cloudflare Workers static assets inside `.dinou/cloudflare/assets` (`[assets] directory = ".dinou/cloudflare/assets"` in `wrangler.toml`), keeping `.dinou/dist3` 100% untouched: public static files sit at `.dinou/cloudflare/assets/*` while internal `.dinou/dist2` SSG/ISR/PPR/Slot cache artifacts are isolated inside `.dinou/cloudflare/assets/__dinou_dist2/*` (returning `404` on direct external HTTP requests while read internally via `fetchCloudflareDist2Asset`).
 - **Unified `public/` Directory (Removed Legacy `favicons/`)**: Standardized on `public/` at the project root as the single directory for unhashed static files across dev and production builds, removing legacy `favicons/` directory copying and watching.
 
 ### Added
@@ -1979,12 +2109,15 @@ const staticAssetsMod = await import(
   pathToFileURL(path.join(dinouRoot, "core/static-assets.js")).href
 );
 const {
+  CLOUDFLARE_DIST2_NAMESPACE,
   STATIC_EXPORT_SCRIPT,
+  fetchCloudflareDist2Asset,
   getStaticContentType,
   getStaticCacheControl,
   injectStaticExportFlag,
   isImmutableAssetPath,
   isPublicStaticAssetRequest,
+  isReservedCloudflareDist2RequestPath,
   normalizePublicRequestPath,
   resolveConfinedStaticFile,
   shouldExportDist2File,
@@ -1992,22 +2125,17 @@ const {
 } = staticAssetsMod;
 
 describe("Public Static Assets & .dinou/dist1 Physical Isolation", () => {
-  it("normalizes valid public URLs (including PWA /manifest.json, spaces, and /.well-known/*) and blocks traversal, dotfiles, and dist2 cache artifacts", () => {
+  it("normalizes valid public URLs (including PWA /manifest.json, spaces, and /.well-known/*) and blocks traversal, dotfiles, and __dinou_dist2 internal paths", () => {
     const blockedUrls = [
       "/",
-      "/slots/home-hero/slot.json",
-      "/slots/home-hero/slot.metadata.json",
-      "/status-manifest.json",
-      "/index.html",
-      "/docs/public/index.html",
-      "/docs/public/shell.html",
-      "/docs/public/metadata.json",
-      "/docs/public/layout.metadata.json",
-      "/shell.layout.json",
-      "/shell.page.json",
-      "/docs/public/page.rsc",
-      "/docs/public/rsc.rsc",
-      "/docs/public/index._old.html",
+      "/__dinou_dist2",
+      "/__dinou_dist2/",
+      "/__dinou_dist2/index.html",
+      "/__dinou_dist2/metadata.json",
+      "/__dinou_dist2/slots/home-hero/slot.json",
+      "/%5f%5fdinou_dist2/metadata.json",
+      "/Thumbs.db",
+      "/images/Thumbs.db",
       "/%2e%2e/package.json",
       "/images/%2e%2e/%2e%2e/package.json",
       "/%2e%2e%5cpackage.json",
@@ -2031,9 +2159,15 @@ describe("Public Static Assets & .dinou/dist1 Physical Isolation", () => {
       );
     }
 
+    assert.equal(isReservedCloudflareDist2RequestPath("/__dinou_dist2/metadata.json"), true);
+    assert.equal(isReservedCloudflareDist2RequestPath("/%5f%5fdinou_dist2/page.rsc"), true);
+    assert.equal(isReservedCloudflareDist2RequestPath("/robots.txt"), false);
+
     assert.equal(normalizePublicRequestPath("/robots.txt"), "robots.txt");
     assert.equal(normalizePublicRequestPath("/sitemap.xml"), "sitemap.xml");
     assert.equal(normalizePublicRequestPath("/manifest.json"), "manifest.json");
+    assert.equal(normalizePublicRequestPath("/metadata.json"), "metadata.json");
+    assert.equal(normalizePublicRequestPath("/slots/banner.svg"), "slots/banner.svg");
     assert.equal(normalizePublicRequestPath("/server/diagram.png"), "server/diagram.png");
     assert.equal(normalizePublicRequestPath("/site.webmanifest"), "site.webmanifest");
     assert.equal(
@@ -2130,12 +2264,10 @@ describe("Public Static Assets & .dinou/dist1 Physical Isolation", () => {
     assert.equal(isPublicStaticAssetRequest("/media/intro.mp4"), true);
 
     assert.equal(isPublicStaticAssetRequest("/about"), false);
-    assert.equal(isPublicStaticAssetRequest("/about/index.html"), false);
-    assert.equal(isPublicStaticAssetRequest("/about/shell.html"), false);
-    assert.equal(isPublicStaticAssetRequest("/about/metadata.json"), false);
-    assert.equal(isPublicStaticAssetRequest("/about/shell.page.json"), false);
-    assert.equal(isPublicStaticAssetRequest("/slots/hero/slot.json"), false);
-    assert.equal(isPublicStaticAssetRequest("/status-manifest.json"), false);
+    assert.equal(isPublicStaticAssetRequest("/__dinou_dist2/index.html"), false);
+    assert.equal(isPublicStaticAssetRequest("/__dinou_dist2/about/metadata.json"), false);
+    assert.equal(isPublicStaticAssetRequest("/__dinou_dist2/slots/hero/slot.json"), false);
+    assert.equal(isPublicStaticAssetRequest("/%5f%5fdinou_dist2/status-manifest.json"), false);
 
     const cfAdapterMod = await import(
       pathToFileURL(path.join(dinouRoot, "adapters/cloudflare.js")).href
@@ -2158,6 +2290,18 @@ describe("Public Static Assets & .dinou/dist1 Physical Isolation", () => {
             return new Response('{"name":"Dinou PWA"}', {
               status: 200,
               headers: { "content-type": "application/json" },
+            });
+          }
+          if (u.pathname === `/${CLOUDFLARE_DIST2_NAMESPACE}/about/metadata.json`) {
+            return new Response('{"status":200,"generatedAt":123}', {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          }
+          if (u.pathname === `/${CLOUDFLARE_DIST2_NAMESPACE}/about/`) {
+            return new Response("<html>About SSG</html>", {
+              status: 200,
+              headers: { "content-type": "text/html" },
             });
           }
           return new Response("Not Found", { status: 404 });
@@ -2183,16 +2327,32 @@ describe("Public Static Assets & .dinou/dist1 Physical Isolation", () => {
 
     assetHits.length = 0;
     const dist2BypassRes = await cfWorker.fetch(
-      new Request("https://example.com/slots/hero/slot.json"),
+      new Request("https://example.com/__dinou_dist2/about/metadata.json"),
       mockEnv,
       {}
     );
     assert.equal(
-      assetHits.includes("/slots/hero/slot.json"),
-      false,
-      "Cloudflare adapter must never bypass handleRequest for dist2 artifacts in env.ASSETS"
+      assetHits.length,
+      0,
+      "Cloudflare adapter must block external /__dinou_dist2/* requests before hitting env.ASSETS"
     );
     assert.equal(dist2BypassRes.status, 404);
+
+    const internalMetaRes = await fetchCloudflareDist2Asset(
+      mockEnv.ASSETS,
+      "about/metadata.json",
+      "https://example.com"
+    );
+    assert.ok(internalMetaRes);
+    assert.equal(await internalMetaRes.text(), '{"status":200,"generatedAt":123}');
+
+    const internalHtmlRes = await fetchCloudflareDist2Asset(
+      mockEnv.ASSETS,
+      "about/index.html",
+      "https://example.com"
+    );
+    assert.ok(internalHtmlRes);
+    assert.equal(await internalHtmlRes.text(), "<html>About SSG</html>");
   });
 
   it("consolidates all internal manifests & server bundles in .dinou/dist1, keeps .dinou/dist3 pure, and preserves user public/manifest.json across Esbuild, Rollup, and Webpack", async () => {
@@ -2466,15 +2626,12 @@ describe("Public Static Assets & .dinou/dist1 Physical Isolation", () => {
     const tmpExport = fs.mkdtempSync(path.join(os.tmpdir(), "dinou-export-test-"));
     try {
       fs.mkdirSync(path.join(tmpExport, ".dinou/dist3/.well-known"), { recursive: true });
-      fs.mkdirSync(path.join(tmpExport, ".dinou/dist3/slots/hero"), { recursive: true });
       fs.mkdirSync(path.join(tmpExport, ".dinou/dist2/about"), { recursive: true });
       fs.mkdirSync(path.join(tmpExport, ".dinou/dist2/slots/hero"), { recursive: true });
 
       fs.writeFileSync(path.join(tmpExport, ".dinou/dist3/manifest.json"), '{"name":"PWA"}');
-      fs.writeFileSync(path.join(tmpExport, ".dinou/dist3/status-manifest.json"), "{}");
-      fs.writeFileSync(path.join(tmpExport, ".dinou/dist3/slots/hero/slot.json"), "{}");
-      fs.writeFileSync(path.join(tmpExport, ".dinou/dist3/shell.html"), "<html>Shell</html>");
-      fs.writeFileSync(path.join(tmpExport, ".dinou/dist3/metadata.json"), "{}");
+      fs.writeFileSync(path.join(tmpExport, ".dinou/dist3/.DS_Store"), "junk");
+      fs.writeFileSync(path.join(tmpExport, ".dinou/dist3/Thumbs.db"), "junk");
 
       fs.writeFileSync(path.join(tmpExport, ".dinou/dist3/main-ZGBKXIUF.js"), "console.log(1)");
       fs.writeFileSync(path.join(tmpExport, ".dinou/dist3/styles.css"), "body{}");
@@ -2518,11 +2675,11 @@ describe("Public Static Assets & .dinou/dist1 Physical Isolation", () => {
       fs.writeFileSync(path.join(tmpExport, ".dinou/dist2/about/shell.page.json"), "[]");
       fs.writeFileSync(path.join(tmpExport, ".dinou/dist2/about/metadata.json"), '{"status":200}');
 
-      assert.equal(shouldExportDist3Entry("slots"), false);
-      assert.equal(shouldExportDist3Entry("slots/hero/slot.json"), false);
-      assert.equal(shouldExportDist3Entry("status-manifest.json"), false);
-      assert.equal(shouldExportDist3Entry("about/shell.page.json"), false);
+      assert.equal(shouldExportDist3Entry(".DS_Store"), false);
+      assert.equal(shouldExportDist3Entry("images/Thumbs.db"), false);
+      assert.equal(shouldExportDist3Entry("__dinou_dist2/metadata.json"), false);
       assert.equal(shouldExportDist3Entry("manifest.json"), true);
+      assert.equal(shouldExportDist3Entry("slots/banner.svg"), true);
       assert.equal(shouldExportDist3Entry(".nojekyll"), true);
       assert.equal(shouldExportDist3Entry(".well-known/assetlinks.json"), true);
 
