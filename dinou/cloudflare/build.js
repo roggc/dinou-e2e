@@ -103,6 +103,36 @@ if (fs.existsSync(dist2Dir)) {
   const copiedCount = copyRecursive(dist2Dir, dist3Dir);
   console.log(`  📄 Synchronized ${copiedCount} pre-rendered static route(s) to .dinou/dist3`);
 }
+if (fs.existsSync(dist3Dir)) {
+  const assetsIgnorePath = path.join(dist3Dir, ".assetsignore");
+  const requiredIgnores = [
+    "/server",
+    "/manifest.json",
+    "/react-client-manifest.json",
+    "/server-functions-manifest.json",
+  ];
+  let existingIgnore = "";
+  if (fs.existsSync(assetsIgnorePath)) {
+    try {
+      existingIgnore = fs.readFileSync(assetsIgnorePath, "utf8");
+    } catch (e) {}
+  }
+  const existingLines = new Set(
+    existingIgnore
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+  );
+  const missingLines = requiredIgnores.filter((entry) => !existingLines.has(entry));
+  if (missingLines.length > 0) {
+    const prefix = existingIgnore && !existingIgnore.endsWith("\n") ? "\n" : "";
+    fs.writeFileSync(
+      assetsIgnorePath,
+      existingIgnore + prefix + missingLines.join("\n") + "\n",
+      "utf8"
+    );
+  }
+}
 console.log("  ⚡ Generating route modules & manifests...");
 const routeModulesCode = generateRouteModulesCode(projectRoot, "../..");
 const routeModulesPath = path.join(cloudflareDir, "route-modules.js");
@@ -780,6 +810,10 @@ import {
   CloudflareKVStorage,
   MemoryStorage,
 } from "${dinouDirSlash}/core/storage-adapter.js";
+import {
+  getStaticContentType,
+  isPublicStaticAssetRequest,
+} from "${dinouDirSlash}/core/static-assets.js";
 
 if (typeof globalThis !== "undefined") {
   globalThis.__DINOU_RUNTIME__ = "edge";
@@ -810,16 +844,24 @@ export default {
       url.pathname.includes("____server_function____") ||
       request.headers.get("x-server-function-call") === "1";
 
-    const staticExtRegex = /\\.(js|mjs|cjs|css|png|jpg|jpeg|gif|svg|ico|webp|avif|woff|woff2|ttf|eot|otf|wasm|map|txt|webmanifest)$/i;
-    const isStaticAsset =
-      staticExtRegex.test(url.pathname) ||
-      url.pathname.startsWith("/assets/") ||
-      url.pathname.startsWith("/_dinou/");
+    const isStaticAsset = isPublicStaticAssetRequest(url.pathname);
 
     if (!isRSCPayload && !isServerFunction && isStaticAsset && env && env.ASSETS && (request.method === "GET" || request.method === "HEAD")) {
       try {
         const assetRes = await env.ASSETS.fetch(request.clone ? request.clone() : request);
         if (assetRes && assetRes.status < 400) {
+          if (
+            url.pathname.toLowerCase().endsWith("/apple-app-site-association") &&
+            !(assetRes.headers.get("content-type") || "").toLowerCase().includes("json")
+          ) {
+            const headers = new Headers(assetRes.headers);
+            headers.set("content-type", getStaticContentType(url.pathname));
+            return new Response(assetRes.body, {
+              status: assetRes.status,
+              statusText: assetRes.statusText,
+              headers,
+            });
+          }
           return assetRes;
         }
       } catch (e) {}

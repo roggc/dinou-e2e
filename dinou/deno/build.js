@@ -779,6 +779,12 @@ import {
   DenoKVStorage,
   MemoryStorage,
 } from "${dinouDirSlash}/core/storage-adapter.js";
+import {
+  getStaticContentType,
+  getStaticCacheControl,
+  normalizePublicRequestPath,
+  resolveConfinedStaticFile,
+} from "${dinouDirSlash}/core/static-assets.js";
 import * as path from "node:path";
 import * as fs from "node:fs";
 
@@ -819,25 +825,34 @@ export async function fetch(req) {
   const pathname = url.pathname;
 
   // Static assets delivery (if running with local disk access)
-  if (pathname !== "/" && typeof Deno !== "undefined" && typeof Deno.readFile === "function") {
-    try {
-      const cwd = typeof Deno.cwd === "function" ? Deno.cwd() : process.cwd();
-      const dist3Dir = path.resolve(cwd, ".dinou/dist3");
-      const filePath = path.join(dist3Dir, pathname);
-      if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-        const content = await Deno.readFile(filePath);
-        const ext = path.extname(filePath).toLowerCase();
-        const headers = {};
-        if (ext === ".js" || ext === ".mjs") headers["content-type"] = "application/javascript; charset=utf-8";
-        else if (ext === ".css") headers["content-type"] = "text/css; charset=utf-8";
-        else if (ext === ".json") headers["content-type"] = "application/json";
-        else if (ext === ".svg") headers["content-type"] = "image/svg+xml";
-        else if (ext === ".png") headers["content-type"] = "image/png";
-        else if (ext === ".ico") headers["content-type"] = "image/x-icon";
-        return new Response(content, { headers });
+  if (
+    (req.method === "GET" || req.method === "HEAD") &&
+    typeof Deno !== "undefined" &&
+    typeof Deno.readFile === "function"
+  ) {
+    const cleanPath = normalizePublicRequestPath(pathname);
+    if (cleanPath) {
+      try {
+        const cwd = typeof Deno.cwd === "function" ? Deno.cwd() : process.cwd();
+        const dist3Dir = path.resolve(cwd, ".dinou/dist3");
+        const filePath = resolveConfinedStaticFile(dist3Dir, cleanPath);
+        if (filePath && fs.existsSync(filePath)) {
+          const stat = fs.statSync(filePath);
+          if (stat.isFile()) {
+            const content =
+              req.method === "HEAD" ? null : await Deno.readFile(filePath);
+            return new Response(content, {
+              headers: {
+                "content-type": getStaticContentType(cleanPath),
+                "content-length": String(stat.size),
+                "cache-control": getStaticCacheControl(cleanPath),
+              },
+            });
+          }
+        }
+      } catch (e) {
+        // Fallback to Dinou handler
       }
-    } catch (e) {
-      // Fallback to Dinou handler
     }
   }
 

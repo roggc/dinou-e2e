@@ -6,7 +6,7 @@ import postcss from "#rollup-plugin-postcss";
 import babelModule from "#rollup/plugin-babel";
 import resolveModule from "#rollup/plugin-node-resolve";
 import commonjs from "#rollup/plugin-commonjs";
-import copy from "#rollup-plugin-copy";
+import { copyStaticDirectoriesToOutdir } from "../core/copy-static-dirs.js";
 import reactClientManifest from "./rollup-plugins/rollup-plugin-react-client-manifest.js";
 import createScopedName from "../core/createScopedName.js";
 import replace from "#rollup/plugin-replace";
@@ -201,20 +201,12 @@ export default async function () {
           path: path.resolve(__dirname, "postcss.config.js"),
         },
       }),
-      shouldWriteToDisk &&
-        copy({
-          targets: [
-            fs.existsSync("public") && {
-              src: "public/*",
-              dest: outputDirectory,
-            },
-            fs.existsSync("favicons") && {
-              src: "favicons/*",
-              dest: outputDirectory,
-            },
-          ].filter(Boolean),
-          flatten: true,
-        }),
+      shouldWriteToDisk && {
+        name: "dinou-copy-static",
+        writeBundle() {
+          copyStaticDirectoriesToOutdir(process.cwd(), outputDirectory);
+        },
+      },
       reactClientManifest({
         manifestPath: path.join(
           ".dinou/react_client_manifest",

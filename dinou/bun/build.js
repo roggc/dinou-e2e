@@ -752,6 +752,12 @@ import {
   FileSystemStorage,
   MemoryStorage,
 } from "${dinouDirSlash}/core/storage-adapter.js";
+import {
+  getStaticContentType,
+  getStaticCacheControl,
+  normalizePublicRequestPath,
+  resolveConfinedStaticFile,
+} from "${dinouDirSlash}/core/static-assets.js";
 import * as path from "node:path";
 import * as fs from "node:fs";
 
@@ -788,11 +794,25 @@ export async function fetch(req) {
   const pathname = url.pathname;
 
   // Static assets delivery (Zero-copy with Bun.file)
-  if (pathname !== "/") {
-    const filePath = path.join(dist3Dir, pathname);
-    const file = Bun.file(filePath);
-    if (await file.exists()) {
-      return new Response(file);
+  if (req.method === "GET" || req.method === "HEAD") {
+    const cleanPath = normalizePublicRequestPath(pathname);
+    if (cleanPath) {
+      const filePath = resolveConfinedStaticFile(dist3Dir, cleanPath);
+      if (filePath && fs.existsSync(filePath)) {
+        try {
+          const stat = fs.statSync(filePath);
+          if (stat.isFile()) {
+            const file = Bun.file(filePath);
+            return new Response(req.method === "HEAD" ? null : file, {
+              headers: {
+                "content-type": getStaticContentType(cleanPath),
+                "content-length": String(stat.size),
+                "cache-control": getStaticCacheControl(cleanPath),
+              },
+            });
+          }
+        } catch (e) {}
+      }
     }
   }
 

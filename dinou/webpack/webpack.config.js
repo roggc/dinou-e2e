@@ -349,11 +349,10 @@ export default async () => {
             from: "public",
             to: ".",
             noErrorOnMissing: true,
-          },
-          {
-            from: "favicons",
-            to: ".",
-            noErrorOnMissing: true,
+            globOptions: {
+              dot: true,
+              ignore: ["**/.DS_Store", "**/Thumbs.db"],
+            },
           },
         ],
       }),

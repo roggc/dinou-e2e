@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { shouldExportDist3Entry } from "./static-assets.js";
 
 const projectRoot = process.cwd();
 const outDir = path.resolve(projectRoot, "out");
@@ -19,16 +20,20 @@ if (fs.existsSync(outDir)) {
 }
 fs.mkdirSync(outDir, { recursive: true });
 
-function copyRecursive(src, dest) {
+function copyRecursive(src, dest, filterRelPath = null, relPrefix = "") {
   if (!fs.existsSync(src)) return 0;
   let count = 0;
   const entries = fs.readdirSync(src, { withFileTypes: true });
   for (const entry of entries) {
+    const relPosix = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
+    if (filterRelPath && !filterRelPath(relPosix)) {
+      continue;
+    }
     const srcPath = path.join(src, entry.name);
     const destPath = path.join(dest, entry.name);
     if (entry.isDirectory()) {
       fs.mkdirSync(destPath, { recursive: true });
-      count += copyRecursive(srcPath, destPath);
+      count += copyRecursive(srcPath, destPath, filterRelPath, relPosix);
     } else {
       fs.mkdirSync(path.dirname(destPath), { recursive: true });
       fs.copyFileSync(srcPath, destPath);
@@ -38,10 +43,10 @@ function copyRecursive(src, dest) {
   return count;
 }
 
-// 2. Copy production assets from .dinou/dist3 (JS bundles, CSS, favicons)
+// 2. Copy production assets from .dinou/dist3 (JS bundles, CSS, public/)
 let assetCount = 0;
 if (fs.existsSync(dist3Dir)) {
-  assetCount = copyRecursive(dist3Dir, outDir);
+  assetCount = copyRecursive(dist3Dir, outDir, shouldExportDist3Entry);
   console.log(`  📦 Copied ${assetCount} production asset(s) from .dinou/dist3`);
 } else {
   console.warn("⚠️ [Dinou Export] Warning: .dinou/dist3 not found. Did you run a production build first?");

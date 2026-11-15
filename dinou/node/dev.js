@@ -35,6 +35,11 @@ import { resolveSetupFiles } from "../core/resolve-setup-files.js";
 import { generateRouteModulesCode, generateRouteTypes } from "../core/route-generator.js";
 import { discoverLayoutsFromFs } from "../core/discover-layouts.js";
 import { esbuildContextualDinouPlugin, isUnderscoreEscapedSrcPath } from "../core/resolve-contextual-dinou.js";
+import {
+  getStaticContentType,
+  normalizePublicRequestPath,
+  resolveConfinedStaticFile,
+} from "../core/static-assets.js";
 import parseExports from "../core/parse-exports.js";
 import { useClientRegex, useServerRegex } from "../constants.js";
 import {
@@ -2188,25 +2193,9 @@ if (!fs.existsSync(dotDinouDir)) {
   fs.mkdirSync(dotDinouDir, { recursive: true });
 }
 
-const MIME_TYPES = {
-  ".js": "application/javascript; charset=utf-8",
-  ".mjs": "application/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".json": "application/json",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".webp": "image/webp",
-  ".ico": "image/x-icon",
-  ".txt": "text/plain; charset=utf-8",
-  ".woff": "font/woff",
-  ".woff2": "font/woff2",
-};
-
 const candidateStaticDirs = [
-  path.resolve(projectRoot, ".dinou/public"),
   path.resolve(projectRoot, "public"),
+  path.resolve(projectRoot, ".dinou/public"),
 ];
 
 function isManifestReady() {
@@ -2632,11 +2621,17 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // 2. Static files delivery from memory, .dinou/public, or public/
-    if (pathname !== "/") {
-      const cleanPath = pathname.startsWith("/") ? pathname.slice(1) : pathname;
-      const mappedPath = (parsedAssetManifest && parsedAssetManifest[cleanPath]) || cleanPath;
-      const ext = path.extname(cleanPath).toLowerCase();
+    // 2. Static files delivery from memory, public/, or .dinou/public
+    const cleanPath =
+      req.method === "GET" || req.method === "HEAD"
+        ? normalizePublicRequestPath(pathname)
+        : null;
+    if (cleanPath) {
+      const rawMapped = (parsedAssetManifest && parsedAssetManifest[cleanPath]) || cleanPath;
+      const mappedPath =
+        rawMapped === cleanPath
+          ? cleanPath
+          : normalizePublicRequestPath("/" + String(rawMapped).replace(/^\/+/, "")) || cleanPath;
 
       // 2.a In-memory fast path for client bundles and assets generated in dev
       if (globalThis.__DINOU_MEM_FILES__) {
@@ -2658,13 +2653,12 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (memBuf) {
-          const fileExt = path.extname(cleanPath).toLowerCase();
-          const contentType = MIME_TYPES[fileExt] || "application/octet-stream";
+          const contentType = getStaticContentType(cleanPath);
           res.statusCode = 200;
           res.setHeader("content-type", contentType);
           res.setHeader("content-length", String(memBuf.length));
           res.setHeader("cache-control", "no-store, no-cache, must-revalidate");
-          res.end(memBuf);
+          res.end(req.method === "HEAD" ? undefined : memBuf);
           return;
         }
       }
@@ -2672,8 +2666,8 @@ const server = http.createServer(async (req, res) => {
       let foundFilePath = null;
       for (const baseDir of candidateStaticDirs) {
         for (const targetName of [mappedPath, cleanPath]) {
-          const filePath = path.join(baseDir, targetName);
-          if (fs.existsSync(filePath)) {
+          const filePath = resolveConfinedStaticFile(baseDir, targetName);
+          if (filePath && fs.existsSync(filePath)) {
             try {
               if (fs.statSync(filePath).isFile()) {
                 foundFilePath = filePath;
@@ -2697,8 +2691,8 @@ const server = http.createServer(async (req, res) => {
           await new Promise((r) => setTimeout(r, 25));
           for (const baseDir of candidateStaticDirs) {
             for (const targetName of [mappedPath, cleanPath]) {
-              const filePath = path.join(baseDir, targetName);
-              if (fs.existsSync(filePath)) {
+              const filePath = resolveConfinedStaticFile(baseDir, targetName);
+              if (filePath && fs.existsSync(filePath)) {
                 try {
                   if (fs.statSync(filePath).isFile()) {
                     foundFilePath = filePath;
@@ -2723,7 +2717,7 @@ const server = http.createServer(async (req, res) => {
       if (foundFilePath) {
         try {
           const fileExt = path.extname(foundFilePath).toLowerCase();
-          const contentType = MIME_TYPES[fileExt] || "application/octet-stream";
+          const contentType = getStaticContentType(foundFilePath);
 
           // Safely read buffer into memory, retrying briefly if the bundler currently has it truncated or locked
           let buf = null;
@@ -2744,7 +2738,7 @@ const server = http.createServer(async (req, res) => {
             res.setHeader("content-type", contentType);
             res.setHeader("content-length", String(buf.length));
             res.setHeader("cache-control", "no-store, no-cache, must-revalidate");
-            res.end(buf);
+            res.end(req.method === "HEAD" ? undefined : buf);
             return;
           }
         } catch (e) {}
