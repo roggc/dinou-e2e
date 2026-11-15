@@ -5738,7 +5738,12 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
 
     test("Server Functions Manifest only includes reachable actions and excludes unimported modules", async () => {
-      const manifestPath = path.join(process.cwd(), ".dinou", "server_functions_manifest", "server-functions-manifest.json");
+      const manifestPath = path.join(
+        process.cwd(),
+        ".dinou",
+        isProd ? "dist1" : "node-dev",
+        "server-functions-manifest.json"
+      );
       if (!fs.existsSync(manifestPath)) {
         return; // In development or memory mode without disk write, skip disk assertion
       }
@@ -5824,7 +5829,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const manifestPath = path.join(
         process.cwd(),
         ".dinou",
-        "server_functions_manifest",
+        isProd ? "dist1" : "node-dev",
         "server-functions-manifest.json"
       );
       if (fs.existsSync(manifestPath)) {
@@ -10434,7 +10439,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       }
 
       const manifestPath = path.resolve(
-        ".dinou/server_functions_manifest/server-functions-manifest.json"
+        isProd
+          ? ".dinou/dist1/server-functions-manifest.json"
+          : ".dinou/node-dev/server-functions-manifest.json"
       );
       if (fs.existsSync(manifestPath)) {
         const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
@@ -11846,7 +11853,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
   });
 
-  test.describe("public/ Static Assets Security, Multi-Bundler Copy Parity & Multi-Runtime Delivery (/t-public-assets)", () => {
+  test.describe("public/ Static Assets Security, .dinou/dist1 Physical Isolation & Multi-Runtime Delivery (/t-public-assets)", () => {
     async function safeApiHead(
       apiCtx: APIRequestContext,
       url: string,
@@ -11870,7 +11877,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       throw new Error(`Failed to HEAD ${url}`);
     }
 
-    test("1. Serves nested images/SVGs, SEO files, .well-known Universal/App Links, verification HTML & URL-encoded spaces (GET & HEAD) with exact MIME and Cache-Control differentiation", async ({
+    test("1. Serves PWA /manifest.json, nested images/SVGs, SEO files, .well-known Universal/App Links, verification HTML & URL-encoded spaces (GET & HEAD) with exact MIME, Cache-Control & .dinou/dist1 physical isolation", async ({
       page,
       request,
     }) => {
@@ -11884,6 +11891,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         timeout: 15000,
       });
       await expect(page.locator("h1")).toHaveText("Public Static Assets E2E");
+      await expect(page.getByTestId("pwa-manifest-link")).toHaveAttribute(
+        "href",
+        "/manifest.json"
+      );
 
       await expect
         .poll(
@@ -11911,7 +11922,21 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         )
         .toBeGreaterThan(0);
 
-      // 1B. /robots.txt (GET + HEAD)
+      // 1B. Standard PWA /manifest.json at domain root (GET + HEAD, never overwritten by bundler chunk map)
+      const pwaGet = await safeApiGet(request, "/manifest.json");
+      expect(pwaGet.status()).toBe(200);
+      expect(pwaGet.headers()["content-type"]).toContain("application/json");
+      const pwaJson = await pwaGet.json();
+      expect(pwaJson.name).toBe("Dinou E2E PWA");
+      expect(pwaJson.display).toBe("standalone");
+      expect(pwaJson["main.js"]).toBeUndefined();
+
+      const pwaHead = await safeApiHead(request, "/manifest.json");
+      expect(pwaHead.status()).toBe(200);
+      expect(pwaHead.headers()["content-type"]).toContain("application/json");
+      expect((await pwaHead.body()).byteLength).toBe(0);
+
+      // 1C. /robots.txt (GET + HEAD)
       const robotsGet = await safeApiGet(request, "/robots.txt");
       expect(robotsGet.status()).toBe(200);
       expect(robotsGet.headers()["content-type"]).toContain("text/plain");
@@ -11934,7 +11959,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         );
       }
 
-      // 1C. /sitemap.xml & /site.webmanifest
+      // 1D. /sitemap.xml & /site.webmanifest
       const sitemapRes = await safeApiGet(request, "/sitemap.xml");
       expect(sitemapRes.status()).toBe(200);
       expect(sitemapRes.headers()["content-type"]).toMatch(
@@ -11952,7 +11977,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const webmanifestJson = await webmanifestRes.json();
       expect(Array.isArray(webmanifestJson.icons)).toBe(true);
 
-      // 1D. Standalone domain verification .html in public/ (served as static file while /index.html stays routed)
+      // 1E. Standalone domain verification .html in public/ (served as static file while /index.html stays routed)
       const verifyHtmlRes = await safeApiGet(
         request,
         "/google1a2b3c4d5e6f.html"
@@ -11963,7 +11988,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         "google-site-verification: google1a2b3c4d5e6f.html"
       );
 
-      // 1E. Nested public/images/og-image.png & multi-level public/images/nested/badge.svg
+      // 1F. Nested public/images/og-image.png & multi-level public/images/nested/badge.svg
       const ogPngRes = await safeApiGet(request, "/images/og-image.png");
       expect(ogPngRes.status()).toBe(200);
       expect(ogPngRes.headers()["content-type"]).toBe("image/png");
@@ -11980,7 +12005,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(nestedSvgRes.headers()["content-type"]).toContain("image/svg+xml");
       expect(await nestedSvgRes.text()).toContain("#10b981");
 
-      // 1F. URL-encoded space (%20) in filename (/downloads/brochure%202026.pdf)
+      // 1G. URL-encoded space (%20) in filename (/downloads/brochure%202026.pdf)
       const pdfRes = await safeApiGet(
         request,
         "/downloads/brochure%202026.pdf"
@@ -11989,7 +12014,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(pdfRes.headers()["content-type"]).toBe("application/pdf");
       expect(await pdfRes.text()).toContain("%PDF-1.4");
 
-      // 1G. RFC 8615 /.well-known/assetlinks.json & extensionless /.well-known/apple-app-site-association
+      // 1H. RFC 8615 /.well-known/assetlinks.json & extensionless /.well-known/apple-app-site-association
       const assetLinksRes = await safeApiGet(
         request,
         "/.well-known/assetlinks.json"
@@ -12024,61 +12049,94 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
       expect((await aasaHead.body()).byteLength).toBe(0);
 
-      // 1H. Cache-Control differentiation & Cloudflare .assetsignore verification
+      // 1I. Physical .dinou/dist1 vs .dinou/dist3 isolation & Cache-Control differentiation
       if (isDev) {
         expect(robotsGet.headers()["cache-control"]).toContain("no-store");
-      } else if (isProd && !isCloudflare) {
-        expect(robotsGet.headers()["cache-control"]).toBe(
-          "public, max-age=0, must-revalidate"
-        );
-        expect(sitemapRes.headers()["cache-control"]).toBe(
-          "public, max-age=0, must-revalidate"
-        );
-        expect(ogPngRes.headers()["cache-control"]).toBe(
-          "public, max-age=0, must-revalidate"
-        );
-        expect(assetLinksRes.headers()["cache-control"]).toBe(
-          "public, max-age=0, must-revalidate"
-        );
+        expect(pwaGet.headers()["cache-control"]).toContain("no-store");
+      } else if (isProd) {
+        const dist1Dir = path.resolve(process.cwd(), ".dinou/dist1");
+        const dist3Dir = path.resolve(process.cwd(), ".dinou/dist3");
 
-        const stylesRes = await safeApiGet(request, "/styles.css");
-        if (stylesRes.status() === 200) {
-          expect(stylesRes.headers()["cache-control"]).toBe(
-            "public, max-age=0, must-revalidate"
-          );
+        expect(fs.existsSync(path.join(dist1Dir, "server/handler.js"))).toBe(
+          true
+        );
+        expect(fs.existsSync(path.join(dist1Dir, "server/netlify.js"))).toBe(
+          true
+        );
+        expect(fs.existsSync(path.join(dist1Dir, "server/package.json"))).toBe(
+          true
+        );
+        expect(fs.existsSync(path.join(dist1Dir, "manifest.json"))).toBe(true);
+        expect(
+          fs.existsSync(path.join(dist1Dir, "react-client-manifest.json"))
+        ).toBe(true);
+        expect(
+          fs.existsSync(path.join(dist1Dir, "server-functions-manifest.json"))
+        ).toBe(true);
+        if (isWebpack) {
+          expect(
+            fs.existsSync(path.join(dist1Dir, "react-ssr-manifest.json"))
+          ).toBe(true);
         }
 
-        const dist3Dir = path.resolve(process.cwd(), ".dinou/dist3");
-        if (fs.existsSync(dist3Dir)) {
-          const mainChunk = fs
-            .readdirSync(dist3Dir)
-            .find((f) => /^main-[A-Za-z0-9_-]+\.js$/.test(f));
-          expect(mainChunk).toBeTruthy();
-          if (mainChunk) {
-            const chunkRes = await safeApiGet(request, `/${mainChunk}`);
-            expect(chunkRes.status()).toBe(200);
-            expect(chunkRes.headers()["cache-control"]).toBe(
-              "public, max-age=31536000, immutable"
+        // .dinou/dist3 must remain a pure public webroot
+        expect(fs.existsSync(path.join(dist3Dir, "server"))).toBe(false);
+        expect(
+          fs.existsSync(path.join(dist3Dir, "react-client-manifest.json"))
+        ).toBe(false);
+        expect(
+          fs.existsSync(path.join(dist3Dir, "react-ssr-manifest.json"))
+        ).toBe(false);
+        expect(
+          fs.existsSync(path.join(dist3Dir, "server-functions-manifest.json"))
+        ).toBe(false);
+        const dist3Pwa = JSON.parse(
+          fs.readFileSync(path.join(dist3Dir, "manifest.json"), "utf8")
+        );
+        expect(dist3Pwa.name).toBe("Dinou E2E PWA");
+
+        const bundlerManifest = JSON.parse(
+          fs.readFileSync(path.join(dist1Dir, "manifest.json"), "utf8")
+        );
+        const mainChunk = bundlerManifest["main.js"];
+        expect(mainChunk).toMatch(/^main-[A-Za-z0-9_-]+\.js$/);
+
+        const chunkRes = await safeApiGet(request, `/${mainChunk}`);
+        expect(chunkRes.status()).toBe(200);
+
+        if (!isCloudflare) {
+          expect(pwaGet.headers()["cache-control"]).toBe(
+            "public, max-age=0, must-revalidate"
+          );
+          expect(robotsGet.headers()["cache-control"]).toBe(
+            "public, max-age=0, must-revalidate"
+          );
+          expect(sitemapRes.headers()["cache-control"]).toBe(
+            "public, max-age=0, must-revalidate"
+          );
+          expect(ogPngRes.headers()["cache-control"]).toBe(
+            "public, max-age=0, must-revalidate"
+          );
+          expect(assetLinksRes.headers()["cache-control"]).toBe(
+            "public, max-age=0, must-revalidate"
+          );
+          expect(chunkRes.headers()["cache-control"]).toBe(
+            "public, max-age=31536000, immutable"
+          );
+
+          const stylesRes = await safeApiGet(request, "/styles.css");
+          if (stylesRes.status() === 200) {
+            expect(stylesRes.headers()["cache-control"]).toBe(
+              "public, max-age=0, must-revalidate"
             );
           }
         }
-      } else if (isCloudflare) {
-        const assetsIgnorePath = path.resolve(
-          process.cwd(),
-          ".dinou/dist3/.assetsignore"
-        );
-        expect(fs.existsSync(assetsIgnorePath)).toBe(true);
-        const ignoreContent = fs.readFileSync(assetsIgnorePath, "utf8");
-        expect(ignoreContent).toContain("/server");
-        expect(ignoreContent).toContain("/manifest.json");
-        expect(ignoreContent).toContain("/react-client-manifest.json");
-        expect(ignoreContent).toContain("/server-functions-manifest.json");
       }
 
       expect(pageErrors).toEqual([]);
     });
 
-    test("2. Blocks public HTTP access (GET & HEAD -> 404) to .dinou/dist3/server/*, internal manifests, route HTML/metadata artifacts, hidden dotfiles, traversal & /public/ prefix", async ({
+    test("2. Blocks public HTTP access (GET & HEAD -> 404) to /server/*, internal RSC/SSR/SF/status manifests, route HTML/metadata artifacts, hidden dotfiles, traversal & /public/ prefix", async ({
       request,
     }) => {
       const forbiddenPaths = [
@@ -12086,8 +12144,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         "/server/handler.js.map",
         "/server/netlify.js",
         "/server/package.json",
-        "/manifest.json",
         "/react-client-manifest.json",
+        "/react-ssr-manifest.json",
         "/server-functions-manifest.json",
         "/status-manifest.json",
         "/t-public-assets/index.html",
@@ -12100,6 +12158,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         "/%2e%2e/package.json",
         "/public/favicon.ico",
         "/public/robots.txt",
+        "/public/manifest.json",
       ];
 
       for (const forbidden of forbiddenPaths) {
@@ -12116,7 +12175,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       for (const headForbidden of [
         "/server/handler.js",
-        "/manifest.json",
+        "/react-client-manifest.json",
+        "/react-ssr-manifest.json",
+        "/server-functions-manifest.json",
         "/.env",
         "/public/favicon.ico",
       ]) {
@@ -12128,7 +12189,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       }
     });
 
-    test("3. Standalone public/ Static Assets Security, Multi-Bundler Copy Parity, Cloudflare Adapter & export-static Suite (scripts/verify-public-static-assets-ci.mjs)", async () => {
+    test("3. Standalone public/ Static Assets Security, .dinou/dist1 Physical Isolation, Multi-Bundler Parity, Cloudflare Adapter & export-static Suite (scripts/verify-public-static-assets-ci.mjs)", async () => {
       const { execFileSync } = await import("child_process");
       const output = execFileSync(
         process.execPath,
@@ -12136,7 +12197,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         { encoding: "utf8", timeout: 120000 }
       );
       expect(output).toContain(
-        "RESULT: All public/ static assets security, multi-bundler copy parity, Cloudflare adapter & export-static checks PASSED"
+        "RESULT: All public/ static assets security, .dinou/dist1 physical isolation, multi-bundler parity, Cloudflare adapter & export-static checks PASSED"
       );
     });
   });

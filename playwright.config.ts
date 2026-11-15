@@ -25,8 +25,8 @@ if (isCloudflare) {
   // En Cloudflare Workers (Wrangler) esperamos directamente a la raíz '/'
   resourceToWaitFor = "";
 } else if (commandToRun.includes("dev")) {
-  // Para Esbuild, Rollup y Webpack en dev esperamos al bundle cliente principal
-  // (manifest.json es un artefacto interno bloqueado con 404 desde los fixes de static-assets)
+  // Para Esbuild, Rollup y Webpack en dev esperamos al bundle cliente principal main.js
+  // (/manifest.json ahora corresponde al PWA manifest estático de public/, mientras que el manifest interno vive en memoria / .dinou/node-dev)
   resourceToWaitFor = "main.js";
 }
 

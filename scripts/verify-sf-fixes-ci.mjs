@@ -230,21 +230,15 @@ export default async function ProfilePage({ params }: { params: { userId: string
     manifest["src/actions/streamWidget.tsx"].includes("confirmDelete")
   );
 
-  fs.mkdirSync(path.join(tmpRoot, ".dinou/react_client_manifest"), {
+  fs.mkdirSync(path.join(tmpRoot, ".dinou/dist1"), {
     recursive: true,
   });
   fs.writeFileSync(
-    path.join(tmpRoot, ".dinou/react_client_manifest/react-client-manifest.json"),
+    path.join(tmpRoot, ".dinou/dist1/react-client-manifest.json"),
     "{}"
   );
-  fs.mkdirSync(path.join(tmpRoot, ".dinou/server_functions_manifest"), {
-    recursive: true,
-  });
   fs.writeFileSync(
-    path.join(
-      tmpRoot,
-      ".dinou/server_functions_manifest/server-functions-manifest.json"
-    ),
+    path.join(tmpRoot, ".dinou/dist1/server-functions-manifest.json"),
     JSON.stringify(manifest, null, 2)
   );
 

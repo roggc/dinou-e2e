@@ -642,7 +642,7 @@ export default function SnippetClient() {
 
   const emittedManifestPath = path.join(
     rollupTmpDir,
-    ".dinou/react_client_manifest/react-client-manifest.json"
+    ".dinou/dist1/react-client-manifest.json"
   );
   assert.ok(
     fs.existsSync(emittedManifestPath),
@@ -727,7 +727,7 @@ try {
   fs.mkdirSync(path.join(miniRoot, "src/components"), { recursive: true });
   fs.mkdirSync(path.join(miniRoot, "src/pattern"), { recursive: true });
   fs.mkdirSync(path.join(miniRoot, "src/inline-sc/[id]"), { recursive: true });
-  fs.mkdirSync(path.join(miniRoot, ".dinou/server_functions_manifest"), {
+  fs.mkdirSync(path.join(miniRoot, ".dinou/dist1"), {
     recursive: true,
   });
 
@@ -865,7 +865,7 @@ export default function InlineScPage({ params }: { params: { id: string } }) {
   fs.writeFileSync(
     path.join(
       miniRoot,
-      ".dinou/server_functions_manifest/server-functions-manifest.json"
+      ".dinou/dist1/server-functions-manifest.json"
     ),
     JSON.stringify(
       {

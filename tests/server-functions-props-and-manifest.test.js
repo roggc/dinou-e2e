@@ -8,7 +8,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
 
 test("Server Functions: reachable modules are registered and unimported modules are excluded", async () => {
-  const manifestPath = path.join(projectRoot, ".dinou", "server_functions_manifest", "server-functions-manifest.json");
+  const dist1Manifest = path.join(projectRoot, ".dinou", "dist1", "server-functions-manifest.json");
+  const nodeDevManifest = path.join(projectRoot, ".dinou", "node-dev", "server-functions-manifest.json");
+  const manifestPath = fs.existsSync(dist1Manifest) ? dist1Manifest : nodeDevManifest;
   assert.ok(fs.existsSync(manifestPath), `Manifest must exist at ${manifestPath}`);
 
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
@@ -90,9 +92,10 @@ test("Server Functions: Rollup, esbuild and Webpack plugins process serverFiles 
   const { default: WebpackPluginClass } = await import(`${dinouBase}/webpack/plugins/server-functions-plugin.js`);
   const { default: webpackManifestGenerator } = await import(`${dinouBase}/webpack/plugins/manifest-generator-plugin.js`);
   webpackManifestGenerator.manifestData = { "serverFunctionProxy.js": "serverFunctionProxy.js" };
+  delete globalThis.__DINOU_RAW_SERVER_FUNCTIONS_MANIFEST__;
   const webpackPlugin = new WebpackPluginClass({ serverFiles: new Set([pagePath]) });
   let processAssetsCb;
-  let emittedManifest = null;
+  let leakedPublicManifestAsset = false;
   const mockCompiler = {
     webpack: {
       Compilation: { PROCESS_ASSETS_STAGE_REPORT: "report" },
@@ -103,9 +106,9 @@ test("Server Functions: Rollup, esbuild and Webpack plugins process serverFiles 
         tap: (name, fn) => {
           const compilation = {
             chunks: [],
-            emitAsset: (filename, rawSource) => {
+            emitAsset: (filename) => {
               if (filename === "server-functions-manifest.json") {
-                emittedManifest = JSON.parse(rawSource.source);
+                leakedPublicManifestAsset = true;
               }
             },
             hooks: {
@@ -122,7 +125,9 @@ test("Server Functions: Rollup, esbuild and Webpack plugins process serverFiles 
   webpackPlugin.apply(mockCompiler);
   // Notice: loader never outputted any temporary JSON files into assets
   processAssetsCb({});
-  assert.ok(emittedManifest, "Webpack must emit server-functions-manifest.json");
+  assert.strictEqual(leakedPublicManifestAsset, false, "Webpack must NOT emit server-functions-manifest.json into public dist3 compilation assets");
+  const emittedManifest = globalThis.__DINOU_RAW_SERVER_FUNCTIONS_MANIFEST__;
+  assert.ok(emittedManifest, "Webpack must populate globalThis.__DINOU_RAW_SERVER_FUNCTIONS_MANIFEST__");
   const webpackPageKey = Object.keys(emittedManifest).find((k) => k.replace(/\\/g, "/").includes("t-sf-props/page"));
   assert.ok(webpackPageKey, "Webpack must register page with body-level server functions when client bundle has 0 module-level actions");
   assert.ok(emittedManifest[webpackPageKey].includes("unexportedModuleAction"));

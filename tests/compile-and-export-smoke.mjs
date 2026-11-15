@@ -96,8 +96,10 @@ async function main() {
   run("npm run export-static");
   const outIndex = path.join(outDir, "index.html");
   const outFavicon = path.join(outDir, "favicon.ico");
+  const outPwaManifest = path.join(outDir, "manifest.json");
   const outRobots = path.join(outDir, "robots.txt");
   const outWellKnown = path.join(outDir, ".well-known", "assetlinks.json");
+  const outAasa = path.join(outDir, ".well-known", "apple-app-site-association");
   const outNoJekyll = path.join(outDir, ".nojekyll");
   if (!fs.existsSync(outIndex) || fs.statSync(outIndex).size === 0) {
     throw new Error("[Smoke] export-static failed: out/index.html is missing or empty");
@@ -105,21 +107,37 @@ async function main() {
   if (!fs.existsSync(outFavicon)) {
     throw new Error("[Smoke] export-static failed: out/favicon.ico is missing");
   }
-  if (!fs.existsSync(outRobots) || !fs.existsSync(outWellKnown) || !fs.existsSync(outNoJekyll)) {
+  if (!fs.existsSync(outPwaManifest)) {
+    throw new Error("[Smoke] export-static failed: user PWA out/manifest.json is missing");
+  }
+  const exportedPwa = JSON.parse(fs.readFileSync(outPwaManifest, "utf8"));
+  if (exportedPwa.name !== "Dinou E2E PWA") {
+    throw new Error(
+      `[Smoke] export-static out/manifest.json was overwritten or invalid: ${JSON.stringify(exportedPwa)}`
+    );
+  }
+  if (
+    !fs.existsSync(outRobots) ||
+    !fs.existsSync(outWellKnown) ||
+    !fs.existsSync(outAasa) ||
+    !fs.existsSync(outNoJekyll)
+  ) {
     throw new Error("[Smoke] export-static failed: public/ SEO or dotfile assets missing in out/");
   }
   for (const forbidden of [
-    "manifest.json",
     "react-client-manifest.json",
+    "react-ssr-manifest.json",
     "server-functions-manifest.json",
+    "status-manifest.json",
     ".assetsignore",
     "server",
+    "_slots",
   ]) {
     if (fs.existsSync(path.join(outDir, forbidden))) {
       throw new Error(`[Smoke] export-static leaked internal artifact into out/${forbidden}`);
     }
   }
-  console.log("✅ [Smoke] export-static verified (SSG HTML + public/ assets exported, server/* & internal manifests excluded)");
+  console.log("✅ [Smoke] export-static verified (SSG HTML + public/ PWA manifest.json & dotfiles exported, server/* & internal manifests excluded)");
 
   // 2. Verify Standalone Node.js Compiled Binary (`npm run build:node:compile`)
   try {

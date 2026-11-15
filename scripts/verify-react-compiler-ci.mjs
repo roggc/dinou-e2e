@@ -20,11 +20,19 @@ process.env.DINOU_WRITE_TO_DISK = "false";
 
 const rootSfManifestPath = path.join(
   projectRoot,
-  ".dinou/server_functions_manifest/server-functions-manifest.json"
+  ".dinou/dist1/server-functions-manifest.json"
+);
+const rootNodeDevSfManifestPath = path.join(
+  projectRoot,
+  ".dinou/node-dev/server-functions-manifest.json"
 );
 const rootSfManifestExistedBefore = existsSync(rootSfManifestPath);
 const rootSfManifestContentBefore = rootSfManifestExistedBefore
   ? readFileSync(rootSfManifestPath, "utf8")
+  : null;
+const rootNodeDevSfExistedBefore = existsSync(rootNodeDevSfManifestPath);
+const rootNodeDevSfContentBefore = rootNodeDevSfExistedBefore
+  ? readFileSync(rootNodeDevSfManifestPath, "utf8")
   : null;
 
 const dinouRootCandidates = [
@@ -596,13 +604,25 @@ console.log(
   assert.equal(
     existsSync(rootSfManifestPath),
     rootSfManifestExistedBefore,
-    "verify-react-compiler-ci.mjs must not create or delete projectRoot/.dinou/server_functions_manifest/server-functions-manifest.json"
+    "verify-react-compiler-ci.mjs must not create or delete projectRoot/.dinou/dist1/server-functions-manifest.json"
   );
   if (rootSfManifestExistedBefore) {
     assert.equal(
       readFileSync(rootSfManifestPath, "utf8"),
       rootSfManifestContentBefore,
-      "verify-react-compiler-ci.mjs must not overwrite projectRoot/.dinou/server_functions_manifest/server-functions-manifest.json"
+      "verify-react-compiler-ci.mjs must not overwrite projectRoot/.dinou/dist1/server-functions-manifest.json"
+    );
+  }
+  assert.equal(
+    existsSync(rootNodeDevSfManifestPath),
+    rootNodeDevSfExistedBefore,
+    "verify-react-compiler-ci.mjs must not create or delete projectRoot/.dinou/node-dev/server-functions-manifest.json"
+  );
+  if (rootNodeDevSfExistedBefore) {
+    assert.equal(
+      readFileSync(rootNodeDevSfManifestPath, "utf8"),
+      rootNodeDevSfContentBefore,
+      "verify-react-compiler-ci.mjs must not overwrite projectRoot/.dinou/node-dev/server-functions-manifest.json"
     );
   }
 }

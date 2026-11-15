@@ -65,9 +65,14 @@ function formatDiagnostics(diagnostics) {
 
 function runWebpackCompile(config) {
   return new Promise((resolve, reject) => {
-    webpack(config, (err, stats) => {
-      if (err) return reject(err);
-      resolve(stats);
+    const compiler = webpack(config, (err, stats) => {
+      if (err) {
+        return compiler.close(() => reject(err));
+      }
+      compiler.close((closeErr) => {
+        if (closeErr) return reject(closeErr);
+        resolve(stats);
+      });
     });
   });
 }
@@ -635,11 +640,14 @@ async function main() {
   );
 
   // =========================================================================
-  // 5. Piece B1: Manifests, Emitted Bundles (`.dinou/dist3`, `.dinou/public`) & SWC Cache
+  // 5. Piece B1: Manifests, Emitted Bundles (`.dinou/dist1`, `.dinou/dist3`, `.dinou/public`) & SWC Cache
   // =========================================================================
   const inspectEmittedArtifacts = (label) => {
     const clientManifestCandidates = [
-      path.join(root, ".dinou/react_client_manifest/react-client-manifest.json"),
+      path.join(root, ".dinou/dist1/react-client-manifest.json"),
+      path.join(root, ".dinou/dist1/react-ssr-manifest.json"),
+      path.join(root, ".dinou/node-dev/react-client-manifest.json"),
+      path.join(root, ".dinou/node-dev/react-ssr-manifest.json"),
       path.join(root, ".dinou/dist3/react-client-manifest.json"),
       path.join(root, ".dinou/public/react-client-manifest.json"),
     ];
@@ -654,7 +662,8 @@ async function main() {
     }
 
     const sfManifestCandidates = [
-      path.join(root, ".dinou/server_functions_manifest/server-functions-manifest.json"),
+      path.join(root, ".dinou/dist1/server-functions-manifest.json"),
+      path.join(root, ".dinou/node-dev/server-functions-manifest.json"),
       path.join(root, ".dinou/dist3/server-functions-manifest.json"),
       path.join(root, ".dinou/public/server-functions-manifest.json"),
     ];
@@ -668,7 +677,7 @@ async function main() {
       }
     }
 
-    for (const outDirName of [".dinou/dist3", ".dinou/public"]) {
+    for (const outDirName of [".dinou/dist1", ".dinou/dist3", ".dinou/public"]) {
       const outDir = path.join(root, outDirName);
       for (const builtFile of collectFilesRecursive(outDir, (f) =>
         /\.(js|mjs|cjs|css)$/.test(f)

@@ -1,0 +1,12 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appIDs": ["TEAMID1234.dev.dinou.e2e"],
+        "components": [{ "/": "/*" }]
+      }
+    ]
+  }
+}
+

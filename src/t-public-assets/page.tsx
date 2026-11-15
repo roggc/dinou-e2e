@@ -2,6 +2,9 @@ export default function PublicAssetsTestPage() {
   return (
     <main data-testid="public-assets-page">
       <h1>Public Static Assets E2E</h1>
+      <a data-testid="pwa-manifest-link" href="/manifest.json">
+        PWA Manifest
+      </a>
       <img
         id="og-preview"
         data-testid="public-og-preview"
@@ -17,4 +20,3 @@ export default function PublicAssetsTestPage() {
     </main>
   );
 }
-
