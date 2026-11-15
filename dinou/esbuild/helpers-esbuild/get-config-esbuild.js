@@ -17,6 +17,7 @@ export default function getConfigEsbuild({
   outdir = ".dinou/public",
   manifest = {},
   changedIds,
+  cssModuleClassChanges,
   hmrEngine,
   cssRefreshRef,
   serverFiles,
@@ -25,6 +26,7 @@ export default function getConfigEsbuild({
   onBuildEnd,
   hmrPort,
 }) {
+  const sharedCssModuleClassChanges = cssModuleClassChanges || new Set();
   let esbuildRebuildStart = 0;
   let plugins = [
     esbuildContextualDinouPlugin({ projectRoot: process.cwd() }),
@@ -46,7 +48,13 @@ export default function getConfigEsbuild({
         ]
       : []),
     skipMissingEntryPointsPlugin(),
-    cssProcessorPlugin({ outdir, hmrEngine, changedIds, cssRefreshRef }),
+    cssProcessorPlugin({
+      outdir,
+      hmrEngine,
+      changedIds,
+      cssRefreshRef,
+      cssModuleClassChanges: sharedCssModuleClassChanges,
+    }),
     serverFunctionsPlugin({ serverFiles }),
     reactClientManifestPlugin({
       manifest,
@@ -55,7 +63,13 @@ export default function getConfigEsbuild({
     }),
     assetsPlugin({ changedIds }),
     stableChunkNamesAndMapsPlugin({ changedIds }),
-    esmHmrPlugin({ entryNames: ["main", "error"], changedIds, hmrEngine, hmrPort }),
+    esmHmrPlugin({
+      entryNames: ["main", "error"],
+      changedIds,
+      cssModuleClassChanges: sharedCssModuleClassChanges,
+      hmrEngine,
+      hmrPort,
+    }),
     ...(onBuildEnd
       ? [
           {

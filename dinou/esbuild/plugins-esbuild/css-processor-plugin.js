@@ -84,6 +84,7 @@ export default function cssProcessorPlugin({
   hmrEngine,
   changedIds,
   cssRefreshRef,
+  cssModuleClassChanges,
 } = {}) {
   const { finalize, plugin: extractor, setExtractedCss } =
     createPostCSSExtractPlugin({
@@ -97,6 +98,7 @@ export default function cssProcessorPlugin({
   const reloadedInCurrentBuild = new Set();
   const tailwindCssFiles = new Set();
   const emittedCssAssets = new Map();
+  const lastSessionModuleMapJson = new Map();
 
   function recordEmittedCssAsset(resolvedAssetPath, assetFileName) {
     emittedCssAssets.set(assetFileName, resolvedAssetPath);
@@ -258,11 +260,13 @@ export default function cssProcessorPlugin({
         postCssTotalTime = 0;
         postCssCount = 0;
         reloadedInCurrentBuild.clear();
+        cssModuleClassChanges?.clear();
       });
 
       build.onLoad({ filter: /\.css$/ }, async (args) => {
         const filePath = path.resolve(args.path);
         const cacheKey = normalizeFileKey(filePath);
+        const lowerKey = cacheKey.toLowerCase();
         loadCssCache();
         const cached =
           process.env.NODE_ENV !== "production" ? cssCache.get(cacheKey) : null;
@@ -270,6 +274,12 @@ export default function cssProcessorPlugin({
         const isModule = filePath.endsWith(".module.css");
         if (cached && isCssCacheEntryFresh(cached, filePath)) {
           setExtractedCss(filePath, cached.extractedCss || "");
+          if (isModule) {
+            lastSessionModuleMapJson.set(
+              lowerKey,
+              JSON.stringify(cached.map || {})
+            );
+          }
           if (Array.isArray(cached.assets)) {
             for (const item of cached.assets) {
               recordEmittedCssAsset(item.resolvedAssetPath, item.assetFileName);
@@ -292,8 +302,17 @@ export default function cssProcessorPlugin({
         const { map, watchFiles } = await processCssFile(filePath);
 
         if (isModule) {
+          const nextMapJson = JSON.stringify(map || {});
+          const prevMapJson = lastSessionModuleMapJson.get(lowerKey);
+          lastSessionModuleMapJson.set(lowerKey, nextMapJson);
+          if (
+            !isInitial &&
+            (prevMapJson === undefined || prevMapJson !== nextMapJson)
+          ) {
+            cssModuleClassChanges?.add(lowerKey);
+          }
           return {
-            contents: `export default ${JSON.stringify(map)};`,
+            contents: `export default ${nextMapJson};`,
             loader: "js",
             watchFiles,
           };

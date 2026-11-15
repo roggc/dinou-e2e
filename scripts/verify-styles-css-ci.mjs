@@ -527,6 +527,9 @@ console.log(
   const { default: cssProcessorPlugin } = await importDinou(
     "esbuild/plugins-esbuild/css-processor-plugin.js"
   );
+  const { default: esmHmrPlugin } = await importDinou(
+    "esbuild/react-refresh/esm-hmr-plugin.js"
+  );
   const fixturesBase = path.join(projectRoot, ".dinou", "tmp-styles-fixtures");
   fs.mkdirSync(fixturesBase, { recursive: true });
   const tmpDir = fs.mkdtempSync(path.join(fixturesBase, "dinou-dev-hmr-"));
@@ -554,11 +557,29 @@ console.log(
 
     process.chdir(tmpDir);
 
+    const normKey = (p) => {
+      let s = path.resolve(p).replace(/\\/g, "/");
+      if (process.platform === "win32") {
+        s = s.replace(/^([a-zA-Z]):/, (_, d) => d.toLowerCase() + ":");
+      }
+      return s;
+    };
+
     const changedIds = new Set();
+    const cssModuleClassChanges = new Set();
     const cssRefreshRef = { refresh: null };
     const broadcasts = [];
+    const hmrEntries = new Map();
     const hmrEngine = {
       value: {
+        setEntry(id, imports) {
+          if (!hmrEntries.has(id)) {
+            hmrEntries.set(id, { id, imports, isHmrAccepted: false });
+          }
+        },
+        getEntry(id) {
+          return hmrEntries.get(id);
+        },
         broadcastMessage(msg) {
           broadcasts.push(msg);
         },
@@ -566,9 +587,16 @@ console.log(
     };
 
     ctx = await esbuild.context({
-      entryPoints: [pageTsx],
-      outdir: path.join(tmpDir, ".dinou", "public"),
+      absWorkingDir: tmpDir,
+      entryPoints: {
+        page: pageTsx,
+        cardCss: cardModuleCss,
+      },
+      outdir: ".dinou/public",
       bundle: true,
+      splitting: true,
+      treeShaking: false,
+      metafile: true,
       format: "esm",
       jsx: "automatic",
       write: false,
@@ -578,6 +606,13 @@ console.log(
           hmrEngine,
           changedIds,
           cssRefreshRef,
+          cssModuleClassChanges,
+        }),
+        esmHmrPlugin({
+          entryNames: [],
+          changedIds,
+          cssModuleClassChanges,
+          hmrEngine,
         }),
       ],
     });
@@ -616,7 +651,7 @@ console.log(
     await new Promise((r) => setTimeout(r, 30));
     fs.writeFileSync(cardModuleCss, `.box { color: seagreen; }\n`, "utf8");
     changedIds.clear();
-    changedIds.add(cardModuleCss);
+    changedIds.add(normKey(cardModuleCss));
     await ctx.rebuild();
 
     cssText = globalThis.__DINOU_MEM_FILES__.get("/styles.css").toString("utf8");
@@ -628,6 +663,26 @@ console.log(
       broadcasts.some(
         (m) => m.type === "style-update" && m.url === "/styles.css"
       )
+    );
+    assert.ok(
+      !broadcasts.some((m) => m.type === "reload"),
+      "Pure CSS Module property edits must NOT trigger a full browser reload"
+    );
+
+    // Adding a new class selector to a standalone CSS Module entry MUST notify JS reload
+    broadcasts.length = 0;
+    await new Promise((r) => setTimeout(r, 30));
+    fs.writeFileSync(
+      cardModuleCss,
+      `.box { color: seagreen; }\n.extraBadge { font-weight: 700; }\n`,
+      "utf8"
+    );
+    changedIds.clear();
+    changedIds.add(normKey(cardModuleCss));
+    await ctx.rebuild();
+    assert.ok(
+      broadcasts.some((m) => m.type === "reload"),
+      "Adding a new class key to a standalone CSS Module entry must trigger JS reload"
     );
   } finally {
     if (ctx) await ctx.dispose();

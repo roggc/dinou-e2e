@@ -11,6 +11,7 @@ const pendingUpdateUrls = new Set();
 let needsFullReload = false;
 let hasPendingCssUpdate = false;
 let lastStylesCssContent = null;
+const lastChunkCodeByFile = new Map();
 
 function normalizePath(p) {
   return path.resolve(p).replace(/\\/g, "/").toLowerCase();
@@ -21,6 +22,8 @@ let activeHmrEngine = null;
 
 function esmHmrPlugin() {
   let hmrEngine = activeHmrEngine;
+  lastChunkCodeByFile.clear();
+  lastStylesCssContent = null;
 
   return {
     name: "esm-hmr",
@@ -109,6 +112,15 @@ function esmHmrPlugin() {
         lastStylesCssContent = nextCss;
       }
 
+      const isInitialBundle = lastChunkCodeByFile.size === 0;
+      if (isInitialBundle) {
+        for (const [fileName, chunkInfo] of Object.entries(bundle)) {
+          if (!fileName.endsWith(".css") && chunkInfo.type === "chunk") {
+            lastChunkCodeByFile.set(fileName, chunkInfo.code);
+          }
+        }
+      }
+
       if (changedIds.size > 0) {
         if (
           Array.from(changedIds).some((id) => {
@@ -125,6 +137,16 @@ function esmHmrPlugin() {
 
         for (const [fileName, chunkInfo] of Object.entries(bundle)) {
           if (fileName.endsWith(".css") || chunkInfo.type !== "chunk") {
+            continue;
+          }
+
+          const prevChunkCode = lastChunkCodeByFile.get(fileName);
+          lastChunkCodeByFile.set(fileName, chunkInfo.code);
+          if (
+            !isInitialBundle &&
+            prevChunkCode !== undefined &&
+            prevChunkCode === chunkInfo.code
+          ) {
             continue;
           }
 
@@ -170,8 +192,12 @@ function esmHmrPlugin() {
           }
 
           if (isChangedByJs) {
-            const urlId = "/" + fileName;
-            pendingUpdateUrls.add(urlId);
+            if (chunkInfo.code && chunkInfo.code.includes("import.meta.hot")) {
+              const urlId = "/" + fileName;
+              pendingUpdateUrls.add(urlId);
+            } else {
+              needsFullReload = true;
+            }
           }
         }
       }
