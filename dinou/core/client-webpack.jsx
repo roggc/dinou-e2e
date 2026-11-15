@@ -291,6 +291,9 @@ const consumeInlineRscResponse = (kind) => {
 const isStaticExportMode = () =>
   typeof window !== "undefined" && Boolean(window.__DINOU_STATIC_EXPORT__);
 
+const isStaticExportUnloading = () =>
+  typeof window !== "undefined" && Boolean(window.__DINOU_STATIC_EXPORT_UNLOADING__);
+
 const buildStaticExportRscUrl = (rawRouteOrKey, fileName) => {
   const withoutHash = String(rawRouteOrKey || "/").split("#")[0];
   const qIdx = withoutHash.indexOf("?");
@@ -308,6 +311,17 @@ const getPagePayload = (route, isPrefetch = false, version = 0) => {
   }
 
   const staticExport = isStaticExportMode();
+  if (staticExport && isStaticExportUnloading()) {
+    const pendingPromise = createFromFetch(new Promise(() => {}), {
+      callServer: async (id, args) => {
+        const proxy = createServerFunctionProxy(id);
+        return proxy(...args);
+      },
+    });
+    pendingPromise.catch(() => {});
+    pageCache.set(url, pendingPromise);
+    return pendingPromise;
+  }
   let payloadUrl;
   if (staticExport) {
     payloadUrl = buildStaticExportRscUrl(url, "page.rsc");
@@ -359,13 +373,20 @@ const getPagePayload = (route, isPrefetch = false, version = 0) => {
           (!res.ok ||
             (res.headers.get("content-type") || "").toLowerCase().includes("text/html"))
         ) {
-          pageCache.delete(url);
           if (!isPrefetch && !isInitialHydration) {
+            window.__DINOU_STATIC_EXPORT_UNLOADING__ = true;
             window.location.replace(url);
+          } else {
+            pageCache.delete(url);
           }
           return new Promise(() => {});
         }
         return res;
+      }, (err) => {
+        if (isStaticExportUnloading()) {
+          return new Promise(() => {});
+        }
+        throw err;
       });
 
   const promise = createFromFetch(
@@ -389,6 +410,17 @@ const getLayoutPayload = (layoutKey, searchPart = "", version = 0) => {
   const cacheKey = staticExport ? layoutKey : `${layoutKey}${searchPart}`;
   if (layoutCache.has(cacheKey)) {
     return layoutCache.get(cacheKey);
+  }
+  if (staticExport && isStaticExportUnloading()) {
+    const pendingPromise = createFromFetch(new Promise(() => {}), {
+      callServer: async (id, args) => {
+        const proxy = createServerFunctionProxy(id);
+        return proxy(...args);
+      },
+    });
+    pendingPromise.catch(() => {});
+    layoutCache.set(cacheKey, pendingPromise);
+    return pendingPromise;
   }
 
   const isInitialHydration =
@@ -416,14 +448,32 @@ const getLayoutPayload = (layoutKey, searchPart = "", version = 0) => {
     ? Promise.resolve(inlineRes)
     : fetch(layoutUrl, {
         cache: staticExport && !version ? "default" : "no-store",
-      }).then((res) => {
-        if (!res.ok) {
-          console.warn(
-            `[Dinou Router] Layout ${layoutKey} fetch returned status ${res.status}`
-          );
+      }).then(
+        (res) => {
+          if (isStaticExportUnloading()) {
+            return new Promise(() => {});
+          }
+          if (
+            staticExport &&
+            (!res.ok ||
+              (res.headers.get("content-type") || "").toLowerCase().includes("text/html"))
+          ) {
+            return new Promise(() => {});
+          }
+          if (!res.ok) {
+            console.warn(
+              `[Dinou Router] Layout ${layoutKey} fetch returned status ${res.status}`
+            );
+          }
+          return res;
+        },
+        (err) => {
+          if (isStaticExportUnloading()) {
+            return new Promise(() => {});
+          }
+          throw err;
         }
-        return res;
-      });
+      );
 
   const promise = createFromFetch(
     fetchPromise,
@@ -441,6 +491,9 @@ const getLayoutPayload = (layoutKey, searchPart = "", version = 0) => {
 };
 
 const getErrorRSCPayload = (route, error) => {
+  if (isStaticExportMode() || isStaticExportUnloading()) {
+    return null;
+  }
   const url = route.split("::")[0];
   const cacheKey = `error::${url}::${error.message || String(error)}`;
   if (pageCache.has(cacheKey)) {
@@ -481,6 +534,7 @@ const getErrorRSCPayload = (route, error) => {
       },
     }
   );
+  promise.catch(() => {});
   pageCache.set(cacheKey, promise);
   return promise;
 };
@@ -538,6 +592,7 @@ class ErrorBoundary extends Component {
   }
 
   componentDidCatch(error, errorInfo) {
+    if (isStaticExportUnloading()) return;
     console.error("[Dinou] ErrorBoundary caught error:", error, errorInfo);
     if (this.props.onError) {
       this.props.onError(error);
@@ -552,6 +607,9 @@ class ErrorBoundary extends Component {
 
   render() {
     if (this.state.hasError) {
+      if (isStaticExportUnloading()) {
+        return null;
+      }
       if (this.props.fallback) {
         return this.props.fallback(this.state.error);
       }
@@ -996,6 +1054,9 @@ const app = useStrictMode
   : routerElement;
 
 const onRecoverableError = (error) => {
+  if (isStaticExportUnloading()) {
+    return;
+  }
   if (
     error?.name === "InvalidStateError" &&
     (error?.message?.includes("Document hidden") || (typeof document !== "undefined" && document.hidden))

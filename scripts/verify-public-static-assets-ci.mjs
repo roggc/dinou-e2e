@@ -1225,13 +1225,34 @@ console.log(
       const clientSrc = fs.readFileSync(path.join(dinouRoot, clientRel), "utf8");
       assert.ok(
         clientSrc.includes("__DINOU_STATIC_EXPORT__") &&
+          clientSrc.includes("__DINOU_STATIC_EXPORT_UNLOADING__") &&
+          clientSrc.includes("isStaticExportUnloading") &&
           clientSrc.includes("buildStaticExportRscUrl") &&
           clientSrc.includes('"page.rsc"') &&
           clientSrc.includes('"layout.rsc"') &&
           clientSrc.includes("window.location.replace(url)"),
-        `Expected ${clientRel} to implement static-export page.rsc / layout.rsc resolution and non-RSC fallback`
+        `Expected ${clientRel} to implement static-export page.rsc / layout.rsc resolution, unload guard, and non-RSC fallback`
+      );
+      assert.ok(
+        /const getErrorRSCPayload\s*=\s*\(route,\s*error\)\s*=>\s*\{\s*if\s*\(isStaticExportMode\(\)\s*\|\|\s*isStaticExportUnloading\(\)\)\s*\{\s*return null;\s*\}/.test(
+          clientSrc
+        ),
+        `Expected ${clientRel} getErrorRSCPayload to skip /____rsc_payload_error____ in static export mode`
+      );
+      const catchCount = (clientSrc.match(/promise\.catch\(\(\)\s*=>\s*\{\}\);/g) || [])
+        .length;
+      assert.ok(
+        catchCount >= 3,
+        `Expected ${clientRel} to attach promise.catch(() => {}) on page, layout, and error RSC promises (found ${catchCount})`
       );
     }
+
+    const slotSrc = fs.readFileSync(path.join(dinouRoot, "core/slot.js"), "utf8");
+    assert.ok(
+      slotSrc.includes("__DINOU_STATIC_EXPORT__") &&
+        slotSrc.includes("__DINOU_STATIC_EXPORT_UNLOADING__"),
+      "Expected core/slot.js SlotErrorRenderer & SlotErrorBoundary to guard static export mode and unload teardown"
+    );
   } finally {
     process.chdir(origCwd);
     process.env.DINOU_WRITE_TO_DISK = "false";
