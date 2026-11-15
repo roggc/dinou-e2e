@@ -2,7 +2,7 @@
 
 ## 1. Executive Summary & Root-Cause Analysis
 
-During the `v9.4.0` audit of `/docs/public`, seven interconnected architectural, security, caching, and multi-bundler/multi-runtime parity issues were identified and resolved across `dinou`:
+During the `v9.4.0` audit of `/docs/public`, seven interconnected architectural, security, caching, static-export, and multi-bundler/multi-runtime parity issues were identified and resolved across `dinou`:
 
 1. **Root Architectural Mixing of Server Bundles & Internal Manifests Inside `.dinou/dist3` (Fixed via `.dinou/dist1` Physical Isolation)**:
    - **Root Cause**: All three bundlers (`esbuild`, `rollup`, `webpack`) previously emitted pre-bundled server runtime code (`.dinou/dist3/server/handler.js`, `.dinou/dist3/server/netlify.js`, `.map` source maps, `package.json`) and internal chunk asset manifests (`.dinou/dist3/manifest.json` — plus `react-client-manifest.json`, `react-ssr-manifest.json`, and `server-functions-manifest.json` in Webpack) directly into `.dinou/dist3`, the exact same directory used as the public static webroot!
@@ -35,8 +35,17 @@ During the `v9.4.0` audit of `/docs/public`, seven interconnected architectural,
    - **Fix**: `getStaticCacheControl(relPosixPath)` in `dinou/core/static-assets.js` reserves `public, max-age=31536000, immutable` strictly for `/assets/*` and content-hashed bundler chunks (`main-<hash>.js`), returning `public, max-age=0, must-revalidate` for all unhashed `public/*` files and unhashed stylesheets.
 
 6. **URL Percent-Decoding, Path Traversal & Hidden Dotfile Hardening**:
-   - **Root Cause**: Runtime servers resolved raw `url.pathname` without `decodeURIComponent` (breaking filenames with spaces like `/docs/brochure%202026.pdf`), lacked uniform `.` / `..` / backslash / null-byte / hidden-dotfile (`/.env`, `/.git/*`) filtering while needing to allow RFC 8615 `/.well-known/*`, and needed defense-in-depth containment (`resolveConfinedStaticFile`) plus internal SSG/ISR/PPR artifact blocking (`index.html`, `shell.html`, `metadata.json`, `*.rsc`, `_slots/*`, `status-manifest.json`).
+   - **Root Cause**: Runtime servers resolved raw `url.pathname` without `decodeURIComponent` (breaking filenames with spaces like `/docs/brochure%202026.pdf`), lacked uniform `.` / `..` / backslash / null-byte / hidden-dotfile (`/.env`, `/.git/*`) filtering while needing to allow RFC 8615 `/.well-known/*`, and needed defense-in-depth containment (`resolveConfinedStaticFile`) plus internal SSG/ISR/PPR artifact blocking (`index.html`, `shell.html`, `metadata.json`, `*.rsc`, `slots/*`, `status-manifest.json`).
    - **Fix**: Implemented `normalizePublicRequestPath`, `isInternalDinouAssetPath`, `resolveConfinedStaticFile`, and `shouldExportDist3Entry` in `dinou/core/static-assets.js` and applied them across `node/dev.js`, `node/build.js`, `bun/build.js`, `deno/build.js`, `cloudflare/build.js`, `adapters/cloudflare.js`, and `core/export-static.js`.
+
+7. **Standalone Static Export (`dinou export-static`) `.dinou/dist2` Leakage & Broken Client-Side RSC Hydration/Navigation**:
+   - **Root Cause**:
+     1. Step 3 of `dinou/core/export-static.js` called `copyRecursive(dist2Dir, outDir)` **unfiltered**, dumping every internal `.dinou/dist2` engine file (`metadata.json`, `layout.metadata.json`, `shell.html`, `shell.layout.json`, `shell.page.json`, `shell.rsc`, `rsc.rsc`, `slots/*`, `status-manifest.json`, `*._old.*`) into `out/`.
+     2. Even worse, `dinou/core/client.jsx` and `dinou/core/client-webpack.jsx` always fetched server-only virtual endpoints (`/____rsc_page_static____/...`, `/____rsc_page____/...`, `/____rsc_layout_static____/...`, `/____rsc_layout____/...`) during initial hydration and `<Link>` navigation. On pure static hosts (`Surge.sh`, `GitHub Pages`, `Cloudflare Pages` static, `S3`, `Nginx`), no Dinou server exists to answer `/____rsc_*`, so the exported `page.rsc` and `layout.rsc` files sat unused in `out/` while initial hydration and `<Link>` SPA navigation failed with `404` / `Application Error`!
+   - **Fix**:
+     1. Added `shouldExportDist2File(relPosixPath)` and `injectStaticExportFlag(html)` in `dinou/core/static-assets.js` and wired them into `dinou/core/export-static.js` so Step 3 strictly allowlists `index.html` (injecting `<script>window.__DINOU_STATIC_EXPORT__=true;</script>` before `</head>` without mutating `.dinou/dist2`), `page.rsc`, and `layout.rsc`, creating zero empty `slots/` folders and zero internal metadata JSON files in `out/`.
+     2. Updated `dinou/core/client.jsx` and `dinou/core/client-webpack.jsx` so when `window.__DINOU_STATIC_EXPORT__` is `true`, `getPagePayload` and `getLayoutPayload` fetch `/<route>/page.rsc` (or `/page.rsc` at `/`) and `/<layout>/layout.rsc` (or `/layout.rsc` at `/`) directly with cache-busting `?____build_id____=<id>`, gracefully falling back to `window.location.replace(url)` if a target path has no `.rsc` (or hits an HTML SPA fallback), and skipping server-only `POST /____rsc_payload_error____` calls.
+     3. Passed `DINOU_BUILD_TOOL=rollup` and `DINOU_BUILD_TOOL=webpack` to `export-static.js` in `dinou/cli.js` (`export-static:rollup` and `export-static:webpack`).
 
 ---
 
@@ -70,7 +79,7 @@ During the `v9.4.0` audit of `/docs/public`, seven interconnected architectural,
 1. `dinou/core/static-assets.js`
 2. `dinou/core/copy-static-dirs.js`
 
-### Modified Files (27)
+### Modified Files (30)
 3. `dinou/esbuild/build.js`
 4. `dinou/esbuild/dev.js`
 5. `dinou/esbuild/helpers-esbuild/get-config-esbuild.js`
@@ -91,13 +100,16 @@ During the `v9.4.0` audit of `/docs/public`, seven interconnected architectural,
 20. `dinou/core/generate-static-rsc.js`
 21. `dinou/core/dinou-paths.js`
 22. `dinou/core/export-static.js`
-23. `dinou/node/dev.js`
-24. `dinou/node/build.js`
-25. `dinou/node/bundle-dual-engine.js`
-26. `dinou/bun/build.js`
-27. `dinou/deno/build.js`
-28. `dinou/cloudflare/build.js`
-29. `dinou/adapters/cloudflare.js`
+23. `dinou/core/client.jsx`
+24. `dinou/core/client-webpack.jsx`
+25. `dinou/cli.js`
+26. `dinou/node/dev.js`
+27. `dinou/node/build.js`
+28. `dinou/node/bundle-dual-engine.js`
+29. `dinou/bun/build.js`
+30. `dinou/deno/build.js`
+31. `dinou/cloudflare/build.js`
+32. `dinou/adapters/cloudflare.js`
 
 ---
 
@@ -174,20 +186,28 @@ export const PUBLIC_STATIC_EXT_REGEX =
 const IMMUTABLE_CHUNK_REGEX =
   /^[^/]+-(?:[A-Z0-9]{8}|[a-f0-9]{16,32}|(?=[A-Za-z0-9_-]{8}\.)(?=[A-Za-z0-9_-]*[A-Z0-9])[A-Za-z0-9_-]{8})\.(?:js|mjs|cjs|css)(?:\.map)?$/;
 
-const ROOT_INTERNAL_MANIFESTS = new Set([
-  "react-client-manifest.json",
-  "react-ssr-manifest.json",
-  "server-functions-manifest.json",
-  "status-manifest.json",
-]);
-
-const ROUTE_INTERNAL_BASENAMES = new Set([
+// Pre-rendered SSG/ISR/PPR cache artifacts from `.dinou/dist2` (synchronized into
+// `.dinou/dist3` during Cloudflare Workers builds so `handler.js` can read them via
+// `env.ASSETS`). They must never bypass `handleRequest` as raw static files.
+const DIST2_INTERNAL_BASENAMES = new Set([
   "index.html",
   "shell.html",
   "metadata.json",
   "layout.metadata.json",
+  "slot.metadata.json",
   "shell.layout.json",
+  "shell.page.json",
+  "slot.json",
 ]);
+
+const DIST2_EXPORTABLE_BASENAMES = new Set([
+  "index.html",
+  "page.rsc",
+  "layout.rsc",
+]);
+
+export const STATIC_EXPORT_SCRIPT =
+  "<script>window.__DINOU_STATIC_EXPORT__=true;</script>";
 
 /**
  * Resolves the HTTP Content-Type header for a static file path or URL pathname.
@@ -211,9 +231,9 @@ export function getStaticContentType(pathnameOrFilePath) {
 }
 
 /**
- * Returns true when a normalized POSIX path (relative to `.dinou/dist3` or `.dinou/public`)
- * refers to an internal Dinou server bundle, manifest, or ISR/SSG/PPR engine artifact
- * that must never be served directly as a raw public asset.
+ * Returns true when a normalized POSIX path refers to an internal `.dinou/dist2`
+ * SSG/ISR/PPR cache artifact (synchronized into `.dinou/dist3` on Cloudflare Workers)
+ * that must never bypass `handleRequest` as a raw static asset.
  */
 export function isInternalDinouAssetPath(relPosixPath) {
   if (!relPosixPath || typeof relPosixPath !== "string") return true;
@@ -223,18 +243,17 @@ export function isInternalDinouAssetPath(relPosixPath) {
   const segments = clean.split("/").filter(Boolean);
   if (segments.length === 0) return true;
 
-  const firstLower = segments[0].toLowerCase();
-  if (firstLower === "server" || firstLower === "_slots") {
+  if (segments[0].toLowerCase() === "slots") {
     return true;
   }
 
   const relLower = segments.join("/").toLowerCase();
-  if (ROOT_INTERNAL_MANIFESTS.has(relLower)) {
+  if (relLower === "status-manifest.json") {
     return true;
   }
 
   const baseLower = segments[segments.length - 1].toLowerCase();
-  if (ROUTE_INTERNAL_BASENAMES.has(baseLower)) {
+  if (DIST2_INTERNAL_BASENAMES.has(baseLower)) {
     return true;
   }
   if (baseLower.endsWith(".rsc") || baseLower.includes("._old.")) {
@@ -375,9 +394,10 @@ export function isPublicStaticAssetRequest(pathname) {
 }
 
 /**
- * Filter predicate for `dinou export` (`export-static.js`) when copying `.dinou/dist3`
- * into `out/`. Excludes server bundles (`server/*`), internal manifests, and OS metadata,
- * while preserving `public/` files (including `manifest.json`, `.well-known/*`, `.nojekyll`) and client chunks.
+ * Filter predicate for `dinou export-static` (`export-static.js`) when copying `.dinou/dist3`
+ * into `out/`. Excludes OS metadata and any `.dinou/dist2` internal cache metadata
+ * (in case `build:cloudflare` previously synchronized `dist2` into `dist3`), while
+ * preserving all `public/` files (including `.well-known/*` and `.nojekyll`) and client chunks.
  */
 export function shouldExportDist3Entry(relPosixPath) {
   if (!relPosixPath || typeof relPosixPath !== "string") return false;
@@ -387,25 +407,28 @@ export function shouldExportDist3Entry(relPosixPath) {
   const segments = clean.split("/").filter(Boolean);
   if (segments.length === 0) return false;
 
-  const firstLower = segments[0].toLowerCase();
-  if (firstLower === "server" || firstLower === "_slots") {
-    return false;
-  }
-
-  const relLower = segments.join("/").toLowerCase();
-  if (ROOT_INTERNAL_MANIFESTS.has(relLower) || relLower === ".assetsignore") {
-    return false;
-  }
-
   const baseLower = segments[segments.length - 1].toLowerCase();
   if (baseLower === ".ds_store" || baseLower === "thumbs.db") {
     return false;
   }
+
+  if (segments[0].toLowerCase() === "slots") {
+    return false;
+  }
+
+  const relLower = segments.join("/").toLowerCase();
+  if (relLower === "status-manifest.json") {
+    return false;
+  }
+
   if (
     baseLower === "shell.html" ||
     baseLower === "metadata.json" ||
     baseLower === "layout.metadata.json" ||
+    baseLower === "slot.metadata.json" ||
     baseLower === "shell.layout.json" ||
+    baseLower === "shell.page.json" ||
+    baseLower === "slot.json" ||
     baseLower.endsWith(".rsc") ||
     baseLower.includes("._old.")
   ) {
@@ -413,6 +436,49 @@ export function shouldExportDist3Entry(relPosixPath) {
   }
 
   return true;
+}
+
+/**
+ * Filter predicate for `dinou export-static` (`export-static.js`) when copying
+ * pre-rendered SSG files from `.dinou/dist2` into `out/`.
+ * Strictly allowlists `index.html`, `page.rsc`, and `layout.rsc` (outside the
+ * internal `slots/` cache namespace) so internal ISR/PPR/Slot metadata JSONs,
+ * `shell.*` templates, `rsc.rsc`, `status-manifest.json`, and `._old.` files
+ * are never published to static hosts.
+ */
+export function shouldExportDist2File(relPosixPath) {
+  if (!relPosixPath || typeof relPosixPath !== "string") return false;
+  const clean = relPosixPath.replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!clean) return false;
+
+  const segments = clean.split("/").filter(Boolean);
+  if (segments.length === 0) return false;
+
+  if (segments[0].toLowerCase() === "slots") {
+    return false;
+  }
+
+  const baseLower = segments[segments.length - 1].toLowerCase();
+  return DIST2_EXPORTABLE_BASENAMES.has(baseLower);
+}
+
+/**
+ * Injects `<script>window.__DINOU_STATIC_EXPORT__=true;</script>` into exported
+ * `index.html` documents so Dinou's client router resolves `/<route>/page.rsc`
+ * and `/<layout>/layout.rsc` directly from static hosting instead of hitting
+ * server-only `/____rsc_*` endpoints.
+ */
+export function injectStaticExportFlag(html) {
+  if (typeof html !== "string" || html.includes("__DINOU_STATIC_EXPORT__")) {
+    return html;
+  }
+  if (/<\/head>/i.test(html)) {
+    return html.replace(/<\/head>/i, (match) => `${STATIC_EXPORT_SCRIPT}${match}`);
+  }
+  if (/<\/body>/i.test(html)) {
+    return html.replace(/<\/body>/i, (match) => `${STATIC_EXPORT_SCRIPT}${match}`);
+  }
+  return `${STATIC_EXPORT_SCRIPT}${html}`;
 }
 ```
 
@@ -1349,50 +1415,229 @@ export default getAssetFromManifest;
      const cwd = typeof process !== "undefined" && process.cwd ? process.cwd() : "";
 ```
 
+```javascript
+// dinou/core/export-static.js
+// Exports a standalone static website from .dinou/dist3 (assets) and .dinou/dist2 (SSG HTML + segmented RSC)
+// into an 'out/' directory, ready for Surge.sh, GitHub Pages, Cloudflare Pages (static), etc.
+
+import fs from "node:fs";
+import path from "node:path";
+import {
+  shouldExportDist3Entry,
+  shouldExportDist2File,
+  injectStaticExportFlag,
+} from "./static-assets.js";
+
+const projectRoot = process.cwd();
+const outDir = path.resolve(projectRoot, "out");
+const dist3Dir = path.resolve(projectRoot, ".dinou/dist3");
+const dist2Dir = path.resolve(projectRoot, ".dinou/dist2");
+
+const bundlerName = process.env.DINOU_BUILD_TOOL || "esbuild";
+console.log(`\n🦖 Dinou (Static Export • ${bundlerName})`);
+
+// 1. Clean output directory
+if (fs.existsSync(outDir)) {
+  fs.rmSync(outDir, { recursive: true, force: true });
+}
+fs.mkdirSync(outDir, { recursive: true });
+
+function copyRecursive(src, dest, filterFile = null, transformFile = null, relPrefix = "") {
+  if (!fs.existsSync(src)) return 0;
+  let count = 0;
+  const entries = fs.readdirSync(src, { withFileTypes: true });
+  for (const entry of entries) {
+    const relPosix = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      count += copyRecursive(srcPath, destPath, filterFile, transformFile, relPosix);
+    } else {
+      if (filterFile && !filterFile(relPosix)) {
+        continue;
+      }
+      fs.mkdirSync(path.dirname(destPath), { recursive: true });
+      if (transformFile) {
+        const transformed = transformFile(srcPath, relPosix);
+        if (typeof transformed === "string") {
+          fs.writeFileSync(destPath, transformed, "utf8");
+          count++;
+          continue;
+        }
+      }
+      fs.copyFileSync(srcPath, destPath);
+      count++;
+    }
+  }
+  return count;
+}
+
+// 2. Copy production assets from .dinou/dist3 (JS bundles, CSS, public/)
+let assetCount = 0;
+if (fs.existsSync(dist3Dir)) {
+  assetCount = copyRecursive(dist3Dir, outDir, shouldExportDist3Entry);
+  console.log(`  📦 Copied ${assetCount} production asset(s) from .dinou/dist3`);
+} else {
+  console.warn("⚠️ [Dinou Export] Warning: .dinou/dist3 not found. Did you run a production build first?");
+}
+
+// 3. Copy pre-rendered SSG HTML pages + segmented RSC payloads (index.html, page.rsc, layout.rsc) from .dinou/dist2
+let pageCount = 0;
+if (fs.existsSync(dist2Dir)) {
+  pageCount = copyRecursive(
+    dist2Dir,
+    outDir,
+    shouldExportDist2File,
+    (srcPath, relPosix) => {
+      if (relPosix.toLowerCase().endsWith("index.html")) {
+        return injectStaticExportFlag(fs.readFileSync(srcPath, "utf8"));
+      }
+      return null;
+    }
+  );
+  console.log(`  📄 Copied ${pageCount} static page/payload file(s) from .dinou/dist2`);
+} else {
+  console.warn("⚠️ [Dinou Export] Warning: .dinou/dist2 not found. Ensure your app has static routes.");
+}
+
+const relOut = path.relative(projectRoot, outDir) || "out";
+console.log(`\n✓ Standalone static site exported to: ${relOut}/`);
+console.log("  👉 Deploy with:");
+console.log("     • Surge.sh:       npx surge out <your-domain>.surge.sh");
+console.log("     • GitHub Pages:   npx gh-pages -d out");
+console.log("     • Cloudflare:     npx wrangler pages deploy out\n");
+```
+
+---
+
+### 4.6b. Static Export SPA Client Router & CLI (`dinou/core/client.jsx`, `dinou/core/client-webpack.jsx`, `dinou/cli.js`)
+
+Identical static-export RSC resolution applied to both `dinou/core/client.jsx` (Esbuild & Rollup) and `dinou/core/client-webpack.jsx` (Webpack):
+
 ```diff
---- a/dinou/core/export-static.js
-+++ b/dinou/core/export-static.js
-@@ -4,6 +4,7 @@
+--- a/dinou/core/client.jsx
++++ b/dinou/core/client.jsx
+@@ -291,17 +291,29 @@
++const isStaticExportMode = () =>
++  typeof window !== "undefined" && Boolean(window.__DINOU_STATIC_EXPORT__);
++
++const buildStaticExportRscUrl = (rawRouteOrKey, fileName) => {
++  const withoutHash = String(rawRouteOrKey || "/").split("#")[0];
++  const qIdx = withoutHash.indexOf("?");
++  const rawPathname = qIdx === -1 ? withoutHash : withoutHash.slice(0, qIdx);
++  const existingQuery = qIdx === -1 ? "" : withoutHash.slice(qIdx + 1);
++  const cleanPathname = rawPathname.replace(/\/+$/, "");
++  const baseRscPath = cleanPathname ? `${cleanPathname}/${fileName}` : `/${fileName}`;
++  return existingQuery ? `${baseRscPath}?${existingQuery}` : baseRscPath;
++};
++
+ const getPagePayload = (route, isPrefetch = false, version = 0) => {
+   const url = route.split("::")[0];
+   if (pageCache.has(url)) {
+     return pageCache.get(url);
+   }
  
- import fs from "node:fs";
- import path from "node:path";
-+import { shouldExportDist3Entry } from "./static-assets.js";
++  const staticExport = isStaticExportMode();
+   let payloadUrl;
+-  if (window.__DINOU_USE_OLD_RSC__ || window.__DINOU_USE_STATIC__) {
++  if (staticExport) {
++    payloadUrl = buildStaticExportRscUrl(url, "page.rsc");
++  } else if (window.__DINOU_USE_OLD_RSC__ || window.__DINOU_USE_STATIC__) {
+     payloadUrl = window.__DINOU_USE_OLD_RSC__
+...
+   const isInitialHydration =
+     !isPrefetch &&
+     typeof document !== "undefined" &&
+     (!document.body || document.body.getAttribute("data-hydrated") !== "true");
+-  const buildId = isInitialHydration ? window.__DINOU_BUILD_ID__ : undefined;
++  const buildId =
++    staticExport || isInitialHydration ? window.__DINOU_BUILD_ID__ : undefined;
+...
+   const inlineRes = isInitialHydration && !version ? consumeInlineRscResponse("P") : null;
+   const fetchPromise = inlineRes
+     ? Promise.resolve(inlineRes)
+-    : fetch(payloadUrl, { cache: "no-store" }).then((res) => {
++    : fetch(payloadUrl, {
++        cache: staticExport && !version ? "default" : "no-store",
++      }).then((res) => {
+         if (res.headers.has("x-rsc-redirect")) {
+           ...
+         }
++        if (
++          staticExport &&
++          (!res.ok ||
++            (res.headers.get("content-type") || "").toLowerCase().includes("text/html"))
++        ) {
++          pageCache.delete(url);
++          if (!isPrefetch && !isInitialHydration) {
++            window.location.replace(url);
++          }
++          return new Promise(() => {});
++        }
+         return res;
+       });
+...
+ const getLayoutPayload = (layoutKey, searchPart = "", version = 0) => {
+   if (!layoutKey) return null;
+-  const cacheKey = `${layoutKey}${searchPart}`;
++  const staticExport = isStaticExportMode();
++  const cacheKey = staticExport ? layoutKey : `${layoutKey}${searchPart}`;
+   if (layoutCache.has(cacheKey)) {
+     return layoutCache.get(cacheKey);
+   }
  
- const projectRoot = process.cwd();
- const outDir = path.resolve(projectRoot, "out");
-@@ -19,17 +20,21 @@
- }
- fs.mkdirSync(outDir, { recursive: true });
+   const isInitialHydration =
+     typeof document !== "undefined" &&
+     (!document.body || document.body.getAttribute("data-hydrated") !== "true");
+-  const buildId = isInitialHydration ? window.__DINOU_BUILD_ID__ : undefined;
++  const buildId =
++    staticExport || isInitialHydration ? window.__DINOU_BUILD_ID__ : undefined;
+   const cleanKey = layoutKey === "/" ? "" : layoutKey;
+-  let layoutUrl =
+-    (window.__DINOU_USE_STATIC__
+-      ? "/____rsc_layout_static____"
+-      : "/____rsc_layout____") + cleanKey + searchPart;
++  let layoutUrl = staticExport
++    ? buildStaticExportRscUrl((cleanKey || "/") + searchPart, "layout.rsc")
++    : (window.__DINOU_USE_STATIC__
++        ? "/____rsc_layout_static____"
++        : "/____rsc_layout____") + cleanKey + searchPart;
+...
+   const inlineRes = isInitialHydration && !version ? consumeInlineRscResponse("L") : null;
+   const fetchPromise = inlineRes
+     ? Promise.resolve(inlineRes)
+-    : fetch(layoutUrl, { cache: "no-store" }).then((res) => {
++    : fetch(layoutUrl, {
++        cache: staticExport && !version ? "default" : "no-store",
++      }).then((res) => {
+...
+       <ErrorBoundary
+         resetKey={`${route}::${navCount}`}
+-        onError={setNavError}
++        onError={isStaticExportMode() ? undefined : setNavError}
+       >
+```
+
+And in `dinou/cli.js`:
+```diff
+--- a/dinou/cli.js
++++ b/dinou/cli.js
+@@ -498,13 +498,13 @@
+ program
+   .command("export-static:rollup")
+   .description("Export standalone static website with Rollup")
+   .action(() => {
+-    runCommand(`cross-env NODE_ENV=production npx rollup -c ${p("rollup/rollup.config.js")} && node ${p("core/export-static.js")}`);
++    runCommand(`cross-env NODE_ENV=production npx rollup -c ${p("rollup/rollup.config.js")} && cross-env DINOU_BUILD_TOOL=rollup node ${p("core/export-static.js")}`);
+   });
  
--function copyRecursive(src, dest) {
-+function copyRecursive(src, dest, filterRelPath = null, relPrefix = "") {
-   if (!fs.existsSync(src)) return 0;
-   let count = 0;
-   const entries = fs.readdirSync(src, { withFileTypes: true });
-   for (const entry of entries) {
-+    const relPosix = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
-+    if (filterRelPath && !filterRelPath(relPosix)) {
-+      continue;
-+    }
-     const srcPath = path.join(src, entry.name);
-     const destPath = path.join(dest, entry.name);
-     if (entry.isDirectory()) {
-       fs.mkdirSync(destPath, { recursive: true });
--      count += copyRecursive(srcPath, destPath);
-+      count += copyRecursive(srcPath, destPath, filterRelPath, relPosix);
-     } else {
-       fs.mkdirSync(path.dirname(destPath), { recursive: true });
-       fs.copyFileSync(srcPath, destPath);
-       count++;
-@@ -41,7 +46,7 @@
- // 2. Copy production assets from .dinou/dist3 (JS bundles, CSS, public/)
- let assetCount = 0;
- if (fs.existsSync(dist3Dir)) {
--  assetCount = copyRecursive(dist3Dir, outDir);
-+  assetCount = copyRecursive(dist3Dir, outDir, shouldExportDist3Entry);
-   console.log(`  📦 Copied ${assetCount} production asset(s) from .dinou/dist3`);
- } else {
-   console.warn("⚠️ [Dinou Export] Warning: .dinou/dist3 not found. Did you run a production build first?");
+ program
+   .command("export-static:webpack")
+   .description("Export standalone static website with Webpack")
+   .action(() => {
+-    runCommand(`cross-env NODE_ENV=production npx webpack --config ${p("webpack/webpack.config.js")} && node ${p("core/export-static.js")}`);
++    runCommand(`cross-env NODE_ENV=production npx webpack --config ${p("webpack/webpack.config.js")} && cross-env DINOU_BUILD_TOOL=webpack node ${p("core/export-static.js")}`);
+   });
 ```
 
 ---
@@ -1600,9 +1845,10 @@ export default getAssetFromManifest;
 ```
 
 #### `dinou/bun/build.js` & `dinou/deno/build.js`
-Both `dinou/bun/build.js` and `dinou/deno/build.js` received the exact same two upgrades:
+Both `dinou/bun/build.js` and `dinou/deno/build.js` received the following upgrades:
 1. `findManifest(filename, folder)` resolves `.dinou/<folder>/<filename>` directly, reading **all three** manifests (`react-client-manifest.json`, `server-functions-manifest.json`, and `manifest.json`) from `"dist1"`.
 2. Generated orchestrator `fetch(req)` imports `{ getStaticContentType, getStaticCacheControl, normalizePublicRequestPath, resolveConfinedStaticFile }` from `${dinouDirSlash}/core/static-assets.js` and serves `GET`/`HEAD` static files from `.dinou/dist3` (`Bun.file(filePath)` on Bun, `Deno.readFile(filePath)` on Deno) with confined paths, smart `Cache-Control`, and full MIME coverage (including extensionless `/.well-known/apple-app-site-association` and PWA `/manifest.json`).
+3. Removed the redundant `copyRecursive(dist2Dir, dist3Dir)` step in `dinou/deno/build.js` (Deno already hydrates `.dinou/dist2` via `readDist2Fallback`, so only Cloudflare Workers needs `dist2` synchronized into `dist3` for `env.ASSETS`).
 
 #### `dinou/cloudflare/build.js` & `dinou/adapters/cloudflare.js`
 
@@ -1685,7 +1931,10 @@ if (!isRSCPayload && !isServerFunction && isStaticAsset && env && env.ASSETS && 
 - **Unified `public/` Directory (Removed Legacy `favicons/`)**: Standardized on `public/` at the project root as the single directory for unhashed static files across dev and production builds, removing legacy `favicons/` directory copying and watching.
 
 ### Added
-- **PWA `public/manifest.json` Support**: Moving Dinou's internal chunk manifest to `.dinou/dist1/manifest.json` frees `/manifest.json` at the domain root for standard Progressive Web App manifests (`public/manifest.json`) across all bundlers, runtimes, Cloudflare Workers `env.ASSETS`, and `dinou export`.
+- **PWA `public/manifest.json` Support**: Moving Dinou's internal chunk manifest to `.dinou/dist1/manifest.json` frees `/manifest.json` at the domain root for standard Progressive Web App manifests (`public/manifest.json`) across all bundlers, runtimes, Cloudflare Workers `env.ASSETS`, and `dinou export-static`.
+- **Standalone Static Export SPA Navigation (`dinou export-static`)**:
+  - Added `shouldExportDist2File` and `injectStaticExportFlag` so `dinou export-static` exports strictly `index.html` (with `window.__DINOU_STATIC_EXPORT__ = true` injected), `page.rsc`, and `layout.rsc` from `.dinou/dist2` into `out/`, excluding all internal ISR/PPR/Slot metadata JSONs (`metadata.json`, `layout.metadata.json`, `shell.*`, `rsc.rsc`, `slots/*`, `status-manifest.json`, `*._old.*`).
+  - Updated `dinou/core/client.jsx` and `dinou/core/client-webpack.jsx` so standalone static sites hydrate and perform full client-side `<Link>` SPA navigation & hover prefetching directly against `/<route>/page.rsc` and `/<layout>/layout.rsc` without requiring a Dinou server, falling back cleanly to native browser navigation if a target path has no `.rsc` payload.
 - **Shared Static Asset Security, Caching & MIME Engine (`dinou/core/static-assets.js`)**:
   - Added safe `decodeURIComponent` normalization (supporting filenames with spaces such as `/docs/brochure%202026.pdf`), strict `path.resolve` confinement against directory traversal (`%2e%2e`, backslashes), and hidden dotfile blocking (`/.env`, `/.git/*`, `/.DS_Store`) while explicitly allowing `/.well-known/*` (including extensionless `/.well-known/apple-app-site-association` served as `application/json; charset=utf-8`).
   - Added smart `Cache-Control` differentiation: `public, max-age=31536000, immutable` for content-hashed bundler chunks and `/assets/*`, and `public, max-age=0, must-revalidate` for unhashed `public/*` assets (`favicon.ico`, `robots.txt`, `sitemap.xml`, `manifest.json`, `site.webmanifest`, `styles.css`, etc.).
@@ -1730,27 +1979,24 @@ const staticAssetsMod = await import(
   pathToFileURL(path.join(dinouRoot, "core/static-assets.js")).href
 );
 const {
+  STATIC_EXPORT_SCRIPT,
   getStaticContentType,
   getStaticCacheControl,
+  injectStaticExportFlag,
   isImmutableAssetPath,
   isPublicStaticAssetRequest,
   normalizePublicRequestPath,
   resolveConfinedStaticFile,
+  shouldExportDist2File,
   shouldExportDist3Entry,
 } = staticAssetsMod;
 
 describe("Public Static Assets & .dinou/dist1 Physical Isolation", () => {
-  it("normalizes valid public URLs (including PWA /manifest.json, spaces, and /.well-known/*) and blocks traversal, dotfiles, and internal artifacts", () => {
+  it("normalizes valid public URLs (including PWA /manifest.json, spaces, and /.well-known/*) and blocks traversal, dotfiles, and dist2 cache artifacts", () => {
     const blockedUrls = [
       "/",
-      "/server/handler.js",
-      "/server/handler.js.map",
-      "/server/netlify.js",
-      "/server/package.json",
-      "/_slots/home-hero.rsc",
-      "/react-client-manifest.json",
-      "/react-ssr-manifest.json",
-      "/server-functions-manifest.json",
+      "/slots/home-hero/slot.json",
+      "/slots/home-hero/slot.metadata.json",
       "/status-manifest.json",
       "/index.html",
       "/docs/public/index.html",
@@ -1758,6 +2004,7 @@ describe("Public Static Assets & .dinou/dist1 Physical Isolation", () => {
       "/docs/public/metadata.json",
       "/docs/public/layout.metadata.json",
       "/shell.layout.json",
+      "/shell.page.json",
       "/docs/public/page.rsc",
       "/docs/public/rsc.rsc",
       "/docs/public/index._old.html",
@@ -1787,6 +2034,7 @@ describe("Public Static Assets & .dinou/dist1 Physical Isolation", () => {
     assert.equal(normalizePublicRequestPath("/robots.txt"), "robots.txt");
     assert.equal(normalizePublicRequestPath("/sitemap.xml"), "sitemap.xml");
     assert.equal(normalizePublicRequestPath("/manifest.json"), "manifest.json");
+    assert.equal(normalizePublicRequestPath("/server/diagram.png"), "server/diagram.png");
     assert.equal(normalizePublicRequestPath("/site.webmanifest"), "site.webmanifest");
     assert.equal(
       normalizePublicRequestPath("/google1a2b3c4d5e6f.html"),
@@ -1885,9 +2133,9 @@ describe("Public Static Assets & .dinou/dist1 Physical Isolation", () => {
     assert.equal(isPublicStaticAssetRequest("/about/index.html"), false);
     assert.equal(isPublicStaticAssetRequest("/about/shell.html"), false);
     assert.equal(isPublicStaticAssetRequest("/about/metadata.json"), false);
-    assert.equal(isPublicStaticAssetRequest("/server/handler.js"), false);
-    assert.equal(isPublicStaticAssetRequest("/server-functions-manifest.json"), false);
-    assert.equal(isPublicStaticAssetRequest("/react-client-manifest.json"), false);
+    assert.equal(isPublicStaticAssetRequest("/about/shell.page.json"), false);
+    assert.equal(isPublicStaticAssetRequest("/slots/hero/slot.json"), false);
+    assert.equal(isPublicStaticAssetRequest("/status-manifest.json"), false);
 
     const cfAdapterMod = await import(
       pathToFileURL(path.join(dinouRoot, "adapters/cloudflare.js")).href
@@ -1934,17 +2182,17 @@ describe("Public Static Assets & .dinou/dist1 Physical Isolation", () => {
     assert.ok(assetHits.includes("/manifest.json"));
 
     assetHits.length = 0;
-    const leakRes = await cfWorker.fetch(
-      new Request("https://example.com/server/handler.js"),
+    const dist2BypassRes = await cfWorker.fetch(
+      new Request("https://example.com/slots/hero/slot.json"),
       mockEnv,
       {}
     );
     assert.equal(
-      assetHits.includes("/server/handler.js"),
+      assetHits.includes("/slots/hero/slot.json"),
       false,
-      "Cloudflare adapter must never query env.ASSETS for /server/handler.js"
+      "Cloudflare adapter must never bypass handleRequest for dist2 artifacts in env.ASSETS"
     );
-    assert.equal(leakRes.status, 404);
+    assert.equal(dist2BypassRes.status, 404);
   });
 
   it("consolidates all internal manifests & server bundles in .dinou/dist1, keeps .dinou/dist3 pure, and preserves user public/manifest.json across Esbuild, Rollup, and Webpack", async () => {
@@ -2214,17 +2462,19 @@ describe("Public Static Assets & .dinou/dist1 Physical Isolation", () => {
     }
   });
 
-  it("exports user PWA manifest.json, .nojekyll, and .well-known/* in dinou export while filtering internal artifacts", () => {
+  it("exports user PWA manifest.json, .nojekyll, .well-known/*, index.html (with __DINOU_STATIC_EXPORT__), page.rsc, and layout.rsc in dinou export-static while excluding all internal dist2 metadata", () => {
     const tmpExport = fs.mkdtempSync(path.join(os.tmpdir(), "dinou-export-test-"));
     try {
       fs.mkdirSync(path.join(tmpExport, ".dinou/dist3/.well-known"), { recursive: true });
+      fs.mkdirSync(path.join(tmpExport, ".dinou/dist3/slots/hero"), { recursive: true });
       fs.mkdirSync(path.join(tmpExport, ".dinou/dist2/about"), { recursive: true });
+      fs.mkdirSync(path.join(tmpExport, ".dinou/dist2/slots/hero"), { recursive: true });
 
       fs.writeFileSync(path.join(tmpExport, ".dinou/dist3/manifest.json"), '{"name":"PWA"}');
-      fs.writeFileSync(path.join(tmpExport, ".dinou/dist3/react-client-manifest.json"), "{}");
-      fs.writeFileSync(path.join(tmpExport, ".dinou/dist3/react-ssr-manifest.json"), "{}");
-      fs.writeFileSync(path.join(tmpExport, ".dinou/dist3/server-functions-manifest.json"), "{}");
-      fs.writeFileSync(path.join(tmpExport, ".dinou/dist3/.assetsignore"), "/_slots\n");
+      fs.writeFileSync(path.join(tmpExport, ".dinou/dist3/status-manifest.json"), "{}");
+      fs.writeFileSync(path.join(tmpExport, ".dinou/dist3/slots/hero/slot.json"), "{}");
+      fs.writeFileSync(path.join(tmpExport, ".dinou/dist3/shell.html"), "<html>Shell</html>");
+      fs.writeFileSync(path.join(tmpExport, ".dinou/dist3/metadata.json"), "{}");
 
       fs.writeFileSync(path.join(tmpExport, ".dinou/dist3/main-ZGBKXIUF.js"), "console.log(1)");
       fs.writeFileSync(path.join(tmpExport, ".dinou/dist3/styles.css"), "body{}");
@@ -2234,17 +2484,72 @@ describe("Public Static Assets & .dinou/dist1 Physical Isolation", () => {
         path.join(tmpExport, ".dinou/dist3/.well-known/assetlinks.json"),
         "[]"
       );
-      fs.writeFileSync(path.join(tmpExport, ".dinou/dist2/index.html"), "<html>Home</html>");
-      fs.writeFileSync(path.join(tmpExport, ".dinou/dist2/about/index.html"), "<html>About</html>");
 
-      assert.equal(shouldExportDist3Entry("server"), false);
-      assert.equal(shouldExportDist3Entry("server/handler.js"), false);
+      // Populate .dinou/dist2 with BOTH exportable SSG files AND internal engine artifacts
+      fs.writeFileSync(
+        path.join(tmpExport, ".dinou/dist2/index.html"),
+        "<!DOCTYPE html><html><head><title>Home</title></head><body>Home</body></html>"
+      );
+      fs.writeFileSync(path.join(tmpExport, ".dinou/dist2/page.rsc"), '0:"home-page"\n');
+      fs.writeFileSync(path.join(tmpExport, ".dinou/dist2/layout.rsc"), '0:"root-layout"\n');
+      fs.writeFileSync(path.join(tmpExport, ".dinou/dist2/rsc.rsc"), '0:"legacy-combined"\n');
+      fs.writeFileSync(path.join(tmpExport, ".dinou/dist2/metadata.json"), '{"status":200}');
+      fs.writeFileSync(path.join(tmpExport, ".dinou/dist2/layout.metadata.json"), '{"status":200}');
+      fs.writeFileSync(path.join(tmpExport, ".dinou/dist2/shell.layout.json"), "[]");
+      fs.writeFileSync(
+        path.join(tmpExport, ".dinou/dist2/status-manifest.json"),
+        '{"/":{"status":200}}'
+      );
+      fs.writeFileSync(path.join(tmpExport, ".dinou/dist2/slots/hero/slot.json"), '{"jsx":null}');
+      fs.writeFileSync(
+        path.join(tmpExport, ".dinou/dist2/slots/hero/slot.metadata.json"),
+        '{"tags":[]}'
+      );
+
+      fs.writeFileSync(
+        path.join(tmpExport, ".dinou/dist2/about/index.html"),
+        "<!DOCTYPE html><html><head><title>About</title></head><body>About</body></html>"
+      );
+      fs.writeFileSync(path.join(tmpExport, ".dinou/dist2/about/page.rsc"), '0:"about-page"\n');
+      fs.writeFileSync(path.join(tmpExport, ".dinou/dist2/about/page._old.rsc"), '0:"old"\n');
+      fs.writeFileSync(path.join(tmpExport, ".dinou/dist2/about/rsc.rsc"), '0:"legacy"\n');
+      fs.writeFileSync(path.join(tmpExport, ".dinou/dist2/about/shell.rsc"), '0:"shell"\n');
+      fs.writeFileSync(path.join(tmpExport, ".dinou/dist2/about/shell.html"), "<html>Shell</html>");
+      fs.writeFileSync(path.join(tmpExport, ".dinou/dist2/about/shell.page.json"), "[]");
+      fs.writeFileSync(path.join(tmpExport, ".dinou/dist2/about/metadata.json"), '{"status":200}');
+
+      assert.equal(shouldExportDist3Entry("slots"), false);
+      assert.equal(shouldExportDist3Entry("slots/hero/slot.json"), false);
+      assert.equal(shouldExportDist3Entry("status-manifest.json"), false);
+      assert.equal(shouldExportDist3Entry("about/shell.page.json"), false);
       assert.equal(shouldExportDist3Entry("manifest.json"), true);
-      assert.equal(shouldExportDist3Entry("react-client-manifest.json"), false);
-      assert.equal(shouldExportDist3Entry("react-ssr-manifest.json"), false);
-      assert.equal(shouldExportDist3Entry("server-functions-manifest.json"), false);
       assert.equal(shouldExportDist3Entry(".nojekyll"), true);
       assert.equal(shouldExportDist3Entry(".well-known/assetlinks.json"), true);
+
+      assert.equal(shouldExportDist2File("index.html"), true);
+      assert.equal(shouldExportDist2File("page.rsc"), true);
+      assert.equal(shouldExportDist2File("layout.rsc"), true);
+      assert.equal(shouldExportDist2File("about/index.html"), true);
+      assert.equal(shouldExportDist2File("about/page.rsc"), true);
+      assert.equal(shouldExportDist2File("about/layout.rsc"), true);
+      assert.equal(shouldExportDist2File("rsc.rsc"), false);
+      assert.equal(shouldExportDist2File("about/rsc.rsc"), false);
+      assert.equal(shouldExportDist2File("about/shell.rsc"), false);
+      assert.equal(shouldExportDist2File("about/page._old.rsc"), false);
+      assert.equal(shouldExportDist2File("metadata.json"), false);
+      assert.equal(shouldExportDist2File("layout.metadata.json"), false);
+      assert.equal(shouldExportDist2File("shell.layout.json"), false);
+      assert.equal(shouldExportDist2File("about/shell.page.json"), false);
+      assert.equal(shouldExportDist2File("about/shell.html"), false);
+      assert.equal(shouldExportDist2File("status-manifest.json"), false);
+      assert.equal(shouldExportDist2File("slots/hero/slot.json"), false);
+      assert.equal(shouldExportDist2File("slots/hero/index.html"), false);
+
+      const injectedOnce = injectStaticExportFlag(
+        "<html><head><title>X</title></head><body></body></html>"
+      );
+      assert.ok(injectedOnce.includes(`${STATIC_EXPORT_SCRIPT}</head>`));
+      assert.equal(injectStaticExportFlag(injectedOnce), injectedOnce);
 
       execFileSync(process.execPath, [path.join(dinouRoot, "core/export-static.js")], {
         cwd: tmpExport,
@@ -2253,18 +2558,36 @@ describe("Public Static Assets & .dinou/dist1 Physical Isolation", () => {
 
       const outDir = path.join(tmpExport, "out");
       assert.equal(fs.readFileSync(path.join(outDir, "manifest.json"), "utf8"), '{"name":"PWA"}');
-      assert.equal(fs.existsSync(path.join(outDir, "react-client-manifest.json")), false);
-      assert.equal(fs.existsSync(path.join(outDir, "react-ssr-manifest.json")), false);
-      assert.equal(fs.existsSync(path.join(outDir, "server-functions-manifest.json")), false);
-      assert.equal(fs.existsSync(path.join(outDir, ".assetsignore")), false);
+      assert.equal(fs.existsSync(path.join(outDir, "status-manifest.json")), false);
+      assert.equal(fs.existsSync(path.join(outDir, "slots")), false);
+      assert.equal(fs.existsSync(path.join(outDir, "shell.html")), false);
+      assert.equal(fs.existsSync(path.join(outDir, "metadata.json")), false);
+      assert.equal(fs.existsSync(path.join(outDir, "layout.metadata.json")), false);
+      assert.equal(fs.existsSync(path.join(outDir, "shell.layout.json")), false);
+      assert.equal(fs.existsSync(path.join(outDir, "rsc.rsc")), false);
+      assert.equal(fs.existsSync(path.join(outDir, "about/metadata.json")), false);
+      assert.equal(fs.existsSync(path.join(outDir, "about/rsc.rsc")), false);
+      assert.equal(fs.existsSync(path.join(outDir, "about/shell.rsc")), false);
+      assert.equal(fs.existsSync(path.join(outDir, "about/shell.html")), false);
+      assert.equal(fs.existsSync(path.join(outDir, "about/shell.page.json")), false);
+      assert.equal(fs.existsSync(path.join(outDir, "about/page._old.rsc")), false);
 
       assert.ok(fs.existsSync(path.join(outDir, "main-ZGBKXIUF.js")));
       assert.ok(fs.existsSync(path.join(outDir, "styles.css")));
       assert.ok(fs.existsSync(path.join(outDir, "robots.txt")));
       assert.ok(fs.existsSync(path.join(outDir, ".nojekyll")));
       assert.ok(fs.existsSync(path.join(outDir, ".well-known/assetlinks.json")));
-      assert.ok(fs.existsSync(path.join(outDir, "index.html")));
-      assert.ok(fs.existsSync(path.join(outDir, "about/index.html")));
+
+      const outHomeHtml = fs.readFileSync(path.join(outDir, "index.html"), "utf8");
+      const outAboutHtml = fs.readFileSync(path.join(outDir, "about/index.html"), "utf8");
+      assert.ok(outHomeHtml.includes("window.__DINOU_STATIC_EXPORT__=true;"));
+      assert.ok(outAboutHtml.includes("window.__DINOU_STATIC_EXPORT__=true;"));
+      assert.equal(fs.readFileSync(path.join(outDir, "page.rsc"), "utf8"), '0:"home-page"\n');
+      assert.equal(fs.readFileSync(path.join(outDir, "layout.rsc"), "utf8"), '0:"root-layout"\n');
+      assert.equal(
+        fs.readFileSync(path.join(outDir, "about/page.rsc"), "utf8"),
+        '0:"about-page"\n'
+      );
     } finally {
       try {
         fs.rmSync(tmpExport, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -2278,33 +2601,62 @@ describe("Public Static Assets & .dinou/dist1 Physical Isolation", () => {
 
 ### 6.2. Playwright E2E Test Suite (`tests/e2e/public-static-assets.spec.ts`)
 
-Verifies live HTTP `GET` and `HEAD` static file serving, `Cache-Control` differentiation, `/.well-known/*` & PWA `/manifest.json` support, URL-encoded space handling, path-traversal/dotfile rejection, and `.dinou/dist1` physical isolation against a production Dinou server.
+Verifies live HTTP `GET` and `HEAD` static file serving, `Cache-Control` differentiation, `/.well-known/*` & PWA `/manifest.json` support, URL-encoded space handling, path-traversal/dotfile rejection, `.dinou/dist1` physical isolation against a production Dinou server, and full serverless `dinou export-static` hydration + `<Link>` SPA navigation over a zero-Dinou static HTTP server.
 
 ```typescript
 // tests/e2e/public-static-assets.spec.ts
 import { test, expect } from "@playwright/test";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 
 const PORT = 4194;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
+const STATIC_EXPORT_PORT = 4195;
+const STATIC_EXPORT_URL = `http://127.0.0.1:${STATIC_EXPORT_PORT}`;
 
-test.describe("Public Static Assets & .dinou/dist1 Physical Isolation (E2E)", () => {
+test.describe("Public Static Assets, .dinou/dist1 Isolation & Static Export SPA (E2E)", () => {
   let appDir = "";
+  let dinouRoot = "";
   let serverProc: ChildProcess | null = null;
 
   test.beforeAll(async () => {
     const workspaceRoot = process.cwd();
     appDir = fs.mkdtempSync(path.join(os.tmpdir(), "dinou-e2e-public-"));
 
-    // Symlink node_modules (and ejected dinou/ if present) into the fixture workspace
-    fs.symlinkSync(
-      path.join(workspaceRoot, "node_modules"),
-      path.join(appDir, "node_modules"),
-      process.platform === "win32" ? "junction" : "dir"
-    );
+    if (fs.existsSync(path.join(workspaceRoot, "core/export-static.js"))) {
+      dinouRoot = workspaceRoot;
+    } else if (fs.existsSync(path.join(workspaceRoot, "dinou/core/export-static.js"))) {
+      dinouRoot = path.join(workspaceRoot, "dinou");
+    } else {
+      dinouRoot = path.join(workspaceRoot, "node_modules/dinou");
+    }
+
+    // Link node_modules (and ensure "dinou" package is resolvable in both upstream & app repos)
+    if (fs.existsSync(path.join(workspaceRoot, "node_modules/dinou"))) {
+      fs.symlinkSync(
+        path.join(workspaceRoot, "node_modules"),
+        path.join(appDir, "node_modules"),
+        process.platform === "win32" ? "junction" : "dir"
+      );
+    } else {
+      fs.mkdirSync(path.join(appDir, "node_modules"), { recursive: true });
+      for (const entry of fs.readdirSync(path.join(workspaceRoot, "node_modules"))) {
+        fs.symlinkSync(
+          path.join(workspaceRoot, "node_modules", entry),
+          path.join(appDir, "node_modules", entry),
+          process.platform === "win32" ? "junction" : "dir"
+        );
+      }
+      fs.symlinkSync(
+        dinouRoot,
+        path.join(appDir, "node_modules/dinou"),
+        process.platform === "win32" ? "junction" : "dir"
+      );
+    }
+
     if (fs.existsSync(path.join(workspaceRoot, "dinou"))) {
       fs.symlinkSync(
         path.join(workspaceRoot, "dinou"),
@@ -2326,8 +2678,8 @@ test.describe("Public Static Assets & .dinou/dist1 Physical Isolation (E2E)", ()
       )
     );
 
-    // Create minimal Dinou app in src/ (with a Client Component and a Server Function)
-    fs.mkdirSync(path.join(appDir, "src"), { recursive: true });
+    // Create minimal 2-route Dinou app in src/ (with Layout, <Link>, Client Component & Server Function)
+    fs.mkdirSync(path.join(appDir, "src/about"), { recursive: true });
     fs.writeFileSync(
       path.join(appDir, "src/actions.ts"),
       `"use server";\nexport async function pingAction() {\n  return "pong";\n}\n`
@@ -2337,20 +2689,43 @@ test.describe("Public Static Assets & .dinou/dist1 Physical Isolation (E2E)", ()
       `"use client";\nimport { pingAction } from "./actions";\nexport function ClientBadge() {\n  return <span data-action={typeof pingAction}>Client Ready</span>;\n}\n`
     );
     fs.writeFileSync(
-      path.join(appDir, "src/page.tsx"),
-      `import { ClientBadge } from "./client-badge";
-      export default function HomePage() {
+      path.join(appDir, "src/layout.tsx"),
+      `import type { ReactNode } from "react";
+      export default function RootLayout({ children }: { children: ReactNode }) {
         return (
           <html lang="en">
             <head>
               <title>Public Assets E2E</title>
               <link rel="manifest" href="/manifest.json" />
             </head>
-            <body>
-              <h1>Public Assets E2E Ready</h1>
-              <ClientBadge />
-            </body>
+            <body>{children}</body>
           </html>
+        );
+      }\n`
+    );
+    fs.writeFileSync(
+      path.join(appDir, "src/page.tsx"),
+      `import { Link } from "./dinou";
+      import { ClientBadge } from "./client-badge";
+      export default function HomePage() {
+        return (
+          <main>
+            <h1>Public Assets E2E Ready</h1>
+            <ClientBadge />
+            <Link href="/about">Go to About</Link>
+          </main>
+        );
+      }\n`
+    );
+    fs.writeFileSync(
+      path.join(appDir, "src/about/page.tsx"),
+      `import { Link } from "./dinou";
+      export default function AboutPage() {
+        return (
+          <main>
+            <h1>About Static Export</h1>
+            <Link href="/">Back Home</Link>
+          </main>
         );
       }\n`
     );
@@ -2386,9 +2761,7 @@ test.describe("Public Static Assets & .dinou/dist1 Physical Isolation (E2E)", ()
     // Dotfile in public/ that must NOT be served over HTTP
     fs.writeFileSync(path.join(appDir, "public/.env"), "SECRET_KEY=should_never_leak");
 
-    const cliPath = fs.existsSync(path.join(workspaceRoot, "dinou/cli.js"))
-      ? path.join(workspaceRoot, "dinou/cli.js")
-      : path.join(workspaceRoot, "node_modules/dinou/cli.js");
+    const cliPath = path.join(dinouRoot, "cli.js");
 
     execFileSync(process.execPath, [cliPath, "build"], {
       cwd: appDir,
@@ -2518,6 +2891,115 @@ test.describe("Public Static Assets & .dinou/dist1 Physical Isolation (E2E)", ()
     await page.goto(BASE_URL);
     await expect(page.locator("h1")).toHaveText("Public Assets E2E Ready");
     await expect(page.locator('link[rel="manifest"]')).toHaveAttribute("href", "/manifest.json");
+  });
+
+  test("exports a clean out/ static site and performs serverless SPA hydration & <Link> navigation via page.rsc and layout.rsc", async ({
+    page,
+  }) => {
+    execFileSync(process.execPath, [path.join(dinouRoot, "core/export-static.js")], {
+      cwd: appDir,
+      stdio: "pipe",
+    });
+
+    const outDir = path.join(appDir, "out");
+    expect(fs.existsSync(path.join(outDir, "index.html"))).toBe(true);
+    expect(fs.existsSync(path.join(outDir, "page.rsc"))).toBe(true);
+    expect(fs.existsSync(path.join(outDir, "layout.rsc"))).toBe(true);
+    expect(fs.existsSync(path.join(outDir, "about/index.html"))).toBe(true);
+    expect(fs.existsSync(path.join(outDir, "about/page.rsc"))).toBe(true);
+    expect(fs.existsSync(path.join(outDir, "manifest.json"))).toBe(true);
+
+    // Internal .dinou/dist2 files must never leak into out/
+    expect(fs.existsSync(path.join(outDir, "metadata.json"))).toBe(false);
+    expect(fs.existsSync(path.join(outDir, "layout.metadata.json"))).toBe(false);
+    expect(fs.existsSync(path.join(outDir, "rsc.rsc"))).toBe(false);
+    expect(fs.existsSync(path.join(outDir, "about/metadata.json"))).toBe(false);
+    expect(fs.existsSync(path.join(outDir, "about/rsc.rsc"))).toBe(false);
+    expect(fs.existsSync(path.join(outDir, "status-manifest.json"))).toBe(false);
+    expect(fs.existsSync(path.join(outDir, "slots"))).toBe(false);
+
+    expect(fs.readFileSync(path.join(outDir, "index.html"), "utf8")).toContain(
+      "window.__DINOU_STATIC_EXPORT__=true;"
+    );
+    expect(fs.readFileSync(path.join(outDir, "about/index.html"), "utf8")).toContain(
+      "window.__DINOU_STATIC_EXPORT__=true;"
+    );
+
+    // Serve out/ over a pure zero-Dinou static file server (mimicking S3 / GitHub Pages / Cloudflare Pages)
+    const mimeByExt: Record<string, string> = {
+      ".html": "text/html; charset=utf-8",
+      ".js": "application/javascript; charset=utf-8",
+      ".css": "text/css; charset=utf-8",
+      ".json": "application/json; charset=utf-8",
+      ".svg": "image/svg+xml",
+      ".rsc": "application/octet-stream",
+    };
+
+    const staticServer = http.createServer((req, res) => {
+      const reqUrl = new URL(req.url || "/", STATIC_EXPORT_URL);
+      const relPath = decodeURIComponent(reqUrl.pathname).replace(/^\/+/, "");
+      let target = path.resolve(outDir, relPath);
+
+      if (!target.startsWith(path.resolve(outDir))) {
+        res.writeHead(403).end("Forbidden");
+        return;
+      }
+
+      if (fs.existsSync(target) && fs.statSync(target).isDirectory()) {
+        target = path.join(target, "index.html");
+      }
+
+      if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
+        res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }).end("Not Found");
+        return;
+      }
+
+      const ext = path.extname(target).toLowerCase();
+      res.writeHead(200, {
+        "Content-Type": mimeByExt[ext] || "application/octet-stream",
+      });
+      res.end(fs.readFileSync(target));
+    });
+
+    await new Promise<void>((resolve) =>
+      staticServer.listen(STATIC_EXPORT_PORT, "127.0.0.1", () => resolve())
+    );
+
+    const requestedPaths: string[] = [];
+    page.on("request", (req) => {
+      const u = new URL(req.url());
+      if (u.origin === STATIC_EXPORT_URL) {
+        requestedPaths.push(u.pathname);
+      }
+    });
+
+    try {
+      await page.goto(STATIC_EXPORT_URL);
+      await expect(page.locator("body")).toHaveAttribute("data-hydrated", "true");
+      await expect(page.locator("h1")).toHaveText("Public Assets E2E Ready");
+
+      // Mark window instance to prove subsequent <Link> click does NOT trigger a full browser reload
+      await page.evaluate(() => {
+        (window as unknown as { __SPA_SESSION_ALIVE__?: boolean }).__SPA_SESSION_ALIVE__ = true;
+      });
+
+      await page.getByRole("link", { name: "Go to About" }).click();
+      await expect(page).toHaveURL(`${STATIC_EXPORT_URL}/about`);
+      await expect(page.locator("h1")).toHaveText("About Static Export");
+
+      const spaPreserved = await page.evaluate(
+        () => (window as unknown as { __SPA_SESSION_ALIVE__?: boolean }).__SPA_SESSION_ALIVE__
+      );
+      expect(spaPreserved).toBe(true);
+
+      // Verify static .rsc files were fetched and zero server-only /____rsc_* endpoints were hit
+      expect(requestedPaths).toContain("/layout.rsc");
+      expect(requestedPaths).toContain("/page.rsc");
+      expect(requestedPaths).toContain("/about/page.rsc");
+      expect(requestedPaths.some((p) => p.startsWith("/____rsc_"))).toBe(false);
+    } finally {
+      await new Promise<void>((resolve) => staticServer.close(() => resolve()));
+    }
   });
 });
 ```
