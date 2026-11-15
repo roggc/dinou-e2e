@@ -7,10 +7,10 @@ compatibility_flags = ["nodejs_compat"]
 # ====================================================================
 # Cloudflare Workers Static Assets
 # ====================================================================
-# Serves client JS/CSS bundles and pre-rendered SSG pages directly from
-# Cloudflare's global edge network before requests hit the worker.
+# Serves public/* files and client JS/CSS bundles from .dinou/cloudflare/assets
+# while keeping internal SSG/ISR/PPR cache isolated under __dinou_dist2/.
 [assets]
-directory = ".dinou/dist3"
+directory = ".dinou/cloudflare/assets"
 binding = "ASSETS"
 run_worker_first = true
 html_handling = "none"

@@ -1,11 +1,11 @@
 // scripts/verify-public-static-assets-ci.mjs
-// Verifies Dinou public/ Static Assets Parity, Security Hardening, .dinou/dist1 Physical Isolation & Static Export SPA (v9.4.0):
-// 1. normalizePublicRequestPath, isInternalDinouAssetPath & resolveConfinedStaticFile allow PWA /manifest.json, /server/diagram.png, spaces & RFC 8615 /.well-known/* while blocking /slots/*, /status-manifest.json, dist2 route HTML/metadata/RSC artifacts, traversal, backslashes, null bytes & dotfiles
+// Verifies Dinou public/ Static Assets Parity, Security Hardening, .dinou/dist1 Physical Isolation, Cloudflare .dinou/cloudflare/assets Isolation & Static Export SPA (v9.4.0):
+// 1. normalizePublicRequestPath, isReservedCloudflareDist2RequestPath, isInternalDinouAssetPath & resolveConfinedStaticFile allow PWA /manifest.json, /metadata.json, /slots/* & /server/* user public assets, spaces & RFC 8615 /.well-known/* while blocking /__dinou_dist2/*, OS junk, traversal, backslashes, null bytes & dotfiles
 // 2. STATIC_MIME_TYPES, PUBLIC_STATIC_EXT_REGEX, getStaticContentType, isImmutableAssetPath & getStaticCacheControl resolve exact MIME types (including extensionless apple-app-site-association & /manifest.json) and differentiate immutable hashed chunks vs must-revalidate public/ assets
 // 3. copyStaticDirectoriesToOutdir recursively copies nested subdirectories, spaces, UTF-8 filenames & dotfiles (.well-known/*, .nojekyll) while filtering .DS_Store and Thumbs.db
-// 4. Cloudflare Workers adapter (dinou/adapters/cloudflare.js) & isPublicStaticAssetRequest serve PWA /manifest.json, SEO, .well-known & PDF assets (GET & HEAD), rewrite apple-app-site-association Content-Type to application/json, and block /slots/* & dist2 cache artifacts without hitting env.ASSETS
-// 5. Esbuild, Rollup & Webpack consolidate server/* and ALL internal manifests in .dinou/dist1 (and .dinou/node-dev in dev disk mode), keep .dinou/dist3 100% pure (including deno/build.js), preserve user public/manifest.json, ignore legacy favicons/, and wire static-export RSC routing across client.jsx, client-webpack.jsx & cli.js
-// 6. dinou/core/export-static.js, shouldExportDist3Entry, shouldExportDist2File & injectStaticExportFlag export index.html (with __DINOU_STATIC_EXPORT__ without mutating .dinou/dist2), page.rsc, layout.rsc, client chunks, user PWA manifest.json & .nojekyll/.well-known/* while excluding slots/*, status-manifest.json & internal dist2 metadata
+// 4. Cloudflare Workers adapter (dinou/adapters/cloudflare.js), isPublicStaticAssetRequest & fetchCloudflareDist2Asset serve PWA /manifest.json, SEO, .well-known & PDF assets (GET & HEAD), rewrite apple-app-site-association Content-Type to application/json, reject external /__dinou_dist2/* without hitting env.ASSETS, and read internal SSG/ISR/PPR/Slot cache from /__dinou_dist2/* (including HTML canonicalization fallbacks)
+// 5. Esbuild, Rollup & Webpack consolidate server/* and ALL internal manifests in .dinou/dist1 (and .dinou/node-dev in dev disk mode), keep .dinou/dist3 100% pure across all runtimes (including cloudflare/build.js -> .dinou/cloudflare/assets/__dinou_dist2 & deno/build.js), preserve user public/manifest.json, ignore legacy favicons/, and wire static-export RSC routing & DINOU_BUILD_TOOL across client.jsx, client-webpack.jsx & cli.js
+// 6. dinou/core/export-static.js, shouldExportDist3Entry, shouldExportDist2File & injectStaticExportFlag export index.html (with __DINOU_STATIC_EXPORT__ without mutating .dinou/dist2), page.rsc, layout.rsc, client chunks, user PWA manifest.json & .nojekyll/.well-known/* while excluding __dinou_dist2/*, slots/*, status-manifest.json & internal dist2 metadata
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -61,8 +61,10 @@ const importDinou = (relPath) =>
 const {
   STATIC_MIME_TYPES,
   PUBLIC_STATIC_EXT_REGEX,
+  CLOUDFLARE_DIST2_NAMESPACE,
   STATIC_EXPORT_SCRIPT,
   getStaticContentType,
+  isReservedCloudflareDist2RequestPath,
   isInternalDinouAssetPath,
   normalizePublicRequestPath,
   resolveConfinedStaticFile,
@@ -71,6 +73,7 @@ const {
   isPublicStaticAssetRequest,
   shouldExportDist3Entry,
   shouldExportDist2File,
+  fetchCloudflareDist2Asset,
   injectStaticExportFlag,
 } = await importDinou("core/static-assets.js");
 
@@ -79,32 +82,28 @@ const { copyStaticDirectoriesToOutdir } = await importDinou(
 );
 
 console.log(
-  "1️⃣ Verifying normalizePublicRequestPath, isInternalDinouAssetPath & resolveConfinedStaticFile (allowing PWA /manifest.json & /server/* public assets while blocking dist2 cache artifacts & traversal)..."
+  "1️⃣ Verifying normalizePublicRequestPath, isReservedCloudflareDist2RequestPath, isInternalDinouAssetPath & resolveConfinedStaticFile..."
 );
 {
+  assert.equal(CLOUDFLARE_DIST2_NAMESPACE, "__dinou_dist2");
+
   const blockedUrls = [
     "",
     "/",
     "favicon.ico",
-    "/slots/home-hero/slot.json",
-    "/slots/home-hero/slot.metadata.json",
-    "/SLOTS/sidebar/slot.json",
-    "/status-manifest.json",
-    "/STATUS-MANIFEST.JSON",
-    "/index.html",
-    "/about/index.html",
-    "/about/shell.html",
-    "/about/metadata.json",
-    "/about/layout.metadata.json",
-    "/about/slot.metadata.json",
-    "/about/shell.layout.json",
-    "/about/shell.page.json",
-    "/about/slot.json",
-    "/about/page.rsc",
-    "/about/layout.rsc",
-    "/about/rsc.rsc",
-    "/main._old.js",
-    "/about/index._old.html",
+    "/__dinou_dist2",
+    "/__dinou_dist2/",
+    "/__dinou_dist2/index.html",
+    "/__dinou_dist2/metadata.json",
+    "/__dinou_dist2/slots/home-hero/slot.json",
+    "/__DINOU_DIST2/about/page.rsc",
+    "/%5f%5fdinou_dist2/metadata.json",
+    "/%5F%5FDINOU_DIST2/status-manifest.json",
+    "/Thumbs.db",
+    "/thumbs.db",
+    "/images/Thumbs.db",
+    "/.DS_Store",
+    "/images/.DS_Store",
     "/../package.json",
     "/%2e%2e/package.json",
     "/%2E%2E/%2E%2E/etc/passwd",
@@ -121,8 +120,6 @@ console.log(
     "/.git/config",
     "/.nojekyll",
     "/.assetsignore",
-    "/.DS_Store",
-    "/images/.DS_Store",
     "/.well-known",
     "/.well-known/",
     "/.well-known/.hidden",
@@ -137,8 +134,44 @@ console.log(
     );
   }
 
-  // Standard PWA /manifest.json and /server/* user assets are allowed (server bundles live in .dinou/dist1)
+  // Reserved Cloudflare internal dist2 namespace detection (raw, uppercase, URL-encoded & backslash)
+  assert.equal(isReservedCloudflareDist2RequestPath("/__dinou_dist2"), true);
+  assert.equal(isReservedCloudflareDist2RequestPath("/__dinou_dist2/"), true);
+  assert.equal(
+    isReservedCloudflareDist2RequestPath("/__dinou_dist2/metadata.json"),
+    true
+  );
+  assert.equal(
+    isReservedCloudflareDist2RequestPath("/__DINOU_DIST2/slots/hero/slot.json"),
+    true
+  );
+  assert.equal(
+    isReservedCloudflareDist2RequestPath("/%5f%5fdinou_dist2/page.rsc"),
+    true
+  );
+  assert.equal(
+    isReservedCloudflareDist2RequestPath("\\__dinou_dist2\\about\\index.html"),
+    true
+  );
+  assert.equal(isReservedCloudflareDist2RequestPath(""), false);
+  assert.equal(isReservedCloudflareDist2RequestPath("/"), false);
+  assert.equal(isReservedCloudflareDist2RequestPath("/robots.txt"), false);
+  assert.equal(
+    isReservedCloudflareDist2RequestPath("/__dinou_dist2_extra/file.js"),
+    false
+  );
+  assert.equal(
+    isReservedCloudflareDist2RequestPath("/nested/__dinou_dist2/file.js"),
+    false
+  );
+
+  // Standard PWA /manifest.json, /metadata.json, /slots/* & /server/* user public assets are allowed
   assert.equal(normalizePublicRequestPath("/manifest.json"), "manifest.json");
+  assert.equal(normalizePublicRequestPath("/metadata.json"), "metadata.json");
+  assert.equal(
+    normalizePublicRequestPath("/slots/banner.svg"),
+    "slots/banner.svg"
+  );
   assert.equal(
     normalizePublicRequestPath("/server/diagram.png"),
     "server/diagram.png"
@@ -188,18 +221,21 @@ console.log(
   );
 
   assert.equal(isInternalDinouAssetPath(""), true);
-  assert.equal(isInternalDinouAssetPath("slots/main"), true);
-  assert.equal(isInternalDinouAssetPath("slots/hero/slot.json"), true);
-  assert.equal(isInternalDinouAssetPath("slots/hero/slot.metadata.json"), true);
-  assert.equal(isInternalDinouAssetPath("status-manifest.json"), true);
-  assert.equal(isInternalDinouAssetPath("index.html"), true);
-  assert.equal(isInternalDinouAssetPath("about/shell.page.json"), true);
-  assert.equal(isInternalDinouAssetPath("about/slot.json"), true);
-  assert.equal(isInternalDinouAssetPath("about/slot.metadata.json"), true);
-  assert.equal(isInternalDinouAssetPath("about/page.rsc"), true);
-  assert.equal(isInternalDinouAssetPath("main._old.js"), true);
+  assert.equal(isInternalDinouAssetPath("/"), true);
+  assert.equal(isInternalDinouAssetPath("__dinou_dist2"), true);
+  assert.equal(isInternalDinouAssetPath("__dinou_dist2/metadata.json"), true);
+  assert.equal(
+    isInternalDinouAssetPath("__DINOU_DIST2/slots/hero/slot.json"),
+    true
+  );
+  assert.equal(isInternalDinouAssetPath(".DS_Store"), true);
+  assert.equal(isInternalDinouAssetPath("images/.DS_Store"), true);
+  assert.equal(isInternalDinouAssetPath("Thumbs.db"), true);
+  assert.equal(isInternalDinouAssetPath("images/Thumbs.db"), true);
   assert.equal(isInternalDinouAssetPath("manifest.json"), false);
   assert.equal(isInternalDinouAssetPath("pwa/manifest.json"), false);
+  assert.equal(isInternalDinouAssetPath("metadata.json"), false);
+  assert.equal(isInternalDinouAssetPath("slots/banner.svg"), false);
   assert.equal(isInternalDinouAssetPath("server/diagram.png"), false);
   assert.equal(isInternalDinouAssetPath("robots.txt"), false);
 
@@ -419,10 +455,12 @@ console.log(
 }
 
 console.log(
-  "4️⃣ Verifying Cloudflare Workers adapter & isPublicStaticAssetRequest (PWA /manifest.json, GET/HEAD, apple-app-site-association JSON rewrite & dist2 cache blocking)..."
+  "4️⃣ Verifying Cloudflare Workers adapter, isPublicStaticAssetRequest & fetchCloudflareDist2Asset (PWA /manifest.json, GET/HEAD, apple-app-site-association JSON rewrite & /__dinou_dist2 isolation)..."
 );
 {
   assert.equal(isPublicStaticAssetRequest("/manifest.json"), true);
+  assert.equal(isPublicStaticAssetRequest("/metadata.json"), true);
+  assert.equal(isPublicStaticAssetRequest("/slots/banner.svg"), true);
   assert.equal(isPublicStaticAssetRequest("/server/diagram.png"), true);
   assert.equal(isPublicStaticAssetRequest("/sitemap.xml"), true);
   assert.equal(isPublicStaticAssetRequest("/robots.txt"), true);
@@ -442,19 +480,22 @@ console.log(
 
   assert.equal(isPublicStaticAssetRequest("/"), false);
   assert.equal(isPublicStaticAssetRequest("/about"), false);
-  assert.equal(isPublicStaticAssetRequest("/about/index.html"), false);
-  assert.equal(isPublicStaticAssetRequest("/about/shell.html"), false);
-  assert.equal(isPublicStaticAssetRequest("/about/metadata.json"), false);
-  assert.equal(isPublicStaticAssetRequest("/about/layout.metadata.json"), false);
-  assert.equal(isPublicStaticAssetRequest("/about/shell.page.json"), false);
-  assert.equal(isPublicStaticAssetRequest("/about/slot.json"), false);
-  assert.equal(isPublicStaticAssetRequest("/about/page.rsc"), false);
-  assert.equal(isPublicStaticAssetRequest("/slots/hero/slot.json"), false);
+  assert.equal(isPublicStaticAssetRequest("/__dinou_dist2"), false);
+  assert.equal(isPublicStaticAssetRequest("/__dinou_dist2/"), false);
+  assert.equal(isPublicStaticAssetRequest("/__dinou_dist2/index.html"), false);
   assert.equal(
-    isPublicStaticAssetRequest("/slots/hero/slot.metadata.json"),
+    isPublicStaticAssetRequest("/__dinou_dist2/about/metadata.json"),
     false
   );
-  assert.equal(isPublicStaticAssetRequest("/status-manifest.json"), false);
+  assert.equal(
+    isPublicStaticAssetRequest("/__dinou_dist2/slots/hero/slot.json"),
+    false
+  );
+  assert.equal(
+    isPublicStaticAssetRequest("/%5f%5fdinou_dist2/status-manifest.json"),
+    false
+  );
+  assert.equal(isPublicStaticAssetRequest("/Thumbs.db"), false);
   assert.equal(isPublicStaticAssetRequest("/.nojekyll"), false);
   assert.equal(isPublicStaticAssetRequest("/.env"), false);
 
@@ -464,6 +505,7 @@ console.log(
     process.chdir(tmpCfDir);
 
     const { default: cfWorker } = await importDinou("adapters/cloudflare.js");
+    const { handleRequest } = await importDinou("core/handler.js");
     const assetHits = [];
     const mockEnv = {
       ASSETS: {
@@ -496,6 +538,53 @@ console.log(
                 headers: { "content-type": "application/xml; charset=utf-8" },
               }
             );
+          }
+          if (
+            u.pathname === `/${CLOUDFLARE_DIST2_NAMESPACE}/about/metadata.json`
+          ) {
+            return new Response('{"status":200,"generatedAt":123}', {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          }
+          if (
+            u.pathname === `/${CLOUDFLARE_DIST2_NAMESPACE}/slots/hero/slot.json`
+          ) {
+            return new Response('{"jsx":null}', {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          }
+          // Trailing-slash canonicalization (Cloudflare default) for /about/
+          if (u.pathname === `/${CLOUDFLARE_DIST2_NAMESPACE}/about/`) {
+            return new Response("<html>About SSG</html>", {
+              status: 200,
+              headers: { "content-type": "text/html; charset=utf-8" },
+            });
+          }
+          // html_handling = "none" exact /index.html fallback for /pricing/index.html
+          if (
+            u.pathname ===
+            `/${CLOUDFLARE_DIST2_NAMESPACE}/pricing/index.html`
+          ) {
+            return new Response("<html>Pricing SSG</html>", {
+              status: 200,
+              headers: { "content-type": "text/html; charset=utf-8" },
+            });
+          }
+          // Drop-trailing-slash canonicalization fallback for /docs
+          if (u.pathname === `/${CLOUDFLARE_DIST2_NAMESPACE}/docs`) {
+            return new Response("<html>Docs SSG</html>", {
+              status: 200,
+              headers: { "content-type": "text/html; charset=utf-8" },
+            });
+          }
+          // Root index.html fallback under html_handling = "none"
+          if (u.pathname === `/${CLOUDFLARE_DIST2_NAMESPACE}/index.html`) {
+            return new Response("<html>Root SSG</html>", {
+              status: 200,
+              headers: { "content-type": "text/html; charset=utf-8" },
+            });
           }
           return new Response("Not Found", { status: 404 });
         },
@@ -546,35 +635,117 @@ console.log(
     assert.equal(sitemapGet.status, 200);
     assert.ok(assetHits.includes("GET:/sitemap.xml"));
 
+    // External GET & HEAD requests to /__dinou_dist2/*, /cdn-cgi/* & dotfiles MUST 404 before hitting env.ASSETS
     assetHits.length = 0;
     for (const blocked of [
-      "/slots/hero/slot.json",
-      "/slots/hero/slot.metadata.json",
-      "/status-manifest.json",
-      "/about/index.html",
-      "/about/metadata.json",
-      "/about/layout.metadata.json",
-      "/about/shell.page.json",
-      "/about/page.rsc",
+      "/__dinou_dist2",
+      "/__dinou_dist2/",
+      "/__dinou_dist2/index.html",
+      "/__dinou_dist2/about/metadata.json",
+      "/__dinou_dist2/slots/hero/slot.json",
+      "/%5f%5fdinou_dist2/about/metadata.json",
+      "/%5F%5FDINOU_DIST2/page.rsc",
+      "/cdn-cgi/rum",
       "/.env",
       "/.well-known/.hidden.json",
     ]) {
-      const res = await cfWorker.fetch(
-        new Request(`https://example.com${blocked}`),
-        mockEnv,
-        {}
-      );
-      assert.equal(
-        res.status,
-        404,
-        `Expected Cloudflare adapter to return 404 for ${blocked}`
-      );
+      for (const method of ["GET", "HEAD"]) {
+        const res = await cfWorker.fetch(
+          new Request(`https://example.com${blocked}`, { method }),
+          mockEnv,
+          {}
+        );
+        assert.equal(
+          res.status,
+          404,
+          `Expected Cloudflare adapter to return 404 for ${method} ${blocked}`
+        );
+      }
     }
     assert.deepEqual(
       assetHits,
       [],
-      "Expected Cloudflare adapter never to forward dist2 cache or dotfile paths to env.ASSETS"
+      "Expected Cloudflare adapter never to forward /__dinou_dist2/* or dotfile paths to env.ASSETS"
     );
+
+    // Direct handleRequest defense-in-depth guard for /__dinou_dist2/* across all runtimes
+    const handlerBlockedRes = await handleRequest(
+      new Request("https://example.com/__dinou_dist2/about/metadata.json"),
+      { env: mockEnv, runtime: "edge" }
+    );
+    assert.equal(handlerBlockedRes.status, 404);
+    assert.deepEqual(assetHits, []);
+
+    // Internal Worker cache reader fetchCloudflareDist2Asset reads /__dinou_dist2/<key> & canonicalized index.html
+    const internalMetaRes = await fetchCloudflareDist2Asset(
+      mockEnv.ASSETS,
+      "about/metadata.json",
+      "https://example.com"
+    );
+    assert.ok(internalMetaRes);
+    assert.equal(
+      await internalMetaRes.text(),
+      '{"status":200,"generatedAt":123}'
+    );
+
+    const internalSlotRes = await fetchCloudflareDist2Asset(
+      mockEnv.ASSETS,
+      "/slots/hero/slot.json",
+      "https://example.com"
+    );
+    assert.ok(internalSlotRes);
+    assert.equal(await internalSlotRes.text(), '{"jsx":null}');
+
+    const internalAboutHtml = await fetchCloudflareDist2Asset(
+      mockEnv.ASSETS,
+      "about/index.html",
+      "https://example.com"
+    );
+    assert.ok(internalAboutHtml);
+    assert.equal(await internalAboutHtml.text(), "<html>About SSG</html>");
+
+    const internalPricingHtml = await fetchCloudflareDist2Asset(
+      mockEnv.ASSETS,
+      "pricing/index.html",
+      "https://example.com"
+    );
+    assert.ok(internalPricingHtml);
+    assert.equal(await internalPricingHtml.text(), "<html>Pricing SSG</html>");
+
+    const internalDocsHtml = await fetchCloudflareDist2Asset(
+      mockEnv.ASSETS,
+      "docs/index.html",
+      "https://example.com"
+    );
+    assert.ok(internalDocsHtml);
+    assert.equal(await internalDocsHtml.text(), "<html>Docs SSG</html>");
+
+    const internalRootHtml = await fetchCloudflareDist2Asset(
+      mockEnv.ASSETS,
+      "index.html",
+      "https://example.com"
+    );
+    assert.ok(internalRootHtml);
+    assert.equal(await internalRootHtml.text(), "<html>Root SSG</html>");
+
+    assert.equal(
+      await fetchCloudflareDist2Asset(
+        mockEnv.ASSETS,
+        "missing/index.html",
+        "https://example.com"
+      ),
+      null
+    );
+    assert.equal(
+      await fetchCloudflareDist2Asset(
+        mockEnv.ASSETS,
+        "missing/metadata.json",
+        "https://example.com"
+      ),
+      null
+    );
+    assert.equal(await fetchCloudflareDist2Asset(null, "index.html"), null);
+    assert.equal(await fetchCloudflareDist2Asset(mockEnv.ASSETS, ""), null);
   } finally {
     process.chdir(origCwd);
     fs.rmSync(tmpCfDir, { recursive: true, force: true });
@@ -982,7 +1153,7 @@ console.log(
       pwaManifestContent
     );
 
-    // 5E. Verify deno/build.js dist3 purity, cli.js DINOU_BUILD_TOOL propagation & client.jsx / client-webpack.jsx static-export RSC parity
+    // 5E. Verify deno/build.js & cloudflare/build.js dist3 purity, Cloudflare .dinou/cloudflare/assets/__dinou_dist2 layout, cli.js DINOU_BUILD_TOOL propagation & client static-export RSC parity
     const denoBuildSrc = fs.readFileSync(
       path.join(dinouRoot, "deno/build.js"),
       "utf8"
@@ -993,12 +1164,62 @@ console.log(
       "deno/build.js must NOT copy .dinou/dist2 into .dinou/dist3"
     );
 
+    const cfBuildSrc = fs.readFileSync(
+      path.join(dinouRoot, "cloudflare/build.js"),
+      "utf8"
+    );
+    assert.equal(
+      cfBuildSrc.includes("copyRecursive(dist2Dir, dist3Dir)"),
+      false,
+      "cloudflare/build.js must NOT copy .dinou/dist2 into .dinou/dist3"
+    );
+    assert.ok(
+      cfBuildSrc.includes("CLOUDFLARE_DIST2_NAMESPACE") &&
+        cfBuildSrc.includes("shouldExportDist3Entry") &&
+        cfBuildSrc.includes(".dinou/cloudflare/assets") &&
+        cfBuildSrc.includes("isReservedCloudflareDist2RequestPath"),
+      "cloudflare/build.js must assemble .dinou/cloudflare/assets + __dinou_dist2 and block external __dinou_dist2 requests"
+    );
+
+    for (const edgeReaderRel of [
+      "core/handler.js",
+      "core/ppr-runtime.js",
+      "core/cache-slot.js",
+      "core/cache-revalidate.js",
+    ]) {
+      const readerSrc = fs.readFileSync(
+        path.join(dinouRoot, edgeReaderRel),
+        "utf8"
+      );
+      assert.ok(
+        readerSrc.includes("fetchCloudflareDist2Asset"),
+        `Expected ${edgeReaderRel} to read Cloudflare SSG/ISR/PPR/Slot cache via fetchCloudflareDist2Asset`
+      );
+    }
+
     const cliSrc = fs.readFileSync(path.join(dinouRoot, "cli.js"), "utf8");
     assert.ok(
       cliSrc.includes("DINOU_BUILD_TOOL=rollup") &&
         cliSrc.includes("DINOU_BUILD_TOOL=webpack"),
-      "dinou/cli.js must pass DINOU_BUILD_TOOL=rollup and DINOU_BUILD_TOOL=webpack to export-static.js"
+      "dinou/cli.js must pass DINOU_BUILD_TOOL=rollup and DINOU_BUILD_TOOL=webpack"
     );
+    assert.ok(
+      /DINOU_BUILD_TOOL=rollup\s+node\s+\$\{p\("cloudflare\/build\.js"\)\}/.test(
+        cliSrc
+      ),
+      "dinou/cli.js build:cloudflare:rollup must pass DINOU_BUILD_TOOL=rollup to cloudflare/build.js"
+    );
+
+    for (const wranglerFile of ["wrangler.toml", "wrangler.toml.example"]) {
+      const wranglerPath = path.join(projectRoot, wranglerFile);
+      if (fs.existsSync(wranglerPath)) {
+        const wranglerToml = fs.readFileSync(wranglerPath, "utf8");
+        assert.ok(
+          wranglerToml.includes('directory = ".dinou/cloudflare/assets"'),
+          `Expected ${wranglerFile} [assets] directory to point to ".dinou/cloudflare/assets"`
+        );
+      }
+    }
 
     for (const clientRel of ["core/client.jsx", "core/client-webpack.jsx"]) {
       const clientSrc = fs.readFileSync(path.join(dinouRoot, clientRel), "utf8");
@@ -1032,26 +1253,23 @@ console.log(
 );
 {
   assert.equal(shouldExportDist3Entry(""), false);
-  assert.equal(shouldExportDist3Entry("slots"), false);
-  assert.equal(shouldExportDist3Entry("slots/hero/slot.json"), false);
-  assert.equal(shouldExportDist3Entry("slots/hero/slot.metadata.json"), false);
-  assert.equal(shouldExportDist3Entry("status-manifest.json"), false);
+  assert.equal(shouldExportDist3Entry("/"), false);
+  assert.equal(shouldExportDist3Entry("__dinou_dist2"), false);
+  assert.equal(shouldExportDist3Entry("__dinou_dist2/metadata.json"), false);
+  assert.equal(
+    shouldExportDist3Entry("__DINOU_DIST2/slots/hero/slot.json"),
+    false
+  );
   assert.equal(shouldExportDist3Entry(".DS_Store"), false);
+  assert.equal(shouldExportDist3Entry("images/.DS_Store"), false);
+  assert.equal(shouldExportDist3Entry("Thumbs.db"), false);
   assert.equal(shouldExportDist3Entry("images/Thumbs.db"), false);
-  assert.equal(shouldExportDist3Entry("about/shell.html"), false);
-  assert.equal(shouldExportDist3Entry("about/metadata.json"), false);
-  assert.equal(shouldExportDist3Entry("about/layout.metadata.json"), false);
-  assert.equal(shouldExportDist3Entry("about/slot.metadata.json"), false);
-  assert.equal(shouldExportDist3Entry("about/shell.layout.json"), false);
-  assert.equal(shouldExportDist3Entry("about/shell.page.json"), false);
-  assert.equal(shouldExportDist3Entry("about/slot.json"), false);
-  assert.equal(shouldExportDist3Entry("about/page.rsc"), false);
-  assert.equal(shouldExportDist3Entry("about/rsc.rsc"), false);
-  assert.equal(shouldExportDist3Entry("main._old.js"), false);
 
-  // User PWA manifest.json, /server/* public assets & dotfiles ARE exported from dist3!
+  // User PWA manifest.json, /metadata.json, /slots/* & /server/* public assets + dotfiles ARE exported from dist3!
   assert.equal(shouldExportDist3Entry("manifest.json"), true);
   assert.equal(shouldExportDist3Entry("pwa/manifest.json"), true);
+  assert.equal(shouldExportDist3Entry("metadata.json"), true);
+  assert.equal(shouldExportDist3Entry("slots/banner.svg"), true);
   assert.equal(shouldExportDist3Entry("server/diagram.png"), true);
   assert.equal(shouldExportDist3Entry("main-ZGBKXIUF.js"), true);
   assert.equal(shouldExportDist3Entry("robots.txt"), true);
@@ -1103,7 +1321,7 @@ console.log(
     path.join(os.tmpdir(), "dinou-export-clean-")
   );
   try {
-    fs.mkdirSync(path.join(tmpExport, ".dinou/dist3/slots/hero"), {
+    fs.mkdirSync(path.join(tmpExport, ".dinou/dist3/__dinou_dist2/about"), {
       recursive: true,
     });
     fs.mkdirSync(path.join(tmpExport, ".dinou/dist3/.well-known"), {
@@ -1119,42 +1337,11 @@ console.log(
       recursive: true,
     });
 
-    // Simulate dist2 cache artifacts synchronized into .dinou/dist3 (as after build:cloudflare) + OS junk
+    // Simulate accidental __dinou_dist2 namespace & OS junk inside .dinou/dist3 (must be filtered by shouldExportDist3Entry)
     fs.writeFileSync(
-      path.join(tmpExport, ".dinou/dist3/slots/hero/slot.json"),
+      path.join(tmpExport, ".dinou/dist3/__dinou_dist2/about/metadata.json"),
       "{}"
     );
-    fs.writeFileSync(
-      path.join(tmpExport, ".dinou/dist3/slots/hero/slot.metadata.json"),
-      "{}"
-    );
-    fs.writeFileSync(
-      path.join(tmpExport, ".dinou/dist3/status-manifest.json"),
-      "{}"
-    );
-    fs.writeFileSync(path.join(tmpExport, ".dinou/dist3/rsc.rsc"), "RSC");
-    fs.writeFileSync(path.join(tmpExport, ".dinou/dist3/shell.html"), "SHELL");
-    fs.writeFileSync(
-      path.join(tmpExport, ".dinou/dist3/metadata.json"),
-      "{}"
-    );
-    fs.writeFileSync(
-      path.join(tmpExport, ".dinou/dist3/layout.metadata.json"),
-      "{}"
-    );
-    fs.writeFileSync(
-      path.join(tmpExport, ".dinou/dist3/slot.metadata.json"),
-      "{}"
-    );
-    fs.writeFileSync(
-      path.join(tmpExport, ".dinou/dist3/shell.layout.json"),
-      "[]"
-    );
-    fs.writeFileSync(
-      path.join(tmpExport, ".dinou/dist3/shell.page.json"),
-      "[]"
-    );
-    fs.writeFileSync(path.join(tmpExport, ".dinou/dist3/main._old.js"), "OLD");
     fs.writeFileSync(path.join(tmpExport, ".dinou/dist3/.DS_Store"), "MAC");
     fs.writeFileSync(
       path.join(tmpExport, ".dinou/dist3/images/Thumbs.db"),
@@ -1210,6 +1397,10 @@ console.log(
       '0:"legacy-combined"\n'
     );
     fs.writeFileSync(
+      path.join(tmpExport, ".dinou/dist2/shell.html"),
+      "<html>Shell</html>"
+    );
+    fs.writeFileSync(
       path.join(tmpExport, ".dinou/dist2/metadata.json"),
       '{"status":200}'
     );
@@ -1218,7 +1409,15 @@ console.log(
       '{"status":200}'
     );
     fs.writeFileSync(
+      path.join(tmpExport, ".dinou/dist2/slot.metadata.json"),
+      '{"status":200}'
+    );
+    fs.writeFileSync(
       path.join(tmpExport, ".dinou/dist2/shell.layout.json"),
+      "[]"
+    );
+    fs.writeFileSync(
+      path.join(tmpExport, ".dinou/dist2/shell.page.json"),
       "[]"
     );
     fs.writeFileSync(
@@ -1327,6 +1526,7 @@ console.log(
     );
 
     for (const excluded of [
+      "__dinou_dist2",
       "slots",
       "status-manifest.json",
       "rsc.rsc",
@@ -1336,7 +1536,6 @@ console.log(
       "slot.metadata.json",
       "shell.layout.json",
       "shell.page.json",
-      "main._old.js",
       ".DS_Store",
       "images/Thumbs.db",
       "about/metadata.json",

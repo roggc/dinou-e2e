@@ -12085,7 +12085,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           ).toBe(true);
         }
 
-        // .dinou/dist3 must remain a pure public webroot
+        // .dinou/dist3 must remain a 100% pure public webroot across ALL runtimes (including Cloudflare)
         expect(fs.existsSync(path.join(dist3Dir, "server"))).toBe(false);
         expect(
           fs.existsSync(path.join(dist3Dir, "react-client-manifest.json"))
@@ -12096,11 +12096,55 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         expect(
           fs.existsSync(path.join(dist3Dir, "server-functions-manifest.json"))
         ).toBe(false);
-        if (!isCloudflare) {
-          // Node, Bun, Bun Pure & Deno must NOT copy .dinou/dist2 route folders into .dinou/dist3
-          expect(fs.existsSync(path.join(dist3Dir, "t-public-assets"))).toBe(
+        expect(fs.existsSync(path.join(dist3Dir, "t-public-assets"))).toBe(
+          false
+        );
+        expect(fs.existsSync(path.join(dist3Dir, "__dinou_dist2"))).toBe(false);
+
+        if (isCloudflare) {
+          // Cloudflare Workers assembles public assets at .dinou/cloudflare/assets/* and isolates dist2 inside __dinou_dist2/*
+          const cfAssetsDir = path.resolve(
+            process.cwd(),
+            ".dinou/cloudflare/assets"
+          );
+          expect(fs.existsSync(path.join(cfAssetsDir, "manifest.json"))).toBe(
+            true
+          );
+          const cfPwa = JSON.parse(
+            fs.readFileSync(path.join(cfAssetsDir, "manifest.json"), "utf8")
+          );
+          expect(cfPwa.name).toBe("Dinou E2E PWA");
+          expect(
+            fs.existsSync(
+              path.join(
+                cfAssetsDir,
+                ".well-known/apple-app-site-association"
+              )
+            )
+          ).toBe(true);
+          expect(fs.existsSync(path.join(cfAssetsDir, "server"))).toBe(false);
+          expect(
+            fs.existsSync(path.join(cfAssetsDir, "react-client-manifest.json"))
+          ).toBe(false);
+          expect(fs.existsSync(path.join(cfAssetsDir, "t-public-assets"))).toBe(
             false
           );
+          expect(
+            fs.existsSync(
+              path.join(
+                cfAssetsDir,
+                "__dinou_dist2/t-public-assets/index.html"
+              )
+            )
+          ).toBe(true);
+          expect(
+            fs.existsSync(
+              path.join(
+                cfAssetsDir,
+                "__dinou_dist2/t-public-assets/metadata.json"
+              )
+            )
+          ).toBe(true);
         }
         const dist3Pwa = JSON.parse(
           fs.readFileSync(path.join(dist3Dir, "manifest.json"), "utf8")
@@ -12148,10 +12192,18 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(pageErrors).toEqual([]);
     });
 
-    test("2. Blocks public HTTP access (GET & HEAD -> 404) to /server/*, internal RSC/SSR/SF/status manifests, /slots/*, dist2 route HTML/metadata/RSC artifacts, hidden dotfiles, traversal & /public/ prefix", async ({
+    test("2. Blocks public HTTP access (GET & HEAD -> 404) to /__dinou_dist2/*, /server/*, internal RSC/SSR/SF/status manifests, /slots/*, dist2 route HTML/metadata/RSC artifacts, hidden dotfiles, traversal & /public/ prefix", async ({
       request,
     }) => {
       const forbiddenPaths = [
+        "/__dinou_dist2",
+        "/__dinou_dist2/",
+        "/__dinou_dist2/index.html",
+        "/__dinou_dist2/metadata.json",
+        "/__dinou_dist2/t-public-assets/index.html",
+        "/__dinou_dist2/t-public-assets/metadata.json",
+        "/__dinou_dist2/t-public-assets/page.rsc",
+        "/%5f%5fdinou_dist2/t-public-assets/metadata.json",
         "/server/handler.js",
         "/server/handler.js.map",
         "/server/netlify.js",
@@ -12193,6 +12245,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(handlerLeakText).not.toContain("registerServerReference");
 
       for (const headForbidden of [
+        "/__dinou_dist2/t-public-assets/metadata.json",
+        "/%5f%5fdinou_dist2/t-public-assets/metadata.json",
         "/server/handler.js",
         "/react-client-manifest.json",
         "/react-ssr-manifest.json",
@@ -12339,6 +12393,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
         // Internal .dinou/dist2 and .dinou/dist1 artifacts must NEVER leak into out/
         for (const forbiddenOut of [
+          "__dinou_dist2",
           "slots",
           "server",
           "react-client-manifest.json",

@@ -172,6 +172,7 @@ async function main() {
     throw new Error("[Smoke] export-static failed: public/ SEO or dotfile assets missing in out/");
   }
   for (const forbidden of [
+    "__dinou_dist2",
     "react-client-manifest.json",
     "react-ssr-manifest.json",
     "server-functions-manifest.json",
