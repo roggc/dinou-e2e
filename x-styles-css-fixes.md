@@ -3226,3 +3226,597 @@ export default function Page() {
   });
 });
 ```
+
+
+---
+
+## 6. Addendum (Part II — Delta Patch): `public/styles.css` Coexistence & Collision Precedence
+
+*(Note: Apply ONLY the 6 file changes and unit test below on top of Part I above.)*
+
+### 6.1. Root-Cause Analysis & Design (Option A)
+
+Because `/styles.css` is Dinou's single fixed-name public client stylesheet URL:
+1. **Dev-vs-Prod Inversion & Bundler Divergence When Both `src/` CSS and `public/styles.css` Existed**:
+   - In `dinou dev` (`esbuild` / `rollup`), `globalThis.__DINOU_MEM_FILES__` took priority over `public/`, serving compiled `src/` CSS.
+   - In `dinou build` (`esbuild` / `rollup`), `copyStaticDirectoriesToOutdir` ran *after* `styles.css` emission with `fs.cpSync(..., { force: true })`, silently overwriting compiled Tailwind/CSS-Modules `.dinou/dist3/styles.css` with raw `public/styles.css`.
+   - In `webpack`, case-variant `public/Styles.css` or `DinouCssAssetsAndMinifyPlugin` did not distinguish copied `public/styles.css` (`asset.info.copied === true`) from compiled `MiniCssExtractPlugin` output, and `WebpackMemoryPlugin` froze copied `public/*` assets in memory in dev mode.
+2. **Empty 0-Byte Buffer Shadowing `public/styles.css` in `dinou dev:esbuild` When Zero CSS Was Imported in `src/`**:
+   - `postcss-extract-plugin.js` previously stored `Buffer.from("", "utf8")` in `globalThis.__DINOU_MEM_FILES__.set("styles.css", ...)` even when `extractedByFile.size === 0`, causing `dinou/node/dev.js` (`if (memBuf)`) to serve 0 bytes instead of falling through to `public/styles.css`.
+
+**Fix (Option A — Smart Coexistence + Explicit Collision Warning)**:
+- **Zero CSS imported in `src/`**: `public/styles.css` works seamlessly and unminified across `dinou dev` and `dinou build` in all 3 bundlers (`esbuild`, `rollup`, `webpack`) with zero warnings.
+- **CSS imported in `src/` + `public/styles.css` present**: Dinou's compiled `styles.css` wins deterministically across `dinou dev` and `dinou build` in all 3 bundlers (preserving nested `public/<subdir>/styles.css` untouched), emitting a clear, deduplicated `⚠️ [Dinou] Detected "public/styles.css" alongside CSS imported in "src/"...` warning.
+
+---
+
+### 6.2. Delta File Manifest (6 Modified Files in `dinou/`)
+
+1. `dinou/core/copy-static-dirs.js`
+2. `dinou/esbuild/plugins-postcss/postcss-extract-plugin.js`
+3. `dinou/esbuild/helpers-esbuild/get-config-esbuild.js`
+4. `dinou/rollup/rollup.config.js`
+5. `dinou/webpack/webpack.config.js`
+6. `dinou/webpack/plugins/webpack-memory-plugin.js`
+
+---
+
+### 6.3. Exact Code Modifications for Part II
+
+#### 1. `dinou/core/copy-static-dirs.js` (Full Replacement)
+
+```js
+import fs from "node:fs";
+import path from "node:path";
+
+const IGNORED_OS_BASENAMES = new Set([".ds_store", "thumbs.db"]);
+const warnedCollisionRoots = new Set();
+
+function shouldCopyStaticEntry(srcPath) {
+  const baseLower = path.basename(srcPath).toLowerCase();
+  return !IGNORED_OS_BASENAMES.has(baseLower);
+}
+
+export function hasPublicStylesCss(projectRoot = process.cwd()) {
+  const publicDir = path.resolve(projectRoot || process.cwd(), "public");
+  if (!fs.existsSync(publicDir)) return false;
+  try {
+    const entries = fs.readdirSync(publicDir, { withFileTypes: true });
+    return entries.some(
+      (entry) =>
+        (entry.isFile() || entry.isSymbolicLink()) &&
+        entry.name.toLowerCase() === "styles.css"
+    );
+  } catch (e) {
+    return false;
+  }
+}
+
+export function warnPublicStylesCssCollision(projectRoot = process.cwd()) {
+  const rootDir = path.resolve(projectRoot || process.cwd());
+  const rootKey = rootDir.toLowerCase();
+  if (warnedCollisionRoots.has(rootKey)) return;
+  if (!hasPublicStylesCss(rootDir)) return;
+  warnedCollisionRoots.add(rootKey);
+  console.warn(
+    '⚠️ [Dinou] Detected "public/styles.css" alongside CSS imported in "src/". ' +
+      '"/styles.css" is used by Dinou\'s compiled stylesheet bundle, so "public/styles.css" was ignored. ' +
+      'Rename the file in "public/" (e.g. "public/custom.css") or import it from "src/".'
+  );
+}
+
+/**
+ * Recursively copies the project's `public/` directory into `outdir`, preserving
+ * nested subdirectories and dotfiles (such as `public/.well-known/*` or `public/.nojekyll`).
+ * If Dinou already emitted a compiled `styles.css` from `src/`, root `public/styles.css`
+ * is skipped with a warning so compiled styles are never overwritten.
+ */
+export function copyStaticDirectoriesToOutdir(projectRoot, outdir, options = {}) {
+  const rootDir = path.resolve(projectRoot || process.cwd());
+  const srcDir = path.resolve(rootDir, "public");
+  if (!fs.existsSync(srcDir)) return false;
+
+  try {
+    if (!fs.statSync(srcDir).isDirectory()) return false;
+    const destDir = path.resolve(rootDir, outdir);
+    fs.mkdirSync(destDir, { recursive: true });
+
+    const compiledStylesExists =
+      Boolean(options.hasCompiledStyles) ||
+      Boolean(
+        typeof globalThis !== "undefined" && globalThis.__DINOU_HAS_COMPILED_STYLES__
+      ) ||
+      fs.existsSync(path.join(destDir, "styles.css"));
+
+    if (compiledStylesExists && hasPublicStylesCss(rootDir)) {
+      warnPublicStylesCssCollision(rootDir);
+    }
+
+    fs.cpSync(srcDir, destDir, {
+      recursive: true,
+      force: true,
+      dereference: true,
+      preserveTimestamps: true,
+      filter: (srcPath) => {
+        if (!shouldCopyStaticEntry(srcPath)) return false;
+        if (compiledStylesExists) {
+          const rel = path.relative(srcDir, srcPath);
+          if (
+            rel &&
+            !rel.includes(path.sep) &&
+            !rel.includes("/") &&
+            rel.toLowerCase() === "styles.css"
+          ) {
+            return false;
+          }
+        }
+        return true;
+      },
+    });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+export default copyStaticDirectoriesToOutdir;
+```
+
+#### 2. `dinou/esbuild/plugins-postcss/postcss-extract-plugin.js`
+
+```diff
+ import fs from "node:fs";
+ import path from "node:path";
+ import esbuild from "esbuild";
+ import { normalizePathCase } from "../../core/path-utils.js";
++import {
++  hasPublicStylesCss,
++  warnPublicStylesCssCollision,
++} from "../../core/copy-static-dirs.js";
+...
+-    let combinedCSS = parts.length > 0 ? parts.join("\n") + "\n" : "";
++    const hasCompiledStyles = extractedByFile.size > 0;
++    let combinedCSS = parts.length > 0 ? parts.join("\n") + "\n" : "";
+ 
+     if (isProduction && combinedCSS) {
+       try {
+         combinedCSS = esbuild.transformSync(combinedCSS, {
+           loader: "css",
+           minify: true,
+         }).code;
+       } catch (e) {}
+     }
+ 
+-    const changed = lastFinalizedCSS !== null && combinedCSS !== lastFinalizedCSS;
+-    lastFinalizedCSS = combinedCSS;
+-    cachedCSSBuffer = Buffer.from(combinedCSS, "utf8");
+-
+-    if (typeof globalThis !== "undefined") {
+-      if (!globalThis.__DINOU_MEM_FILES__) {
+-        globalThis.__DINOU_MEM_FILES__ = new Map();
+-      }
+-      globalThis.__DINOU_MEM_FILES__.set("styles.css", cachedCSSBuffer);
+-      globalThis.__DINOU_MEM_FILES__.set("/styles.css", cachedCSSBuffer);
+-    }
++    const nextState = hasCompiledStyles ? combinedCSS : null;
++    const changed = lastFinalizedCSS !== null && nextState !== lastFinalizedCSS;
++    lastFinalizedCSS = nextState;
++
++    if (typeof globalThis !== "undefined") {
++      globalThis.__DINOU_HAS_COMPILED_STYLES__ = hasCompiledStyles;
++      if (!globalThis.__DINOU_MEM_FILES__) {
++        globalThis.__DINOU_MEM_FILES__ = new Map();
++      }
++      if (hasCompiledStyles) {
++        cachedCSSBuffer = Buffer.from(combinedCSS, "utf8");
++        globalThis.__DINOU_MEM_FILES__.set("styles.css", cachedCSSBuffer);
++        globalThis.__DINOU_MEM_FILES__.set("/styles.css", cachedCSSBuffer);
++      } else {
++        cachedCSSBuffer = null;
++        globalThis.__DINOU_MEM_FILES__.delete("styles.css");
++        globalThis.__DINOU_MEM_FILES__.delete("/styles.css");
++      }
++    }
++
++    if (hasCompiledStyles && hasPublicStylesCss(process.cwd())) {
++      warnPublicStylesCssCollision(process.cwd());
++    }
+ 
+     const shouldWriteToDisk =
+       process.env.DINOU_WRITE_TO_DISK === "true" || isProduction;
+-    if (shouldWriteToDisk && (combinedCSS || fs.existsSync(outputFile))) {
++    if (shouldWriteToDisk && hasCompiledStyles) {
+       const outputDir = path.dirname(outputFile);
+       if (!fs.existsSync(outputDir)) {
+         fs.mkdirSync(outputDir, { recursive: true });
+       }
+       fs.writeFileSync(outputFile, combinedCSS, "utf8");
+     }
+```
+
+#### 3. `dinou/esbuild/helpers-esbuild/get-config-esbuild.js`
+Append `copy-static-files-once` *after* `...plugins` (matching `get-config-esbuild-prod.js` so `cssProcessorPlugin` runs first):
+
+```diff
+   const shouldWriteToDisk = process.env.DINOU_WRITE_TO_DISK === "true";
+   if (fs.existsSync("public") && shouldWriteToDisk) {
+     let staticCopied = false;
+     plugins = [
++      ...plugins,
+       {
+         name: "copy-static-files-once",
+         setup(build) {
+           build.onEnd(() => {
+             if (staticCopied) return;
+             staticCopied = true;
+             copyStaticDirectoriesToOutdir(process.cwd(), outdir);
+           });
+         },
+       },
+-      ...plugins,
+     ];
+   }
+```
+
+#### 4. `dinou/rollup/rollup.config.js`
+
+```diff
+-import { copyStaticDirectoriesToOutdir } from "../core/copy-static-dirs.js";
++import {
++  copyStaticDirectoriesToOutdir,
++  hasPublicStylesCss,
++  warnPublicStylesCssCollision,
++} from "../core/copy-static-dirs.js";
+...
+       {
+         name: "dinou-rollup-css-assets-and-minify",
+         buildStart() {
+           getRegisteredCssUrlAssets().clear();
++          if (typeof globalThis !== "undefined") {
++            globalThis.__DINOU_HAS_COMPILED_STYLES__ = false;
++          }
+         },
+         generateBundle(_options, bundle) {
++          const hasCompiledStyles = Boolean(bundle["styles.css"]);
++          if (typeof globalThis !== "undefined") {
++            globalThis.__DINOU_HAS_COMPILED_STYLES__ = hasCompiledStyles;
++            if (!hasCompiledStyles && globalThis.__DINOU_MEM_FILES__) {
++              globalThis.__DINOU_MEM_FILES__.delete("styles.css");
++              globalThis.__DINOU_MEM_FILES__.delete("/styles.css");
++            }
++          }
++          if (hasCompiledStyles && hasPublicStylesCss(process.cwd())) {
++            warnPublicStylesCssCollision(process.cwd());
++          }
+           for (const [assetFileName, absAssetPath] of getRegisteredCssUrlAssets().entries()) {
+```
+
+#### 5. `dinou/webpack/webpack.config.js`
+
+```diff
+ import {
+   createBasePostCssPlugins,
+   getRegisteredCssUrlAssets,
+ } from "../core/postcss-pipeline.js";
++import {
++  hasPublicStylesCss,
++  warnPublicStylesCssCollision,
++} from "../core/copy-static-dirs.js";
+...
+         apply(compiler) {
+           const pluginName = "DinouCssAssetsAndMinifyPlugin";
+           const clearRegistry = () => {
+             getRegisteredCssUrlAssets().clear();
++            if (typeof globalThis !== "undefined") {
++              globalThis.__DINOU_HAS_COMPILED_STYLES__ = false;
++            }
+           };
+           compiler.hooks.run.tap(pluginName, clearRegistry);
+           compiler.hooks.watchRun.tap(pluginName, clearRegistry);
+ 
+           compiler.hooks.thisCompilation.tap(pluginName, (compilation) => {
+             compilation.hooks.processAssets.tap(
+               {
+                 name: pluginName,
+                 stage: webpack.Compilation.PROCESS_ASSETS_STAGE_ADDITIONS,
+               },
+               () => {
++                const stylesAsset = compilation.getAsset("styles.css");
++                const hasCompiledStyles = Boolean(
++                  stylesAsset && !stylesAsset.info?.copied
++                );
++                if (typeof globalThis !== "undefined") {
++                  globalThis.__DINOU_HAS_COMPILED_STYLES__ = hasCompiledStyles;
++                }
++                if (hasCompiledStyles) {
++                  if (hasPublicStylesCss(process.cwd())) {
++                    warnPublicStylesCssCollision(process.cwd());
++                  }
++                  for (const assetObj of compilation.getAssets()) {
++                    if (
++                      assetObj.info?.copied &&
++                      assetObj.name.toLowerCase() === "styles.css"
++                    ) {
++                      compilation.deleteAsset(assetObj.name);
++                    }
++                  }
++                }
++
+                 for (const [
+...
+             if (!isDevelopment) {
+               compilation.hooks.processAssets.tap(
+                 {
+                   name: `${pluginName}:minify`,
+                   stage: webpack.Compilation.PROCESS_ASSETS_STAGE_OPTIMIZE_SIZE,
+                 },
+                 () => {
+                   const cssAsset = compilation.getAsset("styles.css");
+-                  if (!cssAsset) return;
++                  if (!cssAsset || cssAsset.info?.copied) return;
+```
+
+#### 6. `dinou/webpack/plugins/webpack-memory-plugin.js`
+
+```diff
++        if (typeof globalThis !== "undefined" && globalThis.__DINOU_MEM_FILES__) {
++          const stylesInfo = compilation.getAsset("styles.css")?.info;
++          if (!assets["styles.css"] || stylesInfo?.copied) {
++            globalThis.__DINOU_MEM_FILES__.delete("styles.css");
++            globalThis.__DINOU_MEM_FILES__.delete("/styles.css");
++          }
++        }
++
+         for (const [filename, asset] of Object.entries(assets)) {
+           if (!asset) continue;
++          if (compilation.getAsset(filename)?.info?.copied) {
++            continue;
++          }
+```
+
+---
+
+### 6.4. Additional `CHANGELOG.md` Bullet (`9.4.0` — under `### Fixed`)
+
+```markdown
+- **Deterministic `public/styles.css` Coexistence & Collision Protection**: Fixed `postcss-extract-plugin.js` shadowing static `public/styles.css` with an empty in-memory buffer when no CSS is imported in `src/`, and prevented `copyStaticDirectoriesToOutdir` / `CopyWebpackPlugin` from overwriting compiled `/styles.css` in production builds when both `public/styles.css` and `src/` CSS imports exist (emitting an explicit collision warning across Esbuild, Rollup, and Webpack while preserving nested `public/<dir>/styles.css` files).
+```
+
+---
+
+### 6.5. Complete Automated Unit/Integration Test (`tests/unit/public-styles-css.test.mjs`)
+
+```js
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
+
+const repoRoot = process.cwd();
+const dinouRoot = fs.existsSync(path.join(repoRoot, "dinou", "cli.js"))
+  ? path.join(repoRoot, "dinou")
+  : fs.existsSync(path.join(repoRoot, "cli.js"))
+    ? repoRoot
+    : path.join(repoRoot, "node_modules", "dinou", "dinou");
+const cliPath = path.join(dinouRoot, "cli.js");
+const importDinou = (relPath) =>
+  import(pathToFileURL(path.join(dinouRoot, relPath)).href);
+
+function createFixtureApp(prefix) {
+  const fixturesBase = path.join(repoRoot, ".dinou", "tmp-fixtures");
+  fs.mkdirSync(fixturesBase, { recursive: true });
+  const tmpApp = fs.mkdtempSync(path.join(fixturesBase, prefix));
+
+  const dinouShimDir = path.join(tmpApp, "node_modules", "dinou");
+  fs.mkdirSync(dinouShimDir, { recursive: true });
+  const dinouRootUrl = pathToFileURL(dinouRoot).href;
+  fs.writeFileSync(
+    path.join(dinouShimDir, "package.json"),
+    JSON.stringify(
+      {
+        name: "dinou",
+        version: "9.4.0",
+        type: "module",
+        main: "./index.js",
+        exports: {
+          ".": "./index.js",
+          "./server": "./server.js",
+          "./config": "./config.js",
+        },
+      },
+      null,
+      2
+    ),
+    "utf8"
+  );
+  fs.writeFileSync(
+    path.join(dinouShimDir, "index.js"),
+    `export * from ${JSON.stringify(`${dinouRootUrl}/index.js`)};\n`,
+    "utf8"
+  );
+  fs.writeFileSync(
+    path.join(dinouShimDir, "server.js"),
+    `export * from ${JSON.stringify(`${dinouRootUrl}/server.js`)};\n`,
+    "utf8"
+  );
+  fs.writeFileSync(
+    path.join(dinouShimDir, "config.js"),
+    `export * from ${JSON.stringify(`${dinouRootUrl}/core/config.js`)};\nexport { default } from ${JSON.stringify(`${dinouRootUrl}/core/config.js`)};\n`,
+    "utf8"
+  );
+  fs.writeFileSync(
+    path.join(tmpApp, "package.json"),
+    JSON.stringify({ name: "dinou-pub-styles", version: "1.0.0", type: "module" }, null, 2),
+    "utf8"
+  );
+  fs.writeFileSync(
+    path.join(tmpApp, "tsconfig.json"),
+    JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@/*": ["./src/*"] } } }),
+    "utf8"
+  );
+  return { fixturesBase, tmpApp };
+}
+
+test("1. public/styles.css works cleanly in dev & all 3 bundlers when no CSS is imported in src/", async () => {
+  const { createPostCSSExtractPlugin } = await importDinou(
+    "esbuild/plugins-postcss/postcss-extract-plugin.js"
+  );
+  const { fixturesBase, tmpApp } = createFixtureApp("pub-styles-no-src-");
+  const prevCwd = process.cwd();
+  const prevNodeEnv = process.env.NODE_ENV;
+
+  try {
+    fs.mkdirSync(path.join(tmpApp, "public", "nested"), { recursive: true });
+    fs.mkdirSync(path.join(tmpApp, "src"), { recursive: true });
+
+    fs.writeFileSync(
+      path.join(tmpApp, "public", "styles.css"),
+      "/* raw public stylesheet */\nbody { background: papayawhip; }\n",
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "public", "nested", "styles.css"),
+      ".nested-public { color: rebeccapurple; }\n",
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src", "layout.tsx"),
+      `export default function Layout({ children }: { children: any }) {
+  return (
+    <html lang="en">
+      <head><link rel="stylesheet" href="/styles.css" /></head>
+      <body>{children}</body>
+    </html>
+  );
+}
+`,
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src", "page.tsx"),
+      `export default function Page() { return <main>Hello</main>; }\n`,
+      "utf8"
+    );
+
+    process.chdir(tmpApp);
+    process.env.NODE_ENV = "development";
+    globalThis.__DINOU_MEM_FILES__ = new Map([["styles.css", Buffer.from("stale")]]);
+    const extractor = createPostCSSExtractPlugin({
+      outputFile: path.join(tmpApp, ".dinou", "public", "styles.css"),
+    });
+    extractor.finalize();
+    assert.equal(globalThis.__DINOU_MEM_FILES__.has("styles.css"), false);
+    assert.equal(globalThis.__DINOU_MEM_FILES__.has("/styles.css"), false);
+
+    for (const buildCmd of ["build:node:esbuild", "build:node:rollup", "build:node:webpack"]) {
+      const res = spawnSync(process.execPath, [cliPath, buildCmd], {
+        cwd: tmpApp,
+        encoding: "utf8",
+        env: { ...process.env, NODE_ENV: "production" },
+      });
+      assert.equal(res.status, 0, `[${buildCmd}] failed:\n${res.stderr}`);
+      assert.doesNotMatch(
+        `${res.stdout}\n${res.stderr}`,
+        /Detected "public\/styles\.css"/
+      );
+
+      const distStyles = fs.readFileSync(
+        path.join(tmpApp, ".dinou", "dist3", "styles.css"),
+        "utf8"
+      );
+      assert.match(distStyles, /papayawhip/);
+      assert.match(distStyles, /\/\* raw public stylesheet \*\//);
+    }
+  } finally {
+    process.chdir(prevCwd);
+    process.env.NODE_ENV = prevNodeEnv;
+    fs.rmSync(tmpApp, { recursive: true, force: true });
+    try {
+      if (fs.existsSync(fixturesBase) && fs.readdirSync(fixturesBase).length === 0) {
+        fs.rmdirSync(fixturesBase);
+      }
+    } catch (e) {}
+  }
+});
+
+test("2. compiled src/ CSS wins over public/styles.css with an explicit warning across all 3 bundlers", async () => {
+  const { fixturesBase, tmpApp } = createFixtureApp("pub-styles-collision-");
+
+  try {
+    fs.mkdirSync(path.join(tmpApp, "public", "nested"), { recursive: true });
+    fs.mkdirSync(path.join(tmpApp, "src"), { recursive: true });
+
+    fs.writeFileSync(
+      path.join(tmpApp, "public", "styles.css"),
+      ".from-public-should-be-ignored { color: orange; }\n",
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "public", "nested", "styles.css"),
+      ".nested-public-preserved { color: purple; }\n",
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src", "globals.css"),
+      ".compiled-from-src { color: teal; }\n",
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src", "layout.tsx"),
+      `import "./globals.css";
+export default function Layout({ children }: { children: any }) {
+  return (
+    <html lang="en">
+      <head><link rel="stylesheet" href="/styles.css" /></head>
+      <body>{children}</body>
+    </html>
+  );
+}
+`,
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src", "page.tsx"),
+      `export default function Page() { return <main className="compiled-from-src">Hi</main>; }\n`,
+      "utf8"
+    );
+
+    for (const buildCmd of ["build:node:esbuild", "build:node:rollup", "build:node:webpack"]) {
+      const res = spawnSync(process.execPath, [cliPath, buildCmd], {
+        cwd: tmpApp,
+        encoding: "utf8",
+        env: { ...process.env, NODE_ENV: "production" },
+      });
+      assert.equal(res.status, 0, `[${buildCmd}] failed:\n${res.stderr}`);
+
+      const combinedLogs = `${res.stdout}\n${res.stderr}`;
+      assert.match(
+        combinedLogs,
+        /Detected "public\/styles\.css" alongside CSS imported in "src\/"/
+      );
+
+      const distStyles = fs.readFileSync(
+        path.join(tmpApp, ".dinou", "dist3", "styles.css"),
+        "utf8"
+      );
+      assert.match(distStyles, /\.compiled-from-src\b/);
+      assert.doesNotMatch(distStyles, /from-public-should-be-ignored/);
+
+      const nestedStyles = fs.readFileSync(
+        path.join(tmpApp, ".dinou", "dist3", "nested", "styles.css"),
+        "utf8"
+      );
+      assert.match(nestedStyles, /\.nested-public-preserved\b/);
+    }
+  } finally {
+    fs.rmSync(tmpApp, { recursive: true, force: true });
+    try {
+      if (fs.existsSync(fixturesBase) && fs.readdirSync(fixturesBase).length === 0) {
+        fs.rmdirSync(fixturesBase);
+      }
+    } catch (e) {}
+  }
+});
+```
