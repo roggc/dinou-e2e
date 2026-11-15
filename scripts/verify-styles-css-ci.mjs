@@ -833,7 +833,7 @@ console.log(
     fs.mkdirSync(path.join(tmpApp, "src", "styles"), { recursive: true });
     fs.writeFileSync(
       path.join(tmpApp, "src", "styles", "tokens.css"),
-      `:root { --brand-token: #7c3aed; }\n`,
+      `:root { --brand-token: #7c3aed; }\n.tokens-bg-check { background-image: url("../assets/pattern.svg#grid"); }\n`,
       "utf8"
     );
     fs.writeFileSync(
@@ -986,6 +986,10 @@ export default function Page() {
       assert.ok(css.includes(`/${expectedPatternAsset}#grid`));
       assert.ok(css.includes(`/${expectedLocalFontAsset}`));
       assert.ok(css.includes(`/${expectedThirdPartyFontAsset}`));
+      assert.ok(
+        !css.includes("../assets/"),
+        `[${buildCmd}] @import-inlined relative url(...) inside Tailwind/@reference stylesheets must be rewritten before LightningCSS flattens source origins`
+      );
       assert.ok(!css.includes("should-never-be-bundled"));
 
       for (const relAsset of [

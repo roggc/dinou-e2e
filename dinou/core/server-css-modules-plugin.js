@@ -6,7 +6,12 @@ import {
   resolveCssImportSpecifier,
   resolveStyleImportFromCode,
 } from "./get-abs-path-with-ext.js";
-import { postcss, postcssImport, postCssModules } from "./postcss-pipeline.js";
+import {
+  postcss,
+  postcssImport,
+  postCssModules,
+  createHoistCssImportsPlugin,
+} from "./postcss-pipeline.js";
 
 const serverCssModuleCache = new Map();
 const lastKnownExportJsonByFile = new Map();
@@ -54,6 +59,7 @@ export async function compileCssModuleMap(filePath) {
   let map = {};
 
   const result = await postcss([
+    createHoistCssImportsPlugin(),
     postcssImport({
       resolve: (id, basedir) => resolveCssImportSpecifier(id, basedir),
     }),
