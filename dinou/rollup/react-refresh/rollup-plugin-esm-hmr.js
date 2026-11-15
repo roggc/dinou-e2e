@@ -10,6 +10,7 @@ const changedIds = new Set();
 const pendingUpdateUrls = new Set();
 let needsFullReload = false;
 let hasPendingCssUpdate = false;
+let lastStylesCssContent = null;
 
 function normalizePath(p) {
   return path.resolve(p).replace(/\\/g, "/").toLowerCase();
@@ -97,11 +98,30 @@ function esmHmrPlugin() {
         source: clientSource,
       });
 
+      const stylesAsset = bundle["styles.css"];
+      if (stylesAsset && stylesAsset.type === "asset") {
+        const nextCss = Buffer.isBuffer(stylesAsset.source)
+          ? stylesAsset.source.toString("utf8")
+          : String(stylesAsset.source || "");
+        if (lastStylesCssContent !== null && nextCss !== lastStylesCssContent) {
+          hasPendingCssUpdate = true;
+        }
+        lastStylesCssContent = nextCss;
+      }
+
       if (changedIds.size > 0) {
-        hasPendingCssUpdate = Array.from(changedIds).some((id) => {
-          const lower = id.toLowerCase();
-          return lower.endsWith(".css") || lower.endsWith(".scss") || lower.endsWith(".less");
-        });
+        if (
+          Array.from(changedIds).some((id) => {
+            const lower = id.toLowerCase();
+            return (
+              lower.endsWith(".css") ||
+              lower.endsWith(".scss") ||
+              lower.endsWith(".less")
+            );
+          })
+        ) {
+          hasPendingCssUpdate = true;
+        }
 
         for (const [fileName, chunkInfo] of Object.entries(bundle)) {
           if (fileName.endsWith(".css") || chunkInfo.type !== "chunk") {
