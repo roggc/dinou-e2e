@@ -24,7 +24,7 @@ export default function getConfigEsbuildProd({
     cssProcessorPlugin({ outdir }),
     reactClientManifestPlugin({
       manifest,
-      manifestPath: `.dinou/react_client_manifest/react-client-manifest.json`,
+      manifestPath: `.dinou/dist1/react-client-manifest.json`,
     }),
     assetsPlugin(),
     manifestGeneratorPlugin(manifestData),

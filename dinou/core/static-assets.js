@@ -67,8 +67,8 @@ const IMMUTABLE_CHUNK_REGEX =
   /^[^/]+-(?:[A-Z0-9]{8}|[a-f0-9]{16,32}|(?=[A-Za-z0-9_-]{8}\.)(?=[A-Za-z0-9_-]*[A-Z0-9])[A-Za-z0-9_-]{8})\.(?:js|mjs|cjs|css)(?:\.map)?$/;
 
 const ROOT_INTERNAL_MANIFESTS = new Set([
-  "manifest.json",
   "react-client-manifest.json",
+  "react-ssr-manifest.json",
   "server-functions-manifest.json",
   "status-manifest.json",
 ]);

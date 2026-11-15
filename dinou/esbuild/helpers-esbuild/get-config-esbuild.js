@@ -46,7 +46,11 @@ export default function getConfigEsbuild({
     skipMissingEntryPointsPlugin(),
     cssProcessorPlugin({ outdir, hmrEngine }),
     serverFunctionsPlugin({ serverFiles }),
-    reactClientManifestPlugin({ manifest, onManifestUpdated }),
+    reactClientManifestPlugin({
+      manifest,
+      manifestPath: ".dinou/node-dev/react-client-manifest.json",
+      onManifestUpdated,
+    }),
     assetsPlugin({ changedIds }),
     stableChunkNamesAndMapsPlugin({ changedIds }),
     esmHmrPlugin({ entryNames: ["main", "error"], changedIds, hmrEngine, hmrPort }),

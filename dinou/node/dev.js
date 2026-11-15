@@ -101,6 +101,18 @@ if (typeof globalThis !== "undefined") {
 const isWebpackBuild = process.env.DINOU_BUILD_TOOL === "webpack";
 const devDir = path.resolve(projectRoot, ".dinou/node-dev");
 fs.mkdirSync(devDir, { recursive: true });
+if (process.env.DINOU_STANDALONE_SERVER !== "true") {
+  for (const stale of [
+    "react-client-manifest.json",
+    "react-ssr-manifest.json",
+    "server-functions-manifest.json",
+    "manifest.json",
+  ]) {
+    try {
+      fs.rmSync(path.join(devDir, stale), { force: true });
+    } catch (e) {}
+  }
+}
 
 // Locate Dinou core directory
 const dinouDir = fs.existsSync(path.resolve(projectRoot, "dinou"))
@@ -253,20 +265,9 @@ async function findClientComponents(parsedClientManifest = {}) {
 }
 
 // Manifest paths and helpers
-function findManifest(filename, fallbackFolder) {
-  const candidates = isWebpackBuild
-    ? [
-        path.resolve(projectRoot, ".dinou/public", filename),
-        path.resolve(projectRoot, ".dinou", fallbackFolder, filename),
-      ]
-    : [
-        path.resolve(projectRoot, ".dinou", fallbackFolder, filename),
-        path.resolve(projectRoot, ".dinou/public", filename),
-      ];
-  for (const c of candidates) {
-    if (fs.existsSync(c)) return c;
-  }
-  return null;
+function findManifest(filename, folder) {
+  const candidate = path.resolve(projectRoot, ".dinou", folder, filename);
+  return fs.existsSync(candidate) ? candidate : null;
 }
 
 function readJsonSafe(filePath) {
@@ -315,9 +316,9 @@ function getCachedFileExports(filePath) {
 
 async function updateManifestsState(options = {}) {
   const forceRescan = options.forceRescan || false;
-  const cPath = findManifest("react-client-manifest.json", "react_client_manifest");
-  const sfPath = findManifest("server-functions-manifest.json", "server_functions_manifest");
-  const aPath = findManifest("manifest.json", "public");
+  const cPath = findManifest("react-client-manifest.json", "node-dev");
+  const sfPath = findManifest("server-functions-manifest.json", "node-dev");
+  const aPath = isWebpackBuild ? findManifest("manifest.json", "node-dev") : null;
 
   const rawClient = globalThis.__DINOU_RAW_CLIENT_MANIFEST__ || readJsonSafe(cPath);
   if (rawClient) {
@@ -355,10 +356,10 @@ async function updateManifestsState(options = {}) {
     globalThis.__DINOU_RAW_SERVER_FUNCTIONS_MANIFEST__ = parsedServerFunctionsManifest;
   }
 
-  const rawAsset = globalThis.__DINOU_RAW_ASSET_MANIFEST__ || readJsonSafe(aPath);
-  if (rawAsset) {
-    parsedAssetManifest = rawAsset;
-  }
+  const rawAsset = isWebpackBuild
+    ? globalThis.__DINOU_RAW_ASSET_MANIFEST__ || readJsonSafe(aPath)
+    : null;
+  parsedAssetManifest = rawAsset || {};
 
   // Normalize client manifest
   const normalized = { ...parsedClientManifest };
@@ -2095,22 +2096,17 @@ srcWatcher.on("all", (event, fullPath) => {
   }, 50);
 });
 
-// Watch manifest folder for client bundler output
-const manifestFolder = isWebpackBuild
-  ? path.resolve(projectRoot, ".dinou/public")
-  : path.resolve(projectRoot, ".dinou/react_client_manifest");
-
 let clientManifestReady = false;
 
 function checkClientFilesPresent() {
   if (globalThis.__DINOU_MEM_FILES__ && globalThis.__DINOU_MEM_FILES__.has("main.js")) {
     return true;
   }
-  const cPath = findManifest("react-client-manifest.json", "react_client_manifest");
+  const cPath = findManifest("react-client-manifest.json", "node-dev");
   if (!globalThis.__DINOU_RAW_CLIENT_MANIFEST__ && !readJsonSafe(cPath)) return false;
   if (isWebpackBuild) {
     if (globalThis.__DINOU_RAW_ASSET_MANIFEST__) return true;
-    const mPath = path.resolve(projectRoot, ".dinou/public/manifest.json");
+    const mPath = path.resolve(projectRoot, ".dinou/node-dev/manifest.json");
     return fs.existsSync(mPath);
   }
   const mainPath = path.resolve(projectRoot, ".dinou/public/main.js");
