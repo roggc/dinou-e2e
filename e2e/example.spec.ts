@@ -12289,7 +12289,15 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const { execFileSync } = await import("child_process");
 
       const pageErrors: string[] = [];
-      page.on("pageerror", (err) => pageErrors.push(err.message));
+      const fallbackUnloadErrors: string[] = [];
+      let isFallbackUnloading = false;
+      page.on("pageerror", (err) => {
+        if (isFallbackUnloading) {
+          fallbackUnloadErrors.push(err.message);
+        } else {
+          pageErrors.push(err.message);
+        }
+      });
 
       const tmpExportDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "dinou-e2e-static-export-")
@@ -12303,11 +12311,17 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         const tmpDist2 = path.join(tmpDinou, "dist2");
         fs.mkdirSync(tmpDist2, { recursive: true });
 
-        fs.symlinkSync(
-          srcDist3,
-          path.join(tmpDinou, "dist3"),
-          process.platform === "win32" ? "junction" : "dir"
-        );
+        try {
+          fs.symlinkSync(
+            srcDist3,
+            path.join(tmpDinou, "dist3"),
+            process.platform === "win32" ? "junction" : "dir"
+          );
+        } catch {
+          fs.cpSync(srcDist3, path.join(tmpDinou, "dist3"), {
+            recursive: true,
+          });
+        }
 
         // Copy root dist2 files + real t-public-assets SSG subtree into isolated workspace
         for (const entry of fs.readdirSync(srcDist2, { withFileTypes: true })) {
@@ -12584,18 +12598,28 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         expect(requestedUrls.some((u) => u.startsWith("/____rsc_"))).toBe(
           false
         );
+        expect(pageErrors).toEqual([]);
 
         // 4D. Graceful window.location.replace fallback when target route has no .rsc payload
+        isFallbackUnloading = true;
         await page.getByTestId("public-export-fallback-btn").click();
         await expect(page).toHaveURL(`${staticOrigin}/pure-static-fallback`);
         await expect(
           page.getByTestId("pure-static-fallback-h1")
         ).toHaveText("Pure Static Fallback HTML");
+        isFallbackUnloading = false;
         expect(
           requestedUrls.some((u) =>
             u.startsWith("/pure-static-fallback/page.rsc")
           )
         ).toBe(true);
+        const unexpectedFallbackErrors = fallbackUnloadErrors.filter(
+          (msg) =>
+            !/NetworkError when attempting to fetch resource|due to access control checks|____rsc_payload_error____|Load failed|Failed to fetch|aborted|cancelled|canceled/i.test(
+              msg
+            )
+        );
+        expect(unexpectedFallbackErrors).toEqual([]);
         expect(pageErrors).toEqual([]);
       } finally {
         if (staticServer) {
