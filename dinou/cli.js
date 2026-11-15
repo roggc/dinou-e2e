@@ -270,7 +270,7 @@ program
   .command("build:cloudflare:rollup")
   .description("Build the app for Cloudflare Workers with Rollup")
   .action(() => {
-    runCommand(`cross-env NODE_ENV=production npx rollup -c ${p("rollup/rollup.config.js")} && node ${p("cloudflare/build.js")}`);
+    runCommand(`cross-env NODE_ENV=production npx rollup -c ${p("rollup/rollup.config.js")} && cross-env DINOU_BUILD_TOOL=rollup node ${p("cloudflare/build.js")}`);
   });
 
 program

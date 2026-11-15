@@ -12,6 +12,7 @@ import {
 import {
   getStaticContentType,
   isPublicStaticAssetRequest,
+  isReservedCloudflareDist2RequestPath,
 } from "../core/static-assets.js";
 
 // Ensure Edge runtime flag is set globally
@@ -31,7 +32,10 @@ export default {
    */
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    if (url.pathname.startsWith("/cdn-cgi/")) {
+    if (
+      url.pathname.startsWith("/cdn-cgi/") ||
+      isReservedCloudflareDist2RequestPath(url.pathname)
+    ) {
       return new Response(null, { status: 404 });
     }
 

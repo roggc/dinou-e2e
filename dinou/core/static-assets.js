@@ -66,19 +66,10 @@ export const PUBLIC_STATIC_EXT_REGEX =
 const IMMUTABLE_CHUNK_REGEX =
   /^[^/]+-(?:[A-Z0-9]{8}|[a-f0-9]{16,32}|(?=[A-Za-z0-9_-]{8}\.)(?=[A-Za-z0-9_-]*[A-Z0-9])[A-Za-z0-9_-]{8})\.(?:js|mjs|cjs|css)(?:\.map)?$/;
 
-// Pre-rendered SSG/ISR/PPR cache artifacts from `.dinou/dist2` (synchronized into
-// `.dinou/dist3` during Cloudflare Workers builds so `handler.js` can read them via
-// `env.ASSETS`). They must never bypass `handleRequest` as raw static files.
-const DIST2_INTERNAL_BASENAMES = new Set([
-  "index.html",
-  "shell.html",
-  "metadata.json",
-  "layout.metadata.json",
-  "slot.metadata.json",
-  "shell.layout.json",
-  "shell.page.json",
-  "slot.json",
-]);
+// Reserved internal subdirectory inside `.dinou/cloudflare/assets/` where
+// `dinou build:cloudflare` places pre-rendered `.dinou/dist2` SSG/ISR/PPR/Slot
+// cache files so `.dinou/dist3` stays 100% pure and never collides with `public/`.
+export const CLOUDFLARE_DIST2_NAMESPACE = "__dinou_dist2";
 
 const DIST2_EXPORTABLE_BASENAMES = new Set([
   "index.html",
@@ -111,9 +102,24 @@ export function getStaticContentType(pathnameOrFilePath) {
 }
 
 /**
- * Returns true when a normalized POSIX path refers to an internal `.dinou/dist2`
- * SSG/ISR/PPR cache artifact (synchronized into `.dinou/dist3` on Cloudflare Workers)
- * that must never bypass `handleRequest` as a raw static asset.
+ * Returns true when an incoming URL pathname targets the reserved internal
+ * `/__dinou_dist2/*` namespace inside Cloudflare's `env.ASSETS` directory.
+ */
+export function isReservedCloudflareDist2RequestPath(pathname) {
+  if (!pathname || typeof pathname !== "string") return false;
+  let decoded = pathname;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {}
+  const firstSeg =
+    decoded.replace(/\\/g, "/").replace(/^\/+/, "").split("/")[0] || "";
+  return firstSeg.toLowerCase() === CLOUDFLARE_DIST2_NAMESPACE;
+}
+
+/**
+ * Returns true when a normalized POSIX path refers to an OS metadata file or
+ * Dinou's reserved internal `/__dinou_dist2/*` Cloudflare asset namespace,
+ * ensuring it is never served publicly.
  */
 export function isInternalDinouAssetPath(relPosixPath) {
   if (!relPosixPath || typeof relPosixPath !== "string") return true;
@@ -123,20 +129,12 @@ export function isInternalDinouAssetPath(relPosixPath) {
   const segments = clean.split("/").filter(Boolean);
   if (segments.length === 0) return true;
 
-  if (segments[0].toLowerCase() === "slots") {
-    return true;
-  }
-
-  const relLower = segments.join("/").toLowerCase();
-  if (relLower === "status-manifest.json") {
+  if (segments[0].toLowerCase() === CLOUDFLARE_DIST2_NAMESPACE) {
     return true;
   }
 
   const baseLower = segments[segments.length - 1].toLowerCase();
-  if (DIST2_INTERNAL_BASENAMES.has(baseLower)) {
-    return true;
-  }
-  if (baseLower.endsWith(".rsc") || baseLower.includes("._old.")) {
+  if (baseLower === ".ds_store" || baseLower === "thumbs.db") {
     return true;
   }
 
@@ -274,9 +272,9 @@ export function isPublicStaticAssetRequest(pathname) {
 }
 
 /**
- * Filter predicate for `dinou export-static` (`export-static.js`) when copying `.dinou/dist3`
- * into `out/`. Excludes OS metadata and any `.dinou/dist2` internal cache metadata
- * (in case `build:cloudflare` previously synchronized `dist2` into `dist3`), while
+ * Filter predicate when copying public static assets from `.dinou/dist3` into
+ * `out/` (`dinou export-static`) or `.dinou/cloudflare/assets/` (`dinou build:cloudflare`).
+ * Excludes OS metadata junk and the reserved `__dinou_dist2` namespace while
  * preserving all `public/` files (including `.well-known/*` and `.nojekyll`) and client chunks.
  */
 export function shouldExportDist3Entry(relPosixPath) {
@@ -287,31 +285,12 @@ export function shouldExportDist3Entry(relPosixPath) {
   const segments = clean.split("/").filter(Boolean);
   if (segments.length === 0) return false;
 
+  if (segments[0].toLowerCase() === CLOUDFLARE_DIST2_NAMESPACE) {
+    return false;
+  }
+
   const baseLower = segments[segments.length - 1].toLowerCase();
   if (baseLower === ".ds_store" || baseLower === "thumbs.db") {
-    return false;
-  }
-
-  if (segments[0].toLowerCase() === "slots") {
-    return false;
-  }
-
-  const relLower = segments.join("/").toLowerCase();
-  if (relLower === "status-manifest.json") {
-    return false;
-  }
-
-  if (
-    baseLower === "shell.html" ||
-    baseLower === "metadata.json" ||
-    baseLower === "layout.metadata.json" ||
-    baseLower === "slot.metadata.json" ||
-    baseLower === "shell.layout.json" ||
-    baseLower === "shell.page.json" ||
-    baseLower === "slot.json" ||
-    baseLower.endsWith(".rsc") ||
-    baseLower.includes("._old.")
-  ) {
     return false;
   }
 
@@ -340,6 +319,51 @@ export function shouldExportDist2File(relPosixPath) {
 
   const baseLower = segments[segments.length - 1].toLowerCase();
   return DIST2_EXPORTABLE_BASENAMES.has(baseLower);
+}
+
+/**
+ * Reads an internal `.dinou/dist2` SSG/ISR/PPR/Slot artifact from Cloudflare's
+ * `env.ASSETS` binding under the isolated `/__dinou_dist2/<key>` namespace.
+ * Handles Cloudflare Static Assets HTML canonicalization for `index.html` keys.
+ */
+export async function fetchCloudflareDist2Asset(
+  assetsBinding,
+  key,
+  baseUrl = "http://localhost"
+) {
+  if (!assetsBinding || typeof assetsBinding.fetch !== "function" || !key) {
+    return null;
+  }
+  const cleanKey = String(key).replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!cleanKey) return null;
+
+  const namespacedKey = `${CLOUDFLARE_DIST2_NAMESPACE}/${cleanKey}`;
+  const lowerKey = cleanKey.toLowerCase();
+  const isIndexHtml =
+    lowerKey === "index.html" || lowerKey.endsWith("/index.html");
+
+  if (!isIndexHtml) {
+    const res = await assetsBinding.fetch(
+      new Request(new URL(`/${namespacedKey}`, baseUrl))
+    );
+    return res && res.status === 200 ? res : null;
+  }
+
+  const dirRel = cleanKey.slice(0, -"index.html".length).replace(/\/+$/, "");
+  const dirNamespace = dirRel
+    ? `/${CLOUDFLARE_DIST2_NAMESPACE}/${dirRel}`
+    : `/${CLOUDFLARE_DIST2_NAMESPACE}`;
+  const candidates = [`${dirNamespace}/`, `/${namespacedKey}`, dirNamespace];
+
+  for (const candidatePath of candidates) {
+    const res = await assetsBinding.fetch(
+      new Request(new URL(candidatePath, baseUrl))
+    );
+    if (res && res.status === 200) {
+      return res;
+    }
+  }
+  return null;
 }
 
 /**
