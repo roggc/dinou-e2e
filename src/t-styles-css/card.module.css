@@ -1,5 +1,5 @@
-@reference "tailwindcss";
 @import "@/t-styles-css/styles/tokens.css";
+@reference "tailwindcss";
 
 .layoutFrame {
   border-left: 4px solid rgb(16, 185, 129);
