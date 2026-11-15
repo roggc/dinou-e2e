@@ -95,11 +95,14 @@ async function main() {
   // 1. Verify Static Export (`npm run export-static`)
   run("npm run export-static");
   const outIndex = path.join(outDir, "index.html");
+  const outStylesCss = path.join(outDir, "styles.css");
   const outPageRsc = path.join(outDir, "page.rsc");
   const outLayoutRsc = path.join(outDir, "layout.rsc");
   const outPublicAssetsIndex = path.join(outDir, "t-public-assets", "index.html");
   const outPublicAssetsPageRsc = path.join(outDir, "t-public-assets", "page.rsc");
   const outPublicAssetsLayoutRsc = path.join(outDir, "t-public-assets", "layout.rsc");
+  const outStylesCssIndex = path.join(outDir, "t-styles-css", "index.html");
+  const outStylesCssPageRsc = path.join(outDir, "t-styles-css", "page.rsc");
   const outPublicAssetsAboutIndex = path.join(
     outDir,
     "t-public-assets",
@@ -137,6 +140,7 @@ async function main() {
     );
   }
   for (const requiredExportFile of [
+    outStylesCss,
     outPageRsc,
     outLayoutRsc,
     outPublicAssetsIndex,
@@ -144,6 +148,8 @@ async function main() {
     outPublicAssetsLayoutRsc,
     outPublicAssetsAboutIndex,
     outPublicAssetsAboutPageRsc,
+    outStylesCssIndex,
+    outStylesCssPageRsc,
   ]) {
     if (!fs.existsSync(requiredExportFile) || fs.statSync(requiredExportFile).size === 0) {
       throw new Error(

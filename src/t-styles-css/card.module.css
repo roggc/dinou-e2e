@@ -1,0 +1,25 @@
+@reference "tailwindcss";
+@import "@/t-styles-css/styles/tokens.css";
+
+.layoutFrame {
+  border-left: 4px solid rgb(16, 185, 129);
+  padding-left: 12px;
+}
+
+.serverCard {
+  @apply rounded-xl;
+  color: var(--t-styles-server-color);
+  padding: 20px;
+}
+
+.dynamicModeBadge {
+  border-bottom: 2px solid rgb(59, 130, 246);
+  padding-bottom: 4px;
+}
+
+.clientCounter {
+  background-color: rgb(220, 38, 38);
+  color: rgb(255, 255, 255);
+  padding: 8px 14px;
+}
+

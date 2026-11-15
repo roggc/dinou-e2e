@@ -1,0 +1,17 @@
+/* t-styles-unminified-comment-marker */
+@import "@/t-styles-css/styles/tokens.css";
+
+@font-face {
+  font-family: "DinouStylesTestFont";
+  src: url("./assets/test-font.woff2") format("woff2");
+  font-display: swap;
+}
+
+.t-styles-asset-banner {
+  background-image:
+    url("/images/nested/badge.svg"),
+    url("@/t-styles-css/assets/pattern.svg#grid"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4'%3E%3Crect width='4' height='4' fill='%2310b981'/%3E%3C/svg%3E");
+  min-height: 24px;
+}
+

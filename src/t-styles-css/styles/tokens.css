@@ -1,0 +1,10 @@
+:root {
+  --t-styles-server-color: rgb(124, 58, 237);
+  --t-styles-second-border: rgb(14, 165, 233);
+}
+
+.t-styles-imported-tile {
+  background-image: url("../assets/tile.svg");
+  min-height: 16px;
+}
+

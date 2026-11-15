@@ -12624,4 +12624,442 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       }
     });
   });
+
+  test.describe("Unified Styles, CSS Modules (RSC + SSR + Client), CSS url(...) Assets, Font Loaders & Live CSS HMR (/t-styles-css)", () => {
+    async function withStylesHmrLock<T>(fn: () => Promise<T>): Promise<T> {
+      const os = await import("os");
+      const lockPath = path.join(
+        os.tmpdir(),
+        `dinou-e2e-styles-hmr-${process.env.PORT || 3000}.lock`
+      );
+      const deadline = Date.now() + 90000;
+      let lockFd: number | null = null;
+
+      while (Date.now() < deadline) {
+        try {
+          lockFd = fs.openSync(lockPath, "wx");
+          fs.writeFileSync(lockFd, String(process.pid), "utf8");
+          break;
+        } catch (err: any) {
+          if (err?.code === "EEXIST") {
+            try {
+              const stat = fs.statSync(lockPath);
+              if (Date.now() - stat.mtimeMs > 60000) {
+                fs.unlinkSync(lockPath);
+                continue;
+              }
+            } catch {}
+            await new Promise((r) => setTimeout(r, 150));
+            continue;
+          }
+          throw err;
+        }
+      }
+
+      if (lockFd === null) {
+        throw new Error("Timed out acquiring cross-worker styles HMR lock");
+      }
+
+      try {
+        return await fn();
+      } finally {
+        try {
+          fs.closeSync(lockFd);
+        } catch {}
+        try {
+          fs.unlinkSync(lockPath);
+        } catch {}
+      }
+    }
+
+    test("1. Full SSG (/t-styles-css) & Live Dynamic Pass A + Pass B (/t-styles-css/[mode]) CSS Modules, @import/@reference, multi-CSS Server discovery, CSS url(...) & font assets, and production minification", async ({
+      page,
+      request,
+    }, testInfo) => {
+      const pageErrors: string[] = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      const createScopedMod = await import(
+        resolveDinouCoreModuleUrl("createScopedName.js")
+      );
+      const createScopedName: (name: string, filepath: string) => string =
+        createScopedMod.default ?? createScopedMod;
+
+      const cardModulePath = path.resolve(
+        process.cwd(),
+        "src/t-styles-css/card.module.css"
+      );
+      const hmrModulePath = path.resolve(
+        process.cwd(),
+        "src/t-styles-css/hmr-live.module.css"
+      );
+      const patternSvgPath = path.resolve(
+        process.cwd(),
+        "src/t-styles-css/assets/pattern.svg"
+      );
+      const tileSvgPath = path.resolve(
+        process.cwd(),
+        "src/t-styles-css/assets/tile.svg"
+      );
+      const fontWoff2Path = path.resolve(
+        process.cwd(),
+        "src/t-styles-css/assets/test-font.woff2"
+      );
+
+      const expectedLayoutHash = createScopedName(
+        "layoutFrame",
+        cardModulePath
+      );
+      const expectedServerCardHash = createScopedName(
+        "serverCard",
+        cardModulePath
+      );
+      const expectedDynamicBadgeHash = createScopedName(
+        "dynamicModeBadge",
+        cardModulePath
+      );
+      const expectedClientCounterHash = createScopedName(
+        "clientCounter",
+        cardModulePath
+      );
+      const expectedHmrTargetHash = createScopedName(
+        "hmrTarget",
+        hmrModulePath
+      );
+
+      const expectedPatternAsset = `/assets/${createScopedName("pattern", patternSvgPath)}.svg`;
+      const expectedTileAsset = `/assets/${createScopedName("tile", tileSvgPath)}.svg`;
+      const expectedFontAsset = `/assets/${createScopedName("test-font", fontWoff2Path)}.woff2`;
+
+      // 1A. Inspect /styles.css and emitted CSS url(...) assets over HTTP
+      const stylesRes = await safeApiGet(request, "/styles.css");
+      expect(stylesRes.status()).toBe(200);
+      expect(stylesRes.headers()["content-type"]).toContain("text/css");
+      const stylesCssText = await stylesRes.text();
+
+      expect(stylesCssText).toContain("--t-styles-server-color");
+      expect(stylesCssText).toContain("--t-styles-second-border");
+      expect(stylesCssText).toContain(".t-styles-second-css");
+      expect(stylesCssText).toContain(".t-styles-error-only-sentinel");
+      expect(stylesCssText).toContain(".t-styles-not-found-only-sentinel");
+      expect(stylesCssText).not.toContain(
+        "t-styles-unimported-sentinel-never-bundle"
+      );
+
+      expect(stylesCssText).toContain(`.${expectedLayoutHash}`);
+      expect(stylesCssText).toContain(`.${expectedServerCardHash}`);
+      expect(stylesCssText).toContain(`.${expectedDynamicBadgeHash}`);
+      expect(stylesCssText).toContain(`.${expectedClientCounterHash}`);
+      expect(stylesCssText).toContain(`.${expectedHmrTargetHash}`);
+
+      expect(stylesCssText).toContain("/images/nested/badge.svg");
+      expect(stylesCssText).toContain(`${expectedPatternAsset}#grid`);
+      expect(stylesCssText).toContain(expectedTileAsset);
+      expect(stylesCssText).toContain(expectedFontAsset);
+      expect(stylesCssText).toContain("data:image/svg+xml");
+
+      if (isProd) {
+        expect(stylesCssText).not.toContain(
+          "t-styles-unminified-comment-marker"
+        );
+      }
+
+      const [patternRes, tileRes, fontRes] = await Promise.all([
+        safeApiGet(request, expectedPatternAsset),
+        safeApiGet(request, expectedTileAsset),
+        safeApiGet(request, expectedFontAsset),
+      ]);
+      expect(patternRes.status()).toBe(200);
+      expect(patternRes.headers()["content-type"]).toContain("image/svg+xml");
+      expect(await patternRes.text()).toContain('<g id="grid">');
+
+      expect(tileRes.status()).toBe(200);
+      expect(tileRes.headers()["content-type"]).toContain("image/svg+xml");
+
+      expect(fontRes.status()).toBe(200);
+      expect(fontRes.headers()["content-type"]).toContain("font/woff2");
+      const fontBytes = await fontRes.body();
+      expect(fontBytes.subarray(0, 4).toString("ascii")).toBe("wOF2");
+
+      if (isProd && !isCloudflare) {
+        expect(patternRes.headers()["cache-control"]).toBe(
+          "public, max-age=31536000, immutable"
+        );
+        expect(fontRes.headers()["cache-control"]).toBe(
+          "public, max-age=31536000, immutable"
+        );
+      }
+
+      // 1B. Raw SSG/SSR HTML vs hydrated browser DOM on /t-styles-css
+      const rawHtmlRes = await safeApiGet(request, "/t-styles-css");
+      expect(rawHtmlRes.status()).toBe(200);
+      const rawHtml = await rawHtmlRes.text();
+      expect(rawHtml).toContain(expectedLayoutHash);
+      expect(rawHtml).toContain(expectedServerCardHash);
+      expect(rawHtml).toContain(expectedClientCounterHash);
+      expect(rawHtml).toContain(expectedHmrTargetHash);
+
+      await page.goto("/t-styles-css");
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+
+      const layoutFrame = page.getByTestId("styles-layout-frame");
+      const serverCard = page.getByTestId("styles-server-card");
+      const secondCssBox = page.getByTestId("styles-second-css");
+      const counterBtn = page.getByTestId("styles-client-counter");
+      const hmrTarget = page.getByTestId("styles-hmr-target");
+
+      await expect(layoutFrame).toHaveClass(expectedLayoutHash);
+      await expect(serverCard).toHaveClass(expectedServerCardHash);
+      await expect(counterBtn).toHaveClass(expectedClientCounterHash);
+      await expect(hmrTarget).toHaveClass(expectedHmrTargetHash);
+
+      await expect(layoutFrame).toHaveCSS("border-left-width", "4px");
+      await expect(layoutFrame).toHaveCSS(
+        "border-left-color",
+        "rgb(16, 185, 129)"
+      );
+      await expect(layoutFrame).toHaveCSS("padding-left", "12px");
+
+      await expect(serverCard).toHaveCSS("color", "rgb(124, 58, 237)");
+      await expect(serverCard).toHaveCSS("padding-top", "20px");
+      const cardRadius = await serverCard.evaluate((el) =>
+        parseFloat(getComputedStyle(el).borderTopLeftRadius)
+      );
+      expect(cardRadius).toBeGreaterThanOrEqual(10);
+
+      await expect(secondCssBox).toHaveCSS("border-top-width", "3px");
+      await expect(secondCssBox).toHaveCSS(
+        "border-top-color",
+        "rgb(14, 165, 233)"
+      );
+      await expect(secondCssBox).toHaveCSS("padding-left", "18px");
+
+      await expect(counterBtn).toHaveCSS(
+        "background-color",
+        "rgb(220, 38, 38)"
+      );
+      await expect(counterBtn).toHaveCSS("color", "rgb(255, 255, 255)");
+      await counterBtn.click();
+      await expect(counterBtn).toHaveText("Count: 1");
+
+      const bannerBg = await page
+        .getByTestId("styles-asset-banner")
+        .evaluate((el) => getComputedStyle(el).backgroundImage);
+      expect(bannerBg).toContain("/images/nested/badge.svg");
+      expect(bannerBg).toContain(`${expectedPatternAsset}#grid`);
+      expect(bannerBg).toContain("data:image/svg+xml");
+
+      const importedTileBg = await page
+        .getByTestId("styles-imported-tile")
+        .evaluate((el) => getComputedStyle(el).backgroundImage);
+      expect(importedTileBg).toContain(expectedTileAsset);
+
+      const fontImportText =
+        (await page.getByTestId("styles-font-import-url").textContent()) ?? "";
+      expect(fontImportText).toMatch(/^(\/assets\/.*\.woff2|data:)/);
+
+      // 1C. Live Dynamic Pass A + Pass B SSR + Hydration on /t-styles-css/[mode]
+      const safeProj = testInfo.project.name.replace(/[^a-z0-9]/gi, "-");
+      const rawSlug = `raw-${safeProj}-${Date.now()}`;
+      const rawDynRes = await safeApiGet(
+        request,
+        `/t-styles-css/${rawSlug}`
+      );
+      expect(rawDynRes.status()).toBe(200);
+      const rawDynHtml = await rawDynRes.text();
+      expect(rawDynHtml).toContain(expectedLayoutHash);
+      expect(rawDynHtml).toContain(expectedServerCardHash);
+      expect(rawDynHtml).toContain(expectedDynamicBadgeHash);
+      expect(rawDynHtml).toContain(expectedClientCounterHash);
+
+      const liveSlug = `live-${safeProj}-${Date.now()}`;
+      await page.goto(`/t-styles-css/${liveSlug}`);
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+
+      const dynCard = page.getByTestId("styles-dynamic-card");
+      const dynBadge = page.getByTestId("styles-dynamic-badge");
+      const dynFontUrl =
+        (await page.getByTestId("styles-dynamic-font-url").textContent()) ?? "";
+
+      await expect(dynBadge).toHaveText(`Mode:${liveSlug}`);
+      await expect(dynBadge).toHaveClass(expectedDynamicBadgeHash);
+      await expect(dynBadge).toHaveCSS(
+        "border-bottom-color",
+        "rgb(59, 130, 246)"
+      );
+      await expect(dynCard).toHaveClass(expectedServerCardHash);
+      await expect(dynCard).toHaveCSS("color", "rgb(124, 58, 237)");
+      await expect(dynCard).toHaveCSS("padding-top", "20px");
+      expect(dynFontUrl).toMatch(/^(\/assets\/.*\.woff2|data:)/);
+
+      await page.getByTestId("styles-client-counter").click();
+      await expect(page.getByTestId("styles-client-counter")).toHaveText(
+        "Count: 1"
+      );
+
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("2. Live Dev CSS & Server Component HMR across Esbuild, Rollup & Webpack: zero-reload CSS Module property updates, globals.css Tailwind preservation & Server Component RSC refresh", async ({
+      page,
+    }, testInfo) => {
+      test.skip(
+        !isDev || isProd,
+        "Live CSS & RSC HMR test only runs against active DEV server (esbuild, rollup, webpack)"
+      );
+      test.setTimeout(120000);
+
+      const hmrModulePath = path.resolve(
+        process.cwd(),
+        "src/t-styles-css/hmr-live.module.css"
+      );
+      const dynamicPagePath = path.resolve(
+        process.cwd(),
+        "src/t-styles-css/[mode]/page.tsx"
+      );
+
+      await withStylesHmrLock(async () => {
+        const originalCss = fs.readFileSync(hmrModulePath, "utf8");
+        const originalPageCode = fs.readFileSync(dynamicPagePath, "utf8");
+        const pageErrors: string[] = [];
+        page.on("pageerror", (err) => pageErrors.push(err.message));
+
+        try {
+          const safeProj = testInfo.project.name.replace(/[^a-z0-9]/gi, "-");
+          await page.goto(`/t-styles-css/hmr-${safeProj}-${Date.now()}`);
+          await page.waitForSelector('body[data-hydrated="true"]', {
+            state: "attached",
+            timeout: 15000,
+          });
+
+          const counterBtn = page.getByTestId("styles-client-counter");
+          const clientHmrBox = page.getByTestId("styles-hmr-target");
+          const serverHmrBox = page.getByTestId("styles-dynamic-hmr");
+          const tailwindPill = page.getByTestId("styles-dynamic-tailwind-pill");
+          const serverHeading = page.getByTestId("styles-dynamic-heading");
+
+          await expect(serverHeading).toHaveText(
+            "Initial Styles Server Heading"
+          );
+          await expect(clientHmrBox).toHaveCSS(
+            "background-color",
+            "rgb(245, 158, 11)"
+          );
+          await expect(serverHmrBox).toHaveCSS(
+            "background-color",
+            "rgb(245, 158, 11)"
+          );
+
+          const initialTailwindBg = await tailwindPill.evaluate(
+            (el) => getComputedStyle(el).backgroundColor
+          );
+          expect(initialTailwindBg).not.toBe("rgba(0, 0, 0, 0)");
+          expect(initialTailwindBg).not.toBe("transparent");
+
+          await counterBtn.click();
+          await counterBtn.click();
+          await expect(counterBtn).toHaveText("Count: 2");
+
+          await page.evaluate(() => {
+            (
+              window as unknown as { __STYLES_HMR_NO_RELOAD__?: boolean }
+            ).__STYLES_HMR_NO_RELOAD__ = true;
+          });
+
+          // 2A. Edit CSS Module properties -> zero-reload style-update across Esbuild, Rollup & Webpack
+          const updatedCss = originalCss
+            .replace("rgb(245, 158, 11)", "rgb(37, 99, 235)")
+            .replace("padding: 10px;", "padding: 18px;");
+          fs.writeFileSync(hmrModulePath, updatedCss, "utf8");
+
+          await expect(clientHmrBox).toHaveCSS(
+            "background-color",
+            "rgb(37, 99, 235)",
+            { timeout: 25000 }
+          );
+          await expect(clientHmrBox).toHaveCSS("padding-top", "18px");
+          await expect(serverHmrBox).toHaveCSS(
+            "background-color",
+            "rgb(37, 99, 235)"
+          );
+          await expect(serverHmrBox).toHaveCSS("padding-top", "18px");
+
+          // globals.css Tailwind utilities must NOT be wiped by incremental .module.css HMR
+          await expect(tailwindPill).toHaveCSS(
+            "background-color",
+            initialTailwindBg
+          );
+          await expect(counterBtn).toHaveText("Count: 2");
+          expect(
+            await page.evaluate(
+              () =>
+                (
+                  window as unknown as { __STYLES_HMR_NO_RELOAD__?: boolean }
+                ).__STYLES_HMR_NO_RELOAD__
+            )
+          ).toBe(true);
+
+          // 2B. Edit Server Component page -> zero-reload rsc-update across Esbuild, Rollup & Webpack
+          const updatedPageCode = originalPageCode.replace(
+            "Initial Styles Server Heading",
+            "Updated Styles Server Heading"
+          );
+          fs.writeFileSync(dynamicPagePath, updatedPageCode, "utf8");
+
+          await expect(serverHeading).toHaveText(
+            "Updated Styles Server Heading",
+            { timeout: 25000 }
+          );
+          await expect(counterBtn).toHaveText("Count: 2");
+          expect(
+            await page.evaluate(
+              () =>
+                (
+                  window as unknown as { __STYLES_HMR_NO_RELOAD__?: boolean }
+                ).__STYLES_HMR_NO_RELOAD__
+            )
+          ).toBe(true);
+
+          expect(pageErrors).toEqual([]);
+        } finally {
+          fs.writeFileSync(hmrModulePath, originalCss, "utf8");
+          fs.writeFileSync(dynamicPagePath, originalPageCode, "utf8");
+          await expect(page.getByTestId("styles-hmr-target"))
+            .toHaveCSS("background-color", "rgb(245, 158, 11)", {
+              timeout: 15000,
+            })
+            .catch(() => {});
+          await expect(page.getByTestId("styles-dynamic-heading"))
+            .toHaveText("Initial Styles Server Heading", { timeout: 15000 })
+            .catch(() => {});
+        }
+      });
+    });
+
+    test("3. Standalone Unified Styles, CSS Modules, JSONC tsconfig, CSS url(...) Assets & 3-Bundler/4-Runtime Parity Suite (scripts/verify-styles-css-ci.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "Node CLI parity suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
+      test.setTimeout(240000);
+
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        [path.resolve("scripts/verify-styles-css-ci.mjs")],
+        { encoding: "utf8", timeout: 210000 }
+      );
+      expect(output).toContain(
+        "RESULT: All unified styles, CSS Modules (RSC + SSR + Client), JSONC tsconfig, CSS url(...) assets, dev HMR & 3-bundler/4-runtime parity checks PASSED"
+      );
+    });
+  });
 });
