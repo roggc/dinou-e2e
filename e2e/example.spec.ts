@@ -11845,4 +11845,299 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
     });
   });
+
+  test.describe("public/ Static Assets Security, Multi-Bundler Copy Parity & Multi-Runtime Delivery (/t-public-assets)", () => {
+    async function safeApiHead(
+      apiCtx: APIRequestContext,
+      url: string,
+      retries = 2
+    ) {
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+          return await apiCtx.head(url);
+        } catch (err: any) {
+          const isSocketGlitch =
+            err?.message?.includes("ECONNRESET") ||
+            err?.message?.includes("socket hang up") ||
+            err?.code === "ECONNRESET";
+          if (isSocketGlitch && attempt < retries) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            continue;
+          }
+          throw err;
+        }
+      }
+      throw new Error(`Failed to HEAD ${url}`);
+    }
+
+    test("1. Serves nested images/SVGs, SEO files, .well-known Universal/App Links, verification HTML & URL-encoded spaces (GET & HEAD) with exact MIME and Cache-Control differentiation", async ({
+      page,
+      request,
+    }) => {
+      const pageErrors: string[] = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      // 1A. Real browser DOM rendering of nested public/ images & SVGs across Esbuild, Rollup & Webpack
+      await page.goto("/t-public-assets");
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+      await expect(page.locator("h1")).toHaveText("Public Static Assets E2E");
+
+      await expect
+        .poll(
+          async () =>
+            page
+              .getByTestId("public-og-preview")
+              .evaluate(
+                (img: HTMLImageElement) =>
+                  img.complete ? img.naturalWidth : 0
+              ),
+          { timeout: 10000 }
+        )
+        .toBe(1);
+
+      await expect
+        .poll(
+          async () =>
+            page
+              .getByTestId("public-nested-svg")
+              .evaluate(
+                (img: HTMLImageElement) =>
+                  img.complete ? img.naturalWidth : 0
+              ),
+          { timeout: 10000 }
+        )
+        .toBeGreaterThan(0);
+
+      // 1B. /robots.txt (GET + HEAD)
+      const robotsGet = await safeApiGet(request, "/robots.txt");
+      expect(robotsGet.status()).toBe(200);
+      expect(robotsGet.headers()["content-type"]).toContain("text/plain");
+      const robotsBody = await robotsGet.body();
+      expect(robotsBody.toString("utf8")).toContain(
+        "Sitemap: https://dinou.dev/sitemap.xml"
+      );
+
+      const robotsHead = await safeApiHead(request, "/robots.txt");
+      expect(robotsHead.status()).toBe(200);
+      expect(robotsHead.headers()["content-type"]).toContain("text/plain");
+      expect((await robotsHead.body()).byteLength).toBe(0);
+      if (!isCloudflare) {
+        expect(Number(robotsHead.headers()["content-length"])).toBe(
+          robotsBody.byteLength
+        );
+      } else if (robotsHead.headers()["content-length"]) {
+        expect(Number(robotsHead.headers()["content-length"])).toBe(
+          robotsBody.byteLength
+        );
+      }
+
+      // 1C. /sitemap.xml & /site.webmanifest
+      const sitemapRes = await safeApiGet(request, "/sitemap.xml");
+      expect(sitemapRes.status()).toBe(200);
+      expect(sitemapRes.headers()["content-type"]).toMatch(
+        /(?:application|text)\/xml/i
+      );
+      expect(await sitemapRes.text()).toContain(
+        "<loc>https://dinou.dev/</loc>"
+      );
+
+      const webmanifestRes = await safeApiGet(request, "/site.webmanifest");
+      expect(webmanifestRes.status()).toBe(200);
+      expect(webmanifestRes.headers()["content-type"]).toContain(
+        "application/manifest+json"
+      );
+      const webmanifestJson = await webmanifestRes.json();
+      expect(Array.isArray(webmanifestJson.icons)).toBe(true);
+
+      // 1D. Standalone domain verification .html in public/ (served as static file while /index.html stays routed)
+      const verifyHtmlRes = await safeApiGet(
+        request,
+        "/google1a2b3c4d5e6f.html"
+      );
+      expect(verifyHtmlRes.status()).toBe(200);
+      expect(verifyHtmlRes.headers()["content-type"]).toContain("text/html");
+      expect(await verifyHtmlRes.text()).toContain(
+        "google-site-verification: google1a2b3c4d5e6f.html"
+      );
+
+      // 1E. Nested public/images/og-image.png & multi-level public/images/nested/badge.svg
+      const ogPngRes = await safeApiGet(request, "/images/og-image.png");
+      expect(ogPngRes.status()).toBe(200);
+      expect(ogPngRes.headers()["content-type"]).toBe("image/png");
+      const ogPngBytes = await ogPngRes.body();
+      expect(Array.from(ogPngBytes.subarray(0, 4))).toEqual([
+        0x89, 0x50, 0x4e, 0x47,
+      ]);
+
+      const nestedSvgRes = await safeApiGet(
+        request,
+        "/images/nested/badge.svg"
+      );
+      expect(nestedSvgRes.status()).toBe(200);
+      expect(nestedSvgRes.headers()["content-type"]).toContain("image/svg+xml");
+      expect(await nestedSvgRes.text()).toContain("#10b981");
+
+      // 1F. URL-encoded space (%20) in filename (/downloads/brochure%202026.pdf)
+      const pdfRes = await safeApiGet(
+        request,
+        "/downloads/brochure%202026.pdf"
+      );
+      expect(pdfRes.status()).toBe(200);
+      expect(pdfRes.headers()["content-type"]).toBe("application/pdf");
+      expect(await pdfRes.text()).toContain("%PDF-1.4");
+
+      // 1G. RFC 8615 /.well-known/assetlinks.json & extensionless /.well-known/apple-app-site-association
+      const assetLinksRes = await safeApiGet(
+        request,
+        "/.well-known/assetlinks.json"
+      );
+      expect(assetLinksRes.status()).toBe(200);
+      expect(assetLinksRes.headers()["content-type"]).toContain(
+        "application/json"
+      );
+      const assetLinksJson = await assetLinksRes.json();
+      expect(assetLinksJson[0]?.target?.package_name).toBe("dev.dinou.e2e");
+
+      const aasaGet = await safeApiGet(
+        request,
+        "/.well-known/apple-app-site-association"
+      );
+      expect(aasaGet.status()).toBe(200);
+      expect(aasaGet.headers()["content-type"]).toBe(
+        "application/json; charset=utf-8"
+      );
+      const aasaJson = await aasaGet.json();
+      expect(aasaJson?.applinks?.details?.[0]?.appID).toBe(
+        "TEAMID1234.dev.dinou.e2e"
+      );
+
+      const aasaHead = await safeApiHead(
+        request,
+        "/.well-known/apple-app-site-association"
+      );
+      expect(aasaHead.status()).toBe(200);
+      expect(aasaHead.headers()["content-type"]).toBe(
+        "application/json; charset=utf-8"
+      );
+      expect((await aasaHead.body()).byteLength).toBe(0);
+
+      // 1H. Cache-Control differentiation & Cloudflare .assetsignore verification
+      if (isDev) {
+        expect(robotsGet.headers()["cache-control"]).toContain("no-store");
+      } else if (isProd && !isCloudflare) {
+        expect(robotsGet.headers()["cache-control"]).toBe(
+          "public, max-age=0, must-revalidate"
+        );
+        expect(sitemapRes.headers()["cache-control"]).toBe(
+          "public, max-age=0, must-revalidate"
+        );
+        expect(ogPngRes.headers()["cache-control"]).toBe(
+          "public, max-age=0, must-revalidate"
+        );
+        expect(assetLinksRes.headers()["cache-control"]).toBe(
+          "public, max-age=0, must-revalidate"
+        );
+
+        const stylesRes = await safeApiGet(request, "/styles.css");
+        if (stylesRes.status() === 200) {
+          expect(stylesRes.headers()["cache-control"]).toBe(
+            "public, max-age=0, must-revalidate"
+          );
+        }
+
+        const dist3Dir = path.resolve(process.cwd(), ".dinou/dist3");
+        if (fs.existsSync(dist3Dir)) {
+          const mainChunk = fs
+            .readdirSync(dist3Dir)
+            .find((f) => /^main-[A-Za-z0-9_-]+\.js$/.test(f));
+          expect(mainChunk).toBeTruthy();
+          if (mainChunk) {
+            const chunkRes = await safeApiGet(request, `/${mainChunk}`);
+            expect(chunkRes.status()).toBe(200);
+            expect(chunkRes.headers()["cache-control"]).toBe(
+              "public, max-age=31536000, immutable"
+            );
+          }
+        }
+      } else if (isCloudflare) {
+        const assetsIgnorePath = path.resolve(
+          process.cwd(),
+          ".dinou/dist3/.assetsignore"
+        );
+        expect(fs.existsSync(assetsIgnorePath)).toBe(true);
+        const ignoreContent = fs.readFileSync(assetsIgnorePath, "utf8");
+        expect(ignoreContent).toContain("/server");
+        expect(ignoreContent).toContain("/manifest.json");
+        expect(ignoreContent).toContain("/react-client-manifest.json");
+        expect(ignoreContent).toContain("/server-functions-manifest.json");
+      }
+
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("2. Blocks public HTTP access (GET & HEAD -> 404) to .dinou/dist3/server/*, internal manifests, route HTML/metadata artifacts, hidden dotfiles, traversal & /public/ prefix", async ({
+      request,
+    }) => {
+      const forbiddenPaths = [
+        "/server/handler.js",
+        "/server/handler.js.map",
+        "/server/netlify.js",
+        "/server/package.json",
+        "/manifest.json",
+        "/react-client-manifest.json",
+        "/server-functions-manifest.json",
+        "/status-manifest.json",
+        "/t-public-assets/index.html",
+        "/t-public-assets/metadata.json",
+        "/.nojekyll",
+        "/.assetsignore",
+        "/.env",
+        "/.well-known",
+        "/.well-known/.hidden",
+        "/%2e%2e/package.json",
+        "/public/favicon.ico",
+        "/public/robots.txt",
+      ];
+
+      for (const forbidden of forbiddenPaths) {
+        const res = await safeApiGet(request, forbidden);
+        expect(res.status(), `Expected GET ${forbidden} to return 404`).toBe(
+          404
+        );
+      }
+
+      const handlerLeakText = await (
+        await safeApiGet(request, "/server/handler.js")
+      ).text();
+      expect(handlerLeakText).not.toContain("registerServerReference");
+
+      for (const headForbidden of [
+        "/server/handler.js",
+        "/manifest.json",
+        "/.env",
+        "/public/favicon.ico",
+      ]) {
+        const headRes = await safeApiHead(request, headForbidden);
+        expect(
+          headRes.status(),
+          `Expected HEAD ${headForbidden} to return 404`
+        ).toBe(404);
+      }
+    });
+
+    test("3. Standalone public/ Static Assets Security, Multi-Bundler Copy Parity, Cloudflare Adapter & export-static Suite (scripts/verify-public-static-assets-ci.mjs)", async () => {
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        [path.resolve("scripts/verify-public-static-assets-ci.mjs")],
+        { encoding: "utf8", timeout: 120000 }
+      );
+      expect(output).toContain(
+        "RESULT: All public/ static assets security, multi-bundler copy parity, Cloudflare adapter & export-static checks PASSED"
+      );
+    });
+  });
 });

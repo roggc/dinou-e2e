@@ -15,6 +15,7 @@
     "test:streaming-suspense": "node scripts/verify-streaming-suspense-ci.mjs",
     "test:ssr-server-refs": "node scripts/verify-ssr-server-references-ci.mjs",
     "test:react-compiler": "node scripts/verify-react-compiler-ci.mjs",
+    "test:public-assets": "node scripts/verify-public-static-assets-ci.mjs",
     "test:hmr:ws": "node tests/hmr-websocket.test.mjs",
     "test:smoke:compile": "node tests/compile-and-export-smoke.mjs",
     "dev": "node dinou/cli.js dev",
