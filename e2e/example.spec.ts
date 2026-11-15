@@ -13049,13 +13049,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         browserName !== "chromium",
         "Node CLI parity suite is browser-agnostic; run once per CI matrix job in chromium"
       );
-      test.setTimeout(240000);
+      test.setTimeout(360000);
 
       const { execFileSync } = await import("child_process");
       const output = execFileSync(
         process.execPath,
         [path.resolve("scripts/verify-styles-css-ci.mjs")],
-        { encoding: "utf8", timeout: 210000 }
+        { encoding: "utf8", timeout: 330000 }
       );
       expect(output).toContain(
         "RESULT: All unified styles, CSS Modules (RSC + SSR + Client), JSONC tsconfig, CSS url(...) assets, dev HMR & 3-bundler/4-runtime parity checks PASSED"

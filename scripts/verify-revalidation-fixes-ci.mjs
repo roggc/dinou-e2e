@@ -730,6 +730,9 @@ console.log(
   fs.mkdirSync(path.join(tmpApp, "src/workspaces/[ws]/isr-ttl"), {
     recursive: true,
   });
+  fs.mkdirSync(path.join(tmpApp, "src/isr-race"), {
+    recursive: true,
+  });
 
   fs.writeFileSync(
     path.join(tmpApp, "package.json"),
@@ -743,9 +746,11 @@ console.log(
     billingLayoutVersion: 1,
     pageVersion: 1,
     quotaSlotVersion: 1,
+    isrRaceVersion: 1,
     redisWritesDuringSsg: 0,
     ssgActive: true,
   };
+  globalThis.__TEST_REVAL_WRITE_LOG__ = null;
 
   globalThis.__TEST_REVAL_REDIS_MAP__ = new Map();
   globalThis.__TEST_REVAL_REDIS_CLIENT__ = {
@@ -757,6 +762,9 @@ console.log(
     async set(k, v) {
       if (globalThis.__TEST_REVAL_COUNTERS__.ssgActive) {
         globalThis.__TEST_REVAL_COUNTERS__.redisWritesDuringSsg++;
+      }
+      if (Array.isArray(globalThis.__TEST_REVAL_WRITE_LOG__)) {
+        globalThis.__TEST_REVAL_WRITE_LOG__.push(String(k));
       }
       globalThis.__TEST_REVAL_REDIS_MAP__.set(k, String(v));
       return "OK";
@@ -1035,6 +1043,25 @@ export default async function WorkspaceIsrTtlPage({
 export function getCacheTags(params?: { ws?: string }) {
   return [\`ws-ttl-page-\${params?.ws ?? "default"}\`];
 }
+`
+  );
+
+  fs.writeFileSync(
+    path.join(tmpApp, "src/isr-race/page.tsx"),
+    `export default async function IsrRacePage() {
+  if ((globalThis as any).__TEST_ISR_RACE_GATE__) {
+    await (globalThis as any).__TEST_ISR_RACE_GATE__;
+  }
+  const pv = (globalThis as any).__TEST_REVAL_COUNTERS__.isrRaceVersion;
+  return <div data-testid="isr-race-val">{\`IsrRace-v\${pv}\`}</div>;
+}
+`
+  );
+
+  fs.writeFileSync(
+    path.join(tmpApp, "src/isr-race/page_functions.ts"),
+    `export const revalidate = 1;
+export const ppr = false;
 `
   );
 
@@ -1444,8 +1471,190 @@ export function getCacheTags(params?: { ws?: string }) {
       wsPageGenBefore,
       "Dynamic ISG slot-only refresh must preserve host pageGeneratedAt"
     );
+
+    // 6.9 Two-Cycle Edge/KV ISR Stale-While-Revalidate Hydration Consistency (React #418 regression):
+    //     Reproduces the exact 2-cycle ISR race (T0 -> T1 -> T2) where:
+    //       - Cycle #1 (T0 -> T1) commits T1 (IsrRace-v2) and writes page._old.rsc = T0 (IsrRace-v1).
+    //       - After T1 expires, Visit #2 adds "/isr-race/" to regenerating, starts Background
+    //         Revalidation #2 (T1 -> T2), and immediately serves stale T1 HTML (buildId = T1).
+    //       - While Revalidation #2 is mid-render (before page._old.rsc is updated from T0 to T1),
+    //         the browser hydrates and requests /____rsc_page_static____/isr-race?____build_id____=T1.
+    //       - handler.js MUST serve T1 (IsrRace-v2) from page.rsc (since buildId === currentGeneratedAt),
+    //         NEVER stale T0 (IsrRace-v1) from page._old.rsc!
+    //       - Also verifies causal commit order: _old -> metadata.json -> page.rsc -> index.html.
+    const regeneratingSet = globalThis[Symbol.for("dinou.regenerating.set")];
+    const waitForRegenDrain = async (key) => {
+      const deadline = Date.now() + 8000;
+      while (regeneratingSet?.has(key) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 15));
+      }
+      assert.equal(
+        Boolean(regeneratingSet?.has(key)),
+        false,
+        `Expected regenerating set to drain for ${key}`
+      );
+    };
+
+    const isrDiskMeta = JSON.parse(
+      fs.readFileSync(
+        path.join(tmpApp, ".dinou/dist2/isr-race/metadata.json"),
+        "utf8"
+      )
+    );
+    const waitT0Expiry = isrDiskMeta.generatedAt + 1100 - Date.now();
+    if (waitT0Expiry > 0) {
+      await new Promise((r) => setTimeout(r, waitT0Expiry));
+    }
+
+    // Cycle #1 (T0 -> T1): returns stale T0 (IsrRace-v1) and commits T1 (IsrRace-v2) + page._old.rsc = T0
+    globalThis.__TEST_REVAL_COUNTERS__.isrRaceVersion = 2;
+    const resIsrCycle1 = await rscMod.handleRequest(
+      new Request("http://localhost/isr-race?t=cycle1"),
+      { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml }
+    );
+    const htmlIsrCycle1 = stripComments(await resIsrCycle1.text());
+    assert.ok(
+      htmlIsrCycle1.includes("IsrRace-v1"),
+      `Cycle #1 stale SWR response must serve T0 IsrRace-v1, got: ${htmlIsrCycle1}`
+    );
+    await waitForRegenDrain("/isr-race/");
+
+    const oldRscAfterCycle1 = JSON.parse(
+      globalThis.__TEST_REVAL_REDIS_MAP__.get("cluster:isr-race/page._old.rsc")
+    ).content;
+    assert.ok(
+      oldRscAfterCycle1.includes("IsrRace-v1"),
+      `After Cycle #1, page._old.rsc must hold T0 (IsrRace-v1), got: ${oldRscAfterCycle1}`
+    );
+
+    const t1Meta = JSON.parse(
+      JSON.parse(
+        globalThis.__TEST_REVAL_REDIS_MAP__.get("cluster:isr-race/metadata.json")
+      ).content
+    );
+    const waitT1Expiry = t1Meta.generatedAt + 1100 - Date.now();
+    if (waitT1Expiry > 0) {
+      await new Promise((r) => setTimeout(r, waitT1Expiry));
+    }
+
+    // Cycle #2 (T1 -> T2): hold background render mid-flight via __TEST_ISR_RACE_GATE__
+    globalThis.__TEST_REVAL_COUNTERS__.isrRaceVersion = 3;
+    globalThis.__TEST_REVAL_WRITE_LOG__ = [];
+    let releaseIsrRaceGate;
+    globalThis.__TEST_ISR_RACE_GATE__ = new Promise((resolve) => {
+      releaseIsrRaceGate = resolve;
+    });
+
+    const resIsrCycle2 = await rscMod.handleRequest(
+      new Request("http://localhost/isr-race?t=cycle2"),
+      { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml }
+    );
+    const rawHtmlIsrCycle2 = await resIsrCycle2.text();
+    const htmlIsrCycle2 = stripComments(rawHtmlIsrCycle2);
+    assert.ok(
+      htmlIsrCycle2.includes("IsrRace-v2"),
+      `Cycle #2 stale SWR HTML must serve T1 IsrRace-v2, got: ${htmlIsrCycle2}`
+    );
+    const buildIdMatchT1 = rawHtmlIsrCycle2.match(
+      /window\.__DINOU_BUILD_ID__\s*=\s*"([^"]+)"/
+    );
+    assert.ok(
+      buildIdMatchT1 && buildIdMatchT1[1],
+      `Expected window.__DINOU_BUILD_ID__ in T1 HTML, got: ${rawHtmlIsrCycle2}`
+    );
+    const buildIdT1 = buildIdMatchT1[1];
+    assert.equal(
+      regeneratingSet.has("/isr-race/"),
+      true,
+      "Background Revalidation #2 must still be in-flight while client hydrates T1 HTML"
+    );
+
+    // Client hydration RSC request arrives while regenerating.has("/isr-race/") === true!
+    const resRscMidReval = await rscMod.handleRequest(
+      new Request(
+        `http://localhost/____rsc_page_static____/isr-race?t=cycle2&____build_id____=${encodeURIComponent(
+          buildIdT1
+        )}`
+      ),
+      { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml }
+    );
+    const rscMidRevalText = await resRscMidReval.text();
+    assert.ok(
+      rscMidRevalText.includes("IsrRace-v2"),
+      `Hydrating T1 HTML mid-revalidation MUST receive T1 RSC (IsrRace-v2), got: ${rscMidRevalText}`
+    );
+    assert.equal(
+      rscMidRevalText.includes("IsrRace-v1"),
+      false,
+      `Hydrating T1 HTML mid-revalidation MUST NEVER receive T0 page._old.rsc (IsrRace-v1 -> React #418!), got: ${rscMidRevalText}`
+    );
+
+    // Release gate so Background Revalidation #2 commits T2 (IsrRace-v3)
+    delete globalThis.__TEST_ISR_RACE_GATE__;
+    releaseIsrRaceGate();
+    await waitForRegenDrain("/isr-race/");
+
+    const writeLog = globalThis.__TEST_REVAL_WRITE_LOG__ || [];
+    globalThis.__TEST_REVAL_WRITE_LOG__ = null;
+    const idxOldRsc = writeLog.indexOf("cluster:isr-race/page._old.rsc");
+    const idxMeta = writeLog.indexOf("cluster:isr-race/metadata.json");
+    const idxPageRsc = writeLog.indexOf("cluster:isr-race/page.rsc");
+    const idxHtml = writeLog.indexOf("cluster:isr-race/index.html");
+    assert.ok(
+      idxOldRsc !== -1 &&
+        idxMeta !== -1 &&
+        idxPageRsc !== -1 &&
+        idxHtml !== -1 &&
+        idxOldRsc < idxMeta &&
+        idxMeta < idxPageRsc &&
+        idxPageRsc < idxHtml,
+      `Expected causal ISR commit order (_old.rsc -> metadata.json -> page.rsc -> index.html), got: ${JSON.stringify(
+        writeLog
+      )}`
+    );
+
+    // After T2 commits, a late client still hydrating T1 HTML (buildId = T1 < T2) MUST still get T1 from page._old.rsc!
+    const resRscLateT1 = await rscMod.handleRequest(
+      new Request(
+        `http://localhost/____rsc_page_static____/isr-race?t=late&____build_id____=${encodeURIComponent(
+          buildIdT1
+        )}`
+      ),
+      { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml }
+    );
+    const rscLateT1Text = await resRscLateT1.text();
+    assert.ok(
+      rscLateT1Text.includes("IsrRace-v2"),
+      `Late T1 client after T2 commit must receive T1 (IsrRace-v2) from page._old.rsc, got: ${rscLateT1Text}`
+    );
+
+    // And a fresh client visiting after T2 commits receives T2 HTML (IsrRace-v3) + matching T2 RSC!
+    const resIsrCycle3 = await rscMod.handleRequest(
+      new Request("http://localhost/isr-race?t=cycle3"),
+      { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml }
+    );
+    const rawHtmlIsrCycle3 = await resIsrCycle3.text();
+    assert.ok(
+      stripComments(rawHtmlIsrCycle3).includes("IsrRace-v3"),
+      `Fresh visit after Cycle #2 must serve T2 IsrRace-v3, got: ${rawHtmlIsrCycle3}`
+    );
+    const buildIdT2 = rawHtmlIsrCycle3.match(
+      /window\.__DINOU_BUILD_ID__\s*=\s*"([^"]+)"/
+    )?.[1];
+    assert.ok(buildIdT2 && Number(buildIdT2) > Number(buildIdT1));
+    const resRscT2 = await rscMod.handleRequest(
+      new Request(
+        `http://localhost/____rsc_page_static____/isr-race?t=cycle3&____build_id____=${encodeURIComponent(
+          buildIdT2
+        )}`
+      ),
+      { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml }
+    );
+    assert.ok((await resRscT2.text()).includes("IsrRace-v3"));
   } finally {
     process.chdir(prevCwd);
+    delete globalThis.__TEST_ISR_RACE_GATE__;
+    delete globalThis.__TEST_REVAL_WRITE_LOG__;
     delete globalThis.__TEST_REVAL_COUNTERS__;
     delete globalThis.__TEST_REVAL_REDIS_MAP__;
     delete globalThis.__TEST_REVAL_REDIS_CLIENT__;

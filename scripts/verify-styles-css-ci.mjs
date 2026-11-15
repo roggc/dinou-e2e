@@ -6,9 +6,10 @@
 // 4. createPostCSSExtractPlugin incremental stylesheet preservation & deleted-file pruning
 // 5. Incremental Esbuild dev CSS HMR: live Tailwind v4 utility refresh on Server Component .tsx edits + globals.css preservation on .module.css edits
 // 6. Full 3-bundler (Esbuild, Rollup, Webpack) + 4-runtime (Node, Cloudflare, Bun, Deno) + export-static CSS, minification, assets & CSS Modules parity
+// 7. public/styles.css coexistence (zero src/ CSS) & collision protection (compiled src/ CSS wins with warning & preserves nested public/*/styles.css)
 
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -1083,6 +1084,297 @@ export default function Page() {
   } finally {
     process.chdir(origCwd);
     fs.rmSync(tmpApp, { recursive: true, force: true });
+    try {
+      if (
+        fs.existsSync(fixturesBase) &&
+        fs.readdirSync(fixturesBase).length === 0
+      ) {
+        fs.rmdirSync(fixturesBase);
+      }
+    } catch {}
+  }
+}
+
+console.log(
+  "7️⃣ Verifying public/styles.css coexistence (zero src/ CSS) & collision protection (compiled src/ CSS wins with warning)..."
+);
+{
+  const { createPostCSSExtractPlugin } = await importDinou(
+    "esbuild/plugins-postcss/postcss-extract-plugin.js"
+  );
+  const cliPath = path.join(dinouRoot, "cli.js");
+  const fixturesBase = path.join(projectRoot, ".dinou", "tmp-styles-fixtures");
+  fs.mkdirSync(fixturesBase, { recursive: true });
+
+  const createPublicStylesFixtureApp = (prefix) => {
+    const tmpApp = fs.mkdtempSync(path.join(fixturesBase, prefix));
+    const dinouShimDir = path.join(tmpApp, "node_modules", "dinou");
+    fs.mkdirSync(dinouShimDir, { recursive: true });
+    const dinouRootUrl = pathToFileURL(dinouRoot).href;
+    fs.writeFileSync(
+      path.join(dinouShimDir, "package.json"),
+      JSON.stringify(
+        {
+          name: "dinou",
+          version: "9.4.0",
+          type: "module",
+          main: "./index.js",
+          exports: {
+            ".": "./index.js",
+            "./server": "./server.js",
+            "./config": "./config.js",
+          },
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(dinouShimDir, "index.js"),
+      `export * from ${JSON.stringify(`${dinouRootUrl}/index.js`)};\n`,
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(dinouShimDir, "server.js"),
+      `export * from ${JSON.stringify(`${dinouRootUrl}/server.js`)};\n`,
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(dinouShimDir, "config.js"),
+      `export * from ${JSON.stringify(`${dinouRootUrl}/core/config.js`)};\nexport { default } from ${JSON.stringify(`${dinouRootUrl}/core/config.js`)};\n`,
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "package.json"),
+      JSON.stringify(
+        { name: "dinou-public-styles-fixture", version: "1.0.0", type: "module" },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "tsconfig.json"),
+      JSON.stringify(
+        {
+          compilerOptions: {
+            baseUrl: ".",
+            paths: { "@/*": ["./src/*"] },
+          },
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    return tmpApp;
+  };
+
+  const cleanBuildEnv = { ...process.env, NODE_ENV: "production" };
+  delete cleanBuildEnv.DINOU_WRITE_TO_DISK;
+
+  // 7A: Zero CSS imported in src/ -> public/styles.css & public/nested/styles.css served unminified with zero warnings
+  const tmpAppNoSrcCss = createPublicStylesFixtureApp("dinou-pub-styles-only-");
+  try {
+    fs.mkdirSync(path.join(tmpAppNoSrcCss, "public", "nested"), { recursive: true });
+    fs.mkdirSync(path.join(tmpAppNoSrcCss, "src"), { recursive: true });
+
+    fs.writeFileSync(
+      path.join(tmpAppNoSrcCss, "public", "styles.css"),
+      "/* raw public stylesheet */\nbody { background: papayawhip; }\n",
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(tmpAppNoSrcCss, "public", "nested", "styles.css"),
+      ".nested-public { color: rebeccapurple; }\n",
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(tmpAppNoSrcCss, "src", "layout.tsx"),
+      `export default function Layout({ children }: { children: any }) {
+  return (
+    <html lang="en">
+      <head><link rel="stylesheet" href="/styles.css" /></head>
+      <body>{children}</body>
+    </html>
+  );
+}
+`,
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(tmpAppNoSrcCss, "src", "page.tsx"),
+      `export default function Page() { return <main>Hello Public Styles</main>; }\n`,
+      "utf8"
+    );
+
+    process.chdir(tmpAppNoSrcCss);
+    process.env.NODE_ENV = "development";
+    globalThis.__DINOU_MEM_FILES__ = new Map([
+      ["styles.css", Buffer.from("stale")],
+      ["/styles.css", Buffer.from("stale")],
+    ]);
+    const extractor = createPostCSSExtractPlugin({
+      outputFile: path.join(tmpAppNoSrcCss, ".dinou", "public", "styles.css"),
+    });
+    extractor.finalize();
+    assert.equal(globalThis.__DINOU_HAS_COMPILED_STYLES__, false);
+    assert.equal(globalThis.__DINOU_MEM_FILES__.has("styles.css"), false);
+    assert.equal(globalThis.__DINOU_MEM_FILES__.has("/styles.css"), false);
+
+    for (const buildCmd of [
+      "build:node:esbuild",
+      "build:node:rollup",
+      "build:node:webpack",
+    ]) {
+      const res = spawnSync(process.execPath, [cliPath, buildCmd], {
+        cwd: tmpAppNoSrcCss,
+        encoding: "utf8",
+        env: cleanBuildEnv,
+      });
+      assert.equal(
+        res.status,
+        0,
+        `[7A ${buildCmd}] failed:\n${res.stdout}\n${res.stderr}`
+      );
+      assert.doesNotMatch(
+        `${res.stdout}\n${res.stderr}`,
+        /Detected "public\/styles\.css"/,
+        `[7A ${buildCmd}] Must NOT warn when zero CSS is imported in src/`
+      );
+
+      const distStyles = fs.readFileSync(
+        path.join(tmpAppNoSrcCss, ".dinou", "dist3", "styles.css"),
+        "utf8"
+      );
+      assert.match(distStyles, /papayawhip/);
+      assert.match(
+        distStyles,
+        /\/\* raw public stylesheet \*\//,
+        `[7A ${buildCmd}] Raw public/styles.css comment must be preserved unminified`
+      );
+
+      const nestedStyles = fs.readFileSync(
+        path.join(tmpAppNoSrcCss, ".dinou", "dist3", "nested", "styles.css"),
+        "utf8"
+      );
+      assert.match(nestedStyles, /\.nested-public\b/);
+    }
+
+    const expRes = spawnSync(process.execPath, [cliPath, "export-static"], {
+      cwd: tmpAppNoSrcCss,
+      encoding: "utf8",
+      env: cleanBuildEnv,
+    });
+    assert.equal(expRes.status, 0, `[7A export-static] failed:\n${expRes.stderr}`);
+    assert.match(
+      fs.readFileSync(path.join(tmpAppNoSrcCss, "out", "styles.css"), "utf8"),
+      /papayawhip/
+    );
+  } finally {
+    process.chdir(origCwd);
+    process.env.NODE_ENV = origNodeEnv;
+    fs.rmSync(tmpAppNoSrcCss, { recursive: true, force: true });
+  }
+
+  // 7B: CSS imported in src/ + public/styles.css -> compiled src/ CSS wins, warning emitted, public/nested/styles.css preserved
+  const tmpAppCollision = createPublicStylesFixtureApp("dinou-pub-styles-col-");
+  try {
+    fs.mkdirSync(path.join(tmpAppCollision, "public", "nested"), { recursive: true });
+    fs.mkdirSync(path.join(tmpAppCollision, "src"), { recursive: true });
+
+    fs.writeFileSync(
+      path.join(tmpAppCollision, "public", "styles.css"),
+      ".from-public-should-be-ignored { color: orange; }\n",
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(tmpAppCollision, "public", "nested", "styles.css"),
+      ".nested-public-preserved { color: purple; }\n",
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(tmpAppCollision, "src", "globals.css"),
+      ".compiled-from-src { color: teal; }\n",
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(tmpAppCollision, "src", "layout.tsx"),
+      `import "./globals.css";
+export default function Layout({ children }: { children: any }) {
+  return (
+    <html lang="en">
+      <head><link rel="stylesheet" href="/styles.css" /></head>
+      <body>{children}</body>
+    </html>
+  );
+}
+`,
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(tmpAppCollision, "src", "page.tsx"),
+      `export default function Page() { return <main className="compiled-from-src">Hi</main>; }\n`,
+      "utf8"
+    );
+
+    for (const buildCmd of [
+      "build:node:esbuild",
+      "build:node:rollup",
+      "build:node:webpack",
+    ]) {
+      const res = spawnSync(process.execPath, [cliPath, buildCmd], {
+        cwd: tmpAppCollision,
+        encoding: "utf8",
+        env: cleanBuildEnv,
+      });
+      assert.equal(
+        res.status,
+        0,
+        `[7B ${buildCmd}] failed:\n${res.stdout}\n${res.stderr}`
+      );
+
+      const combinedLogs = `${res.stdout}\n${res.stderr}`;
+      assert.match(
+        combinedLogs,
+        /Detected "public\/styles\.css" alongside CSS imported in "src\/"/,
+        `[7B ${buildCmd}] Expected collision warning in build output`
+      );
+
+      const distStyles = fs.readFileSync(
+        path.join(tmpAppCollision, ".dinou", "dist3", "styles.css"),
+        "utf8"
+      );
+      assert.match(distStyles, /\.compiled-from-src\b/);
+      assert.doesNotMatch(distStyles, /from-public-should-be-ignored/);
+
+      const nestedStyles = fs.readFileSync(
+        path.join(tmpAppCollision, ".dinou", "dist3", "nested", "styles.css"),
+        "utf8"
+      );
+      assert.match(nestedStyles, /\.nested-public-preserved\b/);
+    }
+
+    const expRes = spawnSync(process.execPath, [cliPath, "export-static"], {
+      cwd: tmpAppCollision,
+      encoding: "utf8",
+      env: cleanBuildEnv,
+    });
+    assert.equal(expRes.status, 0, `[7B export-static] failed:\n${expRes.stderr}`);
+    const outStyles = fs.readFileSync(
+      path.join(tmpAppCollision, "out", "styles.css"),
+      "utf8"
+    );
+    assert.match(outStyles, /\.compiled-from-src\b/);
+    assert.doesNotMatch(outStyles, /from-public-should-be-ignored/);
+    assert.match(
+      fs.readFileSync(path.join(tmpAppCollision, "out", "nested", "styles.css"), "utf8"),
+      /\.nested-public-preserved\b/
+    );
+  } finally {
+    process.chdir(origCwd);
+    fs.rmSync(tmpAppCollision, { recursive: true, force: true });
     try {
       if (
         fs.existsSync(fixturesBase) &&
