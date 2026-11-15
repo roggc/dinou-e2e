@@ -11853,7 +11853,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
   });
 
-  test.describe("public/ Static Assets Security, .dinou/dist1 Physical Isolation & Multi-Runtime Delivery (/t-public-assets)", () => {
+  test.describe("public/ Static Assets Security, .dinou/dist1 Physical Isolation, Static Export SPA & Multi-Runtime Delivery (/t-public-assets)", () => {
     async function safeApiHead(
       apiCtx: APIRequestContext,
       url: string,
@@ -11895,6 +11895,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         "href",
         "/manifest.json"
       );
+      await expect(
+        page.getByTestId("public-export-about-link")
+      ).toHaveAttribute("href", "/t-public-assets/about");
 
       await expect
         .poll(
@@ -12038,6 +12041,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(aasaJson?.applinks?.details?.[0]?.appID).toBe(
         "TEAMID1234.dev.dinou.e2e"
       );
+      expect(aasaJson?.applinks?.details?.[0]?.appIDs?.[0]).toBe(
+        "TEAMID1234.dev.dinou.e2e"
+      );
 
       const aasaHead = await safeApiHead(
         request,
@@ -12090,6 +12096,12 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         expect(
           fs.existsSync(path.join(dist3Dir, "server-functions-manifest.json"))
         ).toBe(false);
+        if (!isCloudflare) {
+          // Node, Bun, Bun Pure & Deno must NOT copy .dinou/dist2 route folders into .dinou/dist3
+          expect(fs.existsSync(path.join(dist3Dir, "t-public-assets"))).toBe(
+            false
+          );
+        }
         const dist3Pwa = JSON.parse(
           fs.readFileSync(path.join(dist3Dir, "manifest.json"), "utf8")
         );
@@ -12136,7 +12148,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(pageErrors).toEqual([]);
     });
 
-    test("2. Blocks public HTTP access (GET & HEAD -> 404) to /server/*, internal RSC/SSR/SF/status manifests, route HTML/metadata artifacts, hidden dotfiles, traversal & /public/ prefix", async ({
+    test("2. Blocks public HTTP access (GET & HEAD -> 404) to /server/*, internal RSC/SSR/SF/status manifests, /slots/*, dist2 route HTML/metadata/RSC artifacts, hidden dotfiles, traversal & /public/ prefix", async ({
       request,
     }) => {
       const forbiddenPaths = [
@@ -12148,8 +12160,15 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         "/react-ssr-manifest.json",
         "/server-functions-manifest.json",
         "/status-manifest.json",
+        "/slots/hero/slot.json",
+        "/slots/hero/slot.metadata.json",
         "/t-public-assets/index.html",
         "/t-public-assets/metadata.json",
+        "/t-public-assets/layout.metadata.json",
+        "/t-public-assets/page.rsc",
+        "/t-public-assets/layout.rsc",
+        "/t-public-assets/rsc.rsc",
+        "/t-public-assets/shell.page.json",
         "/.nojekyll",
         "/.assetsignore",
         "/.env",
@@ -12178,6 +12197,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         "/react-client-manifest.json",
         "/react-ssr-manifest.json",
         "/server-functions-manifest.json",
+        "/slots/hero/slot.json",
+        "/t-public-assets/page.rsc",
         "/.env",
         "/public/favicon.ico",
       ]) {
@@ -12199,6 +12220,343 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(output).toContain(
         "RESULT: All public/ static assets security, .dinou/dist1 physical isolation, multi-bundler parity, Cloudflare adapter & export-static checks PASSED"
       );
+    });
+
+    test("4. Standalone Static Export (dinou export-static): clean out/ hygiene, serverless SPA hydration, <Link> page.rsc/layout.rsc transitions & non-RSC static HTML fallback", async ({
+      page,
+    }) => {
+      test.skip(
+        !isProd,
+        "dinou export-static requires production .dinou/dist2 and .dinou/dist3 artifacts"
+      );
+
+      const http = await import("http");
+      const os = await import("os");
+      const { execFileSync } = await import("child_process");
+
+      const pageErrors: string[] = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      const tmpExportDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "dinou-e2e-static-export-")
+      );
+      let staticServer: import("http").Server | null = null;
+
+      try {
+        const srcDist3 = path.resolve(process.cwd(), ".dinou/dist3");
+        const srcDist2 = path.resolve(process.cwd(), ".dinou/dist2");
+        const tmpDinou = path.join(tmpExportDir, ".dinou");
+        const tmpDist2 = path.join(tmpDinou, "dist2");
+        fs.mkdirSync(tmpDist2, { recursive: true });
+
+        fs.symlinkSync(
+          srcDist3,
+          path.join(tmpDinou, "dist3"),
+          process.platform === "win32" ? "junction" : "dir"
+        );
+
+        // Copy root dist2 files + real t-public-assets SSG subtree into isolated workspace
+        for (const entry of fs.readdirSync(srcDist2, { withFileTypes: true })) {
+          if (entry.isFile()) {
+            fs.copyFileSync(
+              path.join(srcDist2, entry.name),
+              path.join(tmpDist2, entry.name)
+            );
+          }
+        }
+        fs.cpSync(
+          path.join(srcDist2, "t-public-assets"),
+          path.join(tmpDist2, "t-public-assets"),
+          { recursive: true }
+        );
+
+        // Seed internal slot & stale ._old. artifacts to verify strict dist2 export filtering
+        fs.mkdirSync(path.join(tmpDist2, "slots/e2e-slot"), {
+          recursive: true,
+        });
+        fs.writeFileSync(
+          path.join(tmpDist2, "slots/e2e-slot/slot.json"),
+          '{"jsx":null}'
+        );
+        fs.writeFileSync(
+          path.join(tmpDist2, "slots/e2e-slot/slot.metadata.json"),
+          '{"tags":[]}'
+        );
+        fs.writeFileSync(
+          path.join(tmpDist2, "t-public-assets/page._old.rsc"),
+          '0:"stale"\n'
+        );
+
+        const exportScriptCandidates = [
+          path.resolve(process.cwd(), "dinou/core/export-static.js"),
+          path.resolve(
+            process.cwd(),
+            "node_modules/dinou/dinou/core/export-static.js"
+          ),
+          path.resolve(
+            process.cwd(),
+            "node_modules/dinou/core/export-static.js"
+          ),
+        ];
+        const exportScriptPath =
+          exportScriptCandidates.find((p) => fs.existsSync(p)) ??
+          exportScriptCandidates[0];
+
+        const activeBundler = fs.existsSync(
+          path.resolve(process.cwd(), ".dinou/dist1/react-ssr-manifest.json")
+        )
+          ? "webpack"
+          : (process.env.TEST_CMD || "").includes("rollup")
+            ? "rollup"
+            : "esbuild";
+
+        execFileSync(process.execPath, [exportScriptPath], {
+          cwd: tmpExportDir,
+          env: { ...process.env, DINOU_BUILD_TOOL: activeBundler },
+          stdio: "pipe",
+        });
+
+        const outDir = path.join(tmpExportDir, "out");
+        for (const expectedFile of [
+          "index.html",
+          "page.rsc",
+          "layout.rsc",
+          "manifest.json",
+          ".nojekyll",
+          ".well-known/apple-app-site-association",
+          "t-public-assets/index.html",
+          "t-public-assets/page.rsc",
+          "t-public-assets/layout.rsc",
+          "t-public-assets/about/index.html",
+          "t-public-assets/about/page.rsc",
+          "t-public-assets/about/layout.rsc",
+        ]) {
+          expect(
+            fs.existsSync(path.join(outDir, expectedFile)),
+            `Expected out/${expectedFile} to exist`
+          ).toBe(true);
+        }
+
+        // Internal .dinou/dist2 and .dinou/dist1 artifacts must NEVER leak into out/
+        for (const forbiddenOut of [
+          "slots",
+          "server",
+          "react-client-manifest.json",
+          "react-ssr-manifest.json",
+          "server-functions-manifest.json",
+          "status-manifest.json",
+          "metadata.json",
+          "layout.metadata.json",
+          "rsc.rsc",
+          "shell.layout.json",
+          "t-public-assets/metadata.json",
+          "t-public-assets/layout.metadata.json",
+          "t-public-assets/rsc.rsc",
+          "t-public-assets/page._old.rsc",
+          "t-public-assets/about/metadata.json",
+          "t-public-assets/about/layout.metadata.json",
+          "t-public-assets/about/rsc.rsc",
+        ]) {
+          expect(
+            fs.existsSync(path.join(outDir, forbiddenOut)),
+            `Expected out/${forbiddenOut} NOT to exist`
+          ).toBe(false);
+        }
+
+        expect(
+          fs.readFileSync(
+            path.join(outDir, "t-public-assets/index.html"),
+            "utf8"
+          )
+        ).toContain("window.__DINOU_STATIC_EXPORT__=true;");
+        expect(
+          fs.readFileSync(
+            path.join(outDir, "t-public-assets/about/index.html"),
+            "utf8"
+          )
+        ).toContain("window.__DINOU_STATIC_EXPORT__=true;");
+        expect(
+          fs.readFileSync(
+            path.join(srcDist2, "t-public-assets/index.html"),
+            "utf8"
+          )
+        ).not.toContain("__DINOU_STATIC_EXPORT__");
+
+        // Add a non-Dinou static HTML page (without page.rsc) to verify graceful location.replace fallback
+        fs.mkdirSync(path.join(outDir, "pure-static-fallback"), {
+          recursive: true,
+        });
+        fs.writeFileSync(
+          path.join(outDir, "pure-static-fallback/index.html"),
+          '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Fallback</title></head><body><h1 data-testid="pure-static-fallback-h1">Pure Static Fallback HTML</h1></body></html>'
+        );
+
+        const mimeByExt: Record<string, string> = {
+          ".html": "text/html; charset=utf-8",
+          ".js": "application/javascript; charset=utf-8",
+          ".mjs": "application/javascript; charset=utf-8",
+          ".css": "text/css; charset=utf-8",
+          ".json": "application/json; charset=utf-8",
+          ".png": "image/png",
+          ".svg": "image/svg+xml",
+          ".ico": "image/x-icon",
+          ".rsc": "application/octet-stream",
+        };
+
+        staticServer = http.createServer((req, res) => {
+          const reqUrl = new URL(req.url || "/", "http://127.0.0.1");
+          const relPath = decodeURIComponent(reqUrl.pathname).replace(
+            /^\/+/,
+            ""
+          );
+          let target = path.resolve(outDir, relPath);
+          const rootResolved = path.resolve(outDir);
+
+          if (
+            target !== rootResolved &&
+            !target.startsWith(rootResolved + path.sep)
+          ) {
+            res.writeHead(403).end("Forbidden");
+            return;
+          }
+
+          if (fs.existsSync(target) && fs.statSync(target).isDirectory()) {
+            target = path.join(target, "index.html");
+          }
+
+          if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
+            res
+              .writeHead(404, { "Content-Type": "text/plain; charset=utf-8" })
+              .end("Not Found");
+            return;
+          }
+
+          const ext = path.extname(target).toLowerCase();
+          res.writeHead(200, {
+            "Content-Type": mimeByExt[ext] || "application/octet-stream",
+          });
+          res.end(fs.readFileSync(target));
+        });
+
+        await new Promise<void>((resolve) =>
+          staticServer!.listen(0, "127.0.0.1", () => resolve())
+        );
+        const addr = staticServer.address() as import("net").AddressInfo;
+        const staticOrigin = `http://127.0.0.1:${addr.port}`;
+
+        const requestedUrls: string[] = [];
+        page.on("request", (req) => {
+          const u = new URL(req.url());
+          if (u.origin === staticOrigin) {
+            requestedUrls.push(`${u.pathname}${u.search}`);
+          }
+        });
+
+        // 4A. Initial hydration over pure zero-Dinou static HTTP server
+        await page.goto(`${staticOrigin}/t-public-assets`);
+        await page.waitForSelector('body[data-hydrated="true"]', {
+          state: "attached",
+          timeout: 15000,
+        });
+        await expect(page.locator("h1")).toHaveText("Public Static Assets E2E");
+
+        // Mutate client layout state & mark window session to prove true SPA navigation
+        await page.getByTestId("public-export-layout-inc").click();
+        await expect(
+          page.getByTestId("public-export-layout-counter")
+        ).toHaveText("LayoutCount:1");
+        await page.evaluate(() => {
+          (
+            window as unknown as { __SPA_SESSION_ALIVE__?: boolean }
+          ).__SPA_SESSION_ALIVE__ = true;
+        });
+
+        // 4B. Serverless <Link> SPA transition to /t-public-assets/about (fetches about/layout.rsc + about/page.rsc)
+        await page.getByTestId("public-export-about-link").click();
+        await expect(page).toHaveURL(`${staticOrigin}/t-public-assets/about`);
+        await expect(page.locator("h1")).toHaveText(
+          "About Public Static Export"
+        );
+        await expect(page.getByTestId("public-export-about-copy")).toHaveText(
+          "Serverless RSC payload loaded from page.rsc"
+        );
+        await expect(
+          page.getByTestId("public-export-layout-counter")
+        ).toHaveText("LayoutCount:1");
+        expect(
+          await page.evaluate(
+            () =>
+              (window as unknown as { __SPA_SESSION_ALIVE__?: boolean })
+                .__SPA_SESSION_ALIVE__
+          )
+        ).toBe(true);
+
+        // 4C. Serverless <Link> SPA transition with query string (?returned=1 -> page.rsc?returned=1&____build_id____=...)
+        await page.getByTestId("public-export-home-query-link").click();
+        await expect(page).toHaveURL(
+          `${staticOrigin}/t-public-assets?returned=1`
+        );
+        await expect(page.locator("h1")).toHaveText("Public Static Assets E2E");
+        await expect(
+          page.getByTestId("public-export-layout-counter")
+        ).toHaveText("LayoutCount:1");
+        expect(
+          await page.evaluate(
+            () =>
+              (window as unknown as { __SPA_SESSION_ALIVE__?: boolean })
+                .__SPA_SESSION_ALIVE__
+          )
+        ).toBe(true);
+
+        // Verify static .rsc payloads were fetched with cache-busting build ID and zero /____rsc_* endpoints were hit
+        expect(
+          requestedUrls.some((u) =>
+            u.startsWith("/t-public-assets/about/layout.rsc?____build_id____=")
+          )
+        ).toBe(true);
+        expect(
+          requestedUrls.some((u) =>
+            u.startsWith("/t-public-assets/about/page.rsc?____build_id____=")
+          )
+        ).toBe(true);
+        expect(
+          requestedUrls.some((u) =>
+            u.startsWith(
+              "/t-public-assets/page.rsc?returned=1&____build_id____="
+            )
+          )
+        ).toBe(true);
+        expect(requestedUrls.some((u) => u.startsWith("/____rsc_"))).toBe(
+          false
+        );
+
+        // 4D. Graceful window.location.replace fallback when target route has no .rsc payload
+        await page.getByTestId("public-export-fallback-btn").click();
+        await expect(page).toHaveURL(`${staticOrigin}/pure-static-fallback`);
+        await expect(
+          page.getByTestId("pure-static-fallback-h1")
+        ).toHaveText("Pure Static Fallback HTML");
+        expect(
+          requestedUrls.some((u) =>
+            u.startsWith("/pure-static-fallback/page.rsc")
+          )
+        ).toBe(true);
+        expect(pageErrors).toEqual([]);
+      } finally {
+        if (staticServer) {
+          await new Promise<void>((resolve) =>
+            staticServer!.close(() => resolve())
+          );
+        }
+        try {
+          fs.rmSync(tmpExportDir, {
+            recursive: true,
+            force: true,
+            maxRetries: 5,
+            retryDelay: 50,
+          });
+        } catch {}
+      }
     });
   });
 });

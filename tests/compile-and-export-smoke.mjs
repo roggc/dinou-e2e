@@ -95,6 +95,23 @@ async function main() {
   // 1. Verify Static Export (`npm run export-static`)
   run("npm run export-static");
   const outIndex = path.join(outDir, "index.html");
+  const outPageRsc = path.join(outDir, "page.rsc");
+  const outLayoutRsc = path.join(outDir, "layout.rsc");
+  const outPublicAssetsIndex = path.join(outDir, "t-public-assets", "index.html");
+  const outPublicAssetsPageRsc = path.join(outDir, "t-public-assets", "page.rsc");
+  const outPublicAssetsLayoutRsc = path.join(outDir, "t-public-assets", "layout.rsc");
+  const outPublicAssetsAboutIndex = path.join(
+    outDir,
+    "t-public-assets",
+    "about",
+    "index.html"
+  );
+  const outPublicAssetsAboutPageRsc = path.join(
+    outDir,
+    "t-public-assets",
+    "about",
+    "page.rsc"
+  );
   const outFavicon = path.join(outDir, "favicon.ico");
   const outPwaManifest = path.join(outDir, "manifest.json");
   const outRobots = path.join(outDir, "robots.txt");
@@ -103,6 +120,36 @@ async function main() {
   const outNoJekyll = path.join(outDir, ".nojekyll");
   if (!fs.existsSync(outIndex) || fs.statSync(outIndex).size === 0) {
     throw new Error("[Smoke] export-static failed: out/index.html is missing or empty");
+  }
+  const outIndexHtml = fs.readFileSync(outIndex, "utf8");
+  if (!outIndexHtml.includes("window.__DINOU_STATIC_EXPORT__=true;")) {
+    throw new Error(
+      "[Smoke] export-static failed: out/index.html is missing window.__DINOU_STATIC_EXPORT__=true; flag"
+    );
+  }
+  const dist2Index = path.join(projectRoot, ".dinou", "dist2", "index.html");
+  if (
+    fs.existsSync(dist2Index) &&
+    fs.readFileSync(dist2Index, "utf8").includes("__DINOU_STATIC_EXPORT__")
+  ) {
+    throw new Error(
+      "[Smoke] export-static must NOT mutate source .dinou/dist2/index.html"
+    );
+  }
+  for (const requiredExportFile of [
+    outPageRsc,
+    outLayoutRsc,
+    outPublicAssetsIndex,
+    outPublicAssetsPageRsc,
+    outPublicAssetsLayoutRsc,
+    outPublicAssetsAboutIndex,
+    outPublicAssetsAboutPageRsc,
+  ]) {
+    if (!fs.existsSync(requiredExportFile) || fs.statSync(requiredExportFile).size === 0) {
+      throw new Error(
+        `[Smoke] export-static failed: missing or empty ${path.relative(projectRoot, requiredExportFile)}`
+      );
+    }
   }
   if (!fs.existsSync(outFavicon)) {
     throw new Error("[Smoke] export-static failed: out/favicon.ico is missing");
@@ -129,15 +176,29 @@ async function main() {
     "react-ssr-manifest.json",
     "server-functions-manifest.json",
     "status-manifest.json",
+    "metadata.json",
+    "layout.metadata.json",
+    "slot.metadata.json",
+    "shell.html",
+    "shell.layout.json",
+    "shell.page.json",
+    "rsc.rsc",
+    "shell.rsc",
     ".assetsignore",
     "server",
+    "slots",
     "_slots",
+    "t-public-assets/metadata.json",
+    "t-public-assets/layout.metadata.json",
+    "t-public-assets/rsc.rsc",
+    "t-public-assets/about/metadata.json",
+    "t-public-assets/about/rsc.rsc",
   ]) {
     if (fs.existsSync(path.join(outDir, forbidden))) {
       throw new Error(`[Smoke] export-static leaked internal artifact into out/${forbidden}`);
     }
   }
-  console.log("✅ [Smoke] export-static verified (SSG HTML + public/ PWA manifest.json & dotfiles exported, server/* & internal manifests excluded)");
+  console.log("✅ [Smoke] export-static verified (SSG HTML with __DINOU_STATIC_EXPORT__, segmented page.rsc/layout.rsc, public/ PWA manifest.json & dotfiles exported; dist2 metadata/slots & server/* excluded)");
 
   // 2. Verify Standalone Node.js Compiled Binary (`npm run build:node:compile`)
   try {

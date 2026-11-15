@@ -1,3 +1,5 @@
+import { Link } from "./dinou";
+
 export default function PublicAssetsTestPage() {
   return (
     <main data-testid="public-assets-page">
@@ -5,6 +7,13 @@ export default function PublicAssetsTestPage() {
       <a data-testid="pwa-manifest-link" href="/manifest.json">
         PWA Manifest
       </a>
+      <Link
+        data-testid="public-export-about-link"
+        href="/t-public-assets/about"
+        prefetch={false}
+      >
+        Go to Static Export About
+      </Link>
       <img
         id="og-preview"
         data-testid="public-og-preview"

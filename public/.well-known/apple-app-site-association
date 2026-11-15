@@ -3,10 +3,10 @@
     "apps": [],
     "details": [
       {
+        "appID": "TEAMID1234.dev.dinou.e2e",
         "appIDs": ["TEAMID1234.dev.dinou.e2e"],
         "components": [{ "/": "/*" }]
       }
     ]
   }
 }
-
