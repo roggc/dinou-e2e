@@ -91,6 +91,7 @@ export default function getConfigEsbuild({
   if (fs.existsSync("public") && shouldWriteToDisk) {
     let staticCopied = false;
     plugins = [
+      ...plugins,
       {
         name: "copy-static-files-once",
         setup(build) {
@@ -101,7 +102,6 @@ export default function getConfigEsbuild({
           });
         },
       },
-      ...plugins,
     ];
   }
 
