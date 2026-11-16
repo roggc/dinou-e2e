@@ -3,7 +3,12 @@ import { existsSync, mkdirSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 
-const require = createRequire(import.meta.url);
+let require = null;
+try {
+  if (typeof import.meta !== "undefined" && import.meta.url) {
+    require = createRequire(import.meta.url);
+  }
+} catch (e) {}
 
 let dinouConfig = { plugins: [] };
 const dinouConfigPromisesByCwd = new Map();

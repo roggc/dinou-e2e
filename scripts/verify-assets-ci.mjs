@@ -878,6 +878,12 @@ assert.equal(await glbRes.text(), "GLTF_BINARY_3D_MODEL");
       "utf8"
     );
     assert.equal(cfWorkerCode.includes("data:image/png;base64"), false);
+    assert.equal(
+      cfWorkerCode.includes("needsContentTypeFix") &&
+        cfWorkerCode.includes("getStaticContentType"),
+      true,
+      "Cloudflare worker.js must populate missing/generic Content-Type headers via getStaticContentType"
+    );
     const cfSsrEngineCode = fs.readFileSync(
       path.join(tmpApp, ".dinou", "cloudflare", "ssr-engine.js"),
       "utf8"
@@ -889,6 +895,62 @@ assert.equal(await glbRes.text(), "GLTF_BINARY_3D_MODEL");
         path.join(tmpApp, ".dinou", "cloudflare", "assets", expected.hero.fileName)
       ),
       true
+    );
+
+    // Verify Cloudflare worker.js populates Content-Type via getStaticContentType when env.ASSETS omits it (e.g. .hdr) or returns generic application/octet-stream
+    const cfMimeProbeScript = path.join(tmpApp, "probe-cf-mime.mjs");
+    fs.writeFileSync(
+      cfMimeProbeScript,
+      `import assert from "node:assert/strict";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const adapterMod = await import(${JSON.stringify(pathToFileURL(path.join(dinouRoot, "adapters", "cloudflare.js")).href)});
+const cfWorker = adapterMod.default ?? adapterMod;
+
+const mockEnv = {
+  ASSETS: {
+    async fetch(req) {
+      const u = new URL(req.url);
+      if (u.pathname.endsWith(".hdr") || u.pathname.endsWith(".xyz")) {
+        // Simulate Wrangler env.ASSETS omitting Content-Type completely when mime lookup returns null
+        return new Response(new Uint8Array([82, 65, 68]), { status: 200 });
+      }
+      if (u.pathname.endsWith(".glb")) {
+        // Simulate generic application/octet-stream fallback
+        return new Response(new Uint8Array([103, 108, 84, 70]), {
+          status: 200,
+          headers: { "content-type": "application/octet-stream" },
+        });
+      }
+      return new Response("Not Found", { status: 404 });
+    },
+  },
+};
+
+const hdrBinRes = await cfWorker.fetch(new Request("https://example.com/assets/skybox-12345678.hdr"), mockEnv, {});
+assert.equal(hdrBinRes.status, 200);
+assert.equal(hdrBinRes.headers.get("content-type"), "image/vnd.radiance");
+
+const xyzBinRes = await cfWorker.fetch(new Request("https://example.com/assets/custom-12345678.xyz"), mockEnv, {});
+assert.equal(xyzBinRes.status, 200);
+assert.equal(xyzBinRes.headers.get("content-type"), "application/octet-stream");
+
+const glbRes = await cfWorker.fetch(new Request("https://example.com/assets/robot-12345678.glb"), mockEnv, {});
+assert.equal(glbRes.status, 200);
+assert.equal(glbRes.headers.get("content-type"), "model/gltf-binary");
+`,
+      "utf8"
+    );
+    const cfMimeProbeRes = spawnSync(process.execPath, [cfMimeProbeScript], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: cleanProdEnv,
+    });
+    assert.equal(
+      cfMimeProbeRes.status,
+      0,
+      `Cloudflare worker MIME probe failed:\n${cfMimeProbeRes.stdout}\n${cfMimeProbeRes.stderr}`
     );
 
     const bunRes = spawnSync(
