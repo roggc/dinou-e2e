@@ -38,6 +38,7 @@ import {
   shouldExportDist3Entry,
 } from "../core/static-assets.js";
 import { createServerCssModulesPlugin } from "../core/server-css-modules-plugin.js";
+import { createServerAssetPlugin } from "../core/asset-extensions.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -934,17 +935,6 @@ const commonLoader = {
   ".tsx": "tsx",
   ".json": "json",
   ".css": "empty",
-  ".svg": "dataurl",
-  ".png": "dataurl",
-  ".jpg": "dataurl",
-  ".jpeg": "dataurl",
-  ".webp": "dataurl",
-  ".ico": "dataurl",
-  ".woff": "dataurl",
-  ".woff2": "dataurl",
-  ".ttf": "dataurl",
-  ".otf": "dataurl",
-  ".eot": "dataurl",
 };
 
 const banner = {
@@ -1122,6 +1112,7 @@ const ssrOutfile = path.join(cloudflareDir, "ssr-engine.js");
 const finalOutfile = path.join(cloudflareDir, "worker.js");
 
 const serverCssModulesPlugin = createServerCssModulesPlugin({ projectRoot });
+const serverAssetPlugin = createServerAssetPlugin({ projectRoot, dinouConfig });
 
 try {
   // Pass A: RSC Engine
@@ -1136,7 +1127,7 @@ try {
     mainFields: ["module", "main"],
     conditions: ["workerd", "worker", "react-server", "style"],
     external: externalList,
-    plugins: [esbuildContextualDinouPlugin({ projectRoot }), clientReferencesPlugin, serverReferencesPlugin, serverCssModulesPlugin],
+    plugins: [esbuildContextualDinouPlugin({ projectRoot }), clientReferencesPlugin, serverReferencesPlugin, serverCssModulesPlugin, serverAssetPlugin],
     alias: commonAlias,
     loader: commonLoader,
     jsx: "automatic",
@@ -1161,7 +1152,7 @@ try {
     mainFields: ["module", "main"],
     conditions: ["workerd", "worker", "browser", "style"],
     external: externalList,
-    plugins: [esbuildContextualDinouPlugin({ projectRoot }), serverReferencesPluginSsr, serverCssModulesPlugin],
+    plugins: [esbuildContextualDinouPlugin({ projectRoot }), serverReferencesPluginSsr, serverCssModulesPlugin, serverAssetPlugin],
     alias: commonAlias,
     loader: commonLoader,
     jsx: "automatic",
@@ -1188,6 +1179,7 @@ try {
     conditions: ["workerd", "worker", "browser"],
     external: externalList,
     banner,
+    plugins: [serverAssetPlugin],
     inject: setupFiles.length > 0 ? setupFiles : undefined,
     alias: commonAlias,
     loader: commonLoader,
