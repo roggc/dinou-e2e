@@ -372,6 +372,82 @@ export default async function ProfilePage({ params }: { params: { userId: string
 }
 
 console.log(
+  "4️⃣ Verifying multi-batch HMR/reload broadcast preservation in dinou/node/dev.js (flushPendingBroadcasts)..."
+);
+{
+  const vm = await import("node:vm");
+  const devJsPath = resolveDinouInternalPath("node/dev.js");
+  const devJsCode = fs.readFileSync(devJsPath, "utf8");
+
+  assert.ok(
+    devJsCode.includes("async function flushPendingBroadcasts()") &&
+      devJsCode.includes("pendingBroadcastReload") &&
+      devJsCode.includes("pendingBroadcastRscPaths"),
+    "Expected dinou/node/dev.js to accumulate pending broadcasts across split Chokidar rebuild batches"
+  );
+
+  const fnStart = devJsCode.indexOf("let pendingBroadcastReload = false;");
+  const fnEnd = devJsCode.indexOf("async function doRebuildBatch(");
+  assert.ok(
+    fnStart !== -1 && fnEnd > fnStart,
+    "Expected flushPendingBroadcasts block before doRebuildBatch in dinou/node/dev.js"
+  );
+  const snippet = devJsCode.slice(fnStart, fnEnd);
+
+  const sentMessages = [];
+  const ctx = {
+    queuedChanges: new Map(),
+    pendingSrcChanges: new Map(),
+    broadcastToClients: async (msg) => {
+      sentMessages.push({ ...msg });
+    },
+  };
+  vm.runInNewContext(
+    `${snippet}\nglobalThis.__controls = { setReload: () => { pendingBroadcastReload = true; }, setStyle: () => { pendingBroadcastStyleUpdate = true; }, addRsc: (p) => pendingBroadcastRscPaths.add(p), flush: flushPendingBroadcasts };`,
+    ctx
+  );
+
+  // Case A: Batch 1 (page.tsx injects new "use server" -> reload) finishes while client.tsx is queued in Batch 2
+  ctx.queuedChanges.set("/app/src/t-sf-body/components/sf-body-client.tsx", "change");
+  ctx.__controls.setReload();
+  await ctx.__controls.flush();
+  assert.equal(
+    sentMessages.length,
+    0,
+    "Batch 1 must defer reload while Batch 2 is still queued"
+  );
+
+  // Batch 2 (client.tsx only, no new reload flag of its own) finishes and drains queue -> reload MUST fire!
+  ctx.queuedChanges.clear();
+  await ctx.__controls.flush();
+  assert.deepEqual(sentMessages, [{ type: "reload" }]);
+
+  // Case B: Batch 1 (Server Component edit -> rsc-update) deferred while Batch 2 (Client Component edit) is pending
+  sentMessages.length = 0;
+  ctx.pendingSrcChanges.set("/app/src/Counter.tsx", "change");
+  ctx.__controls.addRsc("/app/src/page.tsx");
+  await ctx.__controls.flush();
+  assert.equal(sentMessages.length, 0);
+
+  ctx.pendingSrcChanges.clear();
+  await ctx.__controls.flush();
+  assert.deepEqual(sentMessages, [
+    { type: "rsc-update", path: "/app/src/page.tsx" },
+  ]);
+
+  // Case C: Full reload supersedes earlier style-update / rsc-update in the same multi-batch drain cycle
+  sentMessages.length = 0;
+  ctx.queuedChanges.set("/app/src/next.tsx", "change");
+  ctx.__controls.setStyle();
+  ctx.__controls.addRsc("/app/src/page.tsx");
+  await ctx.__controls.flush();
+  ctx.__controls.setReload();
+  ctx.queuedChanges.clear();
+  await ctx.__controls.flush();
+  assert.deepEqual(sentMessages, [{ type: "reload" }]);
+}
+
+console.log(
   "✅ RESULT: All Server Functions fixes verification checks PASSED!"
 );
 

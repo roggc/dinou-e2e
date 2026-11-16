@@ -1726,6 +1726,32 @@ async function broadcastToClients(msg) {
 // Trigger an incremental rebuild with batching and queueing
 let isRebuilding = false;
 const queuedChanges = new Map();
+let pendingBroadcastReload = false;
+let pendingBroadcastStyleUpdate = false;
+const pendingBroadcastRscPaths = new Set();
+
+async function flushPendingBroadcasts() {
+  if (queuedChanges.size > 0 || pendingSrcChanges.size > 0) {
+    return;
+  }
+  const shouldReload = pendingBroadcastReload;
+  const shouldStyleUpdate = pendingBroadcastStyleUpdate;
+  const rscPaths = Array.from(pendingBroadcastRscPaths);
+  pendingBroadcastReload = false;
+  pendingBroadcastStyleUpdate = false;
+  pendingBroadcastRscPaths.clear();
+
+  if (shouldReload) {
+    await broadcastToClients({ type: "reload" });
+    return;
+  }
+  if (shouldStyleUpdate) {
+    await broadcastToClients({ type: "style-update", url: "/styles.css" });
+  }
+  for (const absFilePath of rscPaths) {
+    await broadcastToClients({ type: "rsc-update", path: absFilePath });
+  }
+}
 
 async function doRebuildBatch(changesMap) {
   const t0 = Date.now();
@@ -1741,6 +1767,7 @@ async function doRebuildBatch(changesMap) {
     let hasClientChanges = false;
     let hasServerChanges = false;
     let hasCssChanges = false;
+    let hasNonCssChanges = false;
     const clientRebuildPromises = [];
 
     for (const [absFilePath, eventType] of changesMap) {
@@ -1749,6 +1776,7 @@ async function doRebuildBatch(changesMap) {
       }
       if (eventType === "unlinkDir") {
         needsStructureRebuild = true;
+        hasNonCssChanges = true;
         const dirPrefix = (absFilePath.endsWith(path.sep) ? absFilePath : absFilePath + path.sep).toLowerCase();
         for (const cf of Array.from(knownClientFiles)) {
           if (cf.toLowerCase().startsWith(dirPrefix)) {
@@ -1784,6 +1812,9 @@ async function doRebuildBatch(changesMap) {
             cssModuleClassesChanged = true;
           }
         }
+      }
+      if (!isCssFile || cssModuleClassesChanged) {
+        hasNonCssChanges = true;
       }
 
       let isClientFile = false;
@@ -1923,8 +1954,9 @@ async function doRebuildBatch(changesMap) {
     if (needsClientBundlerRestart && clientBundlerHandle?.restart) {
       updateSpinner(`Directive or structure change detected. Recreating client bundle...`);
       await clientBundlerHandle.restart();
-      if (!needsStructureRebuild && queuedChanges.size === 0 && pendingSrcChanges.size === 0) {
-        await broadcastToClients({ type: "reload" });
+      pendingBroadcastReload = true;
+      if (!needsStructureRebuild) {
+        await flushPendingBroadcasts();
         logSuccess(`Recreated bundle for ${baseName} in ${Date.now() - t0}ms`);
         return;
       }
@@ -1952,9 +1984,10 @@ async function doRebuildBatch(changesMap) {
       if (activeClientBuildPromise) {
         await activeClientBuildPromise;
       }
-      if ((!hasCssChanges || isWebpackBuild) && queuedChanges.size === 0 && pendingSrcChanges.size === 0) {
-        await broadcastToClients({ type: "reload" });
+      if (hasNonCssChanges || !hasCssChanges || isWebpackBuild) {
+        pendingBroadcastReload = true;
       }
+      await flushPendingBroadcasts();
     } else {
       if (clientRebuildPromises.length > 0) {
         await Promise.all(clientRebuildPromises);
@@ -1983,34 +2016,33 @@ async function doRebuildBatch(changesMap) {
       lastClientBuildDetails = "";
       logSuccess(`Rebuilt in ${Date.now() - t0}ms (${baseName})${buildDetails}`);
 
-      if (queuedChanges.size === 0 && pendingSrcChanges.size === 0) {
-        if (isWebpackBuild) {
-          if (hasClientChanges) {
-            await broadcastToClients({ type: "reload" });
-          } else {
-            if (hasCssChanges) {
-              await broadcastToClients({ type: "style-update", url: "/styles.css" });
-            }
-            if (hasServerChanges) {
-              for (const [absFilePath] of changesMap) {
-                await broadcastToClients({ type: "rsc-update", path: absFilePath });
-              }
-            }
+      if (isWebpackBuild) {
+        if (hasClientChanges) {
+          pendingBroadcastReload = true;
+        } else {
+          if (hasCssChanges) {
+            pendingBroadcastStyleUpdate = true;
           }
-        } else if (hasServerChanges) {
-          for (const [absFilePath] of changesMap) {
-            const lowerPath = absFilePath.toLowerCase();
-            const isPureNonModuleCss =
-              (lowerPath.endsWith(".css") ||
-                lowerPath.endsWith(".scss") ||
-                lowerPath.endsWith(".less")) &&
-              !lowerPath.endsWith(".module.css");
-            if (!isPureNonModuleCss) {
-              broadcastToClients({ type: "rsc-update", path: absFilePath });
+          if (hasServerChanges) {
+            for (const [absFilePath] of changesMap) {
+              pendingBroadcastRscPaths.add(absFilePath);
             }
           }
         }
+      } else if (hasServerChanges) {
+        for (const [absFilePath] of changesMap) {
+          const lowerPath = absFilePath.toLowerCase();
+          const isPureNonModuleCss =
+            (lowerPath.endsWith(".css") ||
+              lowerPath.endsWith(".scss") ||
+              lowerPath.endsWith(".less")) &&
+            !lowerPath.endsWith(".module.css");
+          if (!isPureNonModuleCss) {
+            pendingBroadcastRscPaths.add(absFilePath);
+          }
+        }
       }
+      await flushPendingBroadcasts();
     }
   } catch (err) {
     stopSpinner();
@@ -2046,6 +2078,7 @@ async function triggerRebuildBatch(changesMap) {
         queuedChanges.clear();
         await doRebuildBatch(currentBatch);
       }
+      await flushPendingBroadcasts();
     } finally {
       isRebuilding = false;
       activeRebuildPromise = null;
