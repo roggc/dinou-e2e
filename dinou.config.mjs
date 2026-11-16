@@ -1,6 +1,7 @@
 // dinou.config.mjs
 // Configuration and Plugins for Dinou v7
 import { defineConfig } from "dinou/config";
+import { getContext } from "dinou/server";
 
 export default defineConfig({
   assetExtensions: ["glb", ".gltf", "HDR"],
@@ -9,6 +10,21 @@ export default defineConfig({
       name: "e2e-auth-and-webhook-plugin",
       async onRequest(request, context) {
         const url = new URL(request.url);
+
+        if (url.pathname.startsWith("/t-env-vars")) {
+          const alsCtx = getContext();
+          context.envPluginProbe = {
+            hasContextEnv: Boolean(context?.env),
+            hasAlsEnv: Boolean(alsCtx?.env),
+            alsMatchesPluginEnv: Boolean(
+              context?.env?.E2E_ENV_PRIVATE_SECRET &&
+                alsCtx?.env?.E2E_ENV_PRIVATE_SECRET ===
+                  context.env.E2E_ENV_PRIVATE_SECRET
+            ),
+            hierarchyFromPlugin:
+              context?.env?.E2E_ENV_HIERARCHY_MODE ?? "missing",
+          };
+        }
 
         // 1. Webhook endpoint: Intercepts request and responds directly without React/RSC
         if (url.pathname === "/api/webhook") {

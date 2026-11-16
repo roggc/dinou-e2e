@@ -13672,4 +13672,449 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
     });
   });
+
+  test.describe("Environment Variables, .env* Hierarchy, DINOU_PUBLIC_*, Unified getContext().env & Anti-Bot Shield (/t-env-vars)", () => {
+    async function withEnvVarsHmrLock<T>(fn: () => Promise<T>): Promise<T> {
+      const lockPath = path.join(os.tmpdir(), "dinou-e2e-env-vars-hmr.lock");
+      const deadline = Date.now() + 90000;
+      let lockFd: number | null = null;
+
+      while (Date.now() < deadline) {
+        try {
+          lockFd = fs.openSync(lockPath, "wx");
+          fs.writeFileSync(lockFd, String(process.pid), "utf8");
+          break;
+        } catch (err: any) {
+          if (err?.code === "EEXIST") {
+            try {
+              const stat = fs.statSync(lockPath);
+              if (Date.now() - stat.mtimeMs > 60000) {
+                fs.unlinkSync(lockPath);
+                continue;
+              }
+            } catch {}
+            await new Promise((r) => setTimeout(r, 150));
+            continue;
+          }
+          throw err;
+        }
+      }
+
+      if (lockFd === null) {
+        throw new Error("Timed out acquiring cross-worker env-vars HMR lock");
+      }
+
+      try {
+        return await fn();
+      } finally {
+        try {
+          fs.closeSync(lockFd);
+        } catch {}
+        try {
+          fs.unlinkSync(lockPath);
+        } catch {}
+      }
+    }
+
+    const FORBIDDEN_ENV_SECRETS = [
+      "dinou_e2e_server_private_token_940",
+      "dinou_public_dir_dotenv_must_never_be_copied_or_served_940",
+      "example_placeholder_never_emitted_value",
+    ];
+
+    test("1. Full SSG (/t-env-vars), Live Dynamic (/t-env-vars/[slug]), DINOU_PUBLIC_* Inlining, Server Secret Isolation, Unified getContext().env (page_functions + plugin.onRequest + Server Action) & Anti-Bot .env* 404 Shield", async ({
+      page,
+      request,
+    }, testInfo) => {
+      const pageErrors: string[] = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      const expectedPublicTitle = isDev ? "DinouPublicDev" : "DinouPublicProd";
+      const expectedHierarchyMode = isDev ? "dev_env" : "prod_env";
+      const expectedNodeEnv = isDev ? "development" : "production";
+
+      const runEnvAssertions = async () => {
+        // 1. Raw HTTP SSG verification (/t-env-vars & /t-env-vars/ssg-prebuilt)
+        const [ssgRes, prebuiltRes] = await Promise.all([
+          safeApiGet(request, "/t-env-vars"),
+          safeApiGet(request, "/t-env-vars/ssg-prebuilt"),
+        ]);
+        expect(ssgRes.status()).toBe(200);
+        expect(prebuiltRes.status()).toBe(200);
+
+        const ssgHtml = await ssgRes.text();
+        const prebuiltHtml = await prebuiltRes.text();
+
+        expect(ssgHtml).toContain(expectedPublicTitle);
+        expect(ssgHtml).toContain("https://api.dinou-e2e.test");
+        expect(ssgHtml).toContain('data-rsc-secret-ok="true"');
+        expect(ssgHtml).toContain('data-pagefn-secret-ok="true"');
+        expect(ssgHtml).toContain('data-leak-direct="undefined"');
+        expect(ssgHtml).toContain('data-leak-destructured="undefined"');
+        expect(ssgHtml).toContain('data-no-private-keys="true"');
+        expect(prebuiltHtml).toContain(expectedPublicTitle);
+
+        for (const forbidden of FORBIDDEN_ENV_SECRETS) {
+          expect(ssgHtml).not.toContain(forbidden);
+          expect(prebuiltHtml).not.toContain(forbidden);
+        }
+
+        // 2. Real browser hydration + "use server" RPC action on /t-env-vars
+        await page.goto("/t-env-vars");
+        await page.waitForSelector('body[data-hydrated="true"]', {
+          state: "attached",
+          timeout: 15000,
+        });
+
+        const ssgMain = page.getByTestId("t-env-vars-ssg-page");
+        await expect(ssgMain).toHaveAttribute("data-rsc-secret-ok", "true");
+        await expect(ssgMain).toHaveAttribute("data-rsc-exported-ok", "true");
+        await expect(ssgMain).toHaveAttribute("data-rsc-multiline-ok", "true");
+        await expect(ssgMain).toHaveAttribute(
+          "data-rsc-hierarchy-mode",
+          expectedHierarchyMode
+        );
+        await expect(ssgMain).toHaveAttribute(
+          "data-rsc-public-title",
+          expectedPublicTitle
+        );
+        await expect(ssgMain).toHaveAttribute("data-pagefn-secret-ok", "true");
+        await expect(ssgMain).toHaveAttribute(
+          "data-pagefn-exported-ok",
+          "true"
+        );
+        await expect(ssgMain).toHaveAttribute(
+          "data-pagefn-multiline-ok",
+          "true"
+        );
+        await expect(ssgMain).toHaveAttribute(
+          "data-pagefn-hierarchy-mode",
+          expectedHierarchyMode
+        );
+        await expect(ssgMain).toHaveAttribute(
+          "data-pagefn-example-unset",
+          "true"
+        );
+
+        const ssgClient = page.getByTestId("ssg-client-env");
+        await expect(ssgClient).toHaveAttribute("data-client-hydrated", "true");
+        await expect(ssgClient).toHaveAttribute(
+          "data-public-title",
+          expectedPublicTitle
+        );
+        await expect(ssgClient).toHaveAttribute(
+          "data-public-origin",
+          "https://api.dinou-e2e.test"
+        );
+        await expect(ssgClient).toHaveAttribute(
+          "data-destructured-title",
+          expectedPublicTitle
+        );
+        await expect(ssgClient).toHaveAttribute(
+          "data-destructured-origin",
+          "https://api.dinou-e2e.test"
+        );
+        await expect(ssgClient).toHaveAttribute(
+          "data-client-node-env",
+          expectedNodeEnv
+        );
+        await expect(ssgClient).toHaveAttribute(
+          "data-leak-direct",
+          "undefined"
+        );
+        await expect(ssgClient).toHaveAttribute(
+          "data-leak-destructured",
+          "undefined"
+        );
+        await expect(ssgClient).toHaveAttribute("data-no-private-keys", "true");
+        await expect(ssgClient).toHaveAttribute(
+          "data-browser-typeof-process",
+          "undefined"
+        );
+
+        await page.locator("#ssg-rpc-btn").click();
+        await expect(page.locator("#ssg-rpc-result")).not.toHaveText("idle", {
+          timeout: 15000,
+        });
+        const rpcJson = JSON.parse(
+          (await page.locator("#ssg-rpc-result").textContent()) || "{}"
+        );
+        expect(rpcJson.tag).toBe("ssg-rpc");
+        expect(rpcJson.secretMatchesExpected).toBe(true);
+        expect(rpcJson.reqEnvMatches).toBe(true);
+        expect(rpcJson.processEnvSynced).toBe(true);
+        expect(rpcJson.hierarchyMode).toBe(expectedHierarchyMode);
+        expect(rpcJson.publicTitleOnServer).toBe(expectedPublicTitle);
+        if (isCloudflare) {
+          expect(rpcJson.hasEdgeAssetsBinding).toBe(true);
+          expect(rpcJson.edgeBindingTag).toBe("cloudflare_edge_vars_active");
+        }
+
+        // 3. Live Dynamic route (/t-env-vars/[slug]) verifying plugin.onRequest ALS + validateParams ALS
+        const safeProj = testInfo.project.name.replace(/[^a-z0-9]/gi, "-");
+        const liveSlug = `live-env-${safeProj}-${Date.now()}`;
+        await page.goto(`/t-env-vars/${liveSlug}`);
+        await page.waitForSelector('body[data-hydrated="true"]', {
+          state: "attached",
+          timeout: 15000,
+        });
+
+        const dynMain = page.getByTestId("t-env-vars-slug-page");
+        await expect(dynMain).toHaveAttribute("data-slug", liveSlug);
+        await expect(dynMain).toHaveAttribute("data-rsc-secret-ok", "true");
+        await expect(dynMain).toHaveAttribute("data-rsc-multiline-ok", "true");
+        await expect(dynMain).toHaveAttribute(
+          "data-rsc-hierarchy-mode",
+          expectedHierarchyMode
+        );
+        await expect(dynMain).toHaveAttribute(
+          "data-rsc-public-title",
+          expectedPublicTitle
+        );
+        await expect(dynMain).toHaveAttribute("data-pagefn-secret-ok", "true");
+        await expect(dynMain).toHaveAttribute("data-plugin-als-ok", "true");
+        await expect(dynMain).toHaveAttribute(
+          "data-plugin-hierarchy",
+          expectedHierarchyMode
+        );
+        if (isCloudflare) {
+          await expect(dynMain).toHaveAttribute("data-has-edge-assets", "true");
+        }
+
+        const dynClient = page.getByTestId("dyn-client-env");
+        await expect(dynClient).toHaveAttribute("data-client-hydrated", "true");
+        await expect(dynClient).toHaveAttribute(
+          "data-public-title",
+          expectedPublicTitle
+        );
+        await expect(dynClient).toHaveAttribute(
+          "data-leak-direct",
+          "undefined"
+        );
+        await expect(dynClient).toHaveAttribute(
+          "data-leak-destructured",
+          "undefined"
+        );
+      };
+
+      if (isDev) {
+        await withEnvVarsHmrLock(runEnvAssertions);
+      } else {
+        await runEnvAssertions();
+      }
+
+      // 4. validateParams ALS rejection & Anti-Bot .env* 404 Shield (including public/.env.e2e-ignored & [slug] route protection)
+      const blockedValidatorRes = await safeApiGet(
+        request,
+        "/t-env-vars/blocked-by-env-validator"
+      );
+      expect(blockedValidatorRes.status()).toBe(404);
+
+      const botProbes = [
+        "/.env",
+        "/.env.local",
+        "/.env.production",
+        "/.env.e2e-ignored",
+        "/api/.env.staging",
+        "/config/secrets.env",
+        "/%2eenv",
+        "/.%65nv",
+        "/%252eenv",
+        "/t-env-vars/.env.production",
+      ];
+      for (const probePath of botProbes) {
+        const res = await safeApiGet(request, probePath);
+        expect(
+          res.status(),
+          `Expected Anti-Bot Shield 404 on ${probePath}`
+        ).toBe(404);
+        const body = await res.text();
+        for (const forbidden of FORBIDDEN_ENV_SECRETS) {
+          expect(body).not.toContain(forbidden);
+        }
+      }
+
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("2. Live Dev .env.local Hot-Reload across Esbuild, Rollup & Webpack: creating & removing .env.local updates DINOU_PUBLIC_* in SSR + Client bundles and server getContext().env without server restart", async ({
+      page,
+      request,
+    }, testInfo) => {
+      test.skip(
+        !isDev || isProd,
+        "Live .env.local hot-reload test only runs against active DEV server (esbuild, rollup, webpack)"
+      );
+      test.setTimeout(120000);
+
+      const rootDir = process.cwd();
+      const envLocalPath = path.resolve(rootDir, ".env.local");
+
+      await withEnvVarsHmrLock(async () => {
+        const hadOriginalEnvLocal = fs.existsSync(envLocalPath);
+        const originalEnvLocal = hadOriginalEnvLocal
+          ? fs.readFileSync(envLocalPath, "utf8")
+          : null;
+
+        const pageErrors: string[] = [];
+        page.on("pageerror", (err) => pageErrors.push(err.message));
+
+        try {
+          const safeProj = testInfo.project.name.replace(/[^a-z0-9]/gi, "-");
+          const baseSlug = `env-hmr-${safeProj}-${Date.now()}`;
+
+          await page.goto(`/t-env-vars/${baseSlug}`);
+          await page.waitForSelector('body[data-hydrated="true"]', {
+            state: "attached",
+            timeout: 15000,
+          });
+
+          await expect(page.getByTestId("t-env-vars-slug-page")).toHaveAttribute(
+            "data-rsc-public-title",
+            "DinouPublicDev"
+          );
+          await expect(page.getByTestId("dyn-client-env")).toHaveAttribute(
+            "data-public-title",
+            "DinouPublicDev"
+          );
+
+          // Park browser on about:blank before mutating .env.local so page navigation never races Chokidar's awaitWriteFinish window
+          await page.goto("about:blank");
+
+          fs.writeFileSync(
+            envLocalPath,
+            [
+              'DINOU_PUBLIC_E2E_APP_TITLE="DinouPublicHotReloadedV940"',
+              'E2E_ENV_LIVE_HMR_TAG="live_hmr_env_active_v2"',
+            ].join("\n"),
+            "utf8"
+          );
+          const future1 = new Date(Date.now() + 2000);
+          fs.utimesSync(envLocalPath, future1, future1);
+
+          await expect
+            .poll(
+              async () => {
+                const probeRes = await safeApiGet(
+                  request,
+                  `/t-env-vars/${baseSlug}-probe-${Date.now()}`
+                );
+                if (probeRes.status() !== 200) return false;
+                const html = await probeRes.text();
+                return (
+                  html.includes(
+                    'data-rsc-public-title="DinouPublicHotReloadedV940"'
+                  ) &&
+                  html.includes(
+                    'data-public-title="DinouPublicHotReloadedV940"'
+                  ) &&
+                  html.includes(
+                    'data-rsc-live-hmr-tag="live_hmr_env_active_v2"'
+                  )
+                );
+              },
+              { timeout: 45000 }
+            )
+            .toBe(true);
+
+          // Navigate & hydrate in browser: must render hot-reloaded DINOU_PUBLIC_* with ZERO hydration mismatch
+          await page.goto(`/t-env-vars/${baseSlug}-v2`);
+          await page.waitForSelector('body[data-hydrated="true"]', {
+            state: "attached",
+            timeout: 15000,
+          });
+
+          const dynMain = page.getByTestId("t-env-vars-slug-page");
+          const dynClient = page.getByTestId("dyn-client-env");
+
+          await expect(dynMain).toHaveAttribute(
+            "data-rsc-public-title",
+            "DinouPublicHotReloadedV940"
+          );
+          await expect(dynMain).toHaveAttribute(
+            "data-rsc-live-hmr-tag",
+            "live_hmr_env_active_v2"
+          );
+          await expect(dynClient).toHaveAttribute(
+            "data-client-hydrated",
+            "true"
+          );
+          await expect(dynClient).toHaveAttribute(
+            "data-public-title",
+            "DinouPublicHotReloadedV940"
+          );
+          await expect(dynClient).toHaveAttribute(
+            "data-destructured-title",
+            "DinouPublicHotReloadedV940"
+          );
+          await expect(dynClient).toHaveAttribute(
+            "data-leak-direct",
+            "undefined"
+          );
+
+          await page.locator("#dyn-rpc-btn").click();
+          await expect(page.locator("#dyn-rpc-result")).not.toHaveText("idle", {
+            timeout: 15000,
+          });
+          const rpcAfterHot = JSON.parse(
+            (await page.locator("#dyn-rpc-result").textContent()) || "{}"
+          );
+          expect(rpcAfterHot.liveHmrTag).toBe("live_hmr_env_active_v2");
+          expect(rpcAfterHot.publicTitleOnServer).toBe(
+            "DinouPublicHotReloadedV940"
+          );
+          expect(rpcAfterHot.secretMatchesExpected).toBe(true);
+          expect(pageErrors).toEqual([]);
+        } finally {
+          await page.goto("about:blank").catch(() => {});
+          if (hadOriginalEnvLocal && originalEnvLocal !== null) {
+            fs.writeFileSync(envLocalPath, originalEnvLocal, "utf8");
+          } else {
+            try {
+              fs.unlinkSync(envLocalPath);
+            } catch {}
+          }
+          await expect
+            .poll(
+              async () => {
+                const res = await safeApiGet(
+                  request,
+                  `/t-env-vars/restore-${Date.now()}`
+                );
+                if (res.status() !== 200) return false;
+                const txt = await res.text();
+                return (
+                  txt.includes('data-rsc-public-title="DinouPublicDev"') &&
+                  txt.includes('data-public-title="DinouPublicDev"') &&
+                  txt.includes('data-rsc-live-hmr-tag="none"')
+                );
+              },
+              { timeout: 30000 }
+            )
+            .toBe(true)
+            .catch(() => {});
+        }
+      });
+    });
+
+    test("3. Standalone Environment Variables, .env* Hierarchy, DINOU_PUBLIC_*, Unified getContext().env & Anti-Bot Shield Parity Suite (scripts/verify-env-vars-ci.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "Node CLI parity suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
+      test.setTimeout(360000);
+
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        [path.resolve("scripts/verify-env-vars-ci.mjs")],
+        { encoding: "utf8", timeout: 330000 }
+      );
+      expect(output).toContain(
+        "All 6 Dinou v9.4.0 Environment Variables, DINOU_PUBLIC_* & Anti-Bot Shield verification suites PASSED!"
+      );
+    });
+  });
 });

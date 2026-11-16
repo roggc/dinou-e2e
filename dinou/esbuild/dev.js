@@ -318,6 +318,9 @@ export async function startEsbuildDev(options = {}) {
     restart: async () => {
       console.log("⚡ [Esbuild Dev] Recreating client bundle due to directive change...");
       await updateEntriesAndComponents();
+      if (typeof globalThis !== "undefined" && globalThis.__DINOU_MEM_FILES__) {
+        globalThis.__DINOU_MEM_FILES__.clear();
+      }
       await createEsbuildContext(true);
     },
     close: async () => {

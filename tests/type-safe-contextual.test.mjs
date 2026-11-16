@@ -72,6 +72,30 @@ async function main() {
       `Expected .dinou/types/routes.d.ts to declare custom asset module "*.${customExt}" from dinou.config.mjs`
     );
   }
+  for (const envKey of [
+    "DINOU_PUBLIC_E2E_API_ORIGIN",
+    "DINOU_PUBLIC_E2E_APP_TITLE",
+    "E2E_ENV_EXPORTED_FLAG",
+    "E2E_ENV_HIERARCHY_MODE",
+    "E2E_ENV_MULTILINE_CERT",
+    "E2E_ENV_PRIVATE_SECRET",
+    "E2E_EXAMPLE_DECLARED_ONLY",
+  ]) {
+    assert(
+      routesDtsContent.includes(`${envKey}?: string;`),
+      `Expected .dinou/types/routes.d.ts NodeJS.ProcessEnv to declare "${envKey}?: string;"`
+    );
+  }
+  for (const forbiddenValue of [
+    "dinou_e2e_server_private_token_940",
+    "example_placeholder_never_emitted_value",
+    "DinouPublicBase",
+  ]) {
+    assert(
+      !routesDtsContent.includes(forbiddenValue),
+      `Expected .dinou/types/routes.d.ts NEVER to leak .env* values (${forbiddenValue})`
+    );
+  }
 
   // 2. Assert contextual modules exist for route dirs & do NOT exist for non-route / _private dirs
   const expectedRouteDirs = [
@@ -82,6 +106,8 @@ async function main() {
     "t-type-safe-contextual/[slug]/@sidebar",
     "t-type-safe-contextual/[slug]/contact",
     "t-type-safe-contextual/[slug]/contact/sub",
+    "t-env-vars",
+    "t-env-vars/[slug]",
   ];
   for (const rel of expectedRouteDirs) {
     assert(
@@ -121,7 +147,10 @@ async function main() {
     'Expected compilerOptions.rootDirs: ["src", ".dinou/routes"] in tsconfig.json'
   );
 
-  const fixtureFiles = collectTsFiles(path.join(root, "src/t-type-safe-contextual"));
+  const fixtureFiles = [
+    ...collectTsFiles(path.join(root, "src/t-type-safe-contextual")),
+    ...collectTsFiles(path.join(root, "src/t-env-vars")),
+  ];
   const rootNames = [
     ...fixtureFiles,
     path.join(root, "dinou-env.d.ts"),

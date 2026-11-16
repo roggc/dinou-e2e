@@ -60,6 +60,35 @@ async function probeBinary(binaryPath, port, label) {
       );
     }
 
+    // Also probe /t-env-vars (DINOU_PUBLIC_* + server secret isolation) and Anti-Bot Shield (/.env -> 404)
+    const envVarsRes = await fetch(`http://127.0.0.1:${port}/t-env-vars`, {
+      headers: { Accept: "text/html" },
+    });
+    if (envVarsRes.status !== 200) {
+      throw new Error(
+        `[Smoke] ${label} returned ${envVarsRes.status} on /t-env-vars (expected 200)`
+      );
+    }
+    const envVarsHtml = await envVarsRes.text();
+    if (
+      !envVarsHtml.includes("DinouPublicProd") ||
+      !envVarsHtml.includes('data-rsc-secret-ok="true"') ||
+      envVarsHtml.includes("dinou_e2e_server_private_token_940")
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-env-vars failed DINOU_PUBLIC_* or secret-isolation check`
+      );
+    }
+    const botProbeRes = await fetch(`http://127.0.0.1:${port}/.env`);
+    if (botProbeRes.status !== 404) {
+      throw new Error(
+        `[Smoke] ${label} returned ${botProbeRes.status} on /.env (expected 404 Anti-Bot Shield)`
+      );
+    }
+    console.log(
+      `✅ [Smoke] ${label} verified /t-env-vars (DINOU_PUBLIC_* + secret isolation) & /.env -> 404`
+    );
+
     // Also probe a secondary route / RSC endpoint if available
     const candidateRoutes = ["/t-rigurous-hs", "/horizontal-segmentation-test", "/about"];
     for (const route of candidateRoutes) {
@@ -105,6 +134,20 @@ async function main() {
   const outStylesCssPageRsc = path.join(outDir, "t-styles-css", "page.rsc");
   const outAssetsIndex = path.join(outDir, "t-assets", "index.html");
   const outAssetsPageRsc = path.join(outDir, "t-assets", "page.rsc");
+  const outEnvVarsIndex = path.join(outDir, "t-env-vars", "index.html");
+  const outEnvVarsPageRsc = path.join(outDir, "t-env-vars", "page.rsc");
+  const outEnvVarsSsgSlugIndex = path.join(
+    outDir,
+    "t-env-vars",
+    "ssg-prebuilt",
+    "index.html"
+  );
+  const outEnvVarsSsgSlugPageRsc = path.join(
+    outDir,
+    "t-env-vars",
+    "ssg-prebuilt",
+    "page.rsc"
+  );
   const outPublicAssetsAboutIndex = path.join(
     outDir,
     "t-public-assets",
@@ -154,6 +197,10 @@ async function main() {
     outStylesCssPageRsc,
     outAssetsIndex,
     outAssetsPageRsc,
+    outEnvVarsIndex,
+    outEnvVarsPageRsc,
+    outEnvVarsSsgSlugIndex,
+    outEnvVarsSsgSlugPageRsc,
   ]) {
     if (!fs.existsSync(requiredExportFile) || fs.statSync(requiredExportFile).size === 0) {
       throw new Error(
@@ -204,10 +251,24 @@ async function main() {
     "t-public-assets/rsc.rsc",
     "t-public-assets/about/metadata.json",
     "t-public-assets/about/rsc.rsc",
+    ".env",
+    ".env.production",
+    ".env.e2e-ignored",
   ]) {
     if (fs.existsSync(path.join(outDir, forbidden))) {
       throw new Error(`[Smoke] export-static leaked internal artifact into out/${forbidden}`);
     }
+  }
+  const outEnvVarsHtml = fs.readFileSync(outEnvVarsIndex, "utf8");
+  if (
+    !outEnvVarsHtml.includes("DinouPublicProd") ||
+    !outEnvVarsHtml.includes('data-rsc-secret-ok="true"') ||
+    outEnvVarsHtml.includes("dinou_e2e_server_private_token_940") ||
+    outEnvVarsHtml.includes("dinou_public_dir_dotenv_must_never_be_copied_or_served_940")
+  ) {
+    throw new Error(
+      "[Smoke] export-static out/t-env-vars/index.html failed DINOU_PUBLIC_* or secret-isolation check"
+    );
   }
   console.log("✅ [Smoke] export-static verified (SSG HTML with __DINOU_STATIC_EXPORT__, segmented page.rsc/layout.rsc, public/ PWA manifest.json & dotfiles exported; dist2 metadata/slots & server/* excluded)");
 

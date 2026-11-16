@@ -22,3 +22,15 @@ html_handling = "none"
 # [[kv_namespaces]]
 # binding = "DINOU_CACHE"
 # id = "<YOUR_KV_NAMESPACE_ID>"
+
+# ====================================================================
+# E2E Synthetic Environment Bindings for Cloudflare Workers (`wrangler dev`)
+# ====================================================================
+[vars]
+E2E_ENV_PRIVATE_SECRET = "dinou_e2e_server_private_token_940"
+E2E_ENV_HIERARCHY_MODE = "prod_env"
+E2E_ENV_EXPORTED_FLAG = "exported_single_quote_ok"
+E2E_ENV_MULTILINE_CERT = "-----BEGIN DINOU E2E-----\nLINE_TWO_PAYLOAD\n-----END DINOU E2E-----"
+E2E_EDGE_ONLY_BINDING_TAG = "cloudflare_edge_vars_active"
+DINOU_PUBLIC_E2E_APP_TITLE = "DinouPublicProd"
+DINOU_PUBLIC_E2E_API_ORIGIN = "https://api.dinou-e2e.test"

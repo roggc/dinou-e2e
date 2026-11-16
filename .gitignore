@@ -1,6 +1,7 @@
 node_modules
 .dinou
-.env
+.env.local
+.env.*.local
 out
 dist/
 

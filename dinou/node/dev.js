@@ -2168,23 +2168,19 @@ srcWatcher.on("all", (event, fullPath) => {
 
 // Watch root .env* files for live environment hot-reloading in dev
 let envDebounce = null;
-const envWatcher = chokidar.watch(projectRoot, {
-  ignoreInitial: true,
-  depth: 0,
-  awaitWriteFinish: {
-    stabilityThreshold: 20,
-    pollInterval: 10,
-  },
-});
+let pendingEnvChangedPath = null;
+let activeEnvReloadPromise = null;
 
-envWatcher.on("all", (event, fullPath) => {
-  if (event === "addDir" || event === "unlinkDir") return;
-  if (!isWatchedDotEnvFile(fullPath, projectRoot)) return;
-  if (envDebounce) clearTimeout(envDebounce);
-  envDebounce = setTimeout(async () => {
-    envDebounce = null;
+async function triggerEnvReload(fullPath) {
+  const prev = activeEnvReloadPromise;
+  const runPromise = (async () => {
+    if (prev) {
+      try {
+        await prev;
+      } catch (e) {}
+    }
     try {
-      const envName = path.basename(fullPath);
+      const envName = fullPath ? path.basename(fullPath) : ".env";
       const reloadRes = loadEnvFiles(projectRoot, {
         mode: "development",
         reload: true,
@@ -2222,7 +2218,35 @@ envWatcher.on("all", (event, fullPath) => {
       clientBundlerHandle?.broadcast?.({ type: "reload" });
     } catch (err) {
       console.error("❌ [Dinou Dev] Failed to hot-reload .env file:", err);
+    } finally {
+      if (activeEnvReloadPromise === runPromise) {
+        activeEnvReloadPromise = null;
+      }
     }
+  })();
+  activeEnvReloadPromise = runPromise;
+  return runPromise;
+}
+
+const envWatcher = chokidar.watch(projectRoot, {
+  ignoreInitial: true,
+  depth: 0,
+  awaitWriteFinish: {
+    stabilityThreshold: 20,
+    pollInterval: 10,
+  },
+});
+
+envWatcher.on("all", (event, fullPath) => {
+  if (event === "addDir" || event === "unlinkDir") return;
+  if (!isWatchedDotEnvFile(fullPath, projectRoot)) return;
+  pendingEnvChangedPath = fullPath;
+  if (envDebounce) clearTimeout(envDebounce);
+  envDebounce = setTimeout(() => {
+    envDebounce = null;
+    const changedPath = pendingEnvChangedPath;
+    pendingEnvChangedPath = null;
+    triggerEnvReload(changedPath);
   }, 50);
 });
 
@@ -2754,6 +2778,16 @@ const server = http.createServer(async (req, res) => {
       pendingSrcChanges.clear();
       await triggerRebuildBatch(batch);
     }
+    if (envDebounce) {
+      clearTimeout(envDebounce);
+      envDebounce = null;
+      const changedPath = pendingEnvChangedPath;
+      pendingEnvChangedPath = null;
+      await triggerEnvReload(changedPath);
+    }
+    if (activeEnvReloadPromise) {
+      await activeEnvReloadPromise;
+    }
     if (activeRebuildPromise) {
       await activeRebuildPromise;
     }
@@ -2987,6 +3021,16 @@ const server = http.createServer(async (req, res) => {
     }
 
     // 3. Dynamic RSC + Native SSR Streaming
+    if (envDebounce) {
+      clearTimeout(envDebounce);
+      envDebounce = null;
+      const changedPath = pendingEnvChangedPath;
+      pendingEnvChangedPath = null;
+      await triggerEnvReload(changedPath);
+    }
+    if (activeEnvReloadPromise) {
+      await activeEnvReloadPromise;
+    }
     if (activeRebuildPromise) {
       await activeRebuildPromise;
     }
