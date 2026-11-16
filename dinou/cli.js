@@ -5,6 +5,7 @@ import { program } from "#commander";
 import { execSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadEnvFiles, readEnvFilesMap } from "./core/env.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dinouPath = __dirname;
@@ -17,12 +18,26 @@ program
   .version("9.4.0")
   .option("-u, --unvendorized", "Run with standard node_modules dependencies instead of pre-bundled vendor packages");
 
-const isUnvendorizedRequested = () =>
-  process.argv.includes("-u") ||
-  process.argv.includes("--unvendorized") ||
-  process.env.DINOU_UNVENDORIZED === "true" ||
-  process.env.DINOU_UNVENDORIZED === "1" ||
-  Boolean(program.opts?.().unvendorized);
+const isUnvendorizedRequested = () => {
+  if (
+    process.argv.includes("-u") ||
+    process.argv.includes("--unvendorized") ||
+    process.env.DINOU_UNVENDORIZED === "true" ||
+    process.env.DINOU_UNVENDORIZED === "1" ||
+    Boolean(program.opts?.().unvendorized)
+  ) {
+    return true;
+  }
+  try {
+    const dotEnvMap = readEnvFilesMap(projectRoot).values;
+    return (
+      dotEnvMap.DINOU_UNVENDORIZED === "true" ||
+      dotEnvMap.DINOU_UNVENDORIZED === "1"
+    );
+  } catch {
+    return false;
+  }
+};
 
 const pathKey = Object.keys(process.env).find((k) => k.toLowerCase() === "path") || "PATH";
 const projectBin = path.join(projectRoot, "node_modules", ".bin");
@@ -524,6 +539,7 @@ program
   .command("typegen")
   .description("Generate .dinou/types/routes.d.ts and .dinou/routes/**/dinou.{js,d.ts} from src/")
   .action(async () => {
+    loadEnvFiles(projectRoot);
     const { generateRouteTypes } = await import("./core/generate-route-types.js");
     const stats = generateRouteTypes(projectRoot);
     if (stats) {

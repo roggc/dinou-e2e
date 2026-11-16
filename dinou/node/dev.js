@@ -8,6 +8,14 @@ if (!process.env.NODE_ENV) {
   process.env.NODE_ENV = "development";
 }
 
+import {
+  loadEnvFiles,
+  getEsbuildPublicEnvDefines,
+  getWebpackPublicEnvDefines,
+  isWatchedDotEnvFile,
+} from "../core/env.js";
+loadEnvFiles(process.cwd(), { mode: "development" });
+
 import ensureVendorMode from "../core/ensure-vendor-mode.js";
 if (!ensureVendorMode()) {
   await new Promise(() => {});
@@ -1496,33 +1504,51 @@ const ctxA = await esbuild.context({
   logLevel: "warning",
 });
 
-const ctxB = await esbuild.context({
-  entryPoints: { "ssr-engine": path.join(devDir, "ssr-entry.mjs") },
-  outdir: devDir,
-  splitting: true,
-  outExtension: { ".js": ".mjs" },
-  chunkNames: "chunks/ssr/[name]-[hash]",
-  bundle: true,
-  format: "esm",
-  target: "node20",
-  platform: "node",
-  mainFields: ["module", "main"],
-  conditions: ["node", "worker", "browser", "style"],
-  external: externalList,
-  banner,
-  inject: setupFiles,
-  plugins: [esbuildContextualDinouPlugin({ projectRoot }), serverReferencesPluginSsr, serverCssModulesPlugin, serverAssetPlugin, createDevExternalPackagesPlugin(false)],
-  alias: commonAlias,
-  loader: commonLoader,
-  jsx: "automatic",
-  define: {
-    "process.env.NODE_ENV": '"development"',
-    "process.env.DINOU_DEV": '"true"',
-    "process.env.DINOU_RUNTIME": '"node-bundle"',
-    "process.env.DINOU_BUILD_TOOL": JSON.stringify(isWebpackBuild ? "webpack" : (process.env.DINOU_BUILD_TOOL || "esbuild")),
-  },
-  logLevel: "warning",
-});
+async function createSsrContext() {
+  return esbuild.context({
+    entryPoints: { "ssr-engine": path.join(devDir, "ssr-entry.mjs") },
+    outdir: devDir,
+    splitting: true,
+    outExtension: { ".js": ".mjs" },
+    chunkNames: "chunks/ssr/[name]-[hash]",
+    bundle: true,
+    format: "esm",
+    target: "node20",
+    platform: "node",
+    mainFields: ["module", "main"],
+    conditions: ["node", "worker", "browser", "style"],
+    external: externalList,
+    banner,
+    inject: setupFiles,
+    plugins: [
+      esbuildContextualDinouPlugin({ projectRoot }),
+      serverReferencesPluginSsr,
+      serverCssModulesPlugin,
+      serverAssetPlugin,
+      createDevExternalPackagesPlugin(false),
+    ],
+    alias: commonAlias,
+    loader: commonLoader,
+    jsx: "automatic",
+    define: getEsbuildPublicEnvDefines({
+      mode: "development",
+      defineProcessEnvObject: true,
+      extra: {
+        DINOU_DEV: "true",
+        DINOU_RUNTIME: "node-bundle",
+        DINOU_BUILD_TOOL: isWebpackBuild
+          ? "webpack"
+          : process.env.DINOU_BUILD_TOOL || "esbuild",
+        ...(process.env.DINOU_DEBUG
+          ? { DINOU_DEBUG: process.env.DINOU_DEBUG }
+          : {}),
+      },
+    }),
+    logLevel: "warning",
+  });
+}
+
+let ctxB = await createSsrContext();
 
 let rscModule = null;
 let ssrModule = null;
@@ -2140,6 +2166,66 @@ srcWatcher.on("all", (event, fullPath) => {
   }, 50);
 });
 
+// Watch root .env* files for live environment hot-reloading in dev
+let envDebounce = null;
+const envWatcher = chokidar.watch(projectRoot, {
+  ignoreInitial: true,
+  depth: 0,
+  awaitWriteFinish: {
+    stabilityThreshold: 20,
+    pollInterval: 10,
+  },
+});
+
+envWatcher.on("all", (event, fullPath) => {
+  if (event === "addDir" || event === "unlinkDir") return;
+  if (!isWatchedDotEnvFile(fullPath, projectRoot)) return;
+  if (envDebounce) clearTimeout(envDebounce);
+  envDebounce = setTimeout(async () => {
+    envDebounce = null;
+    try {
+      const envName = path.basename(fullPath);
+      const reloadRes = loadEnvFiles(projectRoot, {
+        mode: "development",
+        reload: true,
+      });
+      try {
+        generateRouteTypes(projectRoot);
+      } catch (e) {}
+
+      if (!reloadRes.changed && !reloadRes.publicEnvChanged) {
+        return;
+      }
+
+      try {
+        const dist2Dir = path.resolve(projectRoot, ".dinou/dist2");
+        if (fs.existsSync(dist2Dir)) {
+          fs.rmSync(dist2Dir, { recursive: true, force: true });
+        }
+      } catch (e) {}
+
+      if (reloadRes.publicEnvChanged) {
+        logInfo(`Reloaded ${envName} (DINOU_PUBLIC_* updated). Rebuilding client & SSR...`);
+        fileTransformCache.clear();
+        await ctxB.dispose();
+        ctxB = await createSsrContext();
+        await Promise.all([
+          syncSsrEngine(),
+          clientBundlerHandle?.refreshPublicEnv
+            ? clientBundlerHandle.refreshPublicEnv()
+            : clientBundlerHandle?.restart?.(),
+        ]);
+      } else {
+        logSuccess(`Reloaded server environment from ${envName}`);
+      }
+
+      clientBundlerHandle?.broadcast?.({ type: "reload" });
+    } catch (err) {
+      console.error("❌ [Dinou Dev] Failed to hot-reload .env file:", err);
+    }
+  }, 50);
+});
+
 let clientManifestReady = false;
 
 function checkClientFilesPresent() {
@@ -2420,6 +2506,11 @@ async function startClientBundler(tool) {
     const webpackConfigMod = await import(pathToFileURL(path.resolve(dinouDir, "webpack/webpack.config.js")).href);
     const getWebpackConfig = webpackConfigMod.default || webpackConfigMod;
     const webpackConfig = await getWebpackConfig();
+    const definePlugin = Array.isArray(webpackConfig.plugins)
+      ? webpackConfig.plugins.find(
+          (p) => p && p.constructor && p.constructor.name === "DefinePlugin"
+        )
+      : null;
     const compiler = webpack(webpackConfig);
 
     let devServer = null;
@@ -2544,6 +2635,36 @@ async function startClientBundler(tool) {
               } else if (activeClientBuildPromise) {
                 await activeClientBuildPromise;
               }
+              await onManifestUpdated();
+            },
+            refreshPublicEnv: async () => {
+              if (definePlugin) {
+                definePlugin.definitions = getWebpackPublicEnvDefines({
+                  mode: "development",
+                  extra: {
+                    DINOU_HMR_PORT: String(
+                      process.env.HMR_PORT || Number(process.env.PORT || 3000) + 1
+                    ),
+                  },
+                });
+              }
+              if (!globalThis.__DINOU_WEBPACK_MODIFIED_FILES__) {
+                globalThis.__DINOU_WEBPACK_MODIFIED_FILES__ = new Set();
+              }
+              for (const cf of knownClientFiles) {
+                globalThis.__DINOU_WEBPACK_MODIFIED_FILES__.add(
+                  path.resolve(cf).replace(/\\/g, "/").toLowerCase()
+                );
+              }
+              const waitP = startBuildWait();
+              try {
+                if (devServer?.middleware?.invalidate) {
+                  devServer.middleware.invalidate();
+                } else if (compiler.watching?.invalidate) {
+                  compiler.watching.invalidate();
+                }
+              } catch (e) {}
+              await waitP;
               await onManifestUpdated();
             },
             close: async () => {
@@ -2982,6 +3103,7 @@ async function cleanup() {
   stopSpinner();
   try {
     srcWatcher.close();
+    envWatcher.close();
     if (clientBundlerHandle?.close) {
       await clientBundlerHandle.close();
     }
