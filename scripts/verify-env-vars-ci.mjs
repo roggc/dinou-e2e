@@ -1042,8 +1042,33 @@ process.exit(0);
     assert(!fs.existsSync(path.join(tmpMatrixApp, "out/.env.production")));
     assert(fs.existsSync(path.join(tmpMatrixApp, "out/robots.txt")));
 
-    // Cloudflare, Bun & Deno build verification
-    runCli("build:cloudflare:esbuild");
+    // Cloudflare, Bun & Deno build verification (run Node builder scripts directly so CI jobs without deno/bun binaries in PATH pass cleanly)
+    const cleanAdapterBuildEnv = {
+      ...process.env,
+      NODE_ENV: "production",
+      DINOU_BUILD_TOOL: "esbuild",
+    };
+    delete cleanAdapterBuildEnv.DINOU_DEV;
+    delete cleanAdapterBuildEnv.DINOU_WRITE_TO_DISK;
+
+    const runNodeBuildScript = (relScript) => {
+      const res = spawnSync(
+        process.execPath,
+        [path.join(dinouRoot, relScript)],
+        {
+          cwd: tmpMatrixApp,
+          encoding: "utf8",
+          env: cleanAdapterBuildEnv,
+        }
+      );
+      assert.equal(
+        res.status,
+        0,
+        `${relScript} failed:\n${res.stdout}\n${res.stderr}`
+      );
+    };
+
+    runNodeBuildScript("cloudflare/build.js");
     assertZeroSubstringInDir(
       path.join(tmpMatrixApp, ".dinou/cloudflare/assets"),
       [PRIVATE_SECRET_A, PRIVATE_SECRET_B],
@@ -1059,14 +1084,20 @@ process.exit(0);
     assert(cfSsr.includes("MatrixProdTitle"));
     assert(!cfSsr.includes(PRIVATE_SECRET_A));
 
-    runCli("build:bun:esbuild");
+    runNodeBuildScript("bun/build.js");
     const bunServer = fs.readFileSync(
       path.join(tmpMatrixApp, ".dinou/bun/server.js"),
       "utf8"
     );
+    const bunSsr = fs.readFileSync(
+      path.join(tmpMatrixApp, ".dinou/bun/ssr-engine.js"),
+      "utf8"
+    );
     assert(bunServer.includes("loadEnvFiles"));
+    assert(bunSsr.includes("MatrixProdTitle"));
+    assert(!bunSsr.includes(PRIVATE_SECRET_A));
 
-    runCli("build:deno:esbuild");
+    runNodeBuildScript("deno/build.js");
     const denoMain = fs.readFileSync(
       path.join(tmpMatrixApp, ".dinou/deno/main.js"),
       "utf8"
@@ -1075,7 +1106,12 @@ process.exit(0);
       path.join(tmpMatrixApp, ".dinou/deno/ssr-engine.js"),
       "utf8"
     );
+    const denoSeedKv = fs.readFileSync(
+      path.join(dinouRoot, "deno/seed-kv.js"),
+      "utf8"
+    );
     assert(denoMain.includes("loadEnvFiles"));
+    assert(denoSeedKv.includes("loadEnvFiles"));
     assert(denoSsr.includes("MatrixProdTitle"));
     assert(!denoSsr.includes(PRIVATE_SECRET_A));
   } finally {
