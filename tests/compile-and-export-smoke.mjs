@@ -103,6 +103,8 @@ async function main() {
   const outPublicAssetsLayoutRsc = path.join(outDir, "t-public-assets", "layout.rsc");
   const outStylesCssIndex = path.join(outDir, "t-styles-css", "index.html");
   const outStylesCssPageRsc = path.join(outDir, "t-styles-css", "page.rsc");
+  const outAssetsIndex = path.join(outDir, "t-assets", "index.html");
+  const outAssetsPageRsc = path.join(outDir, "t-assets", "page.rsc");
   const outPublicAssetsAboutIndex = path.join(
     outDir,
     "t-public-assets",
@@ -150,6 +152,8 @@ async function main() {
     outPublicAssetsAboutPageRsc,
     outStylesCssIndex,
     outStylesCssPageRsc,
+    outAssetsIndex,
+    outAssetsPageRsc,
   ]) {
     if (!fs.existsSync(requiredExportFile) || fs.statSync(requiredExportFile).size === 0) {
       throw new Error(

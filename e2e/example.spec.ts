@@ -12705,6 +12705,14 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
       const createScopedName: (name: string, filepath: string) => string =
         createScopedMod.default ?? createScopedMod;
+      const assetExtMod = await import(
+        resolveDinouCoreModuleUrl("asset-extensions.js")
+      );
+      const getAssetPublicUrl: (
+        absFilePath: string,
+        projectRoot?: string
+      ) => string =
+        assetExtMod.getAssetPublicUrl ?? assetExtMod.default?.getAssetPublicUrl;
 
       const cardModulePath = path.resolve(
         process.cwd(),
@@ -12748,9 +12756,12 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         hmrModulePath
       );
 
-      const expectedPatternAsset = `/assets/${createScopedName("pattern", patternSvgPath)}.svg`;
-      const expectedTileAsset = `/assets/${createScopedName("tile", tileSvgPath)}.svg`;
-      const expectedFontAsset = `/assets/${createScopedName("test-font", fontWoff2Path)}.woff2`;
+      const expectedPatternAsset = getAssetPublicUrl(
+        patternSvgPath,
+        process.cwd()
+      );
+      const expectedTileAsset = getAssetPublicUrl(tileSvgPath, process.cwd());
+      const expectedFontAsset = getAssetPublicUrl(fontWoff2Path, process.cwd());
 
       // 1A. Inspect /styles.css and emitted CSS url(...) assets over HTTP
       const stylesRes = await safeApiGet(request, "/styles.css");
@@ -12880,7 +12891,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       const fontImportText =
         (await page.getByTestId("styles-font-import-url").textContent()) ?? "";
-      expect(fontImportText).toMatch(/^(\/assets\/.*\.woff2|data:)/);
+      expect(fontImportText).toBe(expectedFontAsset);
 
       // 1C. Live Dynamic Pass A + Pass B SSR + Hydration on /t-styles-css/[mode]
       const safeProj = testInfo.project.name.replace(/[^a-z0-9]/gi, "-");
@@ -12917,7 +12928,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(dynCard).toHaveClass(expectedServerCardHash);
       await expect(dynCard).toHaveCSS("color", "rgb(124, 58, 237)");
       await expect(dynCard).toHaveCSS("padding-top", "20px");
-      expect(dynFontUrl).toMatch(/^(\/assets\/.*\.woff2|data:)/);
+      expect(dynFontUrl).toBe(expectedFontAsset);
 
       await page.getByTestId("styles-client-counter").click();
       await expect(page.getByTestId("styles-client-counter")).toHaveText(
@@ -13080,6 +13091,532 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
       expect(output).toContain(
         "RESULT: All unified styles, CSS Modules (RSC + SSR + Client), JSONC tsconfig, CSS url(...) assets, dev HMR & 3-bundler/4-runtime parity checks PASSED"
+      );
+    });
+  });
+
+  test.describe("Static Media, Fonts, Custom assetExtensions & HTTP 206 Byte-Range Pipeline (/t-assets)", () => {
+    async function withAssetsHmrLock<T>(fn: () => Promise<T>): Promise<T> {
+      const os = await import("os");
+      const lockPath = path.join(
+        os.tmpdir(),
+        `dinou-e2e-assets-hmr-${process.env.PORT || 3000}.lock`
+      );
+      const deadline = Date.now() + 90000;
+      let lockFd: number | null = null;
+
+      while (Date.now() < deadline) {
+        try {
+          lockFd = fs.openSync(lockPath, "wx");
+          fs.writeFileSync(lockFd, String(process.pid), "utf8");
+          break;
+        } catch (err: any) {
+          if (err?.code === "EEXIST") {
+            try {
+              const stat = fs.statSync(lockPath);
+              if (Date.now() - stat.mtimeMs > 60000) {
+                fs.unlinkSync(lockPath);
+                continue;
+              }
+            } catch {}
+            await new Promise((r) => setTimeout(r, 150));
+            continue;
+          }
+          throw err;
+        }
+      }
+
+      if (lockFd === null) {
+        throw new Error("Timed out acquiring cross-worker assets HMR lock");
+      }
+
+      try {
+        return await fn();
+      } finally {
+        try {
+          fs.closeSync(lockFd);
+        } catch {}
+        try {
+          fs.unlinkSync(lockPath);
+        } catch {}
+      }
+    }
+
+    test("1. Full SSG (/t-assets) & Live Dynamic Pass A + Pass B (/t-assets/[slug]) Server-only & Client assets, custom dinou.config assetExtensions (.glb/.gltf/.hdr), @media/* alias, folder scoping & RFC 9110 HTTP 206/416 Byte-Range streaming", async ({
+      page,
+      request,
+    }, testInfo) => {
+      const pageErrors: string[] = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      const assetExtMod = await import(
+        resolveDinouCoreModuleUrl("asset-extensions.js")
+      );
+      const getAssetPublicUrl: (
+        absFilePath: string,
+        projectRoot?: string
+      ) => string =
+        assetExtMod.getAssetPublicUrl ?? assetExtMod.default?.getAssetPublicUrl;
+
+      const rootDir = process.cwd();
+      const serverHeroPath = path.resolve(
+        rootDir,
+        "src/t-assets/media/server-only-hero.avif"
+      );
+      const clientRelBadgePath = path.resolve(
+        rootDir,
+        "src/t-assets/media/client-rel-badge.svg"
+      );
+      const streamClipPath = path.resolve(
+        rootDir,
+        "src/t-assets/media/stream-clip.mp4"
+      );
+      const cubeGlbPath = path.resolve(
+        rootDir,
+        "src/t-assets/media/cube.glb"
+      );
+      const skyboxHdrPath = path.resolve(
+        rootDir,
+        "src/t-assets/media/skybox.hdr"
+      );
+      const sceneGltfPath = path.resolve(
+        rootDir,
+        "src/t-assets/media/scene.gltf"
+      );
+      const headerLogoPath = path.resolve(
+        rootDir,
+        "src/t-assets/media/header/logo.svg"
+      );
+      const footerLogoPath = path.resolve(
+        rootDir,
+        "src/t-assets/media/footer/logo.svg"
+      );
+      const specialBannerPath = path.resolve(
+        rootDir,
+        "src/t-assets/media/Special Banner (2x).SVG"
+      );
+      const liveHmrBadgePath = path.resolve(
+        rootDir,
+        "src/t-assets/media/live-hmr-badge.svg"
+      );
+
+      const expectedServerHero = getAssetPublicUrl(serverHeroPath, rootDir);
+      const expectedClientRelBadge = getAssetPublicUrl(
+        clientRelBadgePath,
+        rootDir
+      );
+      const expectedStreamClip = getAssetPublicUrl(streamClipPath, rootDir);
+      const expectedCubeGlb = getAssetPublicUrl(cubeGlbPath, rootDir);
+      const expectedSkyboxHdr = getAssetPublicUrl(skyboxHdrPath, rootDir);
+      const expectedSceneGltf = getAssetPublicUrl(sceneGltfPath, rootDir);
+      const expectedHeaderLogo = getAssetPublicUrl(headerLogoPath, rootDir);
+      const expectedFooterLogo = getAssetPublicUrl(footerLogoPath, rootDir);
+      const expectedSpecialBanner = getAssetPublicUrl(
+        specialBannerPath,
+        rootDir
+      );
+
+      expect(expectedServerHero).toMatch(
+        /^\/assets\/server-only-hero-[a-f0-9]{8}\.avif$/
+      );
+      expect(expectedClientRelBadge).toMatch(
+        /^\/assets\/client-rel-badge-[a-f0-9]{8}\.svg$/
+      );
+      expect(expectedStreamClip).toMatch(
+        /^\/assets\/stream-clip-[a-f0-9]{8}\.mp4$/
+      );
+      expect(expectedCubeGlb).toMatch(/^\/assets\/cube-[a-f0-9]{8}\.glb$/);
+      expect(expectedSkyboxHdr).toMatch(/^\/assets\/skybox-[a-f0-9]{8}\.hdr$/);
+      expect(expectedSceneGltf).toMatch(/^\/assets\/scene-[a-f0-9]{8}\.gltf$/);
+      expect(expectedHeaderLogo).toMatch(/^\/assets\/logo-[a-f0-9]{8}\.svg$/);
+      expect(expectedFooterLogo).toMatch(/^\/assets\/logo-[a-f0-9]{8}\.svg$/);
+      expect(expectedHeaderLogo).not.toBe(expectedFooterLogo);
+      expect(expectedSpecialBanner).toMatch(
+        /^\/assets\/Special-Banner-2x-[a-f0-9]{8}\.svg$/
+      );
+
+      // 1A. Verify CSS url(...) deduplication in /styles.css + HTTP delivery & MIME types
+      const [
+        stylesRes,
+        heroRes,
+        relBadgeRes,
+        clipRes,
+        glbRes,
+        hdrRes,
+        gltfRes,
+        headerLogoRes,
+        footerLogoRes,
+        specialRes,
+      ] = await Promise.all([
+        safeApiGet(request, "/styles.css"),
+        safeApiGet(request, expectedServerHero),
+        safeApiGet(request, expectedClientRelBadge),
+        safeApiGet(request, expectedStreamClip),
+        safeApiGet(request, expectedCubeGlb),
+        safeApiGet(request, expectedSkyboxHdr),
+        safeApiGet(request, expectedSceneGltf),
+        safeApiGet(request, expectedHeaderLogo),
+        safeApiGet(request, expectedFooterLogo),
+        safeApiGet(request, expectedSpecialBanner),
+      ]);
+
+      expect(stylesRes.status()).toBe(200);
+      expect(await stylesRes.text()).toContain(expectedHeaderLogo);
+
+      expect(heroRes.status()).toBe(200);
+      expect(heroRes.headers()["content-type"]).toContain("image/avif");
+      expect(await heroRes.text()).toBe("AVIF_SERVER_ONLY_HERO_PAYLOAD_V1");
+
+      expect(relBadgeRes.status()).toBe(200);
+      expect(relBadgeRes.headers()["content-type"]).toContain("image/svg+xml");
+
+      expect(clipRes.status()).toBe(200);
+      expect(clipRes.headers()["content-type"]).toContain("video/mp4");
+      expect(await clipRes.text()).toBe(
+        "0123456789ABCDEFGHIJKLMNOPQRST_DINOU_MP4_STREAM"
+      );
+
+      expect(glbRes.status()).toBe(200);
+      expect(glbRes.headers()["content-type"]).toContain("model/gltf-binary");
+      expect(await glbRes.text()).toBe("GLTF2_CUSTOM_EXT_CUBE_MODEL_V1");
+
+      expect(hdrRes.status()).toBe(200);
+      expect(hdrRes.headers()["content-type"]).toContain("image/vnd.radiance");
+      expect(await hdrRes.text()).toBe("RADIANCE_HDR_ENVIRONMENT_PROBE_V1");
+
+      expect(gltfRes.status()).toBe(200);
+      expect(gltfRes.headers()["content-type"]).toContain("model/gltf+json");
+
+      expect(headerLogoRes.status()).toBe(200);
+      expect(footerLogoRes.status()).toBe(200);
+      expect(specialRes.status()).toBe(200);
+      expect(specialRes.headers()["content-type"]).toContain("image/svg+xml");
+
+      if (isProd && !isCloudflare) {
+        expect(heroRes.headers()["cache-control"]).toBe(
+          "public, max-age=31536000, immutable"
+        );
+        expect(glbRes.headers()["cache-control"]).toBe(
+          "public, max-age=31536000, immutable"
+        );
+      }
+
+      // 1B. Verify RFC 9110 HTTP Byte-Range (206 Partial Content / 416 Range Not Satisfiable / Accept-Ranges: bytes)
+      // across Dinou's dev, Node AOT, Bun, Bun Pure, Deno & unvendorized HTTP servers
+      if (!isCloudflare) {
+        expect(clipRes.headers()["accept-ranges"]).toBe("bytes");
+
+        const rangeStartEnd = await safeApiGet(request, expectedStreamClip, {
+          headers: { Range: "bytes=0-9" },
+        });
+        expect(rangeStartEnd.status()).toBe(206);
+        expect(rangeStartEnd.headers()["accept-ranges"]).toBe("bytes");
+        expect(rangeStartEnd.headers()["content-range"]).toBe("bytes 0-9/47");
+        expect(rangeStartEnd.headers()["content-length"]).toBe("10");
+        expect(rangeStartEnd.headers()["content-type"]).toContain("video/mp4");
+        expect(await rangeStartEnd.text()).toBe("0123456789");
+
+        const rangeOpenEnded = await safeApiGet(request, expectedStreamClip, {
+          headers: { Range: "bytes=41-" },
+        });
+        expect(rangeOpenEnded.status()).toBe(206);
+        expect(rangeOpenEnded.headers()["content-range"]).toBe("bytes 41-46/47");
+        expect(rangeOpenEnded.headers()["content-length"]).toBe("6");
+        expect(await rangeOpenEnded.text()).toBe("STREAM");
+
+        const rangeSuffix = await safeApiGet(request, expectedStreamClip, {
+          headers: { Range: "bytes=-6" },
+        });
+        expect(rangeSuffix.status()).toBe(206);
+        expect(rangeSuffix.headers()["content-range"]).toBe("bytes 41-46/47");
+        expect(await rangeSuffix.text()).toBe("STREAM");
+
+        const rangeUnsatisfiable = await safeApiGet(
+          request,
+          expectedStreamClip,
+          {
+            headers: { Range: "bytes=999-1000" },
+          }
+        );
+        expect(rangeUnsatisfiable.status()).toBe(416);
+        expect(rangeUnsatisfiable.headers()["accept-ranges"]).toBe("bytes");
+        expect(rangeUnsatisfiable.headers()["content-range"]).toBe("bytes */47");
+      }
+
+      // 1C. Raw SSG/SSR HTML vs Hydrated DOM parity on /t-assets (zero data: Base64 bloat, zero hydration mismatch)
+      const rawHtmlRes = await safeApiGet(request, "/t-assets");
+      expect(rawHtmlRes.status()).toBe(200);
+      const rawHtml = await rawHtmlRes.text();
+      expect(rawHtml).toContain(expectedServerHero);
+      expect(rawHtml).toContain(expectedClientRelBadge);
+      expect(rawHtml).toContain(expectedStreamClip);
+      expect(rawHtml).toContain(expectedCubeGlb);
+      expect(rawHtml).toContain(expectedSkyboxHdr);
+      expect(rawHtml).toContain(expectedSceneGltf);
+      expect(rawHtml).toContain(expectedHeaderLogo);
+      expect(rawHtml).toContain(expectedFooterLogo);
+      expect(rawHtml).toContain(expectedSpecialBanner);
+      expect(rawHtml).not.toContain("data:image/");
+
+      await page.goto("/t-assets");
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+
+      const pageRoot = page.getByTestId("t-assets-page");
+      const clientViewer = page.getByTestId("t-assets-client-viewer");
+
+      await expect(pageRoot).toHaveAttribute(
+        "data-server-hero",
+        expectedServerHero
+      );
+      await expect(pageRoot).toHaveAttribute(
+        "data-stream-clip",
+        expectedStreamClip
+      );
+      await expect(pageRoot).toHaveAttribute("data-cube-glb", expectedCubeGlb);
+      await expect(pageRoot).toHaveAttribute(
+        "data-skybox-hdr",
+        expectedSkyboxHdr
+      );
+      await expect(pageRoot).toHaveAttribute(
+        "data-header-logo",
+        expectedHeaderLogo
+      );
+      await expect(pageRoot).toHaveAttribute(
+        "data-footer-logo",
+        expectedFooterLogo
+      );
+      await expect(pageRoot).toHaveAttribute(
+        "data-special-banner",
+        expectedSpecialBanner
+      );
+
+      await expect(clientViewer).toHaveAttribute(
+        "data-rel-badge",
+        expectedClientRelBadge
+      );
+      await expect(clientViewer).toHaveAttribute(
+        "data-stream-clip",
+        expectedStreamClip
+      );
+      await expect(clientViewer).toHaveAttribute(
+        "data-cube-glb",
+        expectedCubeGlb
+      );
+      await expect(clientViewer).toHaveAttribute(
+        "data-scene-gltf",
+        expectedSceneGltf
+      );
+
+      await expect(page.getByTestId("t-assets-client-badge-img")).toBeVisible();
+      await expect(page.getByTestId("t-assets-header-logo-img")).toBeVisible();
+      await expect(page.getByTestId("t-assets-footer-logo-img")).toBeVisible();
+      await expect(
+        page.getByTestId("t-assets-special-banner-img")
+      ).toBeVisible();
+
+      const cssBg = await page
+        .getByTestId("t-assets-css-header-logo")
+        .evaluate((el) => getComputedStyle(el).backgroundImage);
+      expect(cssBg).toContain(expectedHeaderLogo);
+
+      await page.getByTestId("t-assets-client-counter").click();
+      await expect(page.getByTestId("t-assets-client-counter")).toHaveText(
+        "Clicks:1"
+      );
+
+      // 1D. Live Dynamic Pass A + Pass B SSR + Hydration on /t-assets/[slug]
+      const safeProj = testInfo.project.name.replace(/[^a-z0-9]/gi, "-");
+      const liveSlug = `dyn-${safeProj}-${Date.now()}`;
+
+      await withAssetsHmrLock(async () => {
+        const currentExpectedHmrBadge = getAssetPublicUrl(
+          liveHmrBadgePath,
+          rootDir
+        );
+        const rawDynRes = await safeApiGet(request, `/t-assets/${liveSlug}`);
+        expect(rawDynRes.status()).toBe(200);
+        const rawDynHtml = await rawDynRes.text();
+        expect(rawDynHtml).toContain(expectedServerHero);
+        expect(rawDynHtml).toContain(expectedClientRelBadge);
+        expect(rawDynHtml).toContain(expectedCubeGlb);
+        expect(rawDynHtml).toContain(expectedSkyboxHdr);
+        expect(rawDynHtml).toContain(currentExpectedHmrBadge);
+        expect(rawDynHtml).not.toContain("data:image/");
+
+        await page.goto(`/t-assets/${liveSlug}`);
+        await page.waitForSelector('body[data-hydrated="true"]', {
+          state: "attached",
+          timeout: 15000,
+        });
+
+        const dynRoot = page.getByTestId("t-assets-dyn-page");
+        await expect(page.getByTestId("t-assets-dyn-slug")).toHaveText(
+          `Slug:${liveSlug}`
+        );
+        await expect(dynRoot).toHaveAttribute(
+          "data-server-hero",
+          expectedServerHero
+        );
+        await expect(dynRoot).toHaveAttribute("data-cube-glb", expectedCubeGlb);
+        await expect(dynRoot).toHaveAttribute(
+          "data-skybox-hdr",
+          expectedSkyboxHdr
+        );
+        await expect(dynRoot).toHaveAttribute(
+          "data-server-hmr-badge",
+          currentExpectedHmrBadge
+        );
+        await expect(
+          page.getByTestId("t-assets-dyn-client-hmr")
+        ).toHaveAttribute("data-hmr-badge", currentExpectedHmrBadge);
+      });
+
+      await page.getByTestId("t-assets-client-counter").click();
+      await expect(page.getByTestId("t-assets-client-counter")).toHaveText(
+        "Clicks:1"
+      );
+
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("2. Live Dev Asset Content-Hash Hot-Update across Esbuild, Rollup & Webpack: editing binary/SVG media rotates /assets/[name]-[8hex].[ext] in both RSC & Client bundles", async ({
+      page,
+      request,
+    }, testInfo) => {
+      test.skip(
+        !isDev || isProd,
+        "Live asset content-hash hot-update test only runs against active DEV server (esbuild, rollup, webpack)"
+      );
+      test.setTimeout(120000);
+
+      const rootDir = process.cwd();
+      const liveHmrBadgePath = path.resolve(
+        rootDir,
+        "src/t-assets/media/live-hmr-badge.svg"
+      );
+
+      const assetExtMod = await import(
+        resolveDinouCoreModuleUrl("asset-extensions.js")
+      );
+      const getAssetPublicUrl: (
+        absFilePath: string,
+        projectRoot?: string
+      ) => string =
+        assetExtMod.getAssetPublicUrl ?? assetExtMod.default?.getAssetPublicUrl;
+
+      await withAssetsHmrLock(async () => {
+        const originalSvg = fs.readFileSync(liveHmrBadgePath, "utf8");
+        const pageErrors: string[] = [];
+        page.on("pageerror", (err) => pageErrors.push(err.message));
+
+        try {
+          const initialExpectedUrl = getAssetPublicUrl(
+            liveHmrBadgePath,
+            rootDir
+          );
+          const safeProj = testInfo.project.name.replace(/[^a-z0-9]/gi, "-");
+          const hmrSlug = `hmr-${safeProj}-${Date.now()}`;
+
+          await page.goto(`/t-assets/${hmrSlug}`);
+          await page.waitForSelector('body[data-hydrated="true"]', {
+            state: "attached",
+            timeout: 15000,
+          });
+
+          const dynRoot = page.getByTestId("t-assets-dyn-page");
+          const clientHmrBox = page.getByTestId("t-assets-dyn-client-hmr");
+
+          await expect(dynRoot).toHaveAttribute(
+            "data-server-hmr-badge",
+            initialExpectedUrl
+          );
+          await expect(clientHmrBox).toHaveAttribute(
+            "data-hmr-badge",
+            initialExpectedUrl
+          );
+
+          const updatedSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><circle cx="16" cy="16" r="15" fill="#2563eb"/></svg>`;
+          fs.writeFileSync(liveHmrBadgePath, updatedSvg, "utf8");
+          const future1 = new Date(Date.now() + 2000);
+          fs.utimesSync(liveHmrBadgePath, future1, future1);
+
+          const updatedExpectedUrl = getAssetPublicUrl(
+            liveHmrBadgePath,
+            rootDir
+          );
+          expect(updatedExpectedUrl).not.toBe(initialExpectedUrl);
+
+          await expect
+            .poll(
+              async () => {
+                await page.reload();
+                await page.waitForSelector('body[data-hydrated="true"]', {
+                  state: "attached",
+                  timeout: 15000,
+                });
+                const srvUrl = await dynRoot.getAttribute(
+                  "data-server-hmr-badge"
+                );
+                const cliUrl = await clientHmrBox.getAttribute("data-hmr-badge");
+                return srvUrl === updatedExpectedUrl &&
+                  cliUrl === updatedExpectedUrl
+                  ? updatedExpectedUrl
+                  : `${srvUrl}|${cliUrl}`;
+              },
+              { timeout: 30000 }
+            )
+            .toBe(updatedExpectedUrl);
+
+          const updatedSvgRes = await safeApiGet(request, updatedExpectedUrl);
+          expect(updatedSvgRes.status()).toBe(200);
+          expect(updatedSvgRes.headers()["content-type"]).toContain(
+            "image/svg+xml"
+          );
+          expect(await updatedSvgRes.text()).toContain("#2563eb");
+          expect(pageErrors).toEqual([]);
+        } finally {
+          fs.writeFileSync(liveHmrBadgePath, originalSvg, "utf8");
+          const future2 = new Date(Date.now() + 4000);
+          fs.utimesSync(liveHmrBadgePath, future2, future2);
+          const restoredUrl = getAssetPublicUrl(liveHmrBadgePath, rootDir);
+          await expect
+            .poll(
+              async () => {
+                const res = await safeApiGet(
+                  request,
+                  `/t-assets/restore-${Date.now()}`
+                );
+                const txt = await res.text();
+                return txt.includes(restoredUrl);
+              },
+              { timeout: 20000 }
+            )
+            .toBe(true)
+            .catch(() => {});
+        }
+      });
+    });
+
+    test("3. Standalone Static Media, Custom assetExtensions, Path+Content Fingerprinting & 3-Bundler/4-Runtime Parity Suite (scripts/verify-assets-ci.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "Node CLI parity suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
+      test.setTimeout(360000);
+
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        [path.resolve("scripts/verify-assets-ci.mjs")],
+        { encoding: "utf8", timeout: 330000 }
+      );
+      expect(output).toContain(
+        "RESULT: All static media, custom assetExtensions, path+content fingerprinting, RFC 9110 HTTP 206 Range & 3-bundler/4-runtime parity checks PASSED"
       );
     });
   });

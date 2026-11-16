@@ -3,6 +3,7 @@
 import { defineConfig } from "dinou/config";
 
 export default defineConfig({
+  assetExtensions: ["glb", ".gltf", "HDR"],
   plugins: [
     {
       name: "e2e-auth-and-webhook-plugin",

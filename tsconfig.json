@@ -8,6 +8,9 @@
     "paths": {
       "@/*": [
         "./src/*"
+      ],
+      "@media/*": [
+        "./src/t-assets/media/*"
       ]
     },
     "allowJs": true,

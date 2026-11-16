@@ -66,6 +66,12 @@ async function main() {
     routesDtsContent.includes('"/t-type-safe-contextual/[slug]/@sidebar": { slug: string }'),
     "Expected DinouSlotParamsMap to include /t-type-safe-contextual/[slug]/@sidebar"
   );
+  for (const customExt of ["glb", "gltf", "hdr"]) {
+    assert(
+      routesDtsContent.includes(`declare module "*.${customExt}"`),
+      `Expected .dinou/types/routes.d.ts to declare custom asset module "*.${customExt}" from dinou.config.mjs`
+    );
+  }
 
   // 2. Assert contextual modules exist for route dirs & do NOT exist for non-route / _private dirs
   const expectedRouteDirs = [

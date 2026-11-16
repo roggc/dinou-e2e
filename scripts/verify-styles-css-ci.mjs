@@ -298,6 +298,7 @@ console.log(
   const { default: createScopedName } = await importDinou(
     "core/createScopedName.js"
   );
+  const { getAssetFileName } = await importDinou("core/asset-extensions.js");
   const {
     createServerCssModulesPlugin,
     compileCssModuleMap,
@@ -408,8 +409,8 @@ console.log(
       }),
     ]).process(rawCss, { from: entryCssFile });
 
-    const expectedSpriteAsset = `assets/${createScopedName("sprite", spritePath)}.svg`;
-    const expectedSubTileAsset = `assets/${createScopedName("sub-tile", subTilePath)}.svg`;
+    const expectedSpriteAsset = getAssetFileName(spritePath, tmpDir);
+    const expectedSubTileAsset = getAssetFileName(subTilePath, tmpDir);
 
     assert.ok(processed.css.includes('url("/public-hero.svg")'));
     assert.ok(processed.css.includes('url("data:image/svg+xml,%3Csvg/%3E")'));
@@ -710,6 +711,7 @@ console.log(
   const { default: createScopedName } = await importDinou(
     "core/createScopedName.js"
   );
+  const { getAssetFileName } = await importDinou("core/asset-extensions.js");
   const fixturesBase = path.join(projectRoot, ".dinou", "tmp-styles-fixtures");
   fs.mkdirSync(fixturesBase, { recursive: true });
   const tmpApp = fs.mkdtempSync(path.join(fixturesBase, "dinou-styles-"));
@@ -947,9 +949,12 @@ export default function Page() {
     process.chdir(tmpApp);
     const expectedServerHash = createScopedName("serverCard", cardModulePath);
     const expectedClientHash = createScopedName("clientBadge", cardModulePath);
-    const expectedPatternAsset = `assets/${createScopedName("pattern", patternSvgPath)}.svg`;
-    const expectedLocalFontAsset = `assets/${createScopedName("local-font", fontWoff2Path)}.woff2`;
-    const expectedThirdPartyFontAsset = `assets/${createScopedName("third-party", thirdPartyFontPath)}.woff2`;
+    const expectedPatternAsset = getAssetFileName(patternSvgPath, tmpApp);
+    const expectedLocalFontAsset = getAssetFileName(fontWoff2Path, tmpApp);
+    const expectedThirdPartyFontAsset = getAssetFileName(
+      thirdPartyFontPath,
+      tmpApp
+    );
 
     const cliPath = path.join(dinouRoot, "cli.js");
     const cleanBuildEnv = { ...process.env, NODE_ENV: "production" };
