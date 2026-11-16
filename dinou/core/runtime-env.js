@@ -81,12 +81,13 @@ export function syncEdgeEnvToProcessEnv(platformEnv) {
   ) {
     return;
   }
+  const procEnv = process.env;
   try {
     for (const key of Object.keys(platformEnv)) {
       const val = platformEnv[key];
-      if (typeof val === "string" && process.env[key] === undefined) {
+      if (typeof val === "string" && procEnv[key] === undefined) {
         try {
-          process.env[key] = val;
+          procEnv[key] = val;
         } catch {}
       }
     }

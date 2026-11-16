@@ -498,12 +498,19 @@ export function getRollupPublicEnvReplacements(options = {}) {
 
 /**
  * Generates Webpack `DefinePlugin` definitions for Client bundles (both dev and prod).
+ * Wraps `"process.env"` in parentheses `({...})` so statement-position expressions
+ * (e.g. `process.env[key] = val` analyzed by Webpack's production `ConcatenatedModule`
+ * parser) parse as valid parenthesized object expressions rather than block statements.
  */
 export function getWebpackPublicEnvDefines(options = {}) {
-  return getEsbuildPublicEnvDefines({
+  const defines = getEsbuildPublicEnvDefines({
     ...options,
     defineProcessEnvObject: true,
   });
+  if (defines["process.env"]) {
+    defines["process.env"] = `(${defines["process.env"]})`;
+  }
+  return defines;
 }
 
 /**

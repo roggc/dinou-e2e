@@ -64,7 +64,8 @@ function createFixtureApp(prefix) {
 
   const dinouShimDir = path.join(tmpApp, "node_modules", "dinou");
   fs.mkdirSync(dinouShimDir, { recursive: true });
-  const dinouRootUrl = pathToFileURL(dinouRoot).href;
+  const relToDinou = (sub) =>
+    path.relative(dinouShimDir, path.join(dinouRoot, sub)).replace(/\\/g, "/");
 
   fs.writeFileSync(
     path.join(dinouShimDir, "package.json"),
@@ -87,17 +88,17 @@ function createFixtureApp(prefix) {
   );
   fs.writeFileSync(
     path.join(dinouShimDir, "index.js"),
-    `export * from ${JSON.stringify(`${dinouRootUrl}/index.js`)};\n`,
+    `export * from ${JSON.stringify(relToDinou("index.js"))};\nexport { default } from ${JSON.stringify(relToDinou("index.js"))};\n`,
     "utf8"
   );
   fs.writeFileSync(
     path.join(dinouShimDir, "server.js"),
-    `export * from ${JSON.stringify(`${dinouRootUrl}/server.js`)};\n`,
+    `export * from ${JSON.stringify(relToDinou("server.js"))};\n`,
     "utf8"
   );
   fs.writeFileSync(
     path.join(dinouShimDir, "config.js"),
-    `export * from ${JSON.stringify(`${dinouRootUrl}/core/config.js`)};\nexport { default } from ${JSON.stringify(`${dinouRootUrl}/core/config.js`)};\n`,
+    `export * from ${JSON.stringify(relToDinou("core/config.js"))};\nexport { default } from ${JSON.stringify(relToDinou("core/config.js"))};\n`,
     "utf8"
   );
   fs.writeFileSync(
@@ -330,7 +331,11 @@ console.log(
     assert(!rollupReps.objectValues["process.env"].includes("CI_TEST_BASE_ONLY"));
 
     const webpackDefs = getWebpackPublicEnvDefines({ mode: "production" });
-    assert.equal(webpackDefs["process.env"], esbuildDefs["process.env"]);
+    assert.equal(
+      webpackDefs["process.env"],
+      `(${esbuildDefs["process.env"]})`,
+      "Webpack DefinePlugin process.env must be parenthesized for ConcatenatedModule statement parsing"
+    );
 
     // Edit .env (remove CI_TEST_REMOVABLE & rotate DINOU_PUBLIC_CI_UNIT_FLAG) and reload
     fs.writeFileSync(
@@ -870,8 +875,15 @@ console.log(
     fs.writeFileSync(
       path.join(tmpMatrixApp, "src/ClientProbe.tsx"),
       `"use client";
+      import { Link } from "dinou";
       export function ClientProbe() {
         const { DINOU_PUBLIC_MATRIX_SHARED, MATRIX_PRIVATE_TOKEN } = process.env;
+        const dynKey = "__NOOP_CLIENT_ENV_ASSIGN__";
+        if (typeof window !== "undefined" && process.env[dynKey] === "__never__") {
+          try {
+            process.env[dynKey] = "noop";
+          } catch {}
+        }
         return (
           <div
             data-title={process.env.DINOU_PUBLIC_MATRIX_TITLE ?? "missing"}
@@ -880,6 +892,7 @@ console.log(
             data-destructured-secret={String(MATRIX_PRIVATE_TOKEN)}
           >
             {process.env.DINOU_PUBLIC_MATRIX_TITLE}
+            <Link to="/">Home</Link>
           </div>
         );
       }\n`
