@@ -13263,26 +13263,30 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(stylesRes.status()).toBe(200);
       expect(await stylesRes.text()).toContain(expectedHeaderLogo);
 
+      const expectedHeroBytes = fs.readFileSync(serverHeroPath);
+      const expectedClipBytes = fs.readFileSync(streamClipPath);
+      const expectedGlbBytes = fs.readFileSync(cubeGlbPath);
+      const expectedHdrBytes = fs.readFileSync(skyboxHdrPath);
+      const clipSize = expectedClipBytes.length;
+
       expect(heroRes.status()).toBe(200);
       expect(heroRes.headers()["content-type"]).toContain("image/avif");
-      expect(await heroRes.text()).toBe("AVIF_SERVER_ONLY_HERO_PAYLOAD_V1");
+      expect(Buffer.from(await heroRes.body())).toEqual(expectedHeroBytes);
 
       expect(relBadgeRes.status()).toBe(200);
       expect(relBadgeRes.headers()["content-type"]).toContain("image/svg+xml");
 
       expect(clipRes.status()).toBe(200);
       expect(clipRes.headers()["content-type"]).toContain("video/mp4");
-      expect(await clipRes.text()).toBe(
-        "0123456789ABCDEFGHIJKLMNOPQRST_DINOU_MP4_STREAM"
-      );
+      expect(Buffer.from(await clipRes.body())).toEqual(expectedClipBytes);
 
       expect(glbRes.status()).toBe(200);
       expect(glbRes.headers()["content-type"]).toContain("model/gltf-binary");
-      expect(await glbRes.text()).toBe("GLTF2_CUSTOM_EXT_CUBE_MODEL_V1");
+      expect(Buffer.from(await glbRes.body())).toEqual(expectedGlbBytes);
 
       expect(hdrRes.status()).toBe(200);
       expect(hdrRes.headers()["content-type"]).toContain("image/vnd.radiance");
-      expect(await hdrRes.text()).toBe("RADIANCE_HDR_ENVIRONMENT_PROBE_V1");
+      expect(Buffer.from(await hdrRes.body())).toEqual(expectedHdrBytes);
 
       expect(gltfRes.status()).toBe(200);
       expect(gltfRes.headers()["content-type"]).toContain("model/gltf+json");
@@ -13311,25 +13315,44 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         });
         expect(rangeStartEnd.status()).toBe(206);
         expect(rangeStartEnd.headers()["accept-ranges"]).toBe("bytes");
-        expect(rangeStartEnd.headers()["content-range"]).toBe("bytes 0-9/47");
+        expect(rangeStartEnd.headers()["content-range"]).toBe(
+          `bytes 0-9/${clipSize}`
+        );
         expect(rangeStartEnd.headers()["content-length"]).toBe("10");
         expect(rangeStartEnd.headers()["content-type"]).toContain("video/mp4");
-        expect(await rangeStartEnd.text()).toBe("0123456789");
+        expect(Buffer.from(await rangeStartEnd.body())).toEqual(
+          expectedClipBytes.subarray(0, 10)
+        );
 
+        const openOffset = 41;
+        const expectedOpenSlice = expectedClipBytes.subarray(openOffset);
         const rangeOpenEnded = await safeApiGet(request, expectedStreamClip, {
-          headers: { Range: "bytes=41-" },
+          headers: { Range: `bytes=${openOffset}-` },
         });
         expect(rangeOpenEnded.status()).toBe(206);
-        expect(rangeOpenEnded.headers()["content-range"]).toBe("bytes 41-46/47");
-        expect(rangeOpenEnded.headers()["content-length"]).toBe("6");
-        expect(await rangeOpenEnded.text()).toBe("STREAM");
+        expect(rangeOpenEnded.headers()["content-range"]).toBe(
+          `bytes ${openOffset}-${clipSize - 1}/${clipSize}`
+        );
+        expect(rangeOpenEnded.headers()["content-length"]).toBe(
+          String(expectedOpenSlice.length)
+        );
+        expect(Buffer.from(await rangeOpenEnded.body())).toEqual(
+          expectedOpenSlice
+        );
 
+        const suffixLen = 6;
+        const suffixStart = clipSize - suffixLen;
+        const expectedSuffixSlice = expectedClipBytes.subarray(suffixStart);
         const rangeSuffix = await safeApiGet(request, expectedStreamClip, {
-          headers: { Range: "bytes=-6" },
+          headers: { Range: `bytes=-${suffixLen}` },
         });
         expect(rangeSuffix.status()).toBe(206);
-        expect(rangeSuffix.headers()["content-range"]).toBe("bytes 41-46/47");
-        expect(await rangeSuffix.text()).toBe("STREAM");
+        expect(rangeSuffix.headers()["content-range"]).toBe(
+          `bytes ${suffixStart}-${clipSize - 1}/${clipSize}`
+        );
+        expect(Buffer.from(await rangeSuffix.body())).toEqual(
+          expectedSuffixSlice
+        );
 
         const rangeUnsatisfiable = await safeApiGet(
           request,
@@ -13340,7 +13363,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         );
         expect(rangeUnsatisfiable.status()).toBe(416);
         expect(rangeUnsatisfiable.headers()["accept-ranges"]).toBe("bytes");
-        expect(rangeUnsatisfiable.headers()["content-range"]).toBe("bytes */47");
+        expect(rangeUnsatisfiable.headers()["content-range"]).toBe(
+          `bytes */${clipSize}`
+        );
       }
 
       // 1C. Raw SSG/SSR HTML vs Hydrated DOM parity on /t-assets (zero data: Base64 bloat, zero hydration mismatch)
@@ -13538,6 +13563,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
             initialExpectedUrl
           );
 
+          // Park the browser on about:blank while mutating the asset on disk so
+          // page.reload() never races mid-flight inside Chokidar's 20ms awaitWriteFinish window
+          await page.goto("about:blank");
+
           const updatedSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><circle cx="16" cy="16" r="15" fill="#2563eb"/></svg>`;
           fs.writeFileSync(liveHmrBadgePath, updatedSvg, "utf8");
           const future1 = new Date(Date.now() + 2000);
@@ -13549,26 +13578,44 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           );
           expect(updatedExpectedUrl).not.toBe(initialExpectedUrl);
 
+          // Wait via pure HTTP until BOTH Pass A (RSC) and Pass B (SSR) + in-memory asset cache settle on V2
           await expect
             .poll(
               async () => {
-                await page.reload();
-                await page.waitForSelector('body[data-hydrated="true"]', {
-                  state: "attached",
-                  timeout: 15000,
-                });
-                const srvUrl = await dynRoot.getAttribute(
-                  "data-server-hmr-badge"
+                const probeRes = await safeApiGet(
+                  request,
+                  `/t-assets/${hmrSlug}-probe-${Date.now()}`
                 );
-                const cliUrl = await clientHmrBox.getAttribute("data-hmr-badge");
-                return srvUrl === updatedExpectedUrl &&
-                  cliUrl === updatedExpectedUrl
-                  ? updatedExpectedUrl
-                  : `${srvUrl}|${cliUrl}`;
+                if (probeRes.status() !== 200) return false;
+                const html = await probeRes.text();
+                const hasServerAttr = html.includes(
+                  `data-server-hmr-badge="${updatedExpectedUrl}"`
+                );
+                const hasClientSsrAttr = html.includes(
+                  `data-hmr-badge="${updatedExpectedUrl}"`
+                );
+                if (!hasServerAttr || !hasClientSsrAttr) return false;
+                const assetRes = await safeApiGet(request, updatedExpectedUrl);
+                return assetRes.status() === 200;
               },
               { timeout: 30000 }
             )
-            .toBe(updatedExpectedUrl);
+            .toBe(true);
+
+          // Now navigate & hydrate in the real browser: must match V2 with ZERO hydration mismatch
+          await page.goto(`/t-assets/${hmrSlug}-v2`);
+          await page.waitForSelector('body[data-hydrated="true"]', {
+            state: "attached",
+            timeout: 15000,
+          });
+          await expect(dynRoot).toHaveAttribute(
+            "data-server-hmr-badge",
+            updatedExpectedUrl
+          );
+          await expect(clientHmrBox).toHaveAttribute(
+            "data-hmr-badge",
+            updatedExpectedUrl
+          );
 
           const updatedSvgRes = await safeApiGet(request, updatedExpectedUrl);
           expect(updatedSvgRes.status()).toBe(200);
@@ -13578,6 +13625,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           expect(await updatedSvgRes.text()).toContain("#2563eb");
           expect(pageErrors).toEqual([]);
         } finally {
+          await page.goto("about:blank").catch(() => {});
           fs.writeFileSync(liveHmrBadgePath, originalSvg, "utf8");
           const future2 = new Date(Date.now() + 4000);
           fs.utimesSync(liveHmrBadgePath, future2, future2);
@@ -13589,8 +13637,12 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
                   request,
                   `/t-assets/restore-${Date.now()}`
                 );
+                if (res.status() !== 200) return false;
                 const txt = await res.text();
-                return txt.includes(restoredUrl);
+                return (
+                  txt.includes(`data-server-hmr-badge="${restoredUrl}"`) &&
+                  txt.includes(`data-hmr-badge="${restoredUrl}"`)
+                );
               },
               { timeout: 20000 }
             )
