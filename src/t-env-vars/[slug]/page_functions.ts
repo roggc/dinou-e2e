@@ -14,7 +14,7 @@ export async function validateParams(params: { slug: string }) {
   return env.E2E_ENV_PRIVATE_SECRET === EXPECTED_SECRET;
 }
 
-export async function getProps({ params }: { params: { slug: string } }) {
+export async function getProps(params: { slug: string }) {
   const { env, req } = getContext();
   return {
     slugFromPageFn: params.slug,

@@ -13675,7 +13675,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
   test.describe("Environment Variables, .env* Hierarchy, DINOU_PUBLIC_*, Unified getContext().env & Anti-Bot Shield (/t-env-vars)", () => {
     async function withEnvVarsHmrLock<T>(fn: () => Promise<T>): Promise<T> {
-      const lockPath = path.join(os.tmpdir(), "dinou-e2e-env-vars-hmr.lock");
+      const os = await import("os");
+      const lockPath = path.join(
+        os.tmpdir(),
+        `dinou-e2e-env-vars-hmr-${process.env.PORT || 3000}.lock`
+      );
       const deadline = Date.now() + 90000;
       let lockFd: number | null = null;
 
@@ -13989,8 +13993,6 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
             ].join("\n"),
             "utf8"
           );
-          const future1 = new Date(Date.now() + 2000);
-          fs.utimesSync(envLocalPath, future1, future1);
 
           await expect
             .poll(

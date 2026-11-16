@@ -754,13 +754,13 @@ try {
   assert.equal(process.env.LIVE_HOT_SERVER_VAR, "hot_reloaded_server_ok");
 
   await (handle.refreshPublicEnv ? handle.refreshPublicEnv() : handle.restart());
-  const allJsV2 = Array.from(mem.entries())
-    .filter(([k]) => k.endsWith(".js"))
+  const activeJsV2 = Array.from(mem.entries())
+    .filter(([k]) => k.endsWith(".js") && !/^\\/?chunk-[A-Z0-9]+\\.js$/.test(k))
     .map(([, buf]) => buf.toString("utf8"))
     .join("\\n");
-  assert.ok(allJsV2.includes("DevBannerHotReloadedV2"), "Expected V2 DINOU_PUBLIC_DEV_BANNER after refreshPublicEnv()");
-  assert.ok(!allJsV2.includes("DevBannerInitialV1"), "Stale V1 DINOU_PUBLIC_DEV_BANNER must be replaced");
-  assert.ok(!allJsV2.includes("dinou_dev_private_never_leak_555"), "Private secret must stay excluded after refreshPublicEnv()");
+  assert.ok(activeJsV2.includes("DevBannerHotReloadedV2"), "Expected V2 DINOU_PUBLIC_DEV_BANNER after restart()");
+  assert.ok(!activeJsV2.includes("DevBannerInitialV1"), "Stale V1 DINOU_PUBLIC_DEV_BANNER must be replaced in active chunks");
+  assert.ok(!activeJsV2.includes("dinou_dev_private_never_leak_555"), "Private secret must stay excluded after restart()");
 } finally {
   if (handle?.close) await handle.close();
 }

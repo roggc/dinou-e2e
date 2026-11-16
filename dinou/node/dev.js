@@ -337,6 +337,14 @@ async function updateManifestsState(options = {}) {
   const aPath = isWebpackBuild ? findManifest("manifest.json", "node-dev") : null;
 
   const rawClient = globalThis.__DINOU_RAW_CLIENT_MANIFEST__ || readJsonSafe(cPath);
+  const devBundleEpoch = !isWebpackBuild
+    ? Number(globalThis.__DINOU_DEV_BUNDLE_EPOCH__ || 0)
+    : 0;
+  const applyDevEpoch = (chunkUrl) => {
+    if (!chunkUrl || devBundleEpoch <= 0) return chunkUrl;
+    const base = String(chunkUrl).split("?")[0];
+    return base.endsWith(".js") ? `${base}?v=${devBundleEpoch}` : chunkUrl;
+  };
   if (rawClient) {
     const cleanClient = {};
     for (const [k, v] of Object.entries(rawClient)) {
@@ -352,7 +360,10 @@ async function updateManifestsState(options = {}) {
       ) {
         continue;
       }
-      cleanClient[k] = v;
+      cleanClient[k] =
+        devBundleEpoch > 0 && v?.id
+          ? { ...v, id: applyDevEpoch(v.id) }
+          : v;
     }
     parsedClientManifest = cleanClient;
   }
@@ -430,10 +441,10 @@ async function updateManifestsState(options = {}) {
 
   if (!isWebpackBuild) {
     if (!redirectChunkId || redirectChunkId.includes("node_modules")) {
-      redirectChunkId = "/dinouClientRedirect.js";
+      redirectChunkId = applyDevEpoch("/dinouClientRedirect.js");
     }
     if (!linkChunkId || linkChunkId.includes("node_modules")) {
-      linkChunkId = "/dinouLink.js";
+      linkChunkId = applyDevEpoch("/dinouLink.js");
     }
   }
 
@@ -472,7 +483,7 @@ async function updateManifestsState(options = {}) {
     }
   }
   if (!isWebpackBuild && (!slotChunkId || slotChunkId.includes("node_modules"))) {
-    slotChunkId = "/dinouSlot.js";
+    slotChunkId = applyDevEpoch("/dinouSlot.js");
   }
   if (slotChunkId) {
     const slotChunks = isWebpackBuild ? (slotEntry?.chunks || [slotChunkId]) : "DinouPageSlot";
@@ -524,7 +535,11 @@ async function updateManifestsState(options = {}) {
         await yieldToEventLoop();
       }
 
-      const isValidEntryId = (entry) => Boolean(entry?.id && (isWebpackBuild || entry.id.endsWith(".js")));
+      const isValidEntryId = (entry) =>
+        Boolean(
+          entry?.id &&
+            (isWebpackBuild || String(entry.id).split("?")[0].endsWith(".js"))
+        );
 
       // Check if parsedClientManifest already has an entry for this component
       let matchedEntry = null;
@@ -556,7 +571,7 @@ async function updateManifestsState(options = {}) {
 
       const compId = isValidEntryId(matchedEntry)
         ? matchedEntry.id
-        : getFallbackChunkId(comp);
+        : applyDevEpoch(getFallbackChunkId(comp));
       const compChunks = isWebpackBuild ? (matchedEntry?.chunks || []) : "default";
 
       for (const u of urlVariants) {
@@ -583,7 +598,11 @@ async function updateManifestsState(options = {}) {
     }
   } else {
     // Fast path: update normalized mapping for known client components without re-reading files or parsing AST
-    const isValidEntryId = (entry) => Boolean(entry?.id && (isWebpackBuild || entry.id.endsWith(".js")));
+    const isValidEntryId = (entry) =>
+      Boolean(
+        entry?.id &&
+          (isWebpackBuild || String(entry.id).split("?")[0].endsWith(".js"))
+      );
     for (const comp of clientComponents) {
       const urlVariants = generateAllUrlVariants(comp);
       const fileExports = getCachedFileExports(comp);
@@ -620,7 +639,7 @@ async function updateManifestsState(options = {}) {
 
       const compId = isValidEntryId(matchedEntry)
         ? matchedEntry.id
-        : getFallbackChunkId(comp);
+        : applyDevEpoch(getFallbackChunkId(comp));
       const compChunks = isWebpackBuild ? (matchedEntry?.chunks || []) : "default";
 
       for (const u of urlVariants) {
@@ -720,9 +739,15 @@ async function updateManifestsState(options = {}) {
 
   const registerModuleMapEntry = (chunkId, fileUrl, expName) => {
     if (!chunkId || !fileUrl) return;
-    const ids = [chunkId];
-    if (chunkId.startsWith("/")) ids.push(chunkId.slice(1));
-    else ids.push("/" + chunkId);
+    const baseChunkId = String(chunkId).split("?")[0];
+    const ids = Array.from(
+      new Set([
+        chunkId,
+        chunkId.startsWith("/") ? chunkId.slice(1) : "/" + chunkId,
+        baseChunkId,
+        baseChunkId.startsWith("/") ? baseChunkId.slice(1) : "/" + baseChunkId,
+      ])
+    );
 
     // Canonicalize fileUrl to 3 slashes (standard file URL)
     let canonicalUrl = fileUrl;
@@ -770,7 +795,10 @@ async function updateManifestsState(options = {}) {
   for (const [k, v] of Object.entries(normalized)) {
     const fileUrl = k.split("#")[0];
     const expName = k.includes("#") ? k.split("#")[1] : null;
-    if (v?.id && (isWebpackBuild || v.id.endsWith(".js"))) {
+    if (
+      v?.id &&
+      (isWebpackBuild || String(v.id).split("?")[0].endsWith(".js"))
+    ) {
       registerModuleMapEntry(v.id, fileUrl, expName);
     }
   }
@@ -2202,15 +2230,18 @@ async function triggerEnvReload(fullPath) {
 
       if (reloadRes.publicEnvChanged) {
         logInfo(`Reloaded ${envName} (DINOU_PUBLIC_* updated). Rebuilding client & SSR...`);
+        globalThis.__DINOU_DEV_BUNDLE_EPOCH__ =
+          Number(globalThis.__DINOU_DEV_BUNDLE_EPOCH__ || 0) + 1;
         fileTransformCache.clear();
+        if (clientBundlerHandle?.refreshPublicEnv) {
+          await clientBundlerHandle.refreshPublicEnv();
+        } else if (clientBundlerHandle?.restart) {
+          await clientBundlerHandle.restart();
+        }
+        await updateManifestsState({ forceRescan: false });
         await ctxB.dispose();
         ctxB = await createSsrContext();
-        await Promise.all([
-          syncSsrEngine(),
-          clientBundlerHandle?.refreshPublicEnv
-            ? clientBundlerHandle.refreshPublicEnv()
-            : clientBundlerHandle?.restart?.(),
-        ]);
+        await syncSsrEngine();
       } else {
         logSuccess(`Reloaded server environment from ${envName}`);
       }
