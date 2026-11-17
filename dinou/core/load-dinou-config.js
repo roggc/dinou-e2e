@@ -179,7 +179,7 @@ function resolveActiveDinouRoot(cwd) {
   return null;
 }
 
-function createEsbuildDinouConfigPlugin(cwd) {
+function createEsbuildDinouConfigPlugin(cwd, outDir = cwd) {
   const activeDinouRoot = resolveActiveDinouRoot(cwd);
   return {
     name: "dinou-config-alias",
@@ -192,10 +192,15 @@ function createEsbuildDinouConfigPlugin(cwd) {
       });
       build.onResolve({ filter: /^dinou\/server$/ }, () => {
         if (activeDinouRoot) {
-          return {
-            path: pathToFileURL(path.join(activeDinouRoot, "server.js")).href,
-            external: true,
-          };
+          const serverAbs = path.join(activeDinouRoot, "server.js");
+          const rel = path.relative(outDir, serverAbs).replace(/\\/g, "/");
+          if (rel && !path.isAbsolute(rel)) {
+            return {
+              path: rel.startsWith(".") ? rel : "./" + rel,
+              external: true,
+            };
+          }
+          return { path: serverAbs };
         }
         return { path: "dinou/server", external: true };
       });
@@ -280,7 +285,7 @@ export async function prepareDist1ServerEntries({
         ".css": "empty",
       },
       plugins: [
-        createEsbuildDinouConfigPlugin(cwd),
+        createEsbuildDinouConfigPlugin(cwd, dist1Dir),
         esbuildTsconfigAliasesPlugin({
           projectRoot: cwd,
           skipAssets: false,
@@ -369,7 +374,7 @@ async function loadConfigFromDisk(cwd, isDev, configFile) {
         jsx: "automatic",
         sourcemap: "inline",
         plugins: [
-          createEsbuildDinouConfigPlugin(cwd),
+          createEsbuildDinouConfigPlugin(cwd, outDir),
           esbuildTsconfigAliasesPlugin({
             projectRoot: cwd,
             skipAssets: false,

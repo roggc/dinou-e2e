@@ -2506,6 +2506,8 @@ async function triggerDinouConfigReload(fullPath) {
       const nextSetupFiles = resolveSetupFiles(projectRoot, dinouConfig);
       setupFiles.length = 0;
       setupFiles.push(...nextSetupFiles);
+      globalThis.__DINOU_CONFIG_RELOAD_SEQ__ =
+        Number(globalThis.__DINOU_CONFIG_RELOAD_SEQ__ || 0) + 1;
       if (setupFiles.length > 0) {
         await executeSetupFilesInDevProcess(setupFiles);
       }

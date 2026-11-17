@@ -110,6 +110,13 @@ async function main() {
     "t-env-vars/[slug]",
     "t-aliases",
     "t-aliases/[slug]",
+    "t-plugins",
+    "t-plugins/login",
+    "t-plugins/dashboard",
+    "t-plugins/dashboard/live",
+    "t-plugins/res-redirect",
+    "t-plugins/teapot",
+    "t-plugins/ppr-probe",
   ];
   for (const rel of expectedRouteDirs) {
     assert(
@@ -129,6 +136,7 @@ async function main() {
     "t-aliases/components",
     "t-aliases/ui",
     "t-aliases/icons",
+    "_plugins",
   ];
   for (const rel of forbiddenDirs) {
     assert(
@@ -157,6 +165,8 @@ async function main() {
     ...collectTsFiles(path.join(root, "src/t-env-vars")),
     ...collectTsFiles(path.join(root, "src/t-aliases")),
     ...collectTsFiles(path.join(root, "shared-alias-fallback")),
+    ...collectTsFiles(path.join(root, "src/t-plugins")),
+    ...collectTsFiles(path.join(root, "src/_plugins")),
   ];
   const rootNames = [
     ...fixtureFiles,

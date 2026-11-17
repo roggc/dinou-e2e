@@ -14585,4 +14585,403 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
     });
   });
+
+  test.describe("Configuration, setupFiles & Plugin Architecture (/t-plugins)", () => {
+    const isBunStart = (process.env.TEST_CMD || "").includes("start:bun");
+    const isNodeHttpServer = !isCloudflare && !isDeno && !isBunStart;
+
+    const getSetCookieJoined = (res: {
+      headersArray(): Array<{ name: string; value: string }>;
+    }) =>
+      res
+        .headersArray()
+        .filter((h) => h.name.toLowerCase() === "set-cookie")
+        .map((h) => h.value)
+        .join(" | ");
+
+    async function withPluginsHmrLock<T>(fn: () => Promise<T>): Promise<T> {
+      const os = await import("os");
+      const lockPath = path.join(
+        os.tmpdir(),
+        `dinou-e2e-plugins-hmr-${process.env.PORT || 3000}.lock`
+      );
+      const deadline = Date.now() + 120000;
+      let lockFd: number | null = null;
+
+      while (Date.now() < deadline) {
+        try {
+          lockFd = fs.openSync(lockPath, "wx");
+          fs.writeFileSync(lockFd, String(process.pid), "utf8");
+          break;
+        } catch (err: any) {
+          if (err?.code === "EEXIST") {
+            try {
+              const stat = fs.statSync(lockPath);
+              if (Date.now() - stat.mtimeMs > 90000) {
+                fs.unlinkSync(lockPath);
+                continue;
+              }
+            } catch {}
+            await new Promise((r) => setTimeout(r, 150));
+            continue;
+          }
+          throw err;
+        }
+      }
+
+      if (lockFd === null) {
+        throw new Error("Timed out acquiring cross-worker plugins HMR lock");
+      }
+
+      try {
+        return await fn();
+      } finally {
+        try {
+          fs.closeSync(lockFd);
+        } catch {}
+        try {
+          fs.unlinkSync(lockPath);
+        } catch {}
+      }
+    }
+
+    test("1. AOT & Runtime Plugin Pipeline: Single-Execution setupFiles, Upstream Header/Cookie Merge, Node configureServer (Callback-Async + Promise + next(err)), Unblocked SSG + SPA <Link> x-rsc-redirect (Page + Layout + context.res.redirect), Status 418 / Custom Cache-Control, PPR Resume Status 202 & Authenticated Context + Server Action", async ({
+      page,
+      request,
+    }) => {
+      const pageErrors: string[] = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      const runPluginAssertions = async () => {
+        // 1. Webhook + single-execution setupFiles ([plugin-setup, user-setup]) + upstream context.res header/cookie merge
+        const pingRes = await safeApiGet(request, "/t-plugins/api/ping");
+        expect(pingRes.status()).toBe(200);
+        expect(pingRes.headers()["x-t-plugins-upstream"]).toBe("upstream-v1");
+        expect(pingRes.headers()["x-t-plugins-version"]).toBe("v1");
+        const pingCookies = getSetCookieJoined(pingRes);
+        expect(pingCookies).toContain("t_plugins_upstream=v1");
+        expect(pingCookies).toContain("t_plugins_ping=pong");
+
+        const pingJson = await pingRes.json();
+        expect(pingJson).toEqual({
+          ok: true,
+          version: "v1",
+          logicalPath: "/t-plugins/api/ping",
+          rawPath: "/t-plugins/api/ping",
+          isRscRequest: false,
+          setupLog: ["plugin-setup", "user-setup"],
+          userSetupTag: "user-polyfill-ready",
+          ssgHookInvoked: false,
+        });
+
+        // Node HTTP server (Node DEV & Node AOT): verify configureServer callback-async, Promise & next(err) middlewares
+        if (isNodeHttpServer) {
+          expect(pingRes.headers()["x-node-callback-async"]).toBe("cb-v1");
+          expect(pingRes.headers()["x-node-promise-async"]).toBe("prom-v1");
+
+          const healthRes = await safeApiGet(
+            request,
+            "/t-plugins-node-healthz"
+          );
+          expect(healthRes.status()).toBe(200);
+          expect(healthRes.headers()["x-node-mw-mode"]).toBe("direct");
+          expect(await healthRes.text()).toBe("NODE_HEALTH_OK_v1");
+
+          const mwErrRes = await request.get("/t-plugins-node-next-err");
+          expect(mwErrRes.status()).toBe(500);
+        }
+
+        // 2. Explicit context.res.status(418) + custom Cache-Control + Set-Cookie on SSG route
+        const teapotRes = await request.get("/t-plugins/teapot");
+        expect(teapotRes.status()).toBe(418);
+        expect(teapotRes.headers()["cache-control"]).toBe(
+          "private, max-age=77"
+        );
+        expect(getSetCookieJoined(teapotRes)).toContain(
+          "t_plugins_teapot=brewed"
+        );
+        expect(await teapotRes.text()).toContain(
+          "Plugin Status 418 Custom Cache-Control"
+        );
+
+        // 3. PPR streaming resume preserves status(202), custom Cache-Control (+ no-transform), cookies & context
+        const pprRes = await request.get("/t-plugins/ppr-probe", {
+          headers: { Cookie: "t_plugins_viewer=hopper" },
+        });
+        expect(pprRes.status()).toBe(202);
+        expect(pprRes.headers()["cache-control"]).toBe(
+          "private, max-age=33, no-transform"
+        );
+        expect(getSetCookieJoined(pprRes)).toContain("t_plugins_ppr=streamed");
+        const pprHtml = (await pprRes.text()).replace(/<!--[\s\S]*?-->/g, "");
+        expect(pprHtml).toContain("PPR Plugin Shell Ready");
+        expect(pprHtml).toContain("PPR Hole: hopper | ppr-ctx-v1");
+
+        // 4. Hard HTTP unauthenticated requests -> 302 Redirect + Set-Cookie, and wire RSC requests -> 200 x-rsc-redirect
+        const hardUnauthSsg = await request.get("/t-plugins/dashboard", {
+          maxRedirects: 0,
+        });
+        expect(hardUnauthSsg.status()).toBe(302);
+        expect(hardUnauthSsg.headers()["location"]).toContain(
+          "/t-plugins/login?from=%2Ft-plugins%2Fdashboard"
+        );
+        expect(getSetCookieJoined(hardUnauthSsg)).toContain(
+          "t_plugins_flash=auth-required"
+        );
+
+        const hardResRedirect = await request.get("/t-plugins/res-redirect", {
+          maxRedirects: 0,
+        });
+        expect(hardResRedirect.status()).toBe(302);
+        expect(hardResRedirect.headers()["location"]).toBe(
+          "/t-plugins/login?via=res-redirect"
+        );
+        expect(getSetCookieJoined(hardResRedirect)).toContain(
+          "t_plugins_res_redir=1"
+        );
+
+        const wireRscPage = await request.get(
+          "/____rsc_page____/t-plugins/dashboard",
+          { maxRedirects: 0 }
+        );
+        expect(wireRscPage.status()).toBe(200);
+        expect(wireRscPage.headers()["x-rsc-redirect"]).toBe(
+          "/t-plugins/login?from=%2Ft-plugins%2Fdashboard"
+        );
+        expect(getSetCookieJoined(wireRscPage)).toContain(
+          "t_plugins_flash=auth-required"
+        );
+
+        const wireRscLayout = await request.get(
+          "/____rsc_layout____/t-plugins/dashboard/live",
+          { maxRedirects: 0 }
+        );
+        expect(wireRscLayout.status()).toBe(200);
+        expect(wireRscLayout.headers()["x-rsc-redirect"]).toBe(
+          "/t-plugins/login?from=%2Ft-plugins%2Fdashboard%2Flive"
+        );
+
+        // 5. Real browser <Link> SPA navigations (Page RSC, Nested Layout RSC & context.res.redirect)
+        await page.context().clearCookies();
+        await page.goto("/t-plugins");
+        await page.waitForSelector('body[data-hydrated="true"]', {
+          state: "attached",
+          timeout: 15000,
+        });
+        await expect(page.locator("#t-plugins-home-heading")).toHaveText(
+          "Dinou v9.4.0 Plugins Suite"
+        );
+
+        // 5a. <Link> to protected SSG dashboard -> x-rsc-redirect to /t-plugins/login?from=/t-plugins/dashboard
+        await page.locator("#link-protected-ssg-dashboard").click();
+        await expect(page).toHaveURL(
+          /\/t-plugins\/login\?from=%2Ft-plugins%2Fdashboard$/
+        );
+        await expect(page.locator("#t-plugins-login-heading")).toHaveText(
+          "Plugin Auth Login Required"
+        );
+        await expect(page.getByTestId("t-plugins-login-query")).toHaveAttribute(
+          "data-from",
+          "/t-plugins/dashboard"
+        );
+
+        // 5b. <Link> to protected nested-layout route (/____rsc_layout____ + /____rsc_page____) -> x-rsc-redirect
+        await page.locator("#link-back-plugins-home").click();
+        await expect(page.locator("#t-plugins-home-heading")).toBeVisible();
+        await page.locator("#link-protected-layout-live").click();
+        await expect(page).toHaveURL(
+          /\/t-plugins\/login\?from=%2Ft-plugins%2Fdashboard%2Flive$/
+        );
+        await expect(page.getByTestId("t-plugins-login-query")).toHaveAttribute(
+          "data-from",
+          "/t-plugins/dashboard/live"
+        );
+
+        // 5c. <Link> to context.res.redirect() route -> x-rsc-redirect
+        await page.locator("#link-back-plugins-home").click();
+        await expect(page.locator("#t-plugins-home-heading")).toBeVisible();
+        await page.locator("#link-res-redirect").click();
+        await expect(page).toHaveURL(/\/t-plugins\/login\?via=res-redirect$/);
+        await expect(page.getByTestId("t-plugins-login-query")).toHaveAttribute(
+          "data-via",
+          "res-redirect"
+        );
+
+        // 6. Authenticated SPA navigation + Server Action RPC
+        await page.context().addCookies([
+          {
+            name: "t_plugins_auth",
+            value: "granted",
+            domain: "localhost",
+            path: "/",
+          },
+        ]);
+        try {
+          await page.locator("#link-back-plugins-home").click();
+          await expect(page.locator("#t-plugins-home-heading")).toBeVisible();
+          await page.locator("#link-protected-layout-live").click();
+          await expect(page).toHaveURL(/\/t-plugins\/dashboard\/live$/);
+
+          const liveDash = page.getByTestId("t-plugins-live-dashboard");
+          await expect(
+            page.locator("#t-plugins-live-dashboard-heading")
+          ).toHaveText("Welcome Ada Lovelace");
+          await expect(liveDash).toHaveAttribute("data-user-id", "ada-940");
+          await expect(liveDash).toHaveAttribute("data-plugin-version", "v1");
+          await expect(liveDash).toHaveAttribute(
+            "data-logical-path",
+            "/t-plugins/dashboard/live"
+          );
+
+          await page.locator("#t-plugins-rpc-btn").click();
+          await expect(page.locator("#t-plugins-rpc-result")).not.toHaveText(
+            "idle",
+            { timeout: 15000 }
+          );
+          const rpcJson = JSON.parse(
+            (await page.locator("#t-plugins-rpc-result").textContent()) || "{}"
+          );
+          expect(rpcJson).toEqual({
+            label: "dashboard-live",
+            pluginsSuiteVersion: "v1",
+            setupLog: ["plugin-setup", "user-setup"],
+            userSetupTag: "user-polyfill-ready",
+          });
+        } finally {
+          await page.context().clearCookies();
+        }
+      };
+
+      if (isDev) {
+        await withPluginsHmrLock(runPluginAssertions);
+      } else {
+        await runPluginAssertions();
+      }
+
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("2. Live Dev dinou.config.mjs Hot-Reload across Esbuild, Rollup & Webpack: updating plugin configuration reloads configureServer middlewares, onRequest hooks & setupFiles without restarting server", async ({
+      page,
+      request,
+    }) => {
+      test.skip(
+        !isDev || isProd,
+        "Live dinou.config.mjs hot-reload test only runs against active DEV server (esbuild, rollup, webpack)"
+      );
+      test.setTimeout(120000);
+
+      const rootDir = process.cwd();
+      const configPath = path.resolve(rootDir, "dinou.config.mjs");
+
+      await withPluginsHmrLock(async () => {
+        const originalConfig = fs.readFileSync(configPath, "utf8");
+        const pageErrors: string[] = [];
+        page.on("pageerror", (err) => pageErrors.push(err.message));
+
+        try {
+          const initialHealth = await safeApiGet(
+            request,
+            "/t-plugins-node-healthz"
+          );
+          expect(await initialHealth.text()).toBe("NODE_HEALTH_OK_v1");
+
+          await page.goto("about:blank");
+
+          const hotConfig = originalConfig.replace(
+            '...createE2ETPluginsSuite("v1")',
+            '...createE2ETPluginsSuite("v2-hot")'
+          );
+          expect(hotConfig).not.toBe(originalConfig);
+          fs.writeFileSync(configPath, hotConfig, "utf8");
+
+          await expect
+            .poll(
+              async () => {
+                const [hRes, pRes] = await Promise.all([
+                  safeApiGet(request, "/t-plugins-node-healthz"),
+                  safeApiGet(request, "/t-plugins/api/ping"),
+                ]);
+                if (hRes.status() !== 200 || pRes.status() !== 200) {
+                  return false;
+                }
+                const hTxt = await hRes.text();
+                const pJson = await pRes.json();
+                return (
+                  hTxt === "NODE_HEALTH_OK_v2-hot" &&
+                  pJson.version === "v2-hot" &&
+                  pRes.headers()["x-t-plugins-version"] === "v2-hot" &&
+                  pRes.headers()["x-node-callback-async"] === "cb-v2-hot" &&
+                  JSON.stringify(pJson.setupLog) ===
+                    JSON.stringify(["plugin-setup", "user-setup"])
+                );
+              },
+              { timeout: 45000 }
+            )
+            .toBe(true);
+
+          await page.context().addCookies([
+            {
+              name: "t_plugins_auth",
+              value: "granted",
+              domain: "localhost",
+              path: "/",
+            },
+          ]);
+          await page.goto("/t-plugins/dashboard/live");
+          await page.waitForSelector('body[data-hydrated="true"]', {
+            state: "attached",
+            timeout: 15000,
+          });
+          await expect(page.getByTestId("t-plugins-live-dashboard")).toHaveAttribute(
+            "data-plugin-version",
+            "v2-hot"
+          );
+          expect(pageErrors).toEqual([]);
+        } finally {
+          await page.context().clearCookies().catch(() => {});
+          await page.goto("about:blank").catch(() => {});
+          fs.writeFileSync(configPath, originalConfig, "utf8");
+          await expect
+            .poll(
+              async () => {
+                const [hRes, pRes] = await Promise.all([
+                  safeApiGet(request, "/t-plugins-node-healthz"),
+                  safeApiGet(request, "/t-plugins/api/ping"),
+                ]);
+                if (hRes.status() !== 200 || pRes.status() !== 200) {
+                  return false;
+                }
+                const hTxt = await hRes.text();
+                const pJson = await pRes.json();
+                return hTxt === "NODE_HEALTH_OK_v1" && pJson.version === "v1";
+              },
+              { timeout: 30000 }
+            )
+            .toBe(true)
+            .catch(() => {});
+        }
+      });
+    });
+
+    test("3. Standalone Configuration, setupFiles & Plugin Architecture Parity Suite (scripts/verify-plugins-ci.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "Node CLI parity suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
+      test.setTimeout(360000);
+
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        [path.resolve("scripts/verify-plugins-ci.mjs")],
+        { encoding: "utf8", timeout: 330000 }
+      );
+      expect(output).toContain(
+        "All 6 Dinou v9.4.0 Configuration, setupFiles & Plugin Architecture verification suites PASSED!"
+      );
+    });
+  });
 });

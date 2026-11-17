@@ -113,6 +113,70 @@ async function probeBinary(binaryPath, port, label) {
       `✅ [Smoke] ${label} verified /t-aliases (specificity, exact, external fallback & .js->.ts substitution)`
     );
 
+    // Also probe /t-plugins (AOT dinou.config.mjs + setupFiles + SPA x-rsc-redirect + status 418 + Node configureServer)
+    const pluginPingRes = await fetch(`http://127.0.0.1:${port}/t-plugins/api/ping`);
+    if (pluginPingRes.status !== 200) {
+      throw new Error(
+        `[Smoke] ${label} returned ${pluginPingRes.status} on /t-plugins/api/ping (expected 200)`
+      );
+    }
+    const pluginPingJson = await pluginPingRes.json();
+    if (
+      JSON.stringify(pluginPingJson.setupLog) !==
+        JSON.stringify(["plugin-setup", "user-setup"]) ||
+      pluginPingJson.ssgHookInvoked !== false ||
+      pluginPingRes.headers.get("x-t-plugins-upstream") !== "upstream-v1"
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-plugins/api/ping failed AOT plugin/setupFiles check: ${JSON.stringify(pluginPingJson)}`
+      );
+    }
+    const pluginHardGuard = await fetch(
+      `http://127.0.0.1:${port}/t-plugins/dashboard`,
+      { redirect: "manual" }
+    );
+    if (pluginHardGuard.status !== 302) {
+      throw new Error(
+        `[Smoke] ${label} expected 302 on unauthenticated /t-plugins/dashboard, got ${pluginHardGuard.status}`
+      );
+    }
+    const pluginSpaGuard = await fetch(
+      `http://127.0.0.1:${port}/____rsc_page____/t-plugins/dashboard`
+    );
+    if (
+      pluginSpaGuard.status !== 200 ||
+      !(pluginSpaGuard.headers.get("x-rsc-redirect") || "").includes(
+        "/t-plugins/login"
+      )
+    ) {
+      throw new Error(
+        `[Smoke] ${label} expected 200 x-rsc-redirect on /____rsc_page____/t-plugins/dashboard`
+      );
+    }
+    const pluginTeapot = await fetch(`http://127.0.0.1:${port}/t-plugins/teapot`);
+    if (
+      pluginTeapot.status !== 418 ||
+      pluginTeapot.headers.get("cache-control") !== "private, max-age=77"
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-plugins/teapot expected 418 + custom Cache-Control, got ${pluginTeapot.status} (${pluginTeapot.headers.get("cache-control")})`
+      );
+    }
+    if (label.includes("Node")) {
+      const nodeHealthRes = await fetch(
+        `http://127.0.0.1:${port}/t-plugins-node-healthz`
+      );
+      const nodeHealthTxt = await nodeHealthRes.text();
+      if (nodeHealthRes.status !== 200 || nodeHealthTxt !== "NODE_HEALTH_OK_v1") {
+        throw new Error(
+          `[Smoke] ${label} /t-plugins-node-healthz failed AOT configureServer check: ${nodeHealthRes.status} ${nodeHealthTxt}`
+        );
+      }
+    }
+    console.log(
+      `✅ [Smoke] ${label} verified /t-plugins (AOT plugins, single-exec setupFiles, 302/x-rsc-redirect & 418 Cache-Control)`
+    );
+
     // Also probe a secondary route / RSC endpoint if available
     const candidateRoutes = ["/t-rigurous-hs", "/horizontal-segmentation-test", "/about"];
     for (const route of candidateRoutes) {
@@ -186,6 +250,25 @@ async function main() {
     "ssg-prebuilt",
     "page.rsc"
   );
+  const outPluginsIndex = path.join(outDir, "t-plugins", "index.html");
+  const outPluginsDashboardIndex = path.join(
+    outDir,
+    "t-plugins",
+    "dashboard",
+    "index.html"
+  );
+  const outPluginsLoginIndex = path.join(
+    outDir,
+    "t-plugins",
+    "login",
+    "index.html"
+  );
+  const outPluginsTeapotIndex = path.join(
+    outDir,
+    "t-plugins",
+    "teapot",
+    "index.html"
+  );
   const outPublicAssetsAboutIndex = path.join(
     outDir,
     "t-public-assets",
@@ -243,6 +326,10 @@ async function main() {
     outAliasesPageRsc,
     outAliasesSsgSlugIndex,
     outAliasesSsgSlugPageRsc,
+    outPluginsIndex,
+    outPluginsDashboardIndex,
+    outPluginsLoginIndex,
+    outPluginsTeapotIndex,
   ]) {
     if (!fs.existsSync(requiredExportFile) || fs.statSync(requiredExportFile).size === 0) {
       throw new Error(

@@ -3,10 +3,13 @@
 import { defineConfig } from "dinou/config";
 import { getContext } from "dinou/server";
 import { ALIAS_EXACT_SETTINGS } from "@alias-exact-cfg";
+import { createE2ETPluginsSuite } from "@/_plugins/t-plugins-suite";
 
 export default defineConfig({
   assetExtensions: ["glb", ".gltf", "HDR"],
+  setupFiles: ["@/_plugins/user-setup"],
   plugins: [
+    ...createE2ETPluginsSuite("v1"),
     {
       name: "e2e-auth-and-webhook-plugin",
       async onRequest(request, context) {
