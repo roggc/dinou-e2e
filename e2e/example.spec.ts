@@ -10197,7 +10197,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
                 matched !== snapshotAtTrigger
             );
           },
-          { timeout: 15000 }
+          { timeout: 15000, intervals: [150, 200, 250] }
         )
         .toBe(true);
 
