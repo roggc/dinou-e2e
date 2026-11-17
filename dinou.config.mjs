@@ -12,9 +12,7 @@ export default defineConfig({
       async onRequest(request, context) {
         const url = new URL(request.url);
 
-        if (url.pathname.startsWith("/t-aliases")) {
-          context.aliasConfigProbe = ALIAS_EXACT_SETTINGS.configPluginTag;
-        }
+        context.aliasConfigProbe = ALIAS_EXACT_SETTINGS.configPluginTag;
 
         if (url.pathname.startsWith("/t-env-vars")) {
           const alsCtx = getContext();
