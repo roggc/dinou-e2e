@@ -1010,9 +1010,9 @@ console.log(
       ...process.env,
       DINOU_BUILD_DEV_ONLY: "true",
       DINOU_WRITE_TO_DISK: "false",
+      PORT: "48920",
+      HMR_PORT: "48921",
     };
-    delete cleanDevEnv.PORT;
-    delete cleanDevEnv.HMR_PORT;
     delete cleanDevEnv.NODE_ENV;
 
     const devRes = spawnSync(

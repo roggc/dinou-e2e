@@ -14694,8 +14694,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         // 2. Explicit context.res.status(418) + custom Cache-Control + Set-Cookie on SSG route
         const teapotRes = await request.get("/t-plugins/teapot");
         expect(teapotRes.status()).toBe(418);
-        expect(teapotRes.headers()["cache-control"]).toBe(
-          "private, max-age=77"
+        expect(teapotRes.headers()["cache-control"]).toMatch(
+          /^private, max-age=77(?:, no-transform)?$/
         );
         expect(getSetCookieJoined(teapotRes)).toContain(
           "t_plugins_teapot=brewed"

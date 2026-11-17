@@ -90,7 +90,13 @@ import {
 } from "../core/scan-dependency-components.js";
 
 // Resolve dev HTTP and HMR ports before initiating background compilation
-const { port: PORT, hmrPort: HMR_PORT } = await resolveDevPorts();
+const { port: PORT, hmrPort: HMR_PORT } =
+  process.env.DINOU_BUILD_DEV_ONLY === "true"
+    ? {
+        port: Number(process.env.PORT || 0),
+        hmrPort: Number(process.env.HMR_PORT || 0),
+      }
+    : await resolveDevPorts();
 
 const devStartTime = Date.now();
 const devTimings = {};
