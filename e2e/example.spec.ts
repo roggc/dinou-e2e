@@ -14124,4 +14124,465 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
     });
   });
+
+  test.describe("Unified tsconfig.json & jsconfig.json Path Aliases Engine (/t-aliases)", () => {
+    async function withAliasesHmrLock<T>(fn: () => Promise<T>): Promise<T> {
+      const os = await import("os");
+      const lockPath = path.join(
+        os.tmpdir(),
+        `dinou-e2e-aliases-hmr-${process.env.PORT || 3000}.lock`
+      );
+      const deadline = Date.now() + 120000;
+      let lockFd: number | null = null;
+
+      while (Date.now() < deadline) {
+        try {
+          lockFd = fs.openSync(lockPath, "wx");
+          fs.writeFileSync(lockFd, String(process.pid), "utf8");
+          break;
+        } catch (err: any) {
+          if (err?.code === "EEXIST") {
+            try {
+              const stat = fs.statSync(lockPath);
+              if (Date.now() - stat.mtimeMs > 90000) {
+                fs.unlinkSync(lockPath);
+                continue;
+              }
+            } catch {}
+            await new Promise((r) => setTimeout(r, 150));
+            continue;
+          }
+          throw err;
+        }
+      }
+
+      if (lockFd === null) {
+        throw new Error("Timed out acquiring cross-worker aliases HMR lock");
+      }
+
+      try {
+        return await fn();
+      } finally {
+        try {
+          fs.closeSync(lockFd);
+        } catch {}
+        try {
+          fs.unlinkSync(lockPath);
+        } catch {}
+      }
+    }
+
+    test("1. Full SSG (/t-aliases & /t-aliases/ssg-prebuilt), Live Dynamic (/t-aliases/[slug]), Specificity (@alias-ui/icons/* > @alias-ui/*), Exact & Suffix & ~* Wildcards, Multi-Target @alias-shared/* Fallback, ESM .js->.ts Substitution, Aliased Global CSS (@import + url()), CSS Modules, Hashed SVG Assets, dinou.config Alias Plugin & Server Action RPC", async ({
+      page,
+      request,
+    }, testInfo) => {
+      const pageErrors: string[] = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      const runAliasesAssertions = async () => {
+        // 1. Raw HTTP SSG verification (/t-aliases & /t-aliases/ssg-prebuilt)
+        const [ssgRes, prebuiltRes] = await Promise.all([
+          safeApiGet(request, "/t-aliases"),
+          safeApiGet(request, "/t-aliases/ssg-prebuilt"),
+        ]);
+        expect(ssgRes.status()).toBe(200);
+        expect(prebuiltRes.status()).toBe(200);
+
+        const ssgHtml = await ssgRes.text();
+        const prebuiltHtml = await prebuiltRes.text();
+
+        for (const html of [ssgHtml, prebuiltHtml]) {
+          expect(html).toContain("SPECIFIC_ICONS_OVERRIDE_OK");
+          expect(html).toContain("EXACT_ALIAS_OK");
+          expect(html).toContain("LOCAL_OVERRIDE_WINS");
+          expect(html).toContain("EXTERNAL_SHARED_FALLBACK_OK");
+          expect(html).toContain("ESM_JS_TO_TS_SUBSTITUTION_OK");
+          expect(html).toContain("HOT_ALIAS_TARGET_V1");
+          expect(html).not.toContain("WRONG_GENERIC_UI_FALLBACK");
+          expect(html).not.toContain("WRONG_EXTERNAL_FALLBACK");
+        }
+
+        // 2. Browser hydration, CSS (@import + url() + CSS Modules), SVG assets & Server Action on /t-aliases
+        await page.goto("/t-aliases");
+        await page.waitForSelector('body[data-hydrated="true"]', {
+          state: "attached",
+          timeout: 15000,
+        });
+
+        const layoutEl = page.getByTestId("t-aliases-layout");
+        const ssgMain = page.getByTestId("t-aliases-ssg-page");
+        const shellBox = page.getByTestId("alias-ui-shellbox");
+        const clientCard = page.getByTestId("alias-client-card");
+
+        await expect(ssgMain).toHaveAttribute(
+          "data-rsc-star-source",
+          "SPECIFIC_ICONS_OVERRIDE_OK"
+        );
+        await expect(ssgMain).toHaveAttribute(
+          "data-rsc-exact",
+          "EXACT_ALIAS_OK"
+        );
+        await expect(ssgMain).toHaveAttribute(
+          "data-rsc-tilde",
+          "TILDE_OK:ssg"
+        );
+        await expect(ssgMain).toHaveAttribute(
+          "data-rsc-format",
+          "INDEX_FORMAT_OK[ssg]"
+        );
+        await expect(ssgMain).toHaveAttribute(
+          "data-rsc-esm",
+          "ESM_JS_TO_TS_SUBSTITUTION_OK"
+        );
+        await expect(ssgMain).toHaveAttribute(
+          "data-rsc-json",
+          "dinou-tsconfig-aliases"
+        );
+        await expect(ssgMain).toHaveAttribute(
+          "data-rsc-shared-override",
+          "LOCAL_OVERRIDE_WINS"
+        );
+        await expect(ssgMain).toHaveAttribute(
+          "data-rsc-shared-fallback",
+          "EXTERNAL_SHARED_FALLBACK_OK"
+        );
+        await expect(ssgMain).toHaveAttribute(
+          "data-rsc-hot-marker",
+          "HOT_ALIAS_TARGET_V1"
+        );
+
+        await expect(clientCard).toHaveAttribute(
+          "data-client-hydrated",
+          "true"
+        );
+        await expect(clientCard).toHaveAttribute(
+          "data-client-star-source",
+          "SPECIFIC_ICONS_OVERRIDE_OK"
+        );
+        await expect(clientCard).toHaveAttribute(
+          "data-client-exact",
+          "EXACT_ALIAS_OK"
+        );
+        await expect(clientCard).toHaveAttribute(
+          "data-client-tilde",
+          "TILDE_OK:ssg-index"
+        );
+        await expect(clientCard).toHaveAttribute(
+          "data-client-format",
+          "INDEX_FORMAT_OK[ssg-index]"
+        );
+        await expect(clientCard).toHaveAttribute(
+          "data-client-esm",
+          "ESM_JS_TO_TS_SUBSTITUTION_OK"
+        );
+        await expect(clientCard).toHaveAttribute(
+          "data-client-json",
+          "dinou-tsconfig-aliases"
+        );
+        await expect(clientCard).toHaveAttribute(
+          "data-client-shared-override",
+          "LOCAL_OVERRIDE_WINS"
+        );
+        await expect(clientCard).toHaveAttribute(
+          "data-client-shared-fallback",
+          "EXTERNAL_SHARED_FALLBACK_OK"
+        );
+        await expect(clientCard).toHaveAttribute(
+          "data-client-hot-marker",
+          "HOT_ALIAS_TARGET_V1"
+        );
+
+        // Server & Client CSS Modules scoped class parity
+        const serverModClass = await layoutEl.getAttribute(
+          "data-server-module-class"
+        );
+        const clientModClass = await clientCard.getAttribute(
+          "data-client-module-class"
+        );
+        expect(serverModClass).toBeTruthy();
+        expect(clientModClass).toBe(serverModClass);
+
+        // Computed CSS verification for @alias-styles/theme.css (@import @alias-styles/tokens.css + url(@alias-assets/pattern.svg)) & @alias-styles/panel.module.css
+        const shellStyles = await shellBox.evaluate((el) => {
+          const cs = window.getComputedStyle(el);
+          return {
+            borderTopColor: cs.borderTopColor,
+            color: cs.color,
+            backgroundImage: cs.backgroundImage,
+          };
+        });
+        expect(shellStyles.borderTopColor).toBe("rgb(14, 159, 110)");
+        expect(shellStyles.color).toBe("rgb(19, 115, 204)");
+        expect(shellStyles.backgroundImage).toMatch(
+          /\/assets\/pattern-[a-zA-Z0-9_-]+\.svg/
+        );
+
+        const cardStyles = await clientCard.evaluate((el) => {
+          const cs = window.getComputedStyle(el);
+          return {
+            borderLeftColor: cs.borderLeftColor,
+            backgroundColor: cs.backgroundColor,
+            color: cs.color,
+          };
+        });
+        expect(cardStyles.borderLeftColor).toBe("rgb(124, 58, 237)");
+        expect(cardStyles.backgroundColor).toBe("rgb(245, 243, 255)");
+        expect(cardStyles.color).toBe("rgb(19, 115, 204)");
+
+        // Hashed SVG asset URL parity & HTTP 200 delivery (@alias-assets/* & @alias-svg/*.svg suffix alias)
+        const rscBadgeUrl = await ssgMain.getAttribute("data-rsc-badge-asset");
+        const clientBadgeUrl = await clientCard.getAttribute(
+          "data-client-badge-asset"
+        );
+        const rscSparkleUrl = await ssgMain.getAttribute(
+          "data-rsc-sparkle-asset"
+        );
+        const clientSparkleUrl = await clientCard.getAttribute(
+          "data-client-sparkle-asset"
+        );
+
+        expect(rscBadgeUrl).toMatch(
+          /^\/assets\/badge-logo-[a-zA-Z0-9_-]+\.svg$/
+        );
+        expect(clientBadgeUrl).toBe(rscBadgeUrl);
+        expect(rscSparkleUrl).toMatch(
+          /^\/assets\/sparkle-[a-zA-Z0-9_-]+\.svg$/
+        );
+        expect(clientSparkleUrl).toBe(rscSparkleUrl);
+
+        const [badgeAssetRes, sparkleAssetRes] = await Promise.all([
+          safeApiGet(request, rscBadgeUrl!),
+          safeApiGet(request, rscSparkleUrl!),
+        ]);
+        expect(badgeAssetRes.status()).toBe(200);
+        expect(badgeAssetRes.headers()["content-type"]).toContain(
+          "image/svg+xml"
+        );
+        expect(await badgeAssetRes.text()).toContain("ALIAS_BADGE_LOGO_SVG_V1");
+
+        expect(sparkleAssetRes.status()).toBe(200);
+        expect(sparkleAssetRes.headers()["content-type"]).toContain(
+          "image/svg+xml"
+        );
+        expect(await sparkleAssetRes.text()).toContain(
+          "ALIAS_SUFFIX_SPARKLE_SVG_V1"
+        );
+
+        // Server Action RPC via @alias-server/echo-action + dinou.config.mjs @alias-exact-cfg plugin probe
+        await page.locator("#ssg-alias-rpc-btn").click();
+        await expect(page.locator("#ssg-alias-rpc-result")).not.toHaveText(
+          "idle",
+          { timeout: 15000 }
+        );
+        const ssgRpcJson = JSON.parse(
+          (await page.locator("#ssg-alias-rpc-result").textContent()) || "{}"
+        );
+        expect(ssgRpcJson).toEqual({
+          echoed: "INDEX_FORMAT_OK[ssg-index]",
+          exactMode: "EXACT_ALIAS_OK",
+          esmSubstitution: "ESM_JS_TO_TS_SUBSTITUTION_OK",
+          sharedFallback: "EXTERNAL_SHARED_FALLBACK_OK",
+          sharedOverride: "LOCAL_OVERRIDE_WINS",
+          tildeResult: "TILDE_OK:ssg-index",
+          configPluginProbe: "DINOU_CONFIG_ALIAS_PLUGIN_OK",
+        });
+
+        // 3. Live Dynamic [slug] route (/t-aliases/[slug])
+        const safeProj = testInfo.project.name.replace(/[^a-z0-9]/gi, "-");
+        const dynSlug = `live-alias-${safeProj}-${Date.now()}`;
+        await page.goto(`/t-aliases/${dynSlug}`);
+        await page.waitForSelector('body[data-hydrated="true"]', {
+          state: "attached",
+          timeout: 15000,
+        });
+
+        const dynMain = page.getByTestId("t-aliases-slug-page");
+        const dynCard = page.getByTestId("alias-client-card");
+
+        await expect(dynMain).toHaveAttribute("data-slug", dynSlug);
+        await expect(dynMain).toHaveAttribute(
+          "data-formatted-slug",
+          `INDEX_FORMAT_OK[${dynSlug}]`
+        );
+        await expect(dynMain).toHaveAttribute(
+          "data-plugin-probe",
+          "DINOU_CONFIG_ALIAS_PLUGIN_OK"
+        );
+        await expect(dynMain).toHaveAttribute(
+          "data-rsc-star-source",
+          "SPECIFIC_ICONS_OVERRIDE_OK"
+        );
+        await expect(dynMain).toHaveAttribute(
+          "data-rsc-hot-marker",
+          "HOT_ALIAS_TARGET_V1"
+        );
+        await expect(dynCard).toHaveAttribute("data-client-hydrated", "true");
+        await expect(dynCard).toHaveAttribute(
+          "data-client-hot-marker",
+          "HOT_ALIAS_TARGET_V1"
+        );
+
+        await page.locator("#dyn-alias-rpc-btn").click();
+        await expect(page.locator("#dyn-alias-rpc-result")).not.toHaveText(
+          "idle",
+          { timeout: 15000 }
+        );
+        const dynRpcJson = JSON.parse(
+          (await page.locator("#dyn-alias-rpc-result").textContent()) || "{}"
+        );
+        expect(dynRpcJson.echoed).toBe(`INDEX_FORMAT_OK[${dynSlug}]`);
+        expect(dynRpcJson.configPluginProbe).toBe(
+          "DINOU_CONFIG_ALIAS_PLUGIN_OK"
+        );
+      };
+
+      if (isDev) {
+        await withAliasesHmrLock(runAliasesAssertions);
+      } else {
+        await runAliasesAssertions();
+      }
+
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("2. Live Dev tsconfig.aliases.json (extends) Hot-Reload across Esbuild, Rollup & Webpack: remapping @alias-hot/* updates RSC, SSR & Client bundles without touching src/ or restarting server", async ({
+      page,
+      request,
+    }, testInfo) => {
+      test.skip(
+        !isDev || isProd,
+        "Live tsconfig.aliases.json hot-reload test only runs against active DEV server (esbuild, rollup, webpack)"
+      );
+      test.setTimeout(120000);
+
+      const rootDir = process.cwd();
+      const aliasesConfigPath = path.resolve(rootDir, "tsconfig.aliases.json");
+
+      await withAliasesHmrLock(async () => {
+        const originalAliasesConfig = fs.readFileSync(
+          aliasesConfigPath,
+          "utf8"
+        );
+        const pageErrors: string[] = [];
+        page.on("pageerror", (err) => pageErrors.push(err.message));
+
+        try {
+          const safeProj = testInfo.project.name.replace(/[^a-z0-9]/gi, "-");
+          const baseSlug = `alias-hmr-${safeProj}-${Date.now()}`;
+
+          await page.goto(`/t-aliases/${baseSlug}`);
+          await page.waitForSelector('body[data-hydrated="true"]', {
+            state: "attached",
+            timeout: 15000,
+          });
+
+          await expect(page.getByTestId("t-aliases-slug-page")).toHaveAttribute(
+            "data-rsc-hot-marker",
+            "HOT_ALIAS_TARGET_V1"
+          );
+          await expect(page.getByTestId("alias-client-card")).toHaveAttribute(
+            "data-client-hot-marker",
+            "HOT_ALIAS_TARGET_V1"
+          );
+
+          // Park browser on about:blank before mutating tsconfig.aliases.json so navigation never races Chokidar's awaitWriteFinish window
+          await page.goto("about:blank");
+
+          const updatedAliasesConfig = originalAliasesConfig.replace(
+            '"./src/t-aliases/hot-v1/*"',
+            '"./src/t-aliases/hot-v2/*"'
+          );
+          expect(updatedAliasesConfig).not.toBe(originalAliasesConfig);
+          fs.writeFileSync(aliasesConfigPath, updatedAliasesConfig, "utf8");
+
+          await expect
+            .poll(
+              async () => {
+                const probeRes = await safeApiGet(
+                  request,
+                  `/t-aliases/${baseSlug}-probe-${Date.now()}`
+                );
+                if (probeRes.status() !== 200) return false;
+                const html = await probeRes.text();
+                return (
+                  html.includes('data-rsc-hot-marker="HOT_ALIAS_TARGET_V2"') &&
+                  html.includes(
+                    'data-client-hot-marker="HOT_ALIAS_TARGET_V2"'
+                  ) &&
+                  !html.includes("HOT_ALIAS_TARGET_V1")
+                );
+              },
+              { timeout: 45000 }
+            )
+            .toBe(true);
+
+          // Navigate & hydrate in browser: must render HOT_ALIAS_TARGET_V2 with ZERO hydration mismatch
+          await page.goto(`/t-aliases/${baseSlug}-v2`);
+          await page.waitForSelector('body[data-hydrated="true"]', {
+            state: "attached",
+            timeout: 15000,
+          });
+
+          await expect(page.getByTestId("t-aliases-slug-page")).toHaveAttribute(
+            "data-rsc-hot-marker",
+            "HOT_ALIAS_TARGET_V2"
+          );
+          await expect(page.getByTestId("alias-client-card")).toHaveAttribute(
+            "data-client-hydrated",
+            "true"
+          );
+          await expect(page.getByTestId("alias-client-card")).toHaveAttribute(
+            "data-client-hot-marker",
+            "HOT_ALIAS_TARGET_V2"
+          );
+          await expect(page.getByTestId("alias-hot-banner")).toHaveAttribute(
+            "data-hot-marker",
+            "HOT_ALIAS_TARGET_V2"
+          );
+          expect(pageErrors).toEqual([]);
+        } finally {
+          await page.goto("about:blank").catch(() => {});
+          fs.writeFileSync(aliasesConfigPath, originalAliasesConfig, "utf8");
+          await expect
+            .poll(
+              async () => {
+                const res = await safeApiGet(
+                  request,
+                  `/t-aliases/restore-${Date.now()}`
+                );
+                if (res.status() !== 200) return false;
+                const txt = await res.text();
+                return (
+                  txt.includes('data-rsc-hot-marker="HOT_ALIAS_TARGET_V1"') &&
+                  txt.includes('data-client-hot-marker="HOT_ALIAS_TARGET_V1"')
+                );
+              },
+              { timeout: 30000 }
+            )
+            .toBe(true)
+            .catch(() => {});
+        }
+      });
+    });
+
+    test("3. Standalone Unified tsconfig.json & jsconfig.json Path Aliases Parity Suite (scripts/verify-aliases-ci.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "Node CLI parity suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
+      test.setTimeout(360000);
+
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        [path.resolve("scripts/verify-aliases-ci.mjs")],
+        { encoding: "utf8", timeout: 330000 }
+      );
+      expect(output).toContain(
+        "All 6 Dinou v9.4.0 Unified tsconfig.json & jsconfig.json Path Aliases verification suites PASSED!"
+      );
+    });
+  });
 });

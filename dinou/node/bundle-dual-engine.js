@@ -992,6 +992,7 @@ var __webpack_chunk_load__ = function(chunkId) {
     commonAlias,
     commonLoader,
     serverAssetPlugin,
+    serverTsconfigAliasesPlugin,
     isWebpackBuild,
     setupFiles,
   };

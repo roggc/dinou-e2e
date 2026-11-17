@@ -89,6 +89,30 @@ async function probeBinary(binaryPath, port, label) {
       `✅ [Smoke] ${label} verified /t-env-vars (DINOU_PUBLIC_* + secret isolation) & /.env -> 404`
     );
 
+    // Also probe /t-aliases (Unified tsconfig.json / tsconfig.aliases.json Path Aliases Engine)
+    const aliasesRes = await fetch(`http://127.0.0.1:${port}/t-aliases`, {
+      headers: { Accept: "text/html" },
+    });
+    if (aliasesRes.status !== 200) {
+      throw new Error(
+        `[Smoke] ${label} returned ${aliasesRes.status} on /t-aliases (expected 200)`
+      );
+    }
+    const aliasesHtml = await aliasesRes.text();
+    if (
+      !aliasesHtml.includes("SPECIFIC_ICONS_OVERRIDE_OK") ||
+      !aliasesHtml.includes("EXACT_ALIAS_OK") ||
+      !aliasesHtml.includes("EXTERNAL_SHARED_FALLBACK_OK") ||
+      !aliasesHtml.includes("ESM_JS_TO_TS_SUBSTITUTION_OK")
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-aliases failed path alias resolution markers check`
+      );
+    }
+    console.log(
+      `✅ [Smoke] ${label} verified /t-aliases (specificity, exact, external fallback & .js->.ts substitution)`
+    );
+
     // Also probe a secondary route / RSC endpoint if available
     const candidateRoutes = ["/t-rigurous-hs", "/horizontal-segmentation-test", "/about"];
     for (const route of candidateRoutes) {
@@ -148,6 +172,20 @@ async function main() {
     "ssg-prebuilt",
     "page.rsc"
   );
+  const outAliasesIndex = path.join(outDir, "t-aliases", "index.html");
+  const outAliasesPageRsc = path.join(outDir, "t-aliases", "page.rsc");
+  const outAliasesSsgSlugIndex = path.join(
+    outDir,
+    "t-aliases",
+    "ssg-prebuilt",
+    "index.html"
+  );
+  const outAliasesSsgSlugPageRsc = path.join(
+    outDir,
+    "t-aliases",
+    "ssg-prebuilt",
+    "page.rsc"
+  );
   const outPublicAssetsAboutIndex = path.join(
     outDir,
     "t-public-assets",
@@ -201,6 +239,10 @@ async function main() {
     outEnvVarsPageRsc,
     outEnvVarsSsgSlugIndex,
     outEnvVarsSsgSlugPageRsc,
+    outAliasesIndex,
+    outAliasesPageRsc,
+    outAliasesSsgSlugIndex,
+    outAliasesSsgSlugPageRsc,
   ]) {
     if (!fs.existsSync(requiredExportFile) || fs.statSync(requiredExportFile).size === 0) {
       throw new Error(
@@ -268,6 +310,17 @@ async function main() {
   ) {
     throw new Error(
       "[Smoke] export-static out/t-env-vars/index.html failed DINOU_PUBLIC_* or secret-isolation check"
+    );
+  }
+  const outAliasesHtml = fs.readFileSync(outAliasesIndex, "utf8");
+  if (
+    !outAliasesHtml.includes("SPECIFIC_ICONS_OVERRIDE_OK") ||
+    !outAliasesHtml.includes("EXACT_ALIAS_OK") ||
+    !outAliasesHtml.includes("EXTERNAL_SHARED_FALLBACK_OK") ||
+    !outAliasesHtml.includes("ESM_JS_TO_TS_SUBSTITUTION_OK")
+  ) {
+    throw new Error(
+      "[Smoke] export-static out/t-aliases/index.html failed path alias resolution check"
     );
   }
   console.log("✅ [Smoke] export-static verified (SSG HTML with __DINOU_STATIC_EXPORT__, segmented page.rsc/layout.rsc, public/ PWA manifest.json & dotfiles exported; dist2 metadata/slots & server/* excluded)");

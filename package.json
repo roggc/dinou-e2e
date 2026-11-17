@@ -19,6 +19,7 @@
     "test:styles-css": "node scripts/verify-styles-css-ci.mjs",
     "test:assets": "node scripts/verify-assets-ci.mjs",
     "test:env-vars": "node scripts/verify-env-vars-ci.mjs",
+    "test:aliases": "node scripts/verify-aliases-ci.mjs",
     "test:hmr:ws": "node tests/hmr-websocket.test.mjs",
     "test:smoke:compile": "node tests/compile-and-export-smoke.mjs",
     "dev": "node dinou/cli.js dev",

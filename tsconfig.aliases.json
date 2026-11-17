@@ -1,0 +1,27 @@
+{
+  // Dinou v9.4.0 E2E Path Aliases base config (https://www.typescriptlang.org/tsconfig#paths)
+  /* Verifies JSONC line/block comments, URLs inside comments, trailing commas, and extends hot-reload */
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./src/*"],
+      "@media/*": ["./src/t-assets/media/*"],
+      // Deliberately declare less-specific @alias-ui/* BEFORE @alias-ui/icons/* to verify longest-prefix specificity sorting
+      "@alias-ui/*": ["./src/t-aliases/ui/*"],
+      "@alias-ui/icons/*": ["./src/t-aliases/icons/*"],
+      "@alias-exact-cfg": ["./src/t-aliases/config/exact-settings.ts"],
+      "@alias-svg/*.svg": ["./src/t-aliases/svg-icons/*.svg"],
+      "~alias-*": ["./src/t-aliases/tilde/*"],
+      "@alias-shared/*": [
+        "./src/t-aliases/local-overrides/*",
+        "./shared-alias-fallback/*",
+      ],
+      "@alias-components/*": ["./src/t-aliases/components/*"],
+      "@alias-server/*": ["./src/t-aliases/server-functions/*"],
+      "@alias-lib/*": ["./src/t-aliases/lib/*"],
+      "@alias-styles/*": ["./src/t-aliases/styles/*"],
+      "@alias-assets/*": ["./src/t-aliases/assets/*"],
+      "@alias-hot/*": ["./src/t-aliases/hot-v1/*"],
+    },
+  },
+}
+

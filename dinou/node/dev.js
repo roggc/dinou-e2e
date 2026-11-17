@@ -2906,6 +2906,9 @@ async function startClientBundler(tool) {
             },
             refreshAliases: async () => {
               clearTsconfigAliasCache(projectRoot);
+              try {
+                compiler.inputFileSystem?.purge?.();
+              } catch (e) {}
               if (!globalThis.__DINOU_WEBPACK_MODIFIED_FILES__) {
                 globalThis.__DINOU_WEBPACK_MODIFIED_FILES__ = new Set();
               }

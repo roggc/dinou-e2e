@@ -1,18 +1,11 @@
 {
+  "extends": "./tsconfig.aliases.json",
   "compilerOptions": {
     "target": "ES2022",
     "rootDirs": [
       "src",
       ".dinou/routes"
     ],
-    "paths": {
-      "@/*": [
-        "./src/*"
-      ],
-      "@media/*": [
-        "./src/t-assets/media/*"
-      ]
-    },
     "allowJs": true,
     "skipLibCheck": true,
     "noEmit": true,
@@ -23,6 +16,7 @@
   },
   "include": [
     "src",
+    "shared-alias-fallback",
     "dinou-env.d.ts",
     ".dinou/types/**/*.d.ts"
   ]

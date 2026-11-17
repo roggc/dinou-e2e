@@ -1,0 +1,9 @@
+@import "@alias-styles/tokens.css";
+
+.t-aliases-shell {
+  border-top: 4px solid var(--t-alias-border);
+  background-image: url("@alias-assets/pattern.svg");
+  color: var(--t-alias-accent);
+  padding: 16px;
+}
+

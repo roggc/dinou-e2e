@@ -2,6 +2,7 @@
 // Configuration and Plugins for Dinou v7
 import { defineConfig } from "dinou/config";
 import { getContext } from "dinou/server";
+import { ALIAS_EXACT_SETTINGS } from "@alias-exact-cfg";
 
 export default defineConfig({
   assetExtensions: ["glb", ".gltf", "HDR"],
@@ -10,6 +11,10 @@ export default defineConfig({
       name: "e2e-auth-and-webhook-plugin",
       async onRequest(request, context) {
         const url = new URL(request.url);
+
+        if (url.pathname.startsWith("/t-aliases")) {
+          context.aliasConfigProbe = ALIAS_EXACT_SETTINGS.configPluginTag;
+        }
 
         if (url.pathname.startsWith("/t-env-vars")) {
           const alsCtx = getContext();

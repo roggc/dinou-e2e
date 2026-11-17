@@ -125,9 +125,22 @@ function resolveExtendedConfigPath(fromConfigFile, extendsSpecifier) {
     return tryLocalPath(expanded);
   }
 
-  // Package preset inside node_modules (e.g. "@tsconfig/node20/tsconfig.json" or "@acme/tsconfig/base")
+  // Package preset inside node_modules (e.g. "@tsconfig/node20/tsconfig.json", "@tsconfig/node20" via package.json#tsconfig, or "@acme/tsconfig/base")
   try {
     const req = createRequire(fromConfigFile);
+    try {
+      const pkgJsonPath = req.resolve(`${expanded}/package.json`);
+      if (isExistingFile(pkgJsonPath)) {
+        const pkgJson = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"));
+        if (pkgJson && typeof pkgJson.tsconfig === "string" && pkgJson.tsconfig.trim()) {
+          const tsconfigEntry = path.resolve(
+            path.dirname(pkgJsonPath),
+            pkgJson.tsconfig.trim()
+          );
+          if (isExistingFile(tsconfigEntry)) return tsconfigEntry;
+        }
+      }
+    } catch (e) {}
     for (const candidate of [
       expanded,
       expanded.endsWith(".json") ? null : `${expanded}.json`,

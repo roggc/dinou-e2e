@@ -1,0 +1,2 @@
+export const ESM_JS_TO_TS_MARKER = "ESM_JS_TO_TS_SUBSTITUTION_OK";
+

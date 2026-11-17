@@ -108,6 +108,8 @@ async function main() {
     "t-type-safe-contextual/[slug]/contact/sub",
     "t-env-vars",
     "t-env-vars/[slug]",
+    "t-aliases",
+    "t-aliases/[slug]",
   ];
   for (const rel of expectedRouteDirs) {
     assert(
@@ -124,6 +126,9 @@ async function main() {
     "components",
     "demo/components",
     "t-type-safe-contextual/[slug]/contact/components",
+    "t-aliases/components",
+    "t-aliases/ui",
+    "t-aliases/icons",
   ];
   for (const rel of forbiddenDirs) {
     assert(
@@ -150,6 +155,8 @@ async function main() {
   const fixtureFiles = [
     ...collectTsFiles(path.join(root, "src/t-type-safe-contextual")),
     ...collectTsFiles(path.join(root, "src/t-env-vars")),
+    ...collectTsFiles(path.join(root, "src/t-aliases")),
+    ...collectTsFiles(path.join(root, "shared-alias-fallback")),
   ];
   const rootNames = [
     ...fixtureFiles,

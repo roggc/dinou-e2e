@@ -1,0 +1,13 @@
+@import "@alias-styles/tokens.css";
+
+.card {
+  border-left: 6px solid rgb(124, 58, 237);
+  background-color: rgb(245, 243, 255);
+  color: var(--t-alias-accent);
+  padding: 12px;
+}
+
+.badge {
+  font-weight: 700;
+}
+
