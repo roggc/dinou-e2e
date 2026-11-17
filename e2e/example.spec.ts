@@ -13734,7 +13734,12 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       page.on("pageerror", (err) => pageErrors.push(err.message));
 
       const expectedPublicTitle = isDev ? "DinouPublicDev" : "DinouPublicProd";
-      const expectedHierarchyMode = isDev ? "dev_env" : "prod_env";
+      const expectedSsgHierarchyMode = isDev ? "dev_env" : "prod_env";
+      // Under `npx wrangler dev` (without `--env production`), Wrangler v4 natively loads root `.env` (`base_env`)
+      // over `wrangler.toml` `[vars]` at Worker runtime while SSG (`build:cloudflare`) pre-rendered with `.env.production` (`prod_env`).
+      const expectedRuntimeHierarchyMode = isCloudflare
+        ? "base_env"
+        : expectedSsgHierarchyMode;
       const expectedNodeEnv = isDev ? "development" : "production";
 
       const runEnvAssertions = async () => {
@@ -13776,7 +13781,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         await expect(ssgMain).toHaveAttribute("data-rsc-multiline-ok", "true");
         await expect(ssgMain).toHaveAttribute(
           "data-rsc-hierarchy-mode",
-          expectedHierarchyMode
+          expectedSsgHierarchyMode
         );
         await expect(ssgMain).toHaveAttribute(
           "data-rsc-public-title",
@@ -13793,7 +13798,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         );
         await expect(ssgMain).toHaveAttribute(
           "data-pagefn-hierarchy-mode",
-          expectedHierarchyMode
+          expectedSsgHierarchyMode
         );
         await expect(ssgMain).toHaveAttribute(
           "data-pagefn-example-unset",
@@ -13847,7 +13852,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         expect(rpcJson.secretMatchesExpected).toBe(true);
         expect(rpcJson.reqEnvMatches).toBe(true);
         expect(rpcJson.processEnvSynced).toBe(true);
-        expect(rpcJson.hierarchyMode).toBe(expectedHierarchyMode);
+        expect(rpcJson.hierarchyMode).toBe(expectedRuntimeHierarchyMode);
         expect(rpcJson.publicTitleOnServer).toBe(expectedPublicTitle);
         if (isCloudflare) {
           expect(rpcJson.hasEdgeAssetsBinding).toBe(true);
@@ -13869,7 +13874,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         await expect(dynMain).toHaveAttribute("data-rsc-multiline-ok", "true");
         await expect(dynMain).toHaveAttribute(
           "data-rsc-hierarchy-mode",
-          expectedHierarchyMode
+          expectedRuntimeHierarchyMode
         );
         await expect(dynMain).toHaveAttribute(
           "data-rsc-public-title",
@@ -13879,7 +13884,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         await expect(dynMain).toHaveAttribute("data-plugin-als-ok", "true");
         await expect(dynMain).toHaveAttribute(
           "data-plugin-hierarchy",
-          expectedHierarchyMode
+          expectedRuntimeHierarchyMode
         );
         if (isCloudflare) {
           await expect(dynMain).toHaveAttribute("data-has-edge-assets", "true");
