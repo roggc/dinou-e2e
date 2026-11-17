@@ -80,13 +80,17 @@ let dinouConfigPromise = null;
 async function getDinouConfig() {
   const isSsgBuild =
     typeof globalThis !== "undefined" && Boolean(globalThis.__DINOU_IS_SSG_BUILD__);
-  if (typeof globalThis !== "undefined" && globalThis.__DINOU_CONFIG__) {
-    const cfg = globalThis.__DINOU_CONFIG__;
-    if (!isSsgBuild && cfg && cfg.storage) {
-      setStorageAdapter(cfg.storage);
+  const aotOrProdCached =
+    typeof globalThis !== "undefined"
+      ? globalThis.__DINOU_AOT_CONFIG__ ||
+        (!isDevelopment ? globalThis.__DINOU_CONFIG__ : null)
+      : null;
+  if (aotOrProdCached) {
+    if (!isSsgBuild && aotOrProdCached.storage) {
+      setStorageAdapter(aotOrProdCached.storage);
     }
-    dinouConfig = cfg;
-    return cfg;
+    dinouConfig = aotOrProdCached;
+    return aotOrProdCached;
   }
   if (!dinouConfigPromise || isDevelopment) {
     dinouConfigPromise = loadDinouConfig();
@@ -100,8 +104,11 @@ async function getDinouConfig() {
 }
 
 // Initial sync load attempt for immediate storage adapter setup
-if (typeof globalThis !== "undefined" && globalThis.__DINOU_CONFIG__) {
-  const cfg = globalThis.__DINOU_CONFIG__;
+if (
+  typeof globalThis !== "undefined" &&
+  (globalThis.__DINOU_AOT_CONFIG__ || globalThis.__DINOU_CONFIG__)
+) {
+  const cfg = globalThis.__DINOU_AOT_CONFIG__ || globalThis.__DINOU_CONFIG__;
   if (!globalThis.__DINOU_IS_SSG_BUILD__ && cfg && cfg.storage) {
     setStorageAdapter(cfg.storage);
   }
@@ -980,6 +987,7 @@ class WebResponseBridge extends PassThrough {
   constructor(platformContext = null) {
     super();
     this.statusCode = 200;
+    this._explicitStatusSet = false;
     this.statusMessage = "";
     this.headers = new Headers();
     this.cookies = [];
@@ -994,6 +1002,7 @@ class WebResponseBridge extends PassThrough {
 
   status(code) {
     this.statusCode = code;
+    this._explicitStatusSet = true;
     return this;
   }
 
@@ -1201,9 +1210,25 @@ function createRequestContext(simReq, resBridge, platformContext = {}, dynamicSt
     }
   };
 
+  const isRscSimReq = Boolean(
+    simReq.isRscRequest ||
+      String(simReq.rawPath || simReq.path || "").includes("____rsc_")
+  );
+
+  const isAllowedRedirectTarget = (candidate) =>
+    typeof candidate === "string" &&
+    ((candidate.startsWith("/") && !candidate.startsWith("//")) ||
+      /^https?:\/\//i.test(candidate));
+
   const safeResCall = (methodName, ...args) => {
     if (hasRedirected) return;
-    if (methodName === "setHeader" || methodName === "cookie" || methodName === "clearCookie" || methodName === "redirect") {
+    if (
+      methodName === "status" ||
+      methodName === "setHeader" ||
+      methodName === "cookie" ||
+      methodName === "clearCookie" ||
+      methodName === "redirect"
+    ) {
       markDynamic();
     }
     if (methodName === "clearCookie") {
@@ -1221,7 +1246,7 @@ function createRequestContext(simReq, resBridge, platformContext = {}, dynamicSt
       const scriptTag = `<script>document.cookie = ${safeCookieStr};</script>`;
       resBridge._injectedScripts = (resBridge._injectedScripts || "") + scriptTag;
       if (resBridge.headersSent) {
-        if (!simReq.path.includes("____rsc_")) {
+        if (!isRscSimReq) {
           resBridge.write(scriptTag);
         }
         return;
@@ -1244,7 +1269,7 @@ function createRequestContext(simReq, resBridge, platformContext = {}, dynamicSt
         const scriptTag = `<script>document.cookie = ${safeCookieStr};</script>`;
         resBridge._injectedScripts = (resBridge._injectedScripts || "") + scriptTag;
         if (resBridge.headersSent) {
-          if (!simReq.path.includes("____rsc_")) {
+          if (!isRscSimReq) {
             resBridge.write(scriptTag);
           }
           return;
@@ -1257,7 +1282,7 @@ function createRequestContext(simReq, resBridge, platformContext = {}, dynamicSt
     }
     if (resBridge.headersSent) {
       if (methodName === "redirect") {
-        if (simReq.path.includes("____rsc_")) {
+        if (isRscSimReq) {
           return;
         }
         hasRedirected = true;
@@ -1266,10 +1291,7 @@ function createRequestContext(simReq, resBridge, platformContext = {}, dynamicSt
           url = args[1];
         }
         const resolvedUrl = resolveRelativeUrl(url, simReq.path);
-        let finalUrl = "/";
-        if (typeof resolvedUrl === "string" && resolvedUrl.startsWith("/") && !resolvedUrl.startsWith("//")) {
-          finalUrl = resolvedUrl;
-        }
+        const finalUrl = isAllowedRedirectTarget(resolvedUrl) ? resolvedUrl : "/";
         const safeUrl = JSON.stringify(finalUrl);
         resBridge.write(`<script>window.location.href = ${safeUrl};</script>`);
         resBridge.end();
@@ -1286,11 +1308,8 @@ function createRequestContext(simReq, resBridge, platformContext = {}, dynamicSt
         url = args[1];
       }
       const resolvedUrl = resolveRelativeUrl(url, simReq.path);
-      let finalUrl = "/";
-      if (typeof resolvedUrl === "string" && resolvedUrl.startsWith("/") && !resolvedUrl.startsWith("//")) {
-        finalUrl = resolvedUrl;
-      }
-      if (simReq.path.includes("____rsc_")) {
+      const finalUrl = isAllowedRedirectTarget(resolvedUrl) ? resolvedUrl : "/";
+      if (isRscSimReq) {
         resBridge.setHeader("x-rsc-redirect", finalUrl);
         resBridge.status(200).end();
         return;
@@ -1311,6 +1330,8 @@ function createRequestContext(simReq, resBridge, platformContext = {}, dynamicSt
       headers: headersProxy,
       query: queryProxy,
       path: simReq.path,
+      rawPath: simReq.rawPath || simReq.path,
+      isRscRequest: isRscSimReq,
       method: simReq.method,
       env: unifiedEnv,
       ctx: platformContext.ctx || null,
@@ -1329,7 +1350,11 @@ function createRequestContext(simReq, resBridge, platformContext = {}, dynamicSt
     _dynamicState: dynamicState,
   };
 
-  if (dinouConfig.plugins && Array.isArray(dinouConfig.plugins)) {
+  if (
+    !platformContext?.isSSG &&
+    dinouConfig.plugins &&
+    Array.isArray(dinouConfig.plugins)
+  ) {
     for (const plugin of dinouConfig.plugins) {
       if (typeof plugin.onRequestContext === "function") {
         try {
@@ -1425,6 +1450,104 @@ function createServerFunctionContext(simReq, resBridge, platformContext = {}) {
   return context;
 }
 
+function normalizeLogicalRequestPathname(pathname, headersObj = {}) {
+  if (typeof pathname !== "string" || !pathname) {
+    return "/";
+  }
+  if (
+    /^\/____rsc_(?:page|layout|payload)(?:_(?:old_static|old|static))?____(?:\/|$)/.test(
+      pathname
+    )
+  ) {
+    const stripped = pathname.replace(
+      /^\/____rsc_(?:page|layout|payload)(?:_(?:old_static|old|static))?____/,
+      ""
+    );
+    return stripped || "/";
+  }
+  if (/^\/____rsc_payload_error____(?:\/|$)/.test(pathname)) {
+    const stripped = pathname.replace(/^\/____rsc_payload_error____/, "");
+    return stripped || "/";
+  }
+  if (/^\/____rsc_slot____(?:\/|$)/.test(pathname)) {
+    const currentPath = headersObj["x-dinou-current-path"];
+    if (typeof currentPath === "string" && currentPath.startsWith("/")) {
+      return currentPath.split("?")[0] || "/";
+    }
+  }
+  return pathname;
+}
+
+function finalizePluginResponse(result, bridge, request, isRscWireRequest) {
+  let hasBridgeHeaders = false;
+  for (const _ of bridge.headers.keys()) {
+    hasBridgeHeaders = true;
+    break;
+  }
+  const hasBridgeCookies = bridge.cookies.length > 0;
+  let finalRes = result;
+
+  if (hasBridgeHeaders || hasBridgeCookies) {
+    const mergedHeaders = new Headers(result.headers);
+    for (const [k, v] of bridge.headers.entries()) {
+      if (!mergedHeaders.has(k)) {
+        mergedHeaders.set(k, v);
+      }
+    }
+    for (const c of bridge.cookies) {
+      mergedHeaders.append("Set-Cookie", c);
+    }
+    finalRes = new Response(result.body, {
+      status: result.status,
+      statusText: result.statusText,
+      headers: mergedHeaders,
+    });
+  }
+
+  const location = finalRes.headers.get("location");
+  if (
+    isRscWireRequest &&
+    finalRes.status >= 300 &&
+    finalRes.status < 400 &&
+    location
+  ) {
+    const reqUrl = new URL(request.url);
+    let redirectTarget = location;
+    try {
+      const resolved = new URL(location, reqUrl.origin);
+      if (resolved.origin === reqUrl.origin) {
+        redirectTarget = resolved.pathname + resolved.search + resolved.hash;
+      } else {
+        redirectTarget = resolved.href;
+      }
+    } catch (e) {}
+
+    const rscHeaders = new Headers();
+    for (const [k, v] of finalRes.headers.entries()) {
+      const lower = k.toLowerCase();
+      if (lower === "location" || lower === "set-cookie") continue;
+      rscHeaders.set(k, v);
+    }
+    const setCookies =
+      typeof finalRes.headers.getSetCookie === "function"
+        ? finalRes.headers.getSetCookie()
+        : [];
+    for (const c of setCookies) {
+      rscHeaders.append("Set-Cookie", c);
+    }
+    rscHeaders.set("x-rsc-redirect", redirectTarget);
+    if (!rscHeaders.has("Cache-Control")) {
+      rscHeaders.set("Cache-Control", "no-store, no-cache, must-revalidate");
+    }
+    return new Response("", {
+      status: 200,
+      headers: rscHeaders,
+    });
+  }
+
+  return finalRes;
+}
+
 /**
  * Universal request handler: (Request, platformContext?) => Promise<Response>
  * @param {Request} request 
@@ -1495,29 +1618,43 @@ async function handleRequest(request, platformContext = {}) {
   delete queryObj.____build_id____;
   delete queryObj.____v____;
 
+  const isRscWireRequest =
+    pathname.includes("____rsc_") && !pathname.includes("____server_function____");
+  const logicalPathname = normalizeLogicalRequestPathname(pathname, headersObj);
+
   const simReq = {
-    path: pathname,
-    url: pathname + url.search,
+    path: logicalPathname,
+    rawPath: pathname,
+    isRscRequest: isRscWireRequest,
+    url: logicalPathname + url.search,
     query: queryObj,
     headers: headersObj,
     cookies: cookiesObj,
     method: request.method,
   };
 
+  const cfg = await getDinouConfig();
   const bridge = new WebResponseBridge(platformContext);
   const rootContext = createRequestContext(simReq, bridge, platformContext);
 
-  // 4. Plugin onRequest Hook (Universal Middlewares & Webhooks)
-  const cfg = await getDinouConfig();
-  if (cfg.plugins && Array.isArray(cfg.plugins)) {
+  // 4. Plugin onRequest Hook (Universal Middlewares & Webhooks; skipped during build-time SSG)
+  if (!platformContext?.isSSG && cfg.plugins && Array.isArray(cfg.plugins)) {
     for (const plugin of cfg.plugins) {
       if (typeof plugin.onRequest === "function") {
         try {
           const result = await requestStorage.run(rootContext, () =>
             plugin.onRequest(request, rootContext)
           );
+          if (bridge._resolved || bridge.headersSent) {
+            return bridge.toResponse();
+          }
           if (result instanceof Response) {
-            return result;
+            return finalizePluginResponse(
+              result,
+              bridge,
+              request,
+              isRscWireRequest
+            );
           }
         } catch (pluginErr) {
           console.error(`[Dinou Plugin Error: "${plugin.name || "unnamed"}"]:`, pluginErr);
@@ -1662,7 +1799,9 @@ async function handleRequest(request, platformContext = {}) {
       }
 
       bridge.setHeader("Content-Type", "text/x-component");
-      bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+      if (!bridge.headers.has("Cache-Control")) {
+  bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+}
 
       const manifest = getClientManifest();
       requestStorage.run(context, () => {
@@ -1710,7 +1849,9 @@ async function handleRequest(request, platformContext = {}) {
           { segment: "page" },
         );
         bridge.setHeader("Content-Type", "text/x-component");
-        bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+        if (!bridge.headers.has("Cache-Control")) {
+  bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+}
 
         const manifest = getClientManifest();
         pipeRSC(jsx, bridge, manifest, platformContext);
@@ -1761,7 +1902,9 @@ async function handleRequest(request, platformContext = {}) {
         }
 
         bridge.setHeader("Content-Type", "text/x-component");
-        bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+        if (!bridge.headers.has("Cache-Control")) {
+  bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+}
         bridge.setHeader("X-Dinou-Slot", slotId);
 
         const manifest = getClientManifest();
@@ -2199,7 +2342,9 @@ async function handleRequest(request, platformContext = {}) {
               const contentStr = typeof cached.content === "string" ? cached.content : "";
               if (!contentStr.trimStart().startsWith("<")) {
                 bridge.setHeader("Content-Type", "text/x-component");
-                bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+                if (!bridge.headers.has("Cache-Control")) {
+  bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+}
                 bridge.end(cached.content);
                 return bridge.toResponse();
               }
@@ -2235,7 +2380,9 @@ async function handleRequest(request, platformContext = {}) {
               ) {
                 await storage.set(rscKey, rscContent);
                 bridge.setHeader("Content-Type", "text/x-component");
-                bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+                if (!bridge.headers.has("Cache-Control")) {
+  bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+}
                 bridge.end(rscContent);
                 return bridge.toResponse();
               }
@@ -2252,7 +2399,9 @@ async function handleRequest(request, platformContext = {}) {
             !dist2Rsc.content.trimStart().startsWith("<")
           ) {
             bridge.setHeader("Content-Type", "text/x-component");
-            bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+            if (!bridge.headers.has("Cache-Control")) {
+  bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+}
             bridge.end(dist2Rsc.content);
             return bridge.toResponse();
           }
@@ -2262,7 +2411,9 @@ async function handleRequest(request, platformContext = {}) {
           const buffer = readFileSync(payloadPath);
           if (buffer && buffer.length > 0) {
             bridge.setHeader("Content-Type", "application/octet-stream");
-            bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+            if (!bridge.headers.has("Cache-Control")) {
+  bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+}
             bridge.end(buffer);
             return bridge.toResponse();
           }
@@ -2496,7 +2647,9 @@ async function handleRequest(request, platformContext = {}) {
           bridge.status(404);
         }
         bridge.setHeader("Content-Type", "text/x-component");
-        bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+        if (!bridge.headers.has("Cache-Control")) {
+  bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+}
 
         const manifest = getClientManifest();
         pipeRSC(jsx, bridge, manifest, platformContext);
@@ -3125,8 +3278,14 @@ async function handleRequest(request, platformContext = {}) {
       }
 
       bridge.setHeader("Content-Type", "text/html; charset=utf-8");
-      bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-      bridge.status(metadata.status || 200);
+      if (!bridge.headers.has("Cache-Control")) {
+        if (!bridge.headers.has("Cache-Control")) {
+  bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+}
+      }
+      if (!bridge._explicitStatusSet) {
+        bridge.status(metadata.status || 200);
+      }
       let content = cachedItem.content;
       if (typeof content === "string" && !content.includes("window.__DINOU_LAYOUTS__")) {
         const knownLayouts = getDiscoveredLayouts();
@@ -3141,11 +3300,16 @@ async function handleRequest(request, platformContext = {}) {
       return new Response("Not Found", { status: 404 });
     }
 
-    // Concurrency Stampede Protection (Production only, never share dynamic streams in dev or requests with user cookies)
+    // Concurrency Stampede Protection (Production only, never share dynamic streams in dev or requests with user/plugin cookies)
+    const preRenderPluginCookiesCount = bridge.cookies.length;
     const hasCookies = simReq.cookies && Object.keys(simReq.cookies).length > 0;
+    const hasPluginMutation =
+      preRenderPluginCookiesCount > 0 ||
+      (bridge._explicitStatusSet && bridge.statusCode !== 200);
     const canUseInFlight =
       !isDevelopment &&
       !hasCookies &&
+      !hasPluginMutation &&
       !isDynamicConfig &&
       allowISGValue !== false &&
       Object.keys(queryObj).length === 0;
@@ -3285,7 +3449,13 @@ async function handleRequest(request, platformContext = {}) {
 
         const nowGen = Date.now();
         const genMeta = {
-          status: isError ? 500 : isNotFound.value ? 404 : 200,
+          status: isError
+            ? 500
+            : isNotFound.value
+              ? 404
+              : bridge._explicitStatusSet
+                ? bridge.statusCode
+                : 200,
           generatedAt: nowGen,
           pageGeneratedAt: nowGen,
           revalidate: combinedRevalidate,
@@ -3296,7 +3466,7 @@ async function handleRequest(request, platformContext = {}) {
           holes: pprHoles,
           effects: {
             redirect: bridge.headers.get("Location") || null,
-            cookies: [...bridge.cookies],
+            cookies: bridge.cookies.slice(preRenderPluginCookiesCount),
           },
         };
 
@@ -3887,8 +4057,18 @@ async function handleRequest(request, platformContext = {}) {
         }
       }
       bridge.setHeader("Content-Type", "text/html; charset=utf-8");
-      bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-      bridge.status(result.status || 200);
+      if (!bridge.headers.has("Cache-Control")) {
+        if (!bridge.headers.has("Cache-Control")) {
+  bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+}
+      }
+      if (
+        !bridge._explicitStatusSet ||
+        result.status === 404 ||
+        result.status === 500
+      ) {
+        bridge.status(result.status || 200);
+      }
 
       if (result.type === "stream") {
         bridge.setEdgeStream(result.stream);
@@ -3916,7 +4096,9 @@ async function handleRequest(request, platformContext = {}) {
 
     if (existsSync(fileToRead) && (!dynamicState.value || isPprConfig)) {
       bridge.setHeader("Content-Type", "text/html; charset=utf-8");
-      bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+      if (!bridge.headers.has("Cache-Control")) {
+  bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+}
       let status = getStatus(reqPath);
       try {
         let htmlContent = readFileSync(fileToRead, "utf8");
@@ -3948,7 +4130,9 @@ async function handleRequest(request, platformContext = {}) {
           }
         } catch (e) {}
 
-        bridge.status(status || 200);
+        if (!bridge._explicitStatusSet) {
+          bridge.status(status || 200);
+        }
 
         const knownLayouts = getDiscoveredLayouts();
         let scripts = `<script>window.__DINOU_USE_STATIC__=true;window.__DINOU_LAYOUTS__=${JSON.stringify(knownLayouts)};</script>`;

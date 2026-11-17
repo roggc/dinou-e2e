@@ -359,11 +359,14 @@ const getPagePayload = (route, isPrefetch = false, version = 0) => {
         if (res.headers.has("x-rsc-redirect")) {
           const redirectUrl = res.headers.get("x-rsc-redirect");
           pageCache.delete(url);
-          if (!isPrefetch) {
-            if (window.__DINOU_ROUTER_NAVIGATE__) {
-              window.__DINOU_ROUTER_NAVIGATE__(redirectUrl, { replace: true });
-            } else {
+          if (!isPrefetch && redirectUrl) {
+            if (
+              /^https?:\/\//i.test(redirectUrl) ||
+              !window.__DINOU_ROUTER_NAVIGATE__
+            ) {
               window.location.href = redirectUrl;
+            } else {
+              window.__DINOU_ROUTER_NAVIGATE__(redirectUrl, { replace: true });
             }
           }
           return new Promise(() => {});
@@ -450,6 +453,21 @@ const getLayoutPayload = (layoutKey, searchPart = "", version = 0) => {
         cache: staticExport && !version ? "default" : "no-store",
       }).then(
         (res) => {
+          if (res.headers.has("x-rsc-redirect")) {
+            const redirectUrl = res.headers.get("x-rsc-redirect");
+            layoutCache.delete(cacheKey);
+            if (redirectUrl) {
+              if (
+                /^https?:\/\//i.test(redirectUrl) ||
+                !window.__DINOU_ROUTER_NAVIGATE__
+              ) {
+                window.location.href = redirectUrl;
+              } else {
+                window.__DINOU_ROUTER_NAVIGATE__(redirectUrl, { replace: true });
+              }
+            }
+            return new Promise(() => {});
+          }
           if (isStaticExportUnloading()) {
             return new Promise(() => {});
           }
