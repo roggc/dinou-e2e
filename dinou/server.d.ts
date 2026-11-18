@@ -159,7 +159,7 @@ export type {
   ScopedUseRouterHook,
   ScopedLinkProps,
   ScopedLinkComponent,
-} from "./index";
+} from "./index.js";
 
 export interface DinouCacheSlotProps {
   id?: string;
