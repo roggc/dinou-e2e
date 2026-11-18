@@ -11090,8 +11090,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
     async function readProgressiveHtmlStream(
       urlPath: string,
-      markerText: string
+      markerTexts: string | string[]
     ) {
+      const requiredMarkers = Array.isArray(markerTexts)
+        ? markerTexts
+        : [markerTexts];
       const t0 = Date.now();
       const res = await fetch(`${streamBaseUrl}${urlPath}`, {
         headers: { connection: "close" },
@@ -11112,7 +11115,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           break;
         }
         fullHtml += decoder.decode(value, { stream: true });
-        if (firstChunkTime < 0 && fullHtml.includes(markerText)) {
+        if (
+          firstChunkTime < 0 &&
+          requiredMarkers.every((marker) => fullHtml.includes(marker))
+        ) {
           firstChunkTime = Date.now() - t0;
           firstChunkHtml = fullHtml;
         }
@@ -11124,12 +11130,12 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     test("1. Dynamic SSR (revalidate = 0) progressive <Suspense> HTTP chunk streaming, Client Flight use(promise), Server Function RPC streaming & soft navigation (/t-streaming-suspense/dynamic-ssr -> /t-streaming-suspense/soft-target)", async ({
       page,
     }) => {
-      // 1A. Raw HTTP progressive chunk streaming: Chunk 1 flushes shell + fallback BEFORE 750ms promise resolves
+      // 1A. Raw HTTP progressive chunk streaming: initial flush delivers shell + fallback BEFORE 750ms promise resolves
       const { firstChunkHtml, firstChunkTime, fullHtml, totalTime } =
-        await readProgressiveHtmlStream(
-          "/t-streaming-suspense/dynamic-ssr",
-          "Executive Dashboard"
-        );
+        await readProgressiveHtmlStream("/t-streaming-suspense/dynamic-ssr", [
+          "Executive Dashboard",
+          '<div data-testid="metrics-skeleton">Loading metrics...</div>',
+        ]);
 
       expect(firstChunkTime).toBeGreaterThanOrEqual(0);
       expect(firstChunkHtml).toContain("Executive Dashboard");
@@ -11258,10 +11264,12 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // 2B. Verify raw HTTP PPR Resume flushes static shell + cached slot + fallbacks before 600ms live hole
       if (isProd) {
         const { firstChunkHtml, firstChunkTime, fullHtml, totalTime } =
-          await readProgressiveHtmlStream(
-            "/t-streaming-suspense/ppr-promise",
-            "Order Tracker"
-          );
+          await readProgressiveHtmlStream("/t-streaming-suspense/ppr-promise", [
+            "Order Tracker",
+            "WarehouseSlot:Cached",
+            "StaticPromiseBanner:OK",
+            "Fetching live status...",
+          ]);
 
         expect(firstChunkTime).toBeGreaterThanOrEqual(0);
         expect(firstChunkHtml).toContain("Order Tracker");
@@ -11406,7 +11414,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       const queryStream = await readProgressiveHtmlStream(
         `/t-streaming-suspense/isg-query/${slug}?utm_source=stream`,
-        `IsgQueryPage:${slug}:`
+        [
+          `IsgQueryPage:${slug}:`,
+          '<div data-testid="isg-query-skeleton">Loading catalog...</div>',
+          "<!--$?-->",
+        ]
       );
       expect(queryStream.firstChunkTime).toBeGreaterThanOrEqual(0);
       expect(queryStream.firstChunkHtml).toContain(

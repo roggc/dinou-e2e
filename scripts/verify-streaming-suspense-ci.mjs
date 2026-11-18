@@ -94,7 +94,10 @@ function createMockRequestContext({
   };
 }
 
-async function readStreamChunksUntilMarker(res, markerText) {
+async function readStreamChunksUntilMarker(res, markerTexts) {
+  const requiredMarkers = Array.isArray(markerTexts)
+    ? markerTexts
+    : [markerTexts];
   assert.equal(res.status, 200);
   assert.ok(res.body, "Expected readable HTTP response body");
   const reader = res.body.getReader();
@@ -114,7 +117,10 @@ async function readStreamChunksUntilMarker(res, markerText) {
     chunkCount++;
     const text = decoder.decode(value, { stream: true });
     fullHtml += text;
-    if (firstChunkTime < 0 && fullHtml.includes(markerText)) {
+    if (
+      firstChunkTime < 0 &&
+      requiredMarkers.every((marker) => fullHtml.includes(marker))
+    ) {
       firstChunkTime = Date.now() - t0;
       firstChunkHtml = fullHtml;
     }
@@ -850,10 +856,10 @@ export default function IsgCatalogPage({ params }: { params: { slug: string } })
   );
   assert.equal(dynStreamRes.headers.get("x-accel-buffering"), "no");
   assert.match(dynStreamRes.headers.get("cache-control") ?? "", /\bno-transform\b/i);
-  const dynChunks = await readStreamChunksUntilMarker(
-    dynStreamRes,
-    "Executive Dashboard"
-  );
+  const dynChunks = await readStreamChunksUntilMarker(dynStreamRes, [
+    "Executive Dashboard",
+    "Loading metrics...",
+  ]);
   assert.ok(dynChunks.firstChunkHtml.includes("Executive Dashboard"));
   assert.ok(dynChunks.firstChunkHtml.includes("Loading metrics..."));
   assert.ok(
@@ -886,10 +892,11 @@ export default function IsgCatalogPage({ params }: { params: { slug: string } })
   assert.equal(pprStreamRes.headers.get("content-encoding"), "identity");
   assert.equal(pprStreamRes.headers.get("x-accel-buffering"), "no");
   assert.match(pprStreamRes.headers.get("cache-control") ?? "", /\bno-transform\b/i);
-  const pprChunks = await readStreamChunksUntilMarker(
-    pprStreamRes,
-    "Order Tracker"
-  );
+  const pprChunks = await readStreamChunksUntilMarker(pprStreamRes, [
+    "Order Tracker",
+    "MiniSlotOK",
+    "Fetching live status...",
+  ]);
   assert.ok(pprChunks.firstChunkHtml.includes("Order Tracker"));
   assert.ok(pprChunks.firstChunkHtml.includes("MiniSlotOK"));
   assert.ok(pprChunks.firstChunkHtml.includes("Fetching live status..."));
@@ -908,10 +915,11 @@ export default function IsgCatalogPage({ params }: { params: { slug: string } })
   assert.equal(queryIsgRes.headers.get("content-encoding"), "identity");
   assert.equal(queryIsgRes.headers.get("x-accel-buffering"), "no");
   assert.match(queryIsgRes.headers.get("cache-control") ?? "", /\bno-transform\b/i);
-  const queryIsgChunks = await readStreamChunksUntilMarker(
-    queryIsgRes,
-    "IsgCatalog:beta:1"
-  );
+  const queryIsgChunks = await readStreamChunksUntilMarker(queryIsgRes, [
+    "IsgCatalog:beta:1",
+    '<div data-testid="catalog-skeleton">Loading catalog...</div>',
+    "<!--$?-->",
+  ]);
   assert.ok(
     queryIsgChunks.firstChunkHtml.includes(
       '<div data-testid="catalog-skeleton">Loading catalog...</div>'

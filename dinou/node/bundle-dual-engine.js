@@ -349,11 +349,21 @@ export async function bundleDualEngine(options = {}) {
   if (!isWebpackBuild && Object.keys(parsedClientManifest).length > 0) {
     const imports = {};
     const moduleBasePath = pathToFileURL(projectRoot).href + "/";
+    const moduleBasePathLower = moduleBasePath.replace(
+      /^file:\/\/\/([a-zA-Z]):/,
+      (_, d) => `file:///${d.toLowerCase()}:`
+    );
+    const moduleBasePathUpper = moduleBasePath.replace(
+      /^file:\/\/\/([a-zA-Z]):/,
+      (_, d) => `file:///${d.toUpperCase()}:`
+    );
 
     for (const [key, val] of Object.entries(parsedClientManifest)) {
       let specifier = key;
-      if (specifier.startsWith(moduleBasePath)) {
-        specifier = specifier.slice(moduleBasePath.length);
+      if (specifier.startsWith(moduleBasePathUpper)) {
+        specifier = specifier.slice(moduleBasePathUpper.length);
+      } else if (specifier.startsWith(moduleBasePathLower)) {
+        specifier = specifier.slice(moduleBasePathLower.length);
       }
       const hashIdx = specifier.indexOf("#");
       if (hashIdx !== -1) {
