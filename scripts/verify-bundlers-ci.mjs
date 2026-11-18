@@ -223,8 +223,14 @@ function createBundlersFixture() {
   );
 
   fs.writeFileSync(
+    path.join(fixtureDir, "src", "dot.svg"),
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 4"><circle cx="2" cy="2" r="2" fill="#10b981"/></svg>\n',
+    "utf8"
+  );
+
+  fs.writeFileSync(
     path.join(fixtureDir, "src", "badge.module.css"),
-    ".pill { color: rgb(16, 185, 129); font-weight: 600; }\n",
+    '.pill { color: rgb(16, 185, 129); font-weight: 600; background-image: url("./dot.svg"); }\n',
     "utf8"
   );
 
@@ -426,6 +432,21 @@ console.log(
     "package.json"
   );
   assert.ok(fs.existsSync(cssRuntimeApi), "Missing css-loader/runtime/api.js");
+  assert.ok(
+    fs.existsSync(
+      path.join(DINOU_DIR, "compiled", "css-loader", "runtime", "getUrl.js")
+    ),
+    "Missing css-loader/runtime/getUrl.js"
+  );
+  const cssLoaderCompiledTxt = fs.readFileSync(
+    path.join(DINOU_DIR, "compiled", "css-loader", "index.js"),
+    "utf8"
+  );
+  assert.ok(
+    !cssLoaderCompiledTxt.includes('"../runtime/getUrl.js"') &&
+      cssLoaderCompiledTxt.includes('"./runtime/getUrl.js"'),
+    "dinou/compiled/css-loader/index.js must rewrite ../runtime/getUrl.js to ./runtime/getUrl.js"
+  );
   assert.deepEqual(JSON.parse(fs.readFileSync(cssRuntimePkg, "utf8")), {
     type: "commonjs",
   });

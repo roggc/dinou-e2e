@@ -15594,7 +15594,7 @@ var require_postcss_url_parser = __commonJS({
                   options.imports.push({
                     type: "get_url_import",
                     importName: "___CSS_LOADER_GET_URL_IMPORT___",
-                    url: options.urlHandler(__require.resolve("../runtime/getUrl.js")),
+                    url: options.urlHandler(__require.resolve("./runtime/getUrl.js")),
                     index: -1
                   });
                   hasUrlImportHelper = true;

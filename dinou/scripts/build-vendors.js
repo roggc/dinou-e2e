@@ -58,6 +58,14 @@ const VENDORS = [
     name: "css-loader",
     entry: "css-loader",
     postProcess: async (vendorOutdir) => {
+      const indexFile = path.join(vendorOutdir, "index.js");
+      let indexContent = await fs.readFile(indexFile, "utf8");
+      indexContent = indexContent.replaceAll(
+        '"../runtime/getUrl.js"',
+        '"./runtime/getUrl.js"'
+      );
+      await fs.writeFile(indexFile, indexContent, "utf8");
+
       const cssLoaderEntry = vendorRequire.resolve("css-loader");
       const srcRuntimeDir = path.join(path.dirname(cssLoaderEntry), "runtime");
       const destRuntimeDir = path.join(vendorOutdir, "runtime");

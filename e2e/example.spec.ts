@@ -15052,7 +15052,11 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       }
 
       // 3. Browser hydration, SSG DINOU_BUILD_TOOL parity, CSS Modules (#css-loader/runtime/api.js) & Server Function RPC
-      await gotoHydrated(page, "/t-bundlers");
+      await page.goto("/t-bundlers");
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
       const heading = page.getByTestId("bundlers-heading");
       await expect(heading).toHaveText("Bundler Parity E2E");
       const ssgTool = await heading.getAttribute("data-build-tool");
