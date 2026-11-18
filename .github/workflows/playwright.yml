@@ -66,6 +66,8 @@ jobs:
 
       - name: Setup Environment & Dependencies
         uses: ./.github/actions/setup-e2e
+        with:
+          bun: 'true'
 
       - name: Build (Node AOT / esbuild) with -u flag
         run: npm run build:node:esbuild -- -u
@@ -75,6 +77,14 @@ jobs:
           TEST_CMD: npm run start:node:esbuild -- -u
           PORT: 3000
         run: npx playwright test
+
+      - name: Run Unit & HMR WebSocket Suites (tests/*.test.js, tests/unit & test:hmr:ws)
+        run: |
+          npm run test:unit
+          npm run test:hmr:ws
+
+      - name: Run Standalone Playwright E2E Suites (tests/e2e)
+        run: npm run test:e2e:standalone
 
       - name: Upload Playwright Report
         uses: actions/upload-artifact@v7
