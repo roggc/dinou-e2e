@@ -122,6 +122,8 @@ async function main() {
     "t-deployment",
     "t-deployment/dynamic",
     "t-deployment/isg/[slug]",
+    "t-eject",
+    "t-eject/live",
   ];
   for (const rel of expectedRouteDirs) {
     assert(
@@ -174,6 +176,7 @@ async function main() {
     ...collectTsFiles(path.join(root, "src/_plugins")),
     ...collectTsFiles(path.join(root, "src/t-bundlers")),
     ...collectTsFiles(path.join(root, "src/t-deployment")),
+    ...collectTsFiles(path.join(root, "src/t-eject")),
   ];
   const rootNames = [
     ...fixtureFiles,

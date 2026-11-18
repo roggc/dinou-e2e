@@ -23,6 +23,7 @@
     "test:plugins": "node scripts/verify-plugins-ci.mjs",
     "test:bundlers": "node scripts/verify-bundlers-ci.mjs",
     "test:deployment": "node scripts/verify-deployment-ci.mjs",
+    "test:eject": "node scripts/verify-eject-ci.mjs",
     "test:unit": "node --test tests/contracts-duality.test.js tests/ppr-use-search-params.test.js tests/server-functions-props-and-manifest.test.js tests/unit",
     "test:e2e:standalone": "playwright test -c playwright.standalone.config.ts",
     "test:hmr:ws": "node tests/hmr-websocket.test.mjs",
@@ -175,7 +176,8 @@
     "export-static:rollup": "node dinou/cli.js export-static:rollup",
     "export-static:webpack": "node dinou/cli.js export-static:webpack",
     "typegen": "node dinou/cli.js typegen",
-    "build:vendors": "node dinou/cli.js build:vendors"
+    "build:vendors": "node dinou/cli.js build:vendors",
+    "uneject": "node dinou/cli.js uneject"
   },
   "keywords": [],
   "author": "",

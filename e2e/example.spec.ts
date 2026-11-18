@@ -15310,4 +15310,77 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
     });
   });
+
+  // =========================================================================
+  // DINOU EJECT & UNEJECT SOVEREIGNTY LIFECYCLE, LIVE ./DINOU RESOLUTION & MULTI-ROOT VENDORS (/t-eject)
+  // =========================================================================
+  test.describe("Dinou Eject & Uneject Sovereignty Lifecycle, Live ./dinou Tri-Bundler Resolution & Multi-Root Vendors (/t-eject)", () => {
+    test("1. Ejected dinou/config RSC Import, Live Ejected Client Hooks, Server Function RPC & Dynamic SSR SPA Navigation", async ({
+      page,
+      request,
+    }) => {
+      const pageErrors: string[] = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      // 1. Live HTTP probe on /t-eject/live
+      const liveApiRes = await safeApiGet(request, "/t-eject/live?mode=api");
+      expect(liveApiRes.status()).toBe(200);
+      const liveApiHtml = await liveApiRes.text();
+      expect(liveApiHtml).toContain('data-mode="api"');
+      expect(liveApiHtml).toContain('data-secret-ok="true"');
+
+      // 2. Browser hydration on /t-eject (verifying "dinou/config" in RSC, "dinou" in Client Component & "dinou/server" in Action)
+      await page.goto("/t-eject");
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+      await expect(page.getByTestId("eject-page-root")).toHaveAttribute(
+        "data-config-strict",
+        "true"
+      );
+      await expect(page.getByTestId("eject-heading")).toHaveText(
+        "Dinou Eject & Uneject Sovereignty"
+      );
+      await expect(page.getByTestId("eject-client-path")).toHaveText("/t-eject");
+
+      await page.getByTestId("eject-probe-btn").click();
+      await expect(page.getByTestId("eject-probe-result")).toHaveText(
+        "SOVEREIGNTY|secret:true"
+      );
+
+      // 3. Soft SPA navigation via contextual <Link> to /t-eject/live?mode=spa and back
+      await page.getByTestId("eject-nav-live").click();
+      await expect(page.getByTestId("eject-live-heading")).toHaveText(
+        "Live Ejected Mode: spa"
+      );
+
+      await page.getByTestId("eject-back-link").click();
+      await expect(page.getByTestId("eject-heading")).toHaveText(
+        "Dinou Eject & Uneject Sovereignty"
+      );
+
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("2. Standalone Eject & Uneject Sovereignty Lifecycle, Live ./dinou Tri-Bundler Resolution & Multi-Root Vendors Suite (scripts/verify-eject-ci.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "Eject/Uneject CLI & tri-bundler sovereignty suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
+      test.setTimeout(360000);
+
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        [path.resolve("scripts/verify-eject-ci.mjs")],
+        { encoding: "utf8", timeout: 330000 }
+      );
+      expect(output).toContain(
+        "All 6 Dinou v9.4.0 Eject & Uneject Sovereignty Lifecycle verification suites PASSED!"
+      );
+    });
+  });
 });

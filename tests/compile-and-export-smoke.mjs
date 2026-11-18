@@ -253,6 +253,38 @@ async function probeBinary(binaryPath, port, label) {
       `✅ [Smoke] ${label} verified /t-deployment (SSG + Dynamic SSR + On-Demand ISG)`
     );
 
+    // Also probe /t-eject (Ejected Mode "dinou/config" RSC + live Dynamic SSR)
+    const ejectSsgRes = await fetch(`http://127.0.0.1:${port}/t-eject`, {
+      headers: { Accept: "text/html" },
+    });
+    const ejectSsgHtml = await ejectSsgRes.text();
+    if (
+      ejectSsgRes.status !== 200 ||
+      !ejectSsgHtml.includes("Dinou Eject &amp; Uneject Sovereignty") ||
+      !ejectSsgHtml.includes('data-config-strict="true"')
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-eject failed SSG check (${ejectSsgRes.status})`
+      );
+    }
+    const ejectLiveRes = await fetch(
+      `http://127.0.0.1:${port}/t-eject/live?mode=smoke`,
+      { headers: { Accept: "text/html" } }
+    );
+    const ejectLiveHtml = await ejectLiveRes.text();
+    if (
+      ejectLiveRes.status !== 200 ||
+      !ejectLiveHtml.includes('data-mode="smoke"') ||
+      !ejectLiveHtml.includes('data-secret-ok="true"')
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-eject/live failed Dynamic SSR check (${ejectLiveRes.status})`
+      );
+    }
+    console.log(
+      `✅ [Smoke] ${label} verified /t-eject & /t-eject/live (Ejected Mode sovereignty)`
+    );
+
     // Also probe a secondary route / RSC endpoint if available
     const candidateRoutes = ["/t-rigurous-hs", "/horizontal-segmentation-test", "/about"];
     for (const route of candidateRoutes) {
@@ -513,6 +545,22 @@ async function main() {
   ) {
     throw new Error(
       "[Smoke] export-static out/t-deployment/index.html failed content check"
+    );
+  }
+  const outEjectHtmlPath = path.join(outDir, "t-eject", "index.html");
+  const outEjectPageRscPath = path.join(outDir, "t-eject", "page.rsc");
+  if (!fs.existsSync(outEjectHtmlPath) || !fs.existsSync(outEjectPageRscPath)) {
+    throw new Error(
+      "[Smoke] export-static missing out/t-eject/index.html or page.rsc"
+    );
+  }
+  const outEjectHtml = fs.readFileSync(outEjectHtmlPath, "utf8");
+  if (
+    !outEjectHtml.includes("Dinou Eject &amp; Uneject Sovereignty") ||
+    !outEjectHtml.includes('data-config-strict="true"')
+  ) {
+    throw new Error(
+      "[Smoke] export-static out/t-eject/index.html failed content check"
     );
   }
   for (const netlifyArtifact of [
