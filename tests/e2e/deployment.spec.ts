@@ -4,15 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import net from "node:net";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { fileURLToPath, pathToFileURL } from "node:url";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { pathToFileURL } from "node:url";
 
 function resolveDinouRoot(): string {
   const candidates = [
-    path.resolve(__dirname, "../../dinou"),
     path.resolve(process.cwd(), "dinou"),
     path.resolve(process.cwd(), "node_modules/dinou/dinou"),
+    path.resolve(process.cwd(), "node_modules/dinou"),
   ];
   for (const c of candidates) {
     if (fs.existsSync(path.join(c, "cli.js"))) {
