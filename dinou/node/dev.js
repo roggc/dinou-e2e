@@ -106,13 +106,31 @@ startSpinner("Initializing Incremental Dual-Bundle Engine (No fork)...");
 const projectRoot = process.cwd();
 const dinouRequire = createRequire(import.meta.url);
 const projectRequire = createRequire(path.resolve(projectRoot, "package.json"));
-const require = (id) => {
-  try {
-    return dinouRequire(id);
-  } catch {
-    return projectRequire(id);
+const require = Object.assign(
+  (id) => {
+    try {
+      return dinouRequire(id);
+    } catch {
+      return projectRequire(id);
+    }
+  },
+  {
+    resolve(id, options) {
+      if (options) {
+        try {
+          return projectRequire.resolve(id, options);
+        } catch {
+          return dinouRequire.resolve(id, options);
+        }
+      }
+      try {
+        return dinouRequire.resolve(id);
+      } catch {
+        return projectRequire.resolve(id);
+      }
+    },
   }
-};
+);
 const esbuild = require("esbuild");
 const chokidar = chokidarModule?.default || chokidarModule;
 

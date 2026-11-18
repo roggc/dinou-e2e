@@ -21,6 +21,7 @@
     "test:env-vars": "node scripts/verify-env-vars-ci.mjs",
     "test:aliases": "node scripts/verify-aliases-ci.mjs",
     "test:plugins": "node scripts/verify-plugins-ci.mjs",
+    "test:bundlers": "node scripts/verify-bundlers-ci.mjs",
     "test:hmr:ws": "node tests/hmr-websocket.test.mjs",
     "test:smoke:compile": "node tests/compile-and-export-smoke.mjs",
     "dev": "node dinou/cli.js dev",
@@ -184,6 +185,7 @@
     "@types/node": "^25.0.3",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
+    "typescript": "^5.9.3",
     "wrangler": "^4.135.0"
   }
 }

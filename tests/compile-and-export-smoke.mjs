@@ -177,6 +177,37 @@ async function probeBinary(binaryPath, port, label) {
       `✅ [Smoke] ${label} verified /t-plugins (AOT plugins, single-exec setupFiles, 302/x-rsc-redirect & 418 Cache-Control)`
     );
 
+    // Also probe /t-bundlers (DINOU_BUILD_TOOL="esbuild" propagation across SSG & live SSR)
+    const bundlersRes = await fetch(`http://127.0.0.1:${port}/t-bundlers`, {
+      headers: { Accept: "text/html" },
+    });
+    const bundlersHtml = await bundlersRes.text();
+    if (
+      bundlersRes.status !== 200 ||
+      !bundlersHtml.includes("Bundler Parity E2E") ||
+      !bundlersHtml.includes('data-build-tool="esbuild"')
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-bundlers failed DINOU_BUILD_TOOL="esbuild" check (${bundlersRes.status})`
+      );
+    }
+    const bundlersLiveRes = await fetch(
+      `http://127.0.0.1:${port}/t-bundlers/live`,
+      { headers: { Accept: "text/html" } }
+    );
+    const bundlersLiveHtml = await bundlersLiveRes.text();
+    if (
+      bundlersLiveRes.status !== 200 ||
+      !bundlersLiveHtml.includes('data-live-build-tool="esbuild"')
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-bundlers/live failed live DINOU_BUILD_TOOL="esbuild" check (${bundlersLiveRes.status})`
+      );
+    }
+    console.log(
+      `✅ [Smoke] ${label} verified /t-bundlers & /t-bundlers/live (DINOU_BUILD_TOOL="esbuild")`
+    );
+
     // Also probe a secondary route / RSC endpoint if available
     const candidateRoutes = ["/t-rigurous-hs", "/horizontal-segmentation-test", "/about"];
     for (const route of candidateRoutes) {
@@ -408,6 +439,29 @@ async function main() {
   ) {
     throw new Error(
       "[Smoke] export-static out/t-aliases/index.html failed path alias resolution check"
+    );
+  }
+  const outBundlersHtmlPath = path.join(outDir, "t-bundlers", "index.html");
+  if (!fs.existsSync(outBundlersHtmlPath)) {
+    throw new Error("[Smoke] export-static missing out/t-bundlers/index.html");
+  }
+  const outBundlersHtml = fs.readFileSync(outBundlersHtmlPath, "utf8");
+  if (
+    !outBundlersHtml.includes("Bundler Parity E2E") ||
+    !outBundlersHtml.includes('data-build-tool="esbuild"')
+  ) {
+    throw new Error(
+      "[Smoke] export-static out/t-bundlers/index.html failed DINOU_BUILD_TOOL check"
+    );
+  }
+  const outRootFiles = fs.readdirSync(outDir);
+  if (
+    outRootFiles.some(
+      (f) => f.startsWith("runtime-") || f.startsWith("react-refresh-entry-")
+    )
+  ) {
+    throw new Error(
+      "[Smoke] export-static out/ must not contain dead dev react-refresh chunks"
     );
   }
   console.log("✅ [Smoke] export-static verified (SSG HTML with __DINOU_STATIC_EXPORT__, segmented page.rsc/layout.rsc, public/ PWA manifest.json & dotfiles exported; dist2 metadata/slots & server/* excluded)");

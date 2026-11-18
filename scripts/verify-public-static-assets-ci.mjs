@@ -1199,14 +1199,14 @@ console.log(
 
     const cliSrc = fs.readFileSync(path.join(dinouRoot, "cli.js"), "utf8");
     assert.ok(
-      cliSrc.includes("DINOU_BUILD_TOOL=rollup") &&
-        cliSrc.includes("DINOU_BUILD_TOOL=webpack"),
-      "dinou/cli.js must pass DINOU_BUILD_TOOL=rollup and DINOU_BUILD_TOOL=webpack"
+      cliSrc.includes('DINOU_BUILD_TOOL: "rollup"') &&
+        cliSrc.includes('DINOU_BUILD_TOOL: "webpack"'),
+      "dinou/cli.js must pass DINOU_BUILD_TOOL for rollup and webpack"
     );
     assert.ok(
-      /DINOU_BUILD_TOOL=rollup\s+node\s+\$\{p\("cloudflare\/build\.js"\)\}/.test(
-        cliSrc
-      ),
+      cliSrc.includes('dinouScript("cloudflare/build.js")') &&
+        cliSrc.includes('buildCloudflareSteps("rollup")') &&
+        cliSrc.includes("DINOU_BUILD_TOOL: bundler"),
       "dinou/cli.js build:cloudflare:rollup must pass DINOU_BUILD_TOOL=rollup to cloudflare/build.js"
     );
 

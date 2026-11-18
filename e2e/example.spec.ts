@@ -14996,4 +14996,106 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
     });
   });
+
+  // =========================================================================
+  // MULTI-BUNDLER CLI EXECUTION, PURE BUN COMPATIBILITY, VENDOR CATALOG & -u UNVENDORIZED MODE (/t-bundlers)
+  // =========================================================================
+  test.describe("Multi-Bundler CLI Execution, Pure Bun Compatibility, Vendor Catalog & -u Unvendorized Mode (/t-bundlers)", () => {
+    test("1. Tri-Bundler DINOU_BUILD_TOOL Propagation (SSG + Dynamic SSR + Server Action), Dead react-refresh Chunk Omission in Esbuild Prod, -u Unvendorized Runtime Condition, #css-loader Runtime CSS Modules & Client Hydration", async ({
+      page,
+      request,
+    }) => {
+      const pageErrors: string[] = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      const activeTestCmd = process.env.TEST_CMD || "";
+      const expectedBundlerFromCmd = activeTestCmd.includes("webpack")
+        ? "webpack"
+        : activeTestCmd.includes("rollup")
+          ? "rollup"
+          : activeTestCmd.includes("esbuild")
+            ? "esbuild"
+            : null;
+      const isUnvendorizedRuntime = /(?:^|\s)(?:-u|--unvendorized)(?:\s|$)/.test(
+        activeTestCmd
+      );
+
+      // 1. Live Dynamic SSR probe (/t-bundlers/live): verifies DINOU_BUILD_TOOL & -u unvendorized condition
+      const liveRes = await safeApiGet(request, "/t-bundlers/live");
+      expect(liveRes.status()).toBe(200);
+      const liveHtml = await liveRes.text();
+      const liveToolMatch = liveHtml.match(/data-live-build-tool="([^"]+)"/);
+      expect(liveToolMatch).not.toBeNull();
+      const liveTool = liveToolMatch![1];
+      expect(["esbuild", "rollup", "webpack"]).toContain(liveTool);
+      if (expectedBundlerFromCmd) {
+        expect(liveTool).toBe(expectedBundlerFromCmd);
+      }
+      if (isUnvendorizedRuntime) {
+        expect(liveHtml).toContain('data-unvendorized-env="true"');
+        expect(liveHtml).toContain('data-unvendorized-active="true"');
+      }
+
+      // 2. Verify Esbuild production builds omit dead dev-only react-refresh entrypoints from .dinou/dist3
+      if (isProd && liveTool === "esbuild") {
+        const dist3Dir = path.resolve(process.cwd(), ".dinou/dist3");
+        if (fs.existsSync(dist3Dir)) {
+          const dist3Files = fs.readdirSync(dist3Dir);
+          expect(
+            dist3Files.some(
+              (f) =>
+                f.startsWith("runtime-") ||
+                f.startsWith("react-refresh-entry-")
+            )
+          ).toBe(false);
+        }
+      }
+
+      // 3. Browser hydration, SSG DINOU_BUILD_TOOL parity, CSS Modules (#css-loader/runtime/api.js) & Server Function RPC
+      await gotoHydrated(page, "/t-bundlers");
+      const heading = page.getByTestId("bundlers-heading");
+      await expect(heading).toHaveText("Bundler Parity E2E");
+      const ssgTool = await heading.getAttribute("data-build-tool");
+      expect(ssgTool).toBe(liveTool);
+      if (expectedBundlerFromCmd) {
+        expect(ssgTool).toBe(expectedBundlerFromCmd);
+      }
+
+      const valBadge = page.getByTestId("bundlers-val");
+      await expect(valBadge).toHaveText("3");
+      await expect(valBadge).toHaveAttribute("data-tripled", "9");
+
+      const bgColor = await valBadge.evaluate(
+        (el) => getComputedStyle(el).backgroundColor
+      );
+      expect(bgColor).toBe("rgb(16, 185, 129)");
+
+      await page.getByTestId("bundlers-double-btn").click();
+      await expect(valBadge).toHaveText("6");
+      await expect(valBadge).toHaveAttribute("data-tripled", "18");
+      await expect(page.getByTestId("bundlers-rpc-tool")).toHaveText(liveTool);
+
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("2. Standalone Multi-Bundler, Pure Bun, 31-Package Vendor Catalog & -u Unvendorized Parity Suite (scripts/verify-bundlers-ci.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "Node/Bun CLI bundler parity suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
+      test.setTimeout(360000);
+
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        [path.resolve("scripts/verify-bundlers-ci.mjs")],
+        { encoding: "utf8", timeout: 330000 }
+      );
+      expect(output).toContain(
+        "All 5 Dinou v9.4.0 Multi-Bundler, Pure Bun & Dual-Mode Vendoring verification suites PASSED!"
+      );
+    });
+  });
 });

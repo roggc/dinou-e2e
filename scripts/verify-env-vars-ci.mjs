@@ -1097,12 +1097,14 @@ process.exit(0);
     assert(bunSsr.includes("MatrixProdTitle"));
     assert(!bunSsr.includes(PRIVATE_SECRET_A));
 
-    // Verify dinou/cli.js propagates NODE_ENV=production across chained commands (especially build:bun:pure & build:node:pure so Bun's native .env startup loader uses .env.production instead of .env.development)
+    // Verify dinou/cli.js propagates NODE_ENV=production across all build/start steps (especially build:bun:pure & build:node:pure so Bun's native .env startup loader uses .env.production instead of .env.development)
     const cliSource = fs.readFileSync(cliPath, "utf8");
     assert(
-      cliSource.includes("const runProdCommand =") &&
+      (cliSource.includes("const runProdSteps =") ||
+        cliSource.includes("const runProdCommand =")) &&
+        cliSource.includes('NODE_ENV: "production"') &&
         !cliSource.includes("&& bun ${p("),
-      "Expected dinou/cli.js to enforce NODE_ENV=production via runProdCommand and explicit cross-env on chained Bun commands"
+      "Expected dinou/cli.js to enforce NODE_ENV=production across all production build/start steps including Pure Bun commands"
     );
 
     runNodeBuildScript("deno/build.js");

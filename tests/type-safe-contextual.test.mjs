@@ -117,6 +117,8 @@ async function main() {
     "t-plugins/res-redirect",
     "t-plugins/teapot",
     "t-plugins/ppr-probe",
+    "t-bundlers",
+    "t-bundlers/live",
   ];
   for (const rel of expectedRouteDirs) {
     assert(
@@ -167,6 +169,7 @@ async function main() {
     ...collectTsFiles(path.join(root, "shared-alias-fallback")),
     ...collectTsFiles(path.join(root, "src/t-plugins")),
     ...collectTsFiles(path.join(root, "src/_plugins")),
+    ...collectTsFiles(path.join(root, "src/t-bundlers")),
   ];
   const rootNames = [
     ...fixtureFiles,
