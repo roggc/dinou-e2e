@@ -347,6 +347,51 @@ console.log(
     assert.equal(second.allowISG, false);
     assert.equal(second.plugins[0].name, "reloaded-v2");
 
+    // Verify programmatic globalThis.__DINOU_CONFIG__ overrides (e.g. Playwright/unit tests
+    // with NODE_ENV !== "production" & DINOU_DEV unset) are honored by getDinouConfig,
+    // resolveLayoutFunctionsConfig, resolveLayoutChainPpr, and resolvePageFunctionsConfig,
+    // while DINOU_DEV="true" ignores stale globalThis.__DINOU_CONFIG__.
+    const { resolveLayoutFunctionsConfig, resolveLayoutChainPpr } =
+      await importDinou("core/layout-functions.js");
+    const { resolvePageFunctionsConfig } = await importDinou("core/handler.js");
+
+    delete process.env.NODE_ENV;
+    delete process.env.DINOU_DEV;
+    delete globalThis.__DINOU_CONFIG_CWD__;
+    globalThis.__DINOU_CONFIG__ = { allowISG: false, ppr: true };
+
+    const overriddenCfg = await getDinouConfig(tmpApp);
+    assert.equal(overriddenCfg.allowISG, false);
+    assert.equal(overriddenCfg.ppr, true);
+
+    const overriddenLayoutCfg = await resolveLayoutFunctionsConfig(
+      path.resolve(projectRoot, "src/t-layout-functions/dyn/[id]/layout.tsx"),
+      { id: "1" }
+    );
+    assert.equal(overriddenLayoutCfg.allowISG, false);
+
+    const overriddenPageCfg = await resolvePageFunctionsConfig(
+      path.resolve(projectRoot, "src/t-layout-functions/no-isg/[id]/page.tsx"),
+      ["t-layout-functions", "no-isg", "prerendered"],
+      {},
+      { id: "prerendered" },
+      "/t-layout-functions/no-isg/prerendered/"
+    );
+    assert.equal(overriddenPageCfg.allowISGValue, false);
+
+    const overriddenChainPpr = await resolveLayoutChainPpr([
+      "t-ppr-layout",
+      "nested",
+    ]);
+    assert.equal(overriddenChainPpr.defaultPpr, true);
+
+    // When DINOU_DEV="true" (active dev server), globalThis.__DINOU_CONFIG__ is bypassed in favor of mtimeMs cache
+    process.env.DINOU_DEV = "true";
+    const devServerCfg = await getDinouConfig(tmpApp);
+    assert.equal(devServerCfg.plugins[0].name, "reloaded-v2");
+    delete process.env.DINOU_DEV;
+    delete globalThis.__DINOU_CONFIG__;
+
     // Verify __DINOU_AOT_CONFIG__ takes precedence and survives clearDinouConfigCache
     const syntheticAot = { plugins: [{ name: "aot-locked" }] };
     globalThis.__DINOU_AOT_CONFIG__ = syntheticAot;

@@ -2434,6 +2434,7 @@ async function triggerTsconfigReload(fullPath) {
       }
 
       await updateManifestsState({ forceRescan: true });
+      generateEntryFiles();
 
       await ctxA.dispose();
       ctxA = await createRscContext();
@@ -2547,6 +2548,7 @@ async function triggerDinouConfigReload(fullPath) {
       }
 
       await updateManifestsState({ forceRescan: true });
+      generateEntryFiles();
 
       await ctxA.dispose();
       ctxA = await createRscContext();

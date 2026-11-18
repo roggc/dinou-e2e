@@ -76,14 +76,22 @@ import { asyncRenderJSXToClientJSX } from "./render-jsx-to-client-jsx.js";
 // Load Dinou configuration and plugins
 let dinouConfig = { plugins: [] };
 let dinouConfigPromise = null;
+const AUTO_LOADED_PROD_CONFIG = Symbol.for("dinou.autoLoadedProdConfig");
 
 async function getDinouConfig() {
   const isSsgBuild =
     typeof globalThis !== "undefined" && Boolean(globalThis.__DINOU_IS_SSG_BUILD__);
+  const isActiveDevServer =
+    process.env.DINOU_DEV === "true" ||
+    (typeof globalThis !== "undefined" && Boolean(globalThis.__DINOU_DEV__));
   const aotOrProdCached =
     typeof globalThis !== "undefined"
       ? globalThis.__DINOU_AOT_CONFIG__ ||
-        (!isDevelopment ? globalThis.__DINOU_CONFIG__ : null)
+        (globalThis.__DINOU_CONFIG__ &&
+        !isActiveDevServer &&
+        (!isDevelopment || !globalThis.__DINOU_CONFIG__[AUTO_LOADED_PROD_CONFIG])
+          ? globalThis.__DINOU_CONFIG__
+          : null)
       : null;
   if (aotOrProdCached) {
     if (!isSsgBuild && aotOrProdCached.storage) {

@@ -37,6 +37,7 @@ let dinouConfig = { plugins: [] };
 const dinouConfigPromisesByCwd = new Map();
 const devConfigCacheByCwd = new Map();
 let devImportCounter = 0;
+const AUTO_LOADED_PROD_CONFIG = Symbol.for("dinou.autoLoadedProdConfig");
 
 function resolveCwd(customCwd) {
   return path.resolve(
@@ -47,7 +48,7 @@ function resolveCwd(customCwd) {
   );
 }
 
-function isDevEnvironment() {
+function isActiveDinouDevServer() {
   if (
     typeof globalThis !== "undefined" &&
     Boolean(globalThis.__DINOU_DEV__)
@@ -55,7 +56,16 @@ function isDevEnvironment() {
     return true;
   }
   if (typeof process !== "undefined" && process.env) {
-    if (process.env.DINOU_DEV === "true") return true;
+    return process.env.DINOU_DEV === "true";
+  }
+  return false;
+}
+
+function isDevEnvironment() {
+  if (isActiveDinouDevServer()) {
+    return true;
+  }
+  if (typeof process !== "undefined" && process.env) {
     return process.env.NODE_ENV !== "production";
   }
   return false;
@@ -418,6 +428,14 @@ async function loadConfigFromDisk(cwd, isDev, configFile) {
       loaded && loaded.default ? loaded.default : loaded || { plugins: [] };
     dinouConfig = cfg;
     if (!isDev && typeof globalThis !== "undefined") {
+      if (cfg && typeof cfg === "object") {
+        try {
+          Object.defineProperty(cfg, AUTO_LOADED_PROD_CONFIG, {
+            value: true,
+            configurable: true,
+          });
+        } catch (e) {}
+      }
       globalThis.__DINOU_CONFIG__ = cfg;
       globalThis.__DINOU_CONFIG_CWD__ = cwd;
     }
@@ -445,9 +463,10 @@ async function getDinouConfig(customCwd) {
   }
 
   if (
-    !isDev &&
     typeof globalThis !== "undefined" &&
     globalThis.__DINOU_CONFIG__ &&
+    !isActiveDinouDevServer() &&
+    (!isDev || !globalThis.__DINOU_CONFIG__[AUTO_LOADED_PROD_CONFIG]) &&
     (!globalThis.__DINOU_CONFIG_CWD__ ||
       globalThis.__DINOU_CONFIG_CWD__ === cwd)
   ) {
