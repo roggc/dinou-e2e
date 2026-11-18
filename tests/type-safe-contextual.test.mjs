@@ -119,6 +119,9 @@ async function main() {
     "t-plugins/ppr-probe",
     "t-bundlers",
     "t-bundlers/live",
+    "t-deployment",
+    "t-deployment/dynamic",
+    "t-deployment/isg/[slug]",
   ];
   for (const rel of expectedRouteDirs) {
     assert(
@@ -170,6 +173,7 @@ async function main() {
     ...collectTsFiles(path.join(root, "src/t-plugins")),
     ...collectTsFiles(path.join(root, "src/_plugins")),
     ...collectTsFiles(path.join(root, "src/t-bundlers")),
+    ...collectTsFiles(path.join(root, "src/t-deployment")),
   ];
   const rootNames = [
     ...fixtureFiles,

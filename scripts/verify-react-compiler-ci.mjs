@@ -548,7 +548,8 @@ console.log(
     );
 
     globalThis.__DINOU_CONFIG__ = {};
-    const webpackClientEnabled = (await getWebpackConfig())[0];
+    const webpackClientEnabled = await getWebpackConfig();
+    assert.equal(Array.isArray(webpackClientEnabled), false);
     const babelUseEnabled = webpackClientEnabled.module.rules[0].use[0];
 
     assert.ok(
@@ -563,12 +564,12 @@ console.log(
     assert.equal(typeof babelUseEnabled.options.plugins[0], "function");
     assert.equal(typeof babelUseEnabled.options.plugins[1], "function");
 
-    const rollupConfigsEnabled = await getRollupConfig();
-    assert.ok(Array.isArray(rollupConfigsEnabled));
-    assert.ok(rollupConfigsEnabled.length >= 1);
+    const rollupConfigEnabled = await getRollupConfig();
+    assert.equal(Array.isArray(rollupConfigEnabled), false);
+    assert.ok(rollupConfigEnabled && Array.isArray(rollupConfigEnabled.plugins));
 
     globalThis.__DINOU_CONFIG__ = { reactCompiler: false };
-    const webpackClientDisabled = (await getWebpackConfig())[0];
+    const webpackClientDisabled = await getWebpackConfig();
     const babelUseDisabled = webpackClientDisabled.module.rules[0].use[0];
     assert.equal(
       babelUseDisabled.options.plugins.length,
@@ -576,8 +577,9 @@ console.log(
       "Webpack plugins must omit pluginReactCompiler when reactCompiler: false"
     );
 
-    const rollupConfigsDisabled = await getRollupConfig();
-    assert.ok(Array.isArray(rollupConfigsDisabled));
+    const rollupConfigDisabled = await getRollupConfig();
+    assert.equal(Array.isArray(rollupConfigDisabled), false);
+    assert.ok(rollupConfigDisabled && Array.isArray(rollupConfigDisabled.plugins));
   } finally {
     process.chdir(origCwd);
     if (prevNodeEnv === undefined) delete process.env.NODE_ENV;

@@ -15102,4 +15102,212 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
     });
   });
+
+  // =========================================================================
+  // DEPLOYMENT TARGETS, NETLIFY FUNCTIONS V2 DUAL-BUNDLE & MULTI-RUNTIME ADAPTERS (/t-deployment)
+  // =========================================================================
+  test.describe("Deployment Targets, Netlify Functions v2 Dual-Bundle & Multi-Runtime Adapter Parity (/t-deployment)", () => {
+    test("1. Live Runtime Adapter Hydration, Server Function RPC, Dynamic SSR, On-Demand ISG & Root App Netlify Functions v2 CDN Simulator", async ({
+      page,
+      request,
+    }) => {
+      const pageErrors: string[] = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      // 1. Direct Dynamic SSR HTTP probe on active runtime (Node DEV, Node AOT, Cloudflare Worker, Deno, Bun, Bun Pure, -u)
+      const dynApiRes = await safeApiGet(
+        request,
+        "/t-deployment/dynamic?probe=http-api"
+      );
+      expect(dynApiRes.status()).toBe(200);
+      const dynApiHtml = await dynApiRes.text();
+      expect(dynApiHtml).toContain('data-probe="http-api"');
+      expect(dynApiHtml).toContain('data-secret-ok="true"');
+
+      // 2. Browser SSG hydration, DINOU_PUBLIC_* env, "use server" RPC, SPA <Link> Dynamic SSR & On-Demand ISG
+      await page.goto("/t-deployment");
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+      await expect(page.getByTestId("deploy-ssg-heading")).toHaveText(
+        "Deployment Targets Parity"
+      );
+      const pubTitle = await page
+        .getByTestId("deploy-public-title")
+        .textContent();
+      expect(pubTitle).toMatch(/^DinouPublic(Dev|Prod)$/);
+
+      await page.getByTestId("deploy-rpc-btn").click();
+      await expect(page.getByTestId("deploy-rpc-reply")).toContainText(
+        "DEPLOY-RPC|secret:true|"
+      );
+
+      await page.getByTestId("deploy-nav-dynamic").click();
+      await expect(page.getByTestId("deploy-dynamic-heading")).toHaveText(
+        "Dynamic Probe: spa"
+      );
+
+      await page.getByTestId("deploy-back-home").click();
+      await expect(page.getByTestId("deploy-ssg-heading")).toHaveText(
+        "Deployment Targets Parity"
+      );
+
+      await page.getByTestId("deploy-nav-isg").click();
+      await expect(page.getByTestId("deploy-isg-heading")).toHaveText(
+        "ISG Slug: edge-ready"
+      );
+
+      // 3. When running against a Node production build (.dinou/netlify/functions/ssr.mjs emitted),
+      //    also verify the root app's dedicated Netlify Functions v2 bundle + static .dinou/dist3 CDN in real browser!
+      const netlifySsrPath = path.resolve(
+        process.cwd(),
+        ".dinou/netlify/functions/ssr.mjs"
+      );
+      const activeCmd = process.env.TEST_CMD || "";
+      const isNodeProdRun =
+        isProd &&
+        activeCmd.includes("start:node") &&
+        fs.existsSync(netlifySsrPath);
+
+      if (isNodeProdRun) {
+        const netMod = await import("node:net");
+        const { spawn } = await import("node:child_process");
+        const { pathToFileURL } = await import("node:url");
+
+        const simPort = await new Promise<number>((resolve, reject) => {
+          const srv = netMod.createServer();
+          srv.listen(0, "127.0.0.1", () => {
+            const addr = srv.address();
+            const p = typeof addr === "object" && addr ? addr.port : 0;
+            srv.close(() => resolve(p));
+          });
+          srv.on("error", reject);
+        });
+
+        const staticAssetsUrl = pathToFileURL(
+          path.resolve(process.cwd(), "dinou/core/static-assets.js")
+        ).href;
+        const netlifySsrUrl = pathToFileURL(netlifySsrPath).href;
+
+        const simCode = [
+          'import http from "node:http";',
+          'import fs from "node:fs";',
+          'import path from "node:path";',
+          'import { Readable } from "node:stream";',
+          `import netlifyHandler, { config } from ${JSON.stringify(netlifySsrUrl)};`,
+          `import { getStaticContentType, resolveConfinedStaticFile, normalizePublicRequestPath } from ${JSON.stringify(staticAssetsUrl)};`,
+          'globalThis.Netlify = { env: { toObject: () => ({ NETLIFY_REGION: "eu-west-1" }) } };',
+          'const dist3Dir = path.resolve(".dinou/dist3");',
+          `const port = ${simPort};`,
+          "const server = http.createServer(async (req, res) => {",
+          "  const url = new URL(req.url || '/', `http://127.0.0.1:${port}`);",
+          '  if (config.preferStatic && (req.method === "GET" || req.method === "HEAD")) {',
+          "    const clean = normalizePublicRequestPath(url.pathname);",
+          "    if (clean) {",
+          "      const fp = resolveConfinedStaticFile(dist3Dir, clean);",
+          "      if (fp && fs.existsSync(fp) && fs.statSync(fp).isFile()) {",
+          "        res.statusCode = 200;",
+          "        res.setHeader('content-type', getStaticContentType(clean));",
+          "        res.end(fs.readFileSync(fp));",
+          "        return;",
+          "      }",
+          "    }",
+          "  }",
+          "  const headers = new Headers();",
+          "  for (const [k, v] of Object.entries(req.headers)) {",
+          "    if (Array.isArray(v)) v.forEach((item) => headers.append(k, item));",
+          "    else if (v !== undefined) headers.set(k, v);",
+          "  }",
+          '  const body = req.method === "GET" || req.method === "HEAD" ? undefined : await new Promise((r) => { const c = []; req.on("data", (x) => c.push(x)); req.on("end", () => r(Buffer.concat(c))); });',
+          "  const webReq = new Request(url.href, { method: req.method, headers, body });",
+          "  const webRes = await netlifyHandler(webReq, { waitUntil() {} });",
+          "  res.statusCode = webRes.status;",
+          "  webRes.headers.forEach((v, k) => res.setHeader(k, v));",
+          "  if (webRes.body) Readable.fromWeb(webRes.body).pipe(res); else res.end();",
+          "});",
+          'server.listen(port, "127.0.0.1", () => console.log(`NETLIFY_ROOT_SIM_READY:${port}`));',
+        ].join("\n");
+
+        const simChild = spawn(
+          process.execPath,
+          ["--input-type=module", "-e", simCode],
+          {
+            cwd: process.cwd(),
+            env: { ...process.env, NODE_OPTIONS: "" },
+            stdio: ["ignore", "pipe", "pipe"],
+          }
+        );
+
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(
+              () => reject(new Error("Timed out starting root Netlify simulator")),
+              15000
+            );
+            let errBuf = "";
+            simChild.stderr?.on("data", (c) => {
+              errBuf += String(c);
+            });
+            simChild.stdout?.on("data", (c) => {
+              if (String(c).includes(`NETLIFY_ROOT_SIM_READY:${simPort}`)) {
+                clearTimeout(timer);
+                resolve();
+              }
+            });
+            simChild.on("exit", (code) => {
+              clearTimeout(timer);
+              reject(
+                new Error(
+                  `Root Netlify simulator exited early (${code}): ${errBuf}`
+                )
+              );
+            });
+          });
+
+          await page.goto(`http://127.0.0.1:${simPort}/t-deployment`);
+          await page.waitForSelector('body[data-hydrated="true"]', {
+            state: "attached",
+            timeout: 15000,
+          });
+          await page.getByTestId("deploy-rpc-btn").click();
+          await expect(page.getByTestId("deploy-rpc-reply")).toHaveText(
+            "DEPLOY-RPC|secret:true|region:eu-west-1"
+          );
+
+          await page.getByTestId("deploy-nav-dynamic").click();
+          await expect(page.getByTestId("deploy-dynamic-heading")).toHaveText(
+            "Dynamic Probe: spa"
+          );
+          await expect(page.getByTestId("deploy-dynamic-region")).toHaveText(
+            "Region: eu-west-1"
+          );
+        } finally {
+          simChild.kill("SIGTERM");
+        }
+      }
+
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("2. Standalone Deployment Targets, Netlify Functions v2 Dual-Bundle & Multi-Runtime Adapter Suite (scripts/verify-deployment-ci.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "Deployment target & serverless adapter verification is browser-agnostic; run once per CI matrix job in chromium"
+      );
+      test.setTimeout(360000);
+
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        [path.resolve("scripts/verify-deployment-ci.mjs")],
+        { encoding: "utf8", timeout: 330000 }
+      );
+      expect(output).toContain(
+        "All 6 Dinou v9.4.0 Deployment Targets, Netlify Functions v2 Dual-Bundle & Multi-Runtime Adapter verification suites PASSED!"
+      );
+    });
+  });
 });

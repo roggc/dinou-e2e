@@ -48,7 +48,7 @@ export declare function revalidateTag(
 ): Promise<void>;
 
 import type { ReactNode } from "react";
-import type { RequestContextStore } from "./index";
+import type { RequestContextStore } from "./index.js";
 
 export type {
   PPRConfig,

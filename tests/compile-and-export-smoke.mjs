@@ -208,6 +208,51 @@ async function probeBinary(binaryPath, port, label) {
       `✅ [Smoke] ${label} verified /t-bundlers & /t-bundlers/live (DINOU_BUILD_TOOL="esbuild")`
     );
 
+    // Also probe /t-deployment (SSG, live Dynamic SSR with secret isolation, and on-demand ISG)
+    const deploySsgRes = await fetch(`http://127.0.0.1:${port}/t-deployment`, {
+      headers: { Accept: "text/html" },
+    });
+    const deploySsgHtml = await deploySsgRes.text();
+    if (
+      deploySsgRes.status !== 200 ||
+      !deploySsgHtml.includes("Deployment Targets Parity") ||
+      !deploySsgHtml.includes('data-build-tool="esbuild"')
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-deployment failed SSG check (${deploySsgRes.status})`
+      );
+    }
+    const deployDynRes = await fetch(
+      `http://127.0.0.1:${port}/t-deployment/dynamic?probe=smoke`,
+      { headers: { Accept: "text/html" } }
+    );
+    const deployDynHtml = await deployDynRes.text();
+    if (
+      deployDynRes.status !== 200 ||
+      !deployDynHtml.includes('data-probe="smoke"') ||
+      !deployDynHtml.includes('data-secret-ok="true"')
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-deployment/dynamic failed Dynamic SSR check (${deployDynRes.status})`
+      );
+    }
+    const deployIsgRes = await fetch(
+      `http://127.0.0.1:${port}/t-deployment/isg/smoke-slug`,
+      { headers: { Accept: "text/html" } }
+    );
+    const deployIsgHtml = await deployIsgRes.text();
+    if (
+      deployIsgRes.status !== 200 ||
+      !deployIsgHtml.includes('data-isg-slug="smoke-slug"')
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-deployment/isg/smoke-slug failed On-Demand ISG check (${deployIsgRes.status})`
+      );
+    }
+    console.log(
+      `✅ [Smoke] ${label} verified /t-deployment (SSG + Dynamic SSR + On-Demand ISG)`
+    );
+
     // Also probe a secondary route / RSC endpoint if available
     const candidateRoutes = ["/t-rigurous-hs", "/horizontal-segmentation-test", "/about"];
     for (const route of candidateRoutes) {
@@ -453,6 +498,34 @@ async function main() {
     throw new Error(
       "[Smoke] export-static out/t-bundlers/index.html failed DINOU_BUILD_TOOL check"
     );
+  }
+  const outDeployHtmlPath = path.join(outDir, "t-deployment", "index.html");
+  const outDeployPageRscPath = path.join(outDir, "t-deployment", "page.rsc");
+  if (!fs.existsSync(outDeployHtmlPath) || !fs.existsSync(outDeployPageRscPath)) {
+    throw new Error(
+      "[Smoke] export-static missing out/t-deployment/index.html or page.rsc"
+    );
+  }
+  const outDeployHtml = fs.readFileSync(outDeployHtmlPath, "utf8");
+  if (
+    !outDeployHtml.includes("Deployment Targets Parity") ||
+    !outDeployHtml.includes("window.__DINOU_STATIC_EXPORT__=true;")
+  ) {
+    throw new Error(
+      "[Smoke] export-static out/t-deployment/index.html failed content check"
+    );
+  }
+  for (const netlifyArtifact of [
+    ".dinou/netlify/functions/ssr.mjs",
+    ".dinou/netlify/functions/package.json",
+    ".dinou/dist1/server/handler.js",
+    ".dinou/dist1/server/netlify.js",
+  ]) {
+    if (!fs.existsSync(path.join(projectRoot, netlifyArtifact))) {
+      throw new Error(
+        `[Smoke] Expected Dual-Bundle server/Netlify artifact at ${netlifyArtifact}`
+      );
+    }
   }
   const outRootFiles = fs.readdirSync(outDir);
   if (

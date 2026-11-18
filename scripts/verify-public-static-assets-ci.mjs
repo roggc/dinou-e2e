@@ -948,17 +948,20 @@ console.log(
     );
     assertPureDist3AndDist1Manifests(outEsbuildProd, "esbuild-prod");
 
-    // 5B. Rollup Production -> server output .dinou/dist1/server, manifests in .dinou/dist1, pure .dinou/dist3
+    // 5B. Rollup Production -> client output .dinou/dist3 + post-build-ssg hook, manifests in .dinou/dist1, pure .dinou/dist3
     const { rollup } = dinouRequire("rollup");
     const { default: getRollupConfig } = await importDinou(
       "rollup/rollup.config.js"
     );
     fs.rmSync(path.join(tmpBundlers, ".dinou"), { recursive: true, force: true });
-    const [rollupClientCfg, rollupServerCfg] = await getRollupConfig();
+    const rollupClientCfg = await getRollupConfig();
     assert.equal(
-      path.resolve(rollupServerCfg.output.dir),
-      path.resolve(tmpBundlers, ".dinou/dist1/server"),
-      "Rollup server bundle output must target .dinou/dist1/server"
+      path.resolve(rollupClientCfg.output.dir),
+      path.resolve(tmpBundlers, ".dinou/dist3"),
+      "Rollup client bundle output must target .dinou/dist3"
+    );
+    const rollupPostBuildSsgPlugin = rollupClientCfg.plugins.find(
+      (p) => p && p.name === "post-build-ssg"
     );
     const copyRollupPlugin = rollupClientCfg.plugins.find(
       (p) => p && p.name === "dinou-copy-static"
@@ -972,7 +975,13 @@ console.log(
     const rollupSfPlugin = rollupClientCfg.plugins.find(
       (p) => p && p.name === "server-functions-proxy"
     );
-    assert.ok(copyRollupPlugin && rollupManifestPlugin && rollupRcmPlugin && rollupSfPlugin);
+    assert.ok(
+      rollupPostBuildSsgPlugin &&
+        copyRollupPlugin &&
+        rollupManifestPlugin &&
+        rollupRcmPlugin &&
+        rollupSfPlugin
+    );
 
     const outRollup = path.join(tmpBundlers, ".dinou/dist3");
     const bundle = await rollup({
@@ -996,7 +1005,7 @@ console.log(
     await bundle.close();
     assertPureDist3AndDist1Manifests(outRollup, "rollup");
 
-    // 5C. Webpack Production -> server output .dinou/dist1/server, DinouRelocateRscManifestsPlugin -> .dinou/dist1, pure .dinou/dist3
+    // 5C. Webpack Production -> client output .dinou/dist3 + PostBuildClient hook, DinouRelocateRscManifestsPlugin -> .dinou/dist1, pure .dinou/dist3
     const webpack = dinouRequire("webpack");
     const { default: getWebpackConfig } = await importDinou(
       "webpack/webpack.config.js"
@@ -1008,11 +1017,11 @@ console.log(
       "webpack/plugins/manifest-generator-plugin.js"
     );
     fs.rmSync(path.join(tmpBundlers, ".dinou"), { recursive: true, force: true });
-    const [wpClientCfg, wpServerCfg] = await getWebpackConfig();
+    const wpClientCfg = await getWebpackConfig();
     assert.equal(
-      path.resolve(wpServerCfg.output.path),
-      path.resolve(tmpBundlers, ".dinou/dist1/server"),
-      "Webpack server bundle output must target .dinou/dist1/server"
+      path.resolve(wpClientCfg.output.path),
+      path.resolve(tmpBundlers, ".dinou/dist3"),
+      "Webpack client bundle output must target .dinou/dist3"
     );
     const copyWpPlugin = wpClientCfg.plugins.find(
       (p) => p && Array.isArray(p.patterns)
