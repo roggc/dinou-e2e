@@ -1651,6 +1651,27 @@ export const ppr = false;
       { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml }
     );
     assert.ok((await resRscT2.text()).includes("IsrRace-v3"));
+
+    // 6.10 Stale-caller SWR TOCTOU guard (`onlyIfExpired: true`):
+    //      A late concurrent request that observed an expired snapshot before Cycle #2 committed
+    //      and invokes revalidatePage("/isr-race", { onlyIfExpired: true }) immediately after T2 commits
+    //      MUST re-check latest metadata under enqueueRevalidation() and no-op (preserving IsrRace-v3).
+    globalThis.__TEST_REVAL_COUNTERS__.isrRaceVersion = 4;
+    await revalidatePage("/isr-race", { onlyIfExpired: true });
+    const resAfterSpuriousTtl = await rscMod.handleRequest(
+      new Request("http://localhost/isr-race?t=post-ttl-noop"),
+      { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml }
+    );
+    const htmlAfterSpuriousTtl = stripComments(await resAfterSpuriousTtl.text());
+    assert.ok(
+      htmlAfterSpuriousTtl.includes("IsrRace-v3"),
+      `onlyIfExpired: true on a fresh T2 page must be a no-op (keep IsrRace-v3), got: ${htmlAfterSpuriousTtl}`
+    );
+    assert.equal(
+      htmlAfterSpuriousTtl.includes("IsrRace-v4"),
+      false,
+      `Spurious SWR revalidation must NOT overwrite T2 with IsrRace-v4 within TTL, got: ${htmlAfterSpuriousTtl}`
+    );
   } finally {
     process.chdir(prevCwd);
     delete globalThis.__TEST_ISR_RACE_GATE__;
