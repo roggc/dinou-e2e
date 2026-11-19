@@ -445,7 +445,7 @@ export declare function ClientRedirect(props: ClientRedirectProps): ReactNode;
 /**
  * Universal redirect function for Server Components and Server Functions.
  * * It handles the logic intelligently based on the context:
- * 1. **Server-Side (Hard Navigation):** If headers haven't been sent, it performs a real HTTP 307 redirect (better for SEO and performance).
+ * 1. **Server-Side (Hard Navigation):** If headers haven't been sent, it performs a real HTTP 302 redirect (better for SEO and performance).
  * 2. **Client-Side / Streaming (Soft Navigation):** If the response stream has started or we are on the client, it returns a component that triggers a SPA navigation.
  * * @param destination - The path URL to redirect to (e.g., "/login").
  * @returns A React Node that handles the redirection.

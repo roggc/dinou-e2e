@@ -162,6 +162,7 @@ function copyCustomContextProperties(source, target) {
         "platformContext",
         "_markDynamic",
         "_dynamicState",
+        "_hasRedirected",
         "_isStaticHtmlRender",
         "_isPprRuntimeResume",
       ].includes(key)
@@ -1294,6 +1295,7 @@ function createRequestContext(simReq, resBridge, platformContext = {}, dynamicSt
           return;
         }
         hasRedirected = true;
+        if (context) context._hasRedirected = true;
         let url = args[0];
         if (args.length === 2) {
           url = args[1];
@@ -1309,6 +1311,7 @@ function createRequestContext(simReq, resBridge, platformContext = {}, dynamicSt
     }
     if (methodName === "redirect") {
       hasRedirected = true;
+      if (context) context._hasRedirected = true;
       let url = args[0];
       let status = 302;
       if (args.length === 2) {
@@ -1356,6 +1359,7 @@ function createRequestContext(simReq, resBridge, platformContext = {}, dynamicSt
     platformContext,
     _markDynamic: markDynamic,
     _dynamicState: dynamicState,
+    _hasRedirected: false,
   };
 
   if (
@@ -2662,6 +2666,9 @@ async function handleRequest(request, platformContext = {}) {
         const manifest = getClientManifest();
         pipeRSC(jsx, bridge, manifest, platformContext);
       } catch (err) {
+        if (bridge.headers.has("x-rsc-redirect") || bridge.headers.has("Location")) {
+          return;
+        }
         console.error(`[Dinou] Error rendering RSC ${segment}:`, err);
         const serializedError = {
           message: isDevelopment
