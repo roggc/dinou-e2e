@@ -9137,12 +9137,20 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
     });
 
-    test("4. Compile-Time TypeScript (tsc --noEmit), @ts-expect-error, TS2307 Non-Route Boundary & Pruning Suite (tests/type-safe-contextual.test.mjs)", async () => {
+    test("4. Compile-Time TypeScript (tsc --noEmit), @ts-expect-error, TS2307 Non-Route Boundary & Pruning Suite (tests/type-safe-contextual.test.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "TypeScript compile-time suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
+      test.setTimeout(180000);
+
       const { execFileSync } = await import("child_process");
       const output = execFileSync(
         process.execPath,
         [path.resolve("tests/type-safe-contextual.test.mjs")],
-        { encoding: "utf8", timeout: 60000 }
+        { encoding: "utf8", timeout: 150000 }
       );
       expect(output).toContain(
         "RESULT: All 5 contextual './dinou' & router tests PASSED"

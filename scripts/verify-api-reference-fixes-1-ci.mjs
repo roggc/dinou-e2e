@@ -170,6 +170,15 @@ try {
       /if \(mockContext\) mockContext\._hasRedirected = true;/
     );
 
+    const bunBuildSrc = fs.readFileSync(
+      path.join(DINOU_ROOT, "bun/build.js"),
+      "utf8"
+    );
+    assert.ok(
+      (bunBuildSrc.match(/"content-disposition":\s*"inline"/g) || []).length >= 2,
+      "bun/build.js must set content-disposition: inline on Bun.file responses"
+    );
+
     const redirectSrc = fs.readFileSync(
       path.join(DINOU_ROOT, "core/redirect.jsx"),
       "utf8"

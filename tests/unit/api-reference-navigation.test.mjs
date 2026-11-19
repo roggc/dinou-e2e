@@ -466,6 +466,15 @@ test("4. client.jsx & client-webpack.jsx parity, handler/get-jsx redirect guards
     "generate-static-rsc.js must expose and flip _hasRedirected on mockContext"
   );
 
+  const bunBuildSrc = fs.readFileSync(
+    path.join(DINOU_ROOT, "bun/build.js"),
+    "utf8"
+  );
+  assert.ok(
+    (bunBuildSrc.match(/"content-disposition":\s*"inline"/g) || []).length >= 2,
+    "bun/build.js must set content-disposition: inline on Bun.file responses so Bun does not auto-inject filename= overriding HTML <a download>"
+  );
+
   const redirectSrc = fs.readFileSync(path.join(DINOU_ROOT, "core/redirect.jsx"), "utf8");
   assert.match(redirectSrc, /Status 302/, "redirect.jsx comment must specify Status 302");
   assert.doesNotMatch(redirectSrc, /Status 307/, "redirect.jsx comment must not specify Status 307");
