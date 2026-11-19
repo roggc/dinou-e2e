@@ -132,6 +132,8 @@ async function main() {
     "t-api-ref-nav/guarded/@sidebar",
     "t-api-ref-nav/layout-guarded",
     "t-api-ref-nav/counter",
+    "t-ctx-router",
+    "t-ctx-router/child",
   ];
   for (const rel of expectedRouteDirs) {
     assert(
@@ -141,6 +143,34 @@ async function main() {
     assert(
       fs.existsSync(path.join(root, ".dinou/routes", rel, "dinou.js")),
       `Expected contextual dinou.js for route dir: ${rel}`
+    );
+  }
+
+  // Batch 2 contextual parity checks: memoized react-server-safe useRouter() & 7 re-exported types
+  const ctxRouterJs = fs.readFileSync(
+    path.join(root, ".dinou/routes/t-ctx-router/dinou.js"),
+    "utf8"
+  );
+  assert(
+    ctxRouterJs.includes("const useMemo = React.useMemo || ((fn) => fn());"),
+    "Expected contextual .dinou/routes/t-ctx-router/dinou.js to guard React.useMemo for react-server compatibility"
+  );
+  const ctxRouterDts = fs.readFileSync(
+    path.join(root, ".dinou/routes/t-ctx-router/dinou.d.ts"),
+    "utf8"
+  );
+  for (const batch2Type of [
+    "DinouEnv",
+    "DinouNavigableRoutePatternMap",
+    "DinouNavigableRouteKey",
+    "DinouDynamicRoutePattern",
+    "DinouDynamicRouteWithSuffix",
+    "DinouEffectiveRoutePattern",
+    "ScopedLinkTargetForFrom",
+  ]) {
+    assert(
+      new RegExp(`\\b${batch2Type}\\b`).test(ctxRouterDts),
+      `Expected contextual .dinou/routes/t-ctx-router/dinou.d.ts to re-export ${batch2Type}`
     );
   }
 
@@ -186,6 +216,7 @@ async function main() {
     ...collectTsFiles(path.join(root, "src/t-deployment")),
     ...collectTsFiles(path.join(root, "src/t-eject")),
     ...collectTsFiles(path.join(root, "src/t-api-ref-nav")),
+    ...collectTsFiles(path.join(root, "src/t-ctx-router")),
   ];
   const rootNames = [
     ...fixtureFiles,

@@ -15713,4 +15713,139 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
     });
   });
+
+  // =========================================================================
+  // API REFERENCE BATCH 2: CONTEXTUAL ./dinou useRouter(), TYPE RE-EXPORTS & getContext() ISOLATION (/t-ctx-router)
+  // =========================================================================
+  test.describe("API Reference Batch 2: Contextual ./dinou useRouter(), Type Re-Exports & getContext() rawPath/isRscRequest Isolation (/t-ctx-router)", () => {
+    test("1. Contextual ./dinou useRouter() stability, relative push/replace, Server Function RPC context & SSR vs RSC rawPath/isRscRequest isolation", async ({
+      page,
+      request,
+    }) => {
+      const pageErrors: string[] = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      // 1A. Direct HTTP SSR probe on /t-ctx-router/child confirms rawPath === path & isRscRequest === false + plugin user propagation
+      const ssrChildRes = await safeApiGet(request, "/t-ctx-router/child", {
+        headers: { "x-test-user": "Alice Batch2" },
+      });
+      expect(ssrChildRes.status()).toBe(200);
+      const ssrChildHtml = await ssrChildRes.text();
+      expect(ssrChildHtml).toContain(
+        'data-testid="ctx-path">/t-ctx-router/child<'
+      );
+      expect(ssrChildHtml).toContain(
+        'data-testid="ctx-raw-path">/t-ctx-router/child<'
+      );
+      expect(ssrChildHtml).toContain('data-testid="ctx-is-rsc">false<');
+      expect(ssrChildHtml).toContain(
+        'data-testid="ctx-plugin-user">Alice Batch2<'
+      );
+
+      // 1B. Direct RSC wire probe confirms rawPath preserves /____rsc_page____/... & isRscRequest === true while plugin state propagates
+      const rscChildRes = await safeApiGet(
+        request,
+        "/____rsc_page____/t-ctx-router/child",
+        { headers: { "x-test-user": "Bob Batch2" } }
+      );
+      expect(rscChildRes.status()).toBe(200);
+      const rscChildText = await rscChildRes.text();
+      expect(rscChildText).toContain("/____rsc_page____/t-ctx-router/child");
+      expect(rscChildText).toMatch(
+        /"data-testid":"ctx-is-rsc"[^}]*"children":"true"/
+      );
+      expect(rscChildText).toContain("Bob Batch2");
+
+      // 2. Browser: contextual ./dinou useRouter() stays referentially stable across unrelated local state updates
+      await page.goto("/t-ctx-router");
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+      await expect(page.getByTestId("ctx-router-heading")).toHaveText(
+        "Contextual Router Probe"
+      );
+      await expect(page.getByTestId("local-count")).toHaveText("0");
+      await expect(page.getByTestId("router-ref-changes")).toHaveText("0");
+
+      const initialEffectRuns = Number(
+        await page.getByTestId("router-effect-runs").textContent()
+      );
+      expect(initialEffectRuns).toBeGreaterThanOrEqual(1);
+
+      await page.getByTestId("bump-local-state").click();
+      await page.getByTestId("bump-local-state").click();
+      await page.getByTestId("bump-local-state").click();
+
+      await expect(page.getByTestId("local-count")).toHaveText("3");
+      await expect(page.getByTestId("router-effect-runs")).toHaveText(
+        String(initialEffectRuns)
+      );
+      await expect(page.getByTestId("router-ref-changes")).toHaveText("0");
+
+      // 3. Server Function RPC populates req.rawPath & req.isRscRequest=false while preserving plugin context
+      await page.getByTestId("invoke-sf-context-probe").click();
+      await expect(page.getByTestId("sf-context-result")).toHaveText(
+        "path=/____server_function____|raw=/____server_function____|rsc=false|user=Dinou Guest"
+      );
+
+      // 4. Relative SPA push("child") resolves from="/t-ctx-router" and surfaces RSC wire rawPath + isRscRequest=true
+      await page.getByTestId("push-relative-child").click();
+      await expect(page).toHaveURL(/\/t-ctx-router\/child\/?$/);
+      await expect(page.getByTestId("ctx-path")).toHaveText(
+        /^\/t-ctx-router\/child\/?$/
+      );
+      await expect(page.getByTestId("ctx-raw-path")).toHaveText(
+        /^\/____rsc_page(?:_old)?(?:_static)?____\/t-ctx-router\/child\/?$/
+      );
+      await expect(page.getByTestId("ctx-is-rsc")).toHaveText("true");
+      await expect(page.getByTestId("ctx-plugin-user")).toHaveText(
+        "Dinou Guest"
+      );
+
+      // 5. Relative SPA replace("..") from /t-ctx-router/child navigates back to /t-ctx-router
+      await page.getByTestId("replace-relative-parent").click();
+      await expect(page).toHaveURL(/\/t-ctx-router\/?$/);
+      await expect(page.getByTestId("ctx-router-home")).toBeVisible();
+
+      // 6. Direct SSR browser navigation reports rawPath === pathname and isRscRequest=false
+      await page.goto("/t-ctx-router/child");
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+      await expect(page.getByTestId("ctx-path")).toHaveText(
+        /^\/t-ctx-router\/child\/?$/
+      );
+      await expect(page.getByTestId("ctx-raw-path")).toHaveText(
+        /^\/t-ctx-router\/child\/?$/
+      );
+      await expect(page.getByTestId("ctx-is-rsc")).toHaveText("false");
+      await expect(page.getByTestId("ctx-plugin-user")).toHaveText(
+        "Dinou Guest"
+      );
+
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("2. Standalone API Reference Batch 2 Verification Suite (scripts/verify-api-reference-fixes-2-ci.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "API Reference Batch 2 CLI & tri-bundler verification suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
+      test.setTimeout(360000);
+
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        [path.resolve("scripts/verify-api-reference-fixes-2-ci.mjs")],
+        { encoding: "utf8", timeout: 330000 }
+      );
+      expect(output).toContain(
+        "All 4 Dinou v9.4.0 API Reference Batch 2 Contextual ./dinou useRouter(), Type Re-Export & getContext() Isolation verification suites PASSED!"
+      );
+    });
+  });
 });

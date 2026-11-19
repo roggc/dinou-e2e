@@ -340,6 +340,57 @@ async function probeBinary(binaryPath, port, label) {
       `✅ [Smoke] ${label} verified /t-api-ref-nav (SSG + getProps/layout_functions SSR & RSC redirect short-circuit)`
     );
 
+    // Also probe /t-ctx-router (SSG) & /t-ctx-router/child (SSR + RSC rawPath/isRscRequest isolation)
+    const ctxRouterSsgRes = await fetch(`http://127.0.0.1:${port}/t-ctx-router`, {
+      headers: { Accept: "text/html" },
+    });
+    const ctxRouterSsgHtml = await ctxRouterSsgRes.text();
+    if (
+      ctxRouterSsgRes.status !== 200 ||
+      !ctxRouterSsgHtml.includes("Contextual Router Probe")
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-ctx-router failed SSG check (${ctxRouterSsgRes.status})`
+      );
+    }
+    const ctxRouterChildSsrRes = await fetch(
+      `http://127.0.0.1:${port}/t-ctx-router/child`,
+      { headers: { Accept: "text/html" } }
+    );
+    const ctxRouterChildSsrHtml = await ctxRouterChildSsrRes.text();
+    if (
+      ctxRouterChildSsrRes.status !== 200 ||
+      !ctxRouterChildSsrHtml.includes('data-testid="ctx-is-rsc">false<') ||
+      !ctxRouterChildSsrHtml.includes(
+        'data-testid="ctx-raw-path">/t-ctx-router/child<'
+      ) ||
+      !ctxRouterChildSsrHtml.includes(
+        'data-testid="ctx-plugin-user">Dinou Guest<'
+      )
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-ctx-router/child failed SSR getContext() rawPath/isRscRequest check (${ctxRouterChildSsrRes.status})`
+      );
+    }
+    const ctxRouterChildRscRes = await fetch(
+      `http://127.0.0.1:${port}/____rsc_page____/t-ctx-router/child`
+    );
+    const ctxRouterChildRscText = await ctxRouterChildRscRes.text();
+    if (
+      ctxRouterChildRscRes.status !== 200 ||
+      !ctxRouterChildRscText.includes("/____rsc_page____/t-ctx-router/child") ||
+      !/data-testid":"ctx-is-rsc"[^}]*"children":"true"/.test(
+        ctxRouterChildRscText
+      )
+    ) {
+      throw new Error(
+        `[Smoke] ${label} RSC /t-ctx-router/child failed getContext() RSC wire rawPath/isRscRequest check (${ctxRouterChildRscRes.status})`
+      );
+    }
+    console.log(
+      `✅ [Smoke] ${label} verified /t-ctx-router & /t-ctx-router/child (contextual ./dinou + SSR/RSC rawPath & isRscRequest isolation)`
+    );
+
     // Also probe a secondary route / RSC endpoint if available
     const candidateRoutes = ["/t-rigurous-hs", "/horizontal-segmentation-test", "/about"];
     for (const route of candidateRoutes) {
@@ -652,6 +703,36 @@ async function main() {
   ) {
     throw new Error(
       "[Smoke] export-static out/t-api-ref-nav/index.html or ppr-search/index.html failed content check"
+    );
+  }
+  const outCtxRouterHtmlPath = path.join(outDir, "t-ctx-router", "index.html");
+  const outCtxRouterPageRscPath = path.join(outDir, "t-ctx-router", "page.rsc");
+  const outCtxRouterChildHtmlPath = path.join(
+    outDir,
+    "t-ctx-router",
+    "child",
+    "index.html"
+  );
+  if (
+    !fs.existsSync(outCtxRouterHtmlPath) ||
+    !fs.existsSync(outCtxRouterPageRscPath)
+  ) {
+    throw new Error(
+      "[Smoke] export-static missing out/t-ctx-router/index.html or page.rsc"
+    );
+  }
+  if (fs.existsSync(outCtxRouterChildHtmlPath)) {
+    throw new Error(
+      "[Smoke] export-static must NOT statically export dynamic revalidate=0 route out/t-ctx-router/child/index.html"
+    );
+  }
+  const outCtxRouterHtml = fs.readFileSync(outCtxRouterHtmlPath, "utf8");
+  if (
+    !outCtxRouterHtml.includes("Contextual Router Probe") ||
+    !outCtxRouterHtml.includes("window.__DINOU_STATIC_EXPORT__=true;")
+  ) {
+    throw new Error(
+      "[Smoke] export-static out/t-ctx-router/index.html failed content check"
     );
   }
   for (const netlifyArtifact of [
