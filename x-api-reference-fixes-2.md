@@ -1,0 +1,698 @@
+# Upstream Handoff Specification: API Reference Batch 2 — Contextual `./dinou` `useRouter()` Memoization, Contextual Type Re-Export Parity & `getContext()` `rawPath`/`isRscRequest` Isolation (`v9.4.0`)
+
+## 1. Executive Summary & Root-Cause Analysis
+
+During the deep framework audit of `/docs/api-reference` **Batch 2** (Section 3: Type-Safe Routing — `PageProps`, `LayoutProps`, `SlotProps`, `NotFoundProps`, `ErrorProps`, `PageFunctions`, `LayoutFunctions`, `RouteParams`, `DinouRoute`, `DinouRoutePattern`, Contextual `"./dinou"`; Section 4: Server Context & Config — `getContext()`, `defineConfig()`, `DinouPlugin`), we uncovered and fixed **three parity and correctness bugs** across Dinou's contextual route type generator and server request context lifecycle (`dinou/core/generate-route-types.js`, `dinou/core/handler.js`, `dinou/core/request-context.js`):
+
+1. **Contextual `"./dinou"` `useRouter()` Referential Instability (`dinou/core/generate-route-types.js`)**:
+   - **Root Cause**: Although root `useRouter()` in `dinou/core/navigation.js` was memoized on `[context]` (Batch 1), the auto-generated route-contextual `useRouter()` emitted by `buildContextualDinouJs()` into `.dinou/routes/<route>/dinou.js` returned a brand-new object literal `{ ...router, push: ..., replace: ... }` on every component render. Any Client Component importing `useRouter` from `"./dinou"` and placing `router` in a `useEffect(..., [router])`, `useCallback`, or memoized child prop suffered spurious re-executions on every unrelated local state update.
+   - **Fix**: Update `buildContextualDinouJs()` to import `React, { createElement } from "react"`, define a `react-server`-safe guard `const useMemo = React.useMemo || ((fn) => fn());` (so importing `"./dinou"` in Server Components under the `react-server` export condition never throws), and memoize the contextual router object via `useMemo(() => ({ ...router, push: ..., replace: ... }), [router])`.
+
+2. **Incomplete Type Re-Exports in Generated Contextual `dinou.d.ts` (`dinou/core/generate-route-types.js`)**:
+   - **Root Cause**: `buildContextualDinouDts()` re-exported most types from `"dinou"`, but omitted `DinouEnv` (used for augmenting `getContext().env`) and six public route helper types introduced in `dinou/index.d.ts` (`DinouNavigableRoutePatternMap`, `DinouNavigableRouteKey`, `DinouDynamicRoutePattern`, `DinouDynamicRouteWithSuffix`, `DinouEffectiveRoutePattern`, `ScopedLinkTargetForFrom`). Developers migrating imports from `"dinou"` to contextual `"./dinou"` hit missing-export TypeScript errors when referencing those types.
+   - **Fix**: Re-export `DinouEnv`, `DinouNavigableRoutePatternMap`, `DinouNavigableRouteKey`, `DinouDynamicRoutePattern`, `DinouDynamicRouteWithSuffix`, `DinouEffectiveRoutePattern`, and `ScopedLinkTargetForFrom` from `"dinou"` in `buildContextualDinouDts()`.
+
+3. **`getContext()` `rawPath` & `isRscRequest` Sub-Context Isolation and Fallback Parity (`dinou/core/handler.js`, `dinou/core/request-context.js`)**:
+   - **Root Cause**:
+     - `copyCustomContextProperties(source, target)` in `dinou/core/handler.js` copies custom plugin properties attached to `source` and `source.req` onto sub-request contexts (such as Server Function and route-segment sub-contexts). Its internal exclusion list for `source.req` listed `"path"`, `"url"`, `"method"`, etc., but omitted `"rawPath"` and `"isRscRequest"` — allowing internal RSC wire transport metadata (`rawPath: "/____rsc_page____/..."`, `isRscRequest: true`) to overwrite a sub-context's own `req.rawPath` / `req.isRscRequest`.
+     - `createServerFunctionContext()` in `dinou/core/handler.js` and the server/browser fallback context objects in `dinou/core/request-context.js` did not populate `req.rawPath` or `req.isRscRequest`, leaving those fields `undefined` outside normal page/RSC requests despite being part of `RequestContextStore["req"]`.
+   - **Fix**:
+     - Exclude `"rawPath"` and `"isRscRequest"` from `source.req` copying in `copyCustomContextProperties()` (`dinou/core/handler.js`).
+     - Populate `rawPath: simReq.rawPath || simReq.path` and `isRscRequest: false` in `createServerFunctionContext()` (`dinou/core/handler.js`).
+     - Populate `rawPath: "/"` and `isRscRequest: false` in both `createFallbackServerContext()` and the browser fallback object in `getContext()` (`dinou/core/request-context.js`).
+
+---
+
+## 2. Complete File Manifest
+
+1. `dinou/core/generate-route-types.js` *(modified)*
+2. `dinou/core/handler.js` *(modified)*
+3. `dinou/core/request-context.js` *(modified)*
+
+---
+
+## 3. Exact Source Code & Unified Diffs
+
+### 3.1 `dinou/core/generate-route-types.js`
+
+```diff
+--- a/dinou/core/generate-route-types.js
++++ b/dinou/core/generate-route-types.js
+@@ -549,7 +549,7 @@ function generateRouteDefinitions(routesOrTopology) {
+ function buildContextualDinouJs(fromPath) {
+   const routeLiteral = JSON.stringify(fromPath);
+   return `// This file is auto-generated by Dinou. Do not edit directly.
+-import { createElement } from "react";
++import React, { createElement } from "react";
+ import {
+   Link as BaseLink,
+   useRouter as useBaseRouter,
+@@ -564,6 +564,8 @@ import {
+   ClientRedirect,
+ } from "dinou";
+ 
++const useMemo = React.useMemo || ((fn) => fn());
++
+ export const ROUTE = ${routeLiteral};
+ 
+ export function Link(props) {
+@@ -575,13 +577,16 @@ export function Link(props) {
+ 
+ export function useRouter() {
+   const router = useBaseRouter();
+-  return {
+-    ...router,
+-    push: (href, options) =>
+-      router.push(href, { ...options, from: options?.from ?? ROUTE }),
+-    replace: (href, options) =>
+-      router.replace(href, { ...options, from: options?.from ?? ROUTE }),
+-  };
++  return useMemo(
++    () => ({
++      ...router,
++      push: (href, options) =>
++        router.push(href, { ...options, from: options?.from ?? ROUTE }),
++      replace: (href, options) =>
++        router.replace(href, { ...options, from: options?.from ?? ROUTE }),
++    }),
++    [router]
++  );
+ }
+ 
+ export {
+@@ -774,6 +779,7 @@ export type {
+   Headers,
+   CookieOptions,
+   ResponseProxy,
++  DinouEnv,
+   RequestContextStore,
+   NodeMiddleware,
+   ServerHookContext,
+@@ -800,11 +806,17 @@ export type {
+   LayoutSlots,
+   SlotParams,
+   ErrorParams,
++  DinouNavigableRoutePatternMap,
++  DinouNavigableRouteKey,
++  DinouDynamicRoutePattern,
++  DinouDynamicRouteWithSuffix,
++  DinouEffectiveRoutePattern,
+   DinouLinkTarget,
+   DinouFromRoute,
+   DinouRelativeLinkTarget,
+   DinouLinkTargetForFrom,
+   DinouScopedLinkTarget,
++  ScopedLinkTargetForFrom,
+   ScopedLinkProps,
+   ScopedLinkComponent,
+   ScopedUseRouterHook,
+```
+
+---
+
+### 3.2 `dinou/core/handler.js`
+
+```diff
+--- a/dinou/core/handler.js
++++ b/dinou/core/handler.js
+@@ -178,6 +178,8 @@ function copyCustomContextProperties(source, target) {
+           "headers",
+           "query",
+           "path",
++          "rawPath",
++          "isRscRequest",
+           "url",
+           "method",
+           "env",
+@@ -1404,6 +1406,8 @@ function createServerFunctionContext(simReq, resBridge, platformContext = {}) {
+       headers: { ...simReq.headers },
+       query: { ...simReq.query },
+       path: simReq.path,
++      rawPath: simReq.rawPath || simReq.path,
++      isRscRequest: false,
+       method: simReq.method,
+       env: unifiedEnv,
+       ctx: platformContext.ctx || null,
+```
+
+---
+
+### 3.3 `dinou/core/request-context.js`
+
+```diff
+--- a/dinou/core/request-context.js
++++ b/dinou/core/request-context.js
+@@ -76,6 +76,8 @@ function createFallbackServerContext() {
+       cookies: {},
+       headers: {},
+       path: "/",
++      rawPath: "/",
++      isRscRequest: false,
+       method: "GET",
+       env: unifiedEnv,
+       ctx: null,
+@@ -97,6 +99,8 @@ function getContext() {
+         cookies: {},
+         headers: {},
+         path: "/",
++        rawPath: "/",
++        isRscRequest: false,
+         method: "GET",
+         env: {},
+         ctx: null,
+```
+
+---
+
+## 4. `CHANGELOG.md` Entry (Draft for `v9.4.0`)
+
+```markdown
+### Fixed (API Reference Batch 2 — Contextual `./dinou` & Server Request Context)
+- **Memoized Contextual `"./dinou"` `useRouter()` (`dinou/core/generate-route-types.js`)**: Wrapped generated route-contextual `useRouter()` wrappers in a `react-server`-safe `useMemo(..., [router])` so Client Components importing `useRouter` from `"./dinou"` retain referential stability across unrelated local re-renders and avoid spurious `useEffect(..., [router])` teardowns.
+- **Contextual `dinou.d.ts` Type Re-Export Parity (`dinou/core/generate-route-types.js`)**: Re-exported `DinouEnv`, `DinouNavigableRoutePatternMap`, `DinouNavigableRouteKey`, `DinouDynamicRoutePattern`, `DinouDynamicRouteWithSuffix`, `DinouEffectiveRoutePattern`, and `ScopedLinkTargetForFrom` from `"dinou"` in all generated `.dinou/routes/**/dinou.d.ts` declarations.
+- **`getContext()` `rawPath` & `isRscRequest` Consistency and Sub-Context Isolation (`dinou/core/handler.js`, `dinou/core/request-context.js`)**: Excluded internal `rawPath` and `isRscRequest` wire transport fields from `copyCustomContextProperties()` `req` cloning so RSC wire metadata never leaks onto sub-contexts, and ensured `createServerFunctionContext()` as well as server/browser `getContext()` fallback stores consistently populate `req.rawPath` and `req.isRscRequest`.
+```
+
+---
+
+## 5. Verification & Complete Test Suite
+
+### 5.1 Unit & Multi-Bundler Integration Test (`tests/unit/api-reference-context-types.test.mjs`)
+
+Save this complete, zero-dependency Node test file in `dinou-e2e` (or `dinou`) and execute it with `node --test tests/unit/api-reference-context-types.test.mjs`:
+
+```javascript
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
+
+const REPO_ROOT = process.cwd();
+const DINOU_ROOT = fs.existsSync(path.resolve(REPO_ROOT, "dinou", "cli.js"))
+  ? path.resolve(REPO_ROOT, "dinou")
+  : path.resolve(REPO_ROOT, "node_modules", "dinou", "dinou");
+
+const esbuild = await import(
+  pathToFileURL(
+    path.resolve(REPO_ROOT, "node_modules", "esbuild", "lib", "main.js")
+  ).href
+);
+
+function createFixtureDir(prefix) {
+  const inRepoTmpBase = path.join(REPO_ROOT, ".dinou");
+  try {
+    fs.mkdirSync(inRepoTmpBase, { recursive: true });
+    return fs.mkdtempSync(path.join(inRepoTmpBase, prefix));
+  } catch {
+    return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  }
+}
+
+test("1. Contextual dinou.js memoizes useRouter() & dinou.d.ts re-exports DinouEnv and route helpers", async () => {
+  const { generateRouteTypes } = await import(
+    pathToFileURL(path.join(DINOU_ROOT, "core", "generate-route-types.js")).href
+  );
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "dinou-ctx-types-"));
+  try {
+    fs.mkdirSync(path.join(tmpDir, "src", "blog", "[slug]"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, "src", "page.tsx"),
+      "export default function Home() { return null; }\n"
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, "src", "blog", "[slug]", "page.tsx"),
+      "export default function Post() { return null; }\n"
+    );
+
+    generateRouteTypes(tmpDir);
+
+    const ctxJsPath = path.join(
+      tmpDir,
+      ".dinou",
+      "routes",
+      "blog",
+      "[slug]",
+      "dinou.js"
+    );
+    const ctxDtsPath = path.join(
+      tmpDir,
+      ".dinou",
+      "routes",
+      "blog",
+      "[slug]",
+      "dinou.d.ts"
+    );
+    assert.ok(fs.existsSync(ctxJsPath), "Expected contextual dinou.js");
+    assert.ok(fs.existsSync(ctxDtsPath), "Expected contextual dinou.d.ts");
+
+    const ctxDts = fs.readFileSync(ctxDtsPath, "utf8");
+    for (const expectedType of [
+      "DinouEnv",
+      "DinouNavigableRoutePatternMap",
+      "DinouNavigableRouteKey",
+      "DinouDynamicRoutePattern",
+      "DinouDynamicRouteWithSuffix",
+      "DinouEffectiveRoutePattern",
+      "ScopedLinkTargetForFrom",
+    ]) {
+      assert.match(
+        ctxDts,
+        new RegExp(`\\b${expectedType}\\b`),
+        `Expected ${expectedType} in contextual dinou.d.ts`
+      );
+    }
+
+    const wrapperEntry = path.join(tmpDir, "test-entry.js");
+    fs.writeFileSync(
+      wrapperEntry,
+      `import { __setBaseRouter } from "dinou";
+export { useRouter, ROUTE } from ${JSON.stringify(ctxJsPath)};
+export { __setBaseRouter };
+`,
+      "utf8"
+    );
+    const bundled = await esbuild.build({
+      entryPoints: [wrapperEntry],
+      bundle: true,
+      format: "esm",
+      platform: "neutral",
+      write: false,
+      plugins: [
+        {
+          name: "mock-react-dinou",
+          setup(build) {
+            build.onResolve({ filter: /^react$/ }, () => ({
+              path: "mock-react",
+              namespace: "mock",
+            }));
+            build.onResolve({ filter: /^dinou$/ }, () => ({
+              path: "mock-dinou",
+              namespace: "mock",
+            }));
+            build.onLoad({ filter: /^mock-react$/, namespace: "mock" }, () => ({
+              contents: `
+                let memoCache = null;
+                let memoDeps = null;
+                export function createElement(type, props) { return { type, props }; }
+                export default {
+                  createElement,
+                  useMemo(fn, deps) {
+                    const same = memoDeps && deps && memoDeps.length === deps.length && deps.every((d, i) => Object.is(d, memoDeps[i]));
+                    if (same) return memoCache;
+                    memoDeps = deps;
+                    memoCache = fn();
+                    return memoCache;
+                  },
+                };
+              `,
+              loader: "js",
+            }));
+            build.onLoad({ filter: /^mock-dinou$/, namespace: "mock" }, () => ({
+              contents: `
+                let currentBase = null;
+                export function __setBaseRouter(r) { currentBase = r; }
+                export function useRouter() { return currentBase; }
+                export const Link = () => null;
+                export const defineConfig = (c) => c;
+                export const getContext = () => ({});
+                export const noDynamic = () => {};
+                export const usePathname = () => "/";
+                export const useSearchParams = () => new URLSearchParams();
+                export const refreshSlot = () => Promise.resolve();
+                export const useNavigationLoading = () => false;
+                export const redirect = () => null;
+                export const ClientRedirect = () => null;
+              `,
+              loader: "js",
+            }));
+          },
+        },
+      ],
+    });
+    const outBundle = path.join(tmpDir, "ctx-bundle.mjs");
+    fs.writeFileSync(outBundle, bundled.outputFiles[0].text, "utf8");
+    const mod = await import(pathToFileURL(outBundle).href);
+
+    const calls = [];
+    const base1 = {
+      push: (href, opts) => calls.push({ m: "push", href, opts }),
+      replace: (href, opts) => calls.push({ m: "replace", href, opts }),
+      back: () => {},
+      forward: () => {},
+      refresh: () => {},
+      refreshSlot: () => Promise.resolve(),
+    };
+    mod.__setBaseRouter(base1);
+    const r1 = mod.useRouter();
+    const r2 = mod.useRouter();
+    assert.strictEqual(
+      r1,
+      r2,
+      "Contextual useRouter() must return a referentially stable object when base router is unchanged"
+    );
+    r1.push("comments");
+    assert.deepEqual(calls[0], {
+      m: "push",
+      href: "comments",
+      opts: { from: "/blog/[slug]" },
+    });
+
+    const base2 = { ...base1 };
+    mod.__setBaseRouter(base2);
+    const r3 = mod.useRouter();
+    assert.notStrictEqual(
+      r1,
+      r3,
+      "Contextual useRouter() must recompute when base router changes"
+    );
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("2. getContext() fallback provides rawPath & isRscRequest without throwing outside an HTTP request", async () => {
+  const { getContext } = await import(
+    pathToFileURL(path.join(DINOU_ROOT, "core", "request-context.js")).href
+  );
+  const ctx = getContext();
+  assert.ok(ctx && typeof ctx === "object");
+  assert.equal(ctx.req.path, "/");
+  assert.equal(ctx.req.rawPath, "/");
+  assert.equal(ctx.req.isRscRequest, false);
+  assert.ok(ctx.env && typeof ctx.env === "object");
+});
+
+test("3. Multi-bundler (Esbuild, Rollup, Webpack) integration: plugin state propagates while rawPath/isRscRequest stay isolated across SSR and RSC fetches", async () => {
+  const bundlers = ["esbuild", "rollup", "webpack"];
+  for (const bundler of bundlers) {
+    const tmpApp = createFixtureDir(`tmp-ctx-ref2-${bundler}-`);
+    try {
+      fs.writeFileSync(
+        path.join(tmpApp, "package.json"),
+        JSON.stringify(
+          { name: `ctx-ref2-${bundler}`, type: "module", private: true },
+          null,
+          2
+        )
+      );
+
+      const dinouShimDir = path.join(tmpApp, "node_modules", "dinou");
+      fs.mkdirSync(dinouShimDir, { recursive: true });
+      const dinouIndexPath = path
+        .join(DINOU_ROOT, "index.js")
+        .replace(/\\/g, "/");
+      const dinouServerPath = path
+        .join(DINOU_ROOT, "server.js")
+        .replace(/\\/g, "/");
+      const dinouConfigPath = path
+        .join(DINOU_ROOT, "core", "config.js")
+        .replace(/\\/g, "/");
+      fs.writeFileSync(
+        path.join(dinouShimDir, "package.json"),
+        JSON.stringify(
+          {
+            name: "dinou",
+            version: "9.4.0",
+            type: "module",
+            exports: {
+              ".": "./index.js",
+              "./server": "./server.js",
+              "./config": "./config.js",
+            },
+          },
+          null,
+          2
+        )
+      );
+      fs.writeFileSync(
+        path.join(dinouShimDir, "index.js"),
+        `export * from ${JSON.stringify(dinouIndexPath)};\nexport { default } from ${JSON.stringify(dinouIndexPath)};\n`
+      );
+      fs.writeFileSync(
+        path.join(dinouShimDir, "server.js"),
+        `export * from ${JSON.stringify(dinouServerPath)};\n`
+      );
+      fs.writeFileSync(
+        path.join(dinouShimDir, "config.js"),
+        `export * from ${JSON.stringify(dinouConfigPath)};\nexport { default } from ${JSON.stringify(dinouConfigPath)};\n`
+      );
+
+      fs.writeFileSync(
+        path.join(tmpApp, "dinou.config.ts"),
+        `import { defineConfig } from "dinou/config";
+export default defineConfig({
+  plugins: [
+    {
+      name: "tenant-context",
+      onRequest(_req, ctx) {
+        ctx.tenant = "acme-corp";
+      },
+    },
+  ],
+});
+`
+      );
+
+      fs.mkdirSync(path.join(tmpApp, "src", "inspect"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpApp, "src", "layout.tsx"),
+        `import type { ReactNode } from "react";
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return <html><head><title>Ctx Test</title></head><body>{children}</body></html>;
+}
+`
+      );
+      fs.writeFileSync(
+        path.join(tmpApp, "src", "page.tsx"),
+        `export default function Home() { return <main>Home</main>; }\n`
+      );
+      fs.writeFileSync(
+        path.join(tmpApp, "src", "inspect", "page_functions.ts"),
+        `export const revalidate = 0;\n`
+      );
+      fs.writeFileSync(
+        path.join(tmpApp, "src", "inspect", "page.tsx"),
+        `import { getContext } from "./dinou";
+export default function InspectPage() {
+  const ctx = getContext();
+  return (
+    <main>
+      <div id="ctx-info">
+        {\`tenant=\${ctx.tenant}|path=\${ctx.req.path}|raw=\${ctx.req.rawPath}|rsc=\${String(ctx.req.isRscRequest)}\`}
+      </div>
+    </main>
+  );
+}
+`
+      );
+
+      const buildRes = spawnSync(
+        process.execPath,
+        [path.join(DINOU_ROOT, "cli.js"), `build:node:${bundler}`],
+        { cwd: tmpApp, encoding: "utf8" }
+      );
+      assert.equal(
+        buildRes.status,
+        0,
+        `Build failed for ${bundler}:\n${buildRes.stdout}\n${buildRes.stderr}`
+      );
+
+      const prevCwd = process.cwd();
+      process.chdir(tmpApp);
+      try {
+        const rscMod = await import(
+          pathToFileURL(
+            path.join(tmpApp, ".dinou", "node", "rsc-engine.mjs")
+          ).href + `?b=${bundler}&t=${Date.now()}`
+        );
+        const ssrMod = await import(
+          pathToFileURL(
+            path.join(tmpApp, ".dinou", "node", "ssr-engine.mjs")
+          ).href + `?b=${bundler}&t=${Date.now()}`
+        );
+
+        const ssrRes = await rscMod.handleRequest(
+          new Request("http://localhost:3000/inspect"),
+          { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml }
+        );
+        const ssrHtml = await ssrRes.text();
+        assert.match(
+          ssrHtml,
+          /tenant=acme-corp\|path=\/inspect\/?\|raw=\/inspect\|rsc=false/,
+          `[${bundler}] SSR context mismatch:\n${ssrHtml}`
+        );
+
+        const rscRes = await rscMod.handleRequest(
+          new Request("http://localhost:3000/____rsc_page____/inspect"),
+          { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml }
+        );
+        const rscText = await rscRes.text();
+        assert.match(
+          rscText,
+          /tenant=acme-corp\|path=\/inspect\/?\|raw=\/____rsc_page____\/inspect\|rsc=true/,
+          `[${bundler}] RSC wire context mismatch:\n${rscText}`
+        );
+      } finally {
+        process.chdir(prevCwd);
+      }
+    } finally {
+      fs.rmSync(tmpApp, { recursive: true, force: true });
+    }
+  }
+});
+```
+
+---
+
+### 5.2 Playwright E2E Test Suite (`tests/e2e/api-reference-context-types.spec.ts`)
+
+Add the following fixtures into `dinou-e2e`'s test app (`src/t-ctx-router/page.tsx`, `src/t-ctx-router/client-probe.tsx`, `src/t-ctx-router/child/page.tsx`, `src/t-ctx-router/child/page_functions.ts`) and run the Playwright spec below:
+
+#### Fixture A: `src/t-ctx-router/client-probe.tsx`
+```tsx
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "./dinou";
+
+export function ContextualRouterStabilityProbe() {
+  const router = useRouter();
+  const [count, setCount] = useState(0);
+  const effectRunsRef = useRef(0);
+  const [effectRuns, setEffectRuns] = useState(0);
+
+  useEffect(() => {
+    effectRunsRef.current += 1;
+    setEffectRuns(effectRunsRef.current);
+  }, [router]);
+
+  return (
+    <section>
+      <div data-testid="local-count">{count}</div>
+      <div data-testid="router-effect-runs">{effectRuns}</div>
+      <button
+        type="button"
+        data-testid="bump-local-state"
+        onClick={() => setCount((c) => c + 1)}
+      >
+        Bump State
+      </button>
+      <button
+        type="button"
+        data-testid="push-relative-child"
+        onClick={() => router.push("child")}
+      >
+        Go To Relative Child
+      </button>
+    </section>
+  );
+}
+```
+
+#### Fixture B: `src/t-ctx-router/page.tsx`
+```tsx
+import { ContextualRouterStabilityProbe } from "./client-probe";
+
+export default function ContextualRouterHomePage() {
+  return (
+    <main>
+      <h1>Contextual Router Probe</h1>
+      <ContextualRouterStabilityProbe />
+    </main>
+  );
+}
+```
+
+#### Fixture C: `src/t-ctx-router/child/page_functions.ts`
+```ts
+export const revalidate = 0;
+```
+
+#### Fixture D: `src/t-ctx-router/child/page.tsx`
+```tsx
+import { getContext } from "./dinou";
+
+export default function ContextualRouterChildPage() {
+  const ctx = getContext();
+  return (
+    <main>
+      <h1>Contextual Child</h1>
+      <div data-testid="ctx-path">{ctx.req.path}</div>
+      <div data-testid="ctx-raw-path">{ctx.req.rawPath}</div>
+      <div data-testid="ctx-is-rsc">{String(ctx.req.isRscRequest)}</div>
+    </main>
+  );
+}
+```
+
+#### Playwright Spec (`tests/e2e/api-reference-context-types.spec.ts`)
+```ts
+import { test, expect } from "@playwright/test";
+
+test.describe("API Reference Batch 2 — Contextual ./dinou useRouter() & getContext() Parity", () => {
+  test("1. Contextual ./dinou useRouter() stays referentially stable across unrelated local state updates and resolves relative routes", async ({
+    page,
+  }) => {
+    await page.goto("/t-ctx-router");
+
+    await expect(page.getByTestId("local-count")).toHaveText("0");
+    const initialEffectRuns = Number(
+      await page.getByTestId("router-effect-runs").textContent()
+    );
+    expect(initialEffectRuns).toBeGreaterThanOrEqual(1);
+
+    // Trigger 3 local state updates that must NOT cause contextual useRouter() to re-allocate
+    await page.getByTestId("bump-local-state").click();
+    await page.getByTestId("bump-local-state").click();
+    await page.getByTestId("bump-local-state").click();
+
+    await expect(page.getByTestId("local-count")).toHaveText("3");
+    await expect(page.getByTestId("router-effect-runs")).toHaveText(
+      String(initialEffectRuns)
+    );
+
+    // Trigger relative SPA navigation pre-bound to from="/t-ctx-router"
+    await page.getByTestId("push-relative-child").click();
+    await expect(page).toHaveURL(/\/t-ctx-router\/child\/?$/);
+
+    // On SPA RSC wire fetch, logical path is normalized while rawPath preserves wire URL & isRscRequest is true
+    await expect(page.getByTestId("ctx-path")).toHaveText(/^\/t-ctx-router\/child\/?$/);
+    await expect(page.getByTestId("ctx-raw-path")).toHaveText(
+      /^\/____rsc_page____\/t-ctx-router\/child\/?$/
+    );
+    await expect(page.getByTestId("ctx-is-rsc")).toHaveText("true");
+  });
+
+  test("2. Direct SSR navigation reports rawPath equal to pathname and isRscRequest=false", async ({
+    page,
+  }) => {
+    await page.goto("/t-ctx-router/child");
+
+    await expect(page.getByTestId("ctx-path")).toHaveText(/^\/t-ctx-router\/child\/?$/);
+    await expect(page.getByTestId("ctx-raw-path")).toHaveText(
+      /^\/t-ctx-router\/child\/?$/
+    );
+    await expect(page.getByTestId("ctx-is-rsc")).toHaveText("false");
+  });
+});
+```
+
+---
+
+### 5.3 Execution Commands
+
+```bash
+# 1. Syntax check modified framework files
+node --check dinou/core/generate-route-types.js
+node --check dinou/core/handler.js
+node --check dinou/core/request-context.js
+
+# 2. Run unit + 3-bundler (Esbuild, Rollup, Webpack) integration test suite
+node --test tests/unit/api-reference-context-types.test.mjs
+
+# 3. Run Playwright E2E suite (in dinou-e2e)
+npx playwright test tests/e2e/api-reference-context-types.spec.ts
+```
