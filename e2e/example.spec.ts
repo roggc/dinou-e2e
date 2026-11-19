@@ -15383,4 +15383,326 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
     });
   });
+
+  // =========================================================================
+  // API REFERENCE BATCH 1: NAVIGATION, <LINK>, REDIRECT(), USEROUTER() & USESEARCHPARAMS() (/t-api-ref-nav)
+  // =========================================================================
+  test.describe("API Reference Batch 1: Navigation, <Link>, redirect(), useRouter() & useSearchParams() (/t-api-ref-nav)", () => {
+    test("1. getProps/layout_functions redirect short-circuit (SSR + RSC), useRouter stability, <Link>/<a> target & download, hash+fresh, external navigation & PPR zero-hole useSearchParams", async ({
+      page,
+      context,
+      request,
+    }) => {
+      const http = await import("node:http");
+      const pageErrors: string[] = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      // Ephemeral strictly cross-origin HTTP server (127.0.0.1:<port> !== localhost:3000)
+      const externalServer = http.createServer((req, res) => {
+        const pathname = new URL(req.url || "/", "http://127.0.0.1").pathname;
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(
+          `<html><body><h1 data-testid="ext-landing">External:${pathname}</h1></body></html>`
+        );
+      });
+      await new Promise<void>((resolve) =>
+        externalServer.listen(0, "127.0.0.1", resolve)
+      );
+      const extAddr = externalServer.address();
+      const externalPort =
+        extAddr && typeof extAddr === "object" ? extAddr.port : 0;
+
+      try {
+        // 1A. Direct HTTP 302 redirect from page_functions.ts getProps() without crashing GuardedPage
+        const guardedHttp = await safeApiGet(request, "/t-api-ref-nav/guarded", {
+          maxRedirects: 0,
+        });
+        expect(guardedHttp.status()).toBe(302);
+        expect(guardedHttp.headers()["location"]).toMatch(
+          /\/t-api-ref-nav\/login\?from=guarded$/
+        );
+
+        // 1B. Direct RSC x-rsc-redirect from page_functions.ts getProps() (200, NOT 500)
+        const guardedRsc = await safeApiGet(
+          request,
+          "/____rsc_page____/t-api-ref-nav/guarded",
+          { maxRedirects: 0 }
+        );
+        expect(guardedRsc.status()).toBe(200);
+        expect(guardedRsc.headers()["x-rsc-redirect"]).toBe(
+          "/t-api-ref-nav/login?from=guarded"
+        );
+
+        // 1C. Authenticated /t-api-ref-nav/guarded renders Page, Layout & @sidebar
+        const guardedAuth = await safeApiGet(request, "/t-api-ref-nav/guarded", {
+          headers: { cookie: "api_ref_auth=valid" },
+          maxRedirects: 0,
+        });
+        expect(guardedAuth.status()).toBe(200);
+        const guardedAuthHtml = await guardedAuth.text();
+        expect(guardedAuthHtml).toContain("Grace");
+        expect(guardedAuthHtml).toContain("Guarded Sidebar");
+
+        // 1D. Direct HTTP 302 & RSC layout x-rsc-redirect from layout_functions.ts getProps()
+        const layoutGuardedHttp = await safeApiGet(
+          request,
+          "/t-api-ref-nav/layout-guarded",
+          { maxRedirects: 0 }
+        );
+        expect(layoutGuardedHttp.status()).toBe(302);
+        expect(layoutGuardedHttp.headers()["location"]).toMatch(
+          /\/t-api-ref-nav\/login\?from=layout$/
+        );
+
+        const layoutGuardedRsc = await safeApiGet(
+          request,
+          "/____rsc_layout____/t-api-ref-nav/layout-guarded",
+          { maxRedirects: 0 }
+        );
+        expect(layoutGuardedRsc.status()).toBe(200);
+        expect(layoutGuardedRsc.headers()["x-rsc-redirect"]).toBe(
+          "/t-api-ref-nav/login?from=layout"
+        );
+
+        const layoutAuth = await safeApiGet(
+          request,
+          "/t-api-ref-nav/layout-guarded",
+          {
+            headers: { cookie: "api_ref_tenant=acme" },
+            maxRedirects: 0,
+          }
+        );
+        expect(layoutAuth.status()).toBe(200);
+        expect(await layoutAuth.text()).toContain('data-tenant="Acme Corp"');
+
+        // 2. Hard browser navigation to /t-api-ref-nav/guarded redirects cleanly to login
+        const directPageRes = await page.goto("/t-api-ref-nav/guarded");
+        expect(directPageRes?.status()).toBe(200);
+        await expect(page).toHaveURL(/\/t-api-ref-nav\/login\?from=guarded$/);
+        await expect(page.getByTestId("api-nav-login-from")).toHaveText(
+          "from=guarded|q=empty"
+        );
+
+        // 3. PPR zero-hole page with useSearchParams() hydrates cleanly with query string
+        await page.goto("/t-api-ref-nav/ppr-search?q=batch1&page=4");
+        await page.waitForSelector('body[data-hydrated="true"]', {
+          state: "attached",
+          timeout: 15000,
+        });
+        await expect(page.getByTestId("api-nav-ppr-search-value")).toHaveText(
+          "ppr-zero-hole|q=batch1|page=4"
+        );
+
+        // 4. Hub page: verify useRouter() referential stability across local state changes (works in both Dev StrictMode & Prod)
+        await page.goto("/t-api-ref-nav");
+        await page.waitForSelector('body[data-hydrated="true"]', {
+          state: "attached",
+          timeout: 15000,
+        });
+        await expect(page.getByTestId("api-nav-heading")).toHaveText(
+          "API Reference Navigation Hub"
+        );
+        const initialEffectRuns = await page
+          .getByTestId("api-nav-effect-runs")
+          .textContent();
+        expect(initialEffectRuns).toMatch(/^EffectRuns:[12]$/);
+        await expect(page.getByTestId("api-nav-ref-changes")).toHaveText(
+          "RefChanges:0"
+        );
+        await page.getByTestId("api-nav-bump-local").click();
+        await page.getByTestId("api-nav-bump-local").click();
+        await expect(page.getByTestId("api-nav-bump-local")).toHaveText(
+          "Local:2"
+        );
+        await expect(page.getByTestId("api-nav-effect-runs")).toHaveText(
+          initialEffectRuns!
+        );
+        await expect(page.getByTestId("api-nav-ref-changes")).toHaveText(
+          "RefChanges:0"
+        );
+
+        // 5. <Link target="_blank"> and <Link download> skip hover prefetch and yield to browser
+        const rscPrefetchHits: string[] = [];
+        const prefetchWatcher = (req: { url: () => string }) => {
+          if (/\/____rsc_page(?:_old)?(?:_static)?____\/t-api-ref-nav\/report/.test(req.url())) {
+            rscPrefetchHits.push(req.url());
+          }
+        };
+        page.on("request", prefetchWatcher);
+        await page.getByTestId("api-nav-link-blank").hover();
+        await page.getByTestId("api-nav-link-download").hover();
+        await page.waitForTimeout(150);
+        expect(rscPrefetchHits).toEqual([]);
+        page.off("request", prefetchWatcher);
+
+        const [linkPopup] = await Promise.all([
+          context.waitForEvent("page"),
+          page.getByTestId("api-nav-link-blank").click(),
+        ]);
+        await linkPopup.waitForLoadState();
+        await expect(linkPopup).toHaveURL(/\/t-api-ref-nav\/report$/);
+        await expect(linkPopup.getByTestId("api-nav-report-page")).toContainText(
+          "API Ref Nav Report"
+        );
+        await expect(page).toHaveURL(/\/t-api-ref-nav$/);
+        await linkPopup.close();
+
+        const [linkDownload] = await Promise.all([
+          page.waitForEvent("download"),
+          page.getByTestId("api-nav-link-download").click(),
+        ]);
+        expect(linkDownload.suggestedFilename()).toBe("api-ref-report.html");
+        await expect(page).toHaveURL(/\/t-api-ref-nav$/);
+
+        // <Link target="_self"> performs normal SPA navigation
+        await page.getByTestId("api-nav-link-self").click();
+        await expect(page).toHaveURL(/\/t-api-ref-nav\/report$/);
+        await page.getByTestId("api-nav-report-back").click();
+        await expect(page).toHaveURL(/\/t-api-ref-nav$/);
+
+        // 6. Plain <a> global listener respects target="_blank", target="_self" (SPA), and download
+        const [anchorPopup] = await Promise.all([
+          context.waitForEvent("page"),
+          page.getByTestId("api-nav-anchor-blank").click(),
+        ]);
+        await anchorPopup.waitForLoadState();
+        await expect(anchorPopup).toHaveURL(/\/t-api-ref-nav\/report$/);
+        await expect(page).toHaveURL(/\/t-api-ref-nav$/);
+        await anchorPopup.close();
+
+        const [anchorDownload] = await Promise.all([
+          page.waitForEvent("download"),
+          page.getByTestId("api-nav-anchor-download").click(),
+        ]);
+        expect(anchorDownload.suggestedFilename()).toBe("brochure-2026.pdf");
+        await expect(page).toHaveURL(/\/t-api-ref-nav$/);
+
+        await page.evaluate(() => {
+          (window as any).__API_NAV_SPA_ALIVE__ = true;
+        });
+        await page.getByTestId("api-nav-anchor-self").click();
+        await expect(page).toHaveURL(/\/t-api-ref-nav\/report$/);
+        expect(
+          await page.evaluate(() => Boolean((window as any).__API_NAV_SPA_ALIVE__))
+        ).toBe(true);
+        await page.getByTestId("api-nav-report-back").click();
+        await expect(page).toHaveURL(/\/t-api-ref-nav$/);
+
+        // 7. Hash + fresh navigation strips #hash from RSC fetch URL (?____v____= in query) and busts cache
+        const counterRscUrls: string[] = [];
+        page.on("request", (req) => {
+          if (/\/____rsc_page(?:_old)?(?:_static)?____\/t-api-ref-nav\/counter/.test(req.url())) {
+            counterRscUrls.push(req.url());
+          }
+        });
+        await page.getByTestId("api-nav-link-hash-fresh").click();
+        await expect(page).toHaveURL(/\/t-api-ref-nav\/counter#target-sec$/);
+        const firstToken = await page
+          .getByTestId("api-nav-counter-token")
+          .textContent();
+        expect(firstToken).toBeTruthy();
+
+        await page.getByTestId("api-nav-counter-back").click();
+        await expect(page).toHaveURL(/\/t-api-ref-nav$/);
+
+        await page.getByTestId("api-nav-link-hash-fresh").click();
+        await expect(page).toHaveURL(/\/t-api-ref-nav\/counter#target-sec$/);
+        await expect(page.getByTestId("api-nav-counter-token")).not.toHaveText(
+          firstToken!
+        );
+        expect(counterRscUrls.length).toBeGreaterThanOrEqual(2);
+        expect(counterRscUrls.every((u) => !u.includes("#target-sec"))).toBe(
+          true
+        );
+        expect(
+          counterRscUrls.some(
+            (u) => u.includes("____v____=") && !u.includes("#target-sec")
+          )
+        ).toBe(true);
+
+        // 8. SPA navigation to /t-api-ref-nav/guarded and /t-api-ref-nav/layout-guarded redirects cleanly
+        await page.getByTestId("api-nav-counter-back").click();
+        await expect(page).toHaveURL(/\/t-api-ref-nav$/);
+        await page.getByTestId("api-nav-link-guarded").click();
+        await expect(page).toHaveURL(/\/t-api-ref-nav\/login\?from=guarded$/);
+        await expect(page.getByTestId("api-nav-login-from")).toHaveText(
+          "from=guarded|q=empty"
+        );
+
+        await page.getByTestId("api-nav-login-back").click();
+        await expect(page).toHaveURL(/\/t-api-ref-nav$/);
+        await page.getByTestId("api-nav-link-layout-guarded").click();
+        await expect(page).toHaveURL(/\/t-api-ref-nav\/login\?from=layout$/);
+        await expect(page.getByTestId("api-nav-login-from")).toHaveText(
+          "from=layout|q=empty"
+        );
+
+        // 9. External URL navigation via router.push(), router.replace() & <ClientRedirect /> (no SecurityError)
+        const extPushUrl = `http://127.0.0.1:${externalPort}/ext-push`;
+        await page.goto("/t-api-ref-nav");
+        await page.waitForSelector('body[data-hydrated="true"]', {
+          state: "attached",
+          timeout: 15000,
+        });
+        await page.getByTestId("api-nav-ext-url-input").fill(extPushUrl);
+        await page.getByTestId("api-nav-btn-ext-push").click();
+        await expect(page).toHaveURL(extPushUrl);
+        await expect(page.getByTestId("ext-landing")).toHaveText(
+          "External:/ext-push"
+        );
+
+        const extReplaceUrl = `http://127.0.0.1:${externalPort}/ext-replace`;
+        await page.goto("/t-api-ref-nav");
+        await page.waitForSelector('body[data-hydrated="true"]', {
+          state: "attached",
+          timeout: 15000,
+        });
+        await page.getByTestId("api-nav-ext-url-input").fill(extReplaceUrl);
+        await page.getByTestId("api-nav-btn-ext-replace").click();
+        await expect(page).toHaveURL(extReplaceUrl);
+        await expect(page.getByTestId("ext-landing")).toHaveText(
+          "External:/ext-replace"
+        );
+
+        const extClientRedirUrl = `http://127.0.0.1:${externalPort}/ext-client-redirect`;
+        await page.goto("/t-api-ref-nav");
+        await page.waitForSelector('body[data-hydrated="true"]', {
+          state: "attached",
+          timeout: 15000,
+        });
+        await page.getByTestId("api-nav-ext-url-input").fill(extClientRedirUrl);
+        await page.getByTestId("api-nav-btn-ext-client-redirect").click();
+        await expect(page).toHaveURL(extClientRedirUrl);
+        await expect(page.getByTestId("ext-landing")).toHaveText(
+          "External:/ext-client-redirect"
+        );
+
+        expect(pageErrors).toEqual([]);
+      } finally {
+        await new Promise<void>((resolve) =>
+          externalServer.close(() => resolve())
+        );
+      }
+    });
+
+    test("2. Standalone API Reference Batch 1 Verification Suite (scripts/verify-api-reference-fixes-1-ci.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "API Reference Batch 1 CLI & tri-bundler verification suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
+      test.setTimeout(360000);
+
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        [path.resolve("scripts/verify-api-reference-fixes-1-ci.mjs")],
+        { encoding: "utf8", timeout: 330000 }
+      );
+      expect(output).toContain(
+        "All 6 Dinou v9.4.0 API Reference Batch 1 Navigation, <Link>, redirect(), useRouter() & useSearchParams() verification suites PASSED!"
+      );
+    });
+  });
 });

@@ -285,6 +285,61 @@ async function probeBinary(binaryPath, port, label) {
       `✅ [Smoke] ${label} verified /t-eject & /t-eject/live (Ejected Mode sovereignty)`
     );
 
+    // Also probe /t-api-ref-nav (SSG + getProps/layout_functions redirect short-circuit on SSR & RSC)
+    const apiNavHubRes = await fetch(`http://127.0.0.1:${port}/t-api-ref-nav`, {
+      headers: { Accept: "text/html" },
+    });
+    const apiNavHubHtml = await apiNavHubRes.text();
+    if (
+      apiNavHubRes.status !== 200 ||
+      !apiNavHubHtml.includes("API Reference Navigation Hub")
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-api-ref-nav failed SSG check (${apiNavHubRes.status})`
+      );
+    }
+    const apiNavGuardedRes = await fetch(
+      `http://127.0.0.1:${port}/t-api-ref-nav/guarded`,
+      { headers: { Accept: "text/html" }, redirect: "manual" }
+    );
+    if (
+      apiNavGuardedRes.status !== 302 ||
+      apiNavGuardedRes.headers.get("location") !==
+        "/t-api-ref-nav/login?from=guarded"
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-api-ref-nav/guarded expected 302 -> /t-api-ref-nav/login?from=guarded, got ${apiNavGuardedRes.status} (${apiNavGuardedRes.headers.get("location")})`
+      );
+    }
+    const apiNavGuardedRscRes = await fetch(
+      `http://127.0.0.1:${port}/____rsc_page____/t-api-ref-nav/guarded`
+    );
+    if (
+      apiNavGuardedRscRes.status !== 200 ||
+      apiNavGuardedRscRes.headers.get("x-rsc-redirect") !==
+        "/t-api-ref-nav/login?from=guarded"
+    ) {
+      throw new Error(
+        `[Smoke] ${label} RSC /t-api-ref-nav/guarded expected 200 + x-rsc-redirect, got ${apiNavGuardedRscRes.status} (${apiNavGuardedRscRes.headers.get("x-rsc-redirect")})`
+      );
+    }
+    const apiNavLayoutGuardedRes = await fetch(
+      `http://127.0.0.1:${port}/t-api-ref-nav/layout-guarded`,
+      { headers: { Accept: "text/html" }, redirect: "manual" }
+    );
+    if (
+      apiNavLayoutGuardedRes.status !== 302 ||
+      apiNavLayoutGuardedRes.headers.get("location") !==
+        "/t-api-ref-nav/login?from=layout"
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-api-ref-nav/layout-guarded expected 302 -> /t-api-ref-nav/login?from=layout, got ${apiNavLayoutGuardedRes.status} (${apiNavLayoutGuardedRes.headers.get("location")})`
+      );
+    }
+    console.log(
+      `✅ [Smoke] ${label} verified /t-api-ref-nav (SSG + getProps/layout_functions SSR & RSC redirect short-circuit)`
+    );
+
     // Also probe a secondary route / RSC endpoint if available
     const candidateRoutes = ["/t-rigurous-hs", "/horizontal-segmentation-test", "/about"];
     for (const route of candidateRoutes) {
@@ -561,6 +616,42 @@ async function main() {
   ) {
     throw new Error(
       "[Smoke] export-static out/t-eject/index.html failed content check"
+    );
+  }
+  const outApiNavHtmlPath = path.join(outDir, "t-api-ref-nav", "index.html");
+  const outApiNavPageRscPath = path.join(outDir, "t-api-ref-nav", "page.rsc");
+  const outApiNavPprHtmlPath = path.join(
+    outDir,
+    "t-api-ref-nav",
+    "ppr-search",
+    "index.html"
+  );
+  const outApiNavPprPageRscPath = path.join(
+    outDir,
+    "t-api-ref-nav",
+    "ppr-search",
+    "page.rsc"
+  );
+  if (
+    !fs.existsSync(outApiNavHtmlPath) ||
+    !fs.existsSync(outApiNavPageRscPath) ||
+    !fs.existsSync(outApiNavPprHtmlPath) ||
+    !fs.existsSync(outApiNavPprPageRscPath)
+  ) {
+    throw new Error(
+      "[Smoke] export-static missing out/t-api-ref-nav or out/t-api-ref-nav/ppr-search index.html/page.rsc"
+    );
+  }
+  const outApiNavHtml = fs.readFileSync(outApiNavHtmlPath, "utf8");
+  const outApiNavPprHtml = fs.readFileSync(outApiNavPprHtmlPath, "utf8");
+  if (
+    !outApiNavHtml.includes("API Reference Navigation Hub") ||
+    !outApiNavHtml.includes("window.__DINOU_STATIC_EXPORT__=true;") ||
+    !outApiNavPprHtml.includes("API Ref Nav PPR Zero-Hole Search") ||
+    !outApiNavPprHtml.includes("window.__DINOU_STATIC_EXPORT__=true;")
+  ) {
+    throw new Error(
+      "[Smoke] export-static out/t-api-ref-nav/index.html or ppr-search/index.html failed content check"
     );
   }
   for (const netlifyArtifact of [

@@ -124,6 +124,14 @@ async function main() {
     "t-deployment/isg/[slug]",
     "t-eject",
     "t-eject/live",
+    "t-api-ref-nav",
+    "t-api-ref-nav/report",
+    "t-api-ref-nav/login",
+    "t-api-ref-nav/ppr-search",
+    "t-api-ref-nav/guarded",
+    "t-api-ref-nav/guarded/@sidebar",
+    "t-api-ref-nav/layout-guarded",
+    "t-api-ref-nav/counter",
   ];
   for (const rel of expectedRouteDirs) {
     assert(
@@ -177,6 +185,7 @@ async function main() {
     ...collectTsFiles(path.join(root, "src/t-bundlers")),
     ...collectTsFiles(path.join(root, "src/t-deployment")),
     ...collectTsFiles(path.join(root, "src/t-eject")),
+    ...collectTsFiles(path.join(root, "src/t-api-ref-nav")),
   ];
   const rootNames = [
     ...fixtureFiles,
