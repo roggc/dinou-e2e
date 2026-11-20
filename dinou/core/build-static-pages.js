@@ -155,9 +155,34 @@ async function buildStaticPages(onProgress = null) {
             getStaticPaths = module.getStaticPaths || defMod?.getStaticPaths;
             revalidate = module.revalidate ?? defMod?.revalidate;
           }
+          const lfPath = getLayoutFunctionsPath(dynamicPath);
+          if (lfPath) {
+            const lmod = await importModule(lfPath);
+            const ldefMod = lmod.default?.default ? lmod.default.default : lmod.default;
+            const lmodGetStaticPaths = lmod.getStaticPaths || ldefMod?.getStaticPaths;
+            const lmodRevalidate = lmod.revalidate ?? ldefMod?.revalidate;
+            if (!getStaticPaths && lmodGetStaticPaths) {
+              getStaticPaths = lmodGetStaticPaths;
+            }
+            if (revalidate === undefined && lmodRevalidate !== undefined) {
+              revalidate = lmodRevalidate;
+            }
+          }
           const isLocalPage =
             pagePath && path.dirname(pagePath) === dynamicPath;
-          if (isLocalPage && !(await isDynamicRoute(revalidate))) {
+          const [layoutPath] = getFilePathAndDynamicParams(
+            segments,
+            {},
+            dynamicPath,
+            "layout",
+            true,
+            true,
+            undefined,
+            segments.length,
+          );
+          const hasLocalLayout =
+            layoutPath && path.dirname(layoutPath) === dynamicPath;
+          if ((isLocalPage || hasLocalLayout) && !(await isDynamicRoute(revalidate))) {
             if (process.env.DINOU_DEBUG) {
               console.log(
                 `Found optional catch-all route: ${segments.join("/") ?? ""
@@ -301,9 +326,34 @@ async function buildStaticPages(onProgress = null) {
             getStaticPaths = module.getStaticPaths || defMod?.getStaticPaths;
             revalidate = module.revalidate ?? defMod?.revalidate;
           }
+          const lfPath = getLayoutFunctionsPath(dynamicPath);
+          if (lfPath) {
+            const lmod = await importModule(lfPath);
+            const ldefMod = lmod.default?.default ? lmod.default.default : lmod.default;
+            const lmodGetStaticPaths = lmod.getStaticPaths || ldefMod?.getStaticPaths;
+            const lmodRevalidate = lmod.revalidate ?? ldefMod?.revalidate;
+            if (!getStaticPaths && lmodGetStaticPaths) {
+              getStaticPaths = lmodGetStaticPaths;
+            }
+            if (revalidate === undefined && lmodRevalidate !== undefined) {
+              revalidate = lmodRevalidate;
+            }
+          }
           const isLocalPage =
             pagePath && path.dirname(pagePath) === dynamicPath;
-          if (isLocalPage && !(await isDynamicRoute(revalidate))) {
+          const [layoutPath] = getFilePathAndDynamicParams(
+            segments,
+            {},
+            dynamicPath,
+            "layout",
+            true,
+            true,
+            undefined,
+            segments.length,
+          );
+          const hasLocalLayout =
+            layoutPath && path.dirname(layoutPath) === dynamicPath;
+          if ((isLocalPage || hasLocalLayout) && !(await isDynamicRoute(revalidate))) {
             if (process.env.DINOU_DEBUG) {
               console.log(
                 `Found catch-all route: ${segments.join("/") ?? ""
@@ -410,9 +460,34 @@ async function buildStaticPages(onProgress = null) {
             getStaticPaths = module.getStaticPaths || defMod?.getStaticPaths;
             revalidate = module.revalidate ?? defMod?.revalidate;
           }
+          const lfPath = getLayoutFunctionsPath(dynamicPath);
+          if (lfPath) {
+            const lmod = await importModule(lfPath);
+            const ldefMod = lmod.default?.default ? lmod.default.default : lmod.default;
+            const lmodGetStaticPaths = lmod.getStaticPaths || ldefMod?.getStaticPaths;
+            const lmodRevalidate = lmod.revalidate ?? ldefMod?.revalidate;
+            if (!getStaticPaths && lmodGetStaticPaths) {
+              getStaticPaths = lmodGetStaticPaths;
+            }
+            if (revalidate === undefined && lmodRevalidate !== undefined) {
+              revalidate = lmodRevalidate;
+            }
+          }
           const isLocalPage =
             pagePath && path.dirname(pagePath) === dynamicPath;
-          if (isLocalPage && !(await isDynamicRoute(revalidate))) {
+          const [layoutPath] = getFilePathAndDynamicParams(
+            segments,
+            {},
+            dynamicPath,
+            "layout",
+            true,
+            true,
+            undefined,
+            segments.length,
+          );
+          const hasLocalLayout =
+            layoutPath && path.dirname(layoutPath) === dynamicPath;
+          if ((isLocalPage || hasLocalLayout) && !(await isDynamicRoute(revalidate))) {
             if (process.env.DINOU_DEBUG) {
               console.log(
                 `Found optional dynamic route: ${segments.join("/") ?? ""
