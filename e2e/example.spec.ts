@@ -16010,4 +16010,198 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
     });
   });
+
+  // =========================================================================
+  // API REFERENCE BATCH 4: ROUTE CONTRACTS PERIMETER VETO, allowISG NORMALIZATION & DYNAMIC LAYOUT getStaticPaths (/t-contract-veto)
+  // =========================================================================
+  test.describe("API Reference Batch 4: Route Contracts Perimeter Veto, allowISG Normalization & Dynamic Layout getStaticPaths (/t-contract-veto)", () => {
+    test("1. Numeric & catch-all allowISG=false, optional [[locale]] layout getStaticPaths, cached HTML+RSC validateParams veto & root-to-child short-circuit", async ({
+      page,
+      request,
+      browserName,
+    }) => {
+      const pageErrors: string[] = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      // Per-browser tenant ensures 100% isolation even under parallel local workers
+      const tenant = `acme-${browserName}`;
+
+      try {
+        // 1A. Numeric `{ tenant, id: 1 }` with allowISG=false must succeed
+        const initialRes = await page.goto(
+          `/t-contract-veto/${tenant}/items/1`
+        );
+        expect(initialRes?.status()).toBe(200);
+        await page.waitForSelector('body[data-hydrated="true"]', {
+          state: "attached",
+          timeout: 15000,
+        });
+        await expect(page.getByTestId("tenant-item")).toHaveText(
+          `Tenant:${tenant}:Item:1`
+        );
+
+        // 1B. Unlisted numeric id with allowISG=false must return 404 on HTML & RSC
+        const unlistedHtml = await safeApiGet(
+          request,
+          `/t-contract-veto/${tenant}/items/999`
+        );
+        expect(unlistedHtml.status()).toBe(404);
+        const unlistedRsc = await safeApiGet(
+          request,
+          `/____rsc_page____/t-contract-veto/${tenant}/items/999`
+        );
+        expect(unlistedRsc.status()).toBe(404);
+
+        // 1C. Catch-all array `{ slug: ["docs", "intro"] }` with allowISG=false -> 200 vs unlisted -> 404
+        const catchOkHtml = await safeApiGet(
+          request,
+          "/t-contract-veto/catch/docs/intro"
+        );
+        expect(catchOkHtml.status()).toBe(200);
+        expect(await catchOkHtml.text()).toContain("Catch:docs/intro");
+        const catchBlockedHtml = await safeApiGet(
+          request,
+          "/t-contract-veto/catch/docs/unknown"
+        );
+        expect(catchBlockedHtml.status()).toBe(404);
+        const catchBlockedRsc = await safeApiGet(
+          request,
+          "/____rsc_page____/t-contract-veto/catch/docs/unknown"
+        );
+        expect(catchBlockedRsc.status()).toBe(404);
+
+        // 1D. Optional [[locale]] layout_functions.ts getStaticPaths routes (leaf optional + child routes)
+        for (const [optPath, expectedLocale, expectedText] of [
+          ["/t-contract-veto/opt", "default", "OptIndex:default"],
+          ["/t-contract-veto/opt/en", "en", "OptIndex:en"],
+          ["/t-contract-veto/opt/es", "es", "OptIndex:es"],
+          ["/t-contract-veto/opt/en/about", "en", "OptAbout:en"],
+          ["/t-contract-veto/opt/es/about", "es", "OptAbout:es"],
+        ]) {
+          const optRes = await safeApiGet(request, optPath);
+          expect(optRes.status()).toBe(200);
+          const optHtml = await optRes.text();
+          expect(optHtml).toContain(`data-locale="${expectedLocale}"`);
+          expect(optHtml).toContain(expectedText);
+        }
+
+        // 2. Deactivate item while route is already cached -> HTML + page RSC (incl. static wire) 404, layout RSC 200
+        await page.goto("/t-contract-veto");
+        await page.waitForSelector('body[data-hydrated="true"]', {
+          state: "attached",
+          timeout: 15000,
+        });
+        await page.getByTestId("veto-tenant-input").fill(tenant);
+        await page.getByTestId("deactivate-item").click();
+        await expect(page.getByTestId("veto-status")).toHaveText(
+          `item-off:${tenant}`,
+          { timeout: 15000 }
+        );
+
+        expect(
+          (
+            await safeApiGet(request, `/t-contract-veto/${tenant}/items/1`)
+          ).status()
+        ).toBe(404);
+        expect(
+          (
+            await safeApiGet(
+              request,
+              `/____rsc_page____/t-contract-veto/${tenant}/items/1`
+            )
+          ).status()
+        ).toBe(404);
+        expect(
+          (
+            await safeApiGet(
+              request,
+              `/____rsc_page_static____/t-contract-veto/${tenant}/items/1`
+            )
+          ).status()
+        ).toBe(404);
+        expect(
+          (
+            await safeApiGet(
+              request,
+              `/____rsc_layout____/t-contract-veto/${tenant}`
+            )
+          ).status()
+        ).toBe(200);
+
+        // 3. Deactivate tenant layout while route is cached -> HTML + layout RSC + page RSC ALL 404
+        //    AND verify strict root-to-child short-circuit (child page validateParams NEVER runs)
+        await page.getByTestId("deactivate-tenant").click();
+        await expect(page.getByTestId("veto-status")).toHaveText(
+          `tenant-off:${tenant}`,
+          { timeout: 15000 }
+        );
+
+        expect(
+          (
+            await safeApiGet(request, `/t-contract-veto/${tenant}/items/1`)
+          ).status()
+        ).toBe(404);
+        expect(
+          (
+            await safeApiGet(
+              request,
+              `/____rsc_layout____/t-contract-veto/${tenant}`
+            )
+          ).status()
+        ).toBe(404);
+        expect(
+          (
+            await safeApiGet(
+              request,
+              `/____rsc_page____/t-contract-veto/${tenant}/items/1`
+            )
+          ).status()
+        ).toBe(404);
+
+        await page.getByTestId("read-validation-log").click();
+        await expect(page.getByTestId("veto-validation-log")).toHaveText(
+          JSON.stringify([
+            `layout:${tenant}`,
+            `layout:${tenant}`,
+            `layout:${tenant}`,
+          ]),
+          { timeout: 15000 }
+        );
+
+        expect(pageErrors).toEqual([]);
+      } finally {
+        await page.goto("/t-contract-veto");
+        await page.waitForSelector('body[data-hydrated="true"]', {
+          state: "attached",
+          timeout: 15000,
+        });
+        await page.getByTestId("veto-tenant-input").fill(tenant);
+        await page.getByTestId("reset-veto").click();
+        await expect(page.getByTestId("veto-status")).toHaveText(
+          `reset:${tenant}`,
+          { timeout: 15000 }
+        );
+      }
+    });
+
+    test("2. Standalone API Reference Batch 4 Verification Suite (scripts/verify-api-reference-fixes-4-ci.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "API Reference Batch 4 CLI & tri-bundler verification suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
+      test.setTimeout(360000);
+
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        [path.resolve("scripts/verify-api-reference-fixes-4-ci.mjs")],
+        { encoding: "utf8", timeout: 330000 }
+      );
+      expect(output).toContain(
+        "All 2 Dinou v9.4.0 API Reference Batch 4 Route Contracts, Perimeter Veto & Static Path Parity verification suites PASSED!"
+      );
+    });
+  });
 });

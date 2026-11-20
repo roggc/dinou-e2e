@@ -136,6 +136,12 @@ async function main() {
     "t-ctx-router/child",
     "t-slot-combo",
     "t-slot-combo/[scope]",
+    "t-contract-veto",
+    "t-contract-veto/[tenant]",
+    "t-contract-veto/[tenant]/items/[id]",
+    "t-contract-veto/catch/[...slug]",
+    "t-contract-veto/opt/[[locale]]",
+    "t-contract-veto/opt/[[locale]]/about",
   ];
   for (const rel of expectedRouteDirs) {
     assert(
@@ -220,6 +226,7 @@ async function main() {
     ...collectTsFiles(path.join(root, "src/t-api-ref-nav")),
     ...collectTsFiles(path.join(root, "src/t-ctx-router")),
     ...collectTsFiles(path.join(root, "src/t-slot-combo")),
+    ...collectTsFiles(path.join(root, "src/t-contract-veto")),
   ];
   const rootNames = [
     ...fixtureFiles,

@@ -27,6 +27,7 @@
     "test:api-ref-1": "node scripts/verify-api-reference-fixes-1-ci.mjs",
     "test:api-ref-2": "node scripts/verify-api-reference-fixes-2-ci.mjs",
     "test:api-ref-3": "node scripts/verify-api-reference-fixes-3-ci.mjs",
+    "test:api-ref-4": "node scripts/verify-api-reference-fixes-4-ci.mjs",
     "test:unit": "node --test tests/contracts-duality.test.js tests/ppr-use-search-params.test.js tests/server-functions-props-and-manifest.test.js tests/unit",
     "test:e2e:standalone": "playwright test -c playwright.standalone.config.ts",
     "test:hmr:ws": "node tests/hmr-websocket.test.mjs",

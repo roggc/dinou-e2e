@@ -409,6 +409,65 @@ async function probeBinary(binaryPath, port, label) {
       `✅ [Smoke] ${label} verified /t-slot-combo (SSG id-only & tag+tags DinouCacheSlot)`
     );
 
+    // Also probe /t-contract-veto (numeric & catch-all allowISG=false + optional [[locale]] layout_functions getStaticPaths)
+    const contractOkRes = await fetch(
+      `http://127.0.0.1:${port}/t-contract-veto/acme/items/1`,
+      { headers: { Accept: "text/html" } }
+    );
+    const contractOkHtml = await contractOkRes.text();
+    if (
+      contractOkRes.status !== 200 ||
+      !contractOkHtml.includes("Tenant:acme:Item:1")
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-contract-veto/acme/items/1 failed numeric allowISG=false check (${contractOkRes.status})`
+      );
+    }
+    const contractUnlistedRes = await fetch(
+      `http://127.0.0.1:${port}/t-contract-veto/acme/items/999`
+    );
+    const contractUnlistedRscRes = await fetch(
+      `http://127.0.0.1:${port}/____rsc_page____/t-contract-veto/acme/items/999`
+    );
+    if (
+      contractUnlistedRes.status !== 404 ||
+      contractUnlistedRscRes.status !== 404
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-contract-veto/acme/items/999 expected 404 HTML & RSC, got ${contractUnlistedRes.status}/${contractUnlistedRscRes.status}`
+      );
+    }
+    const contractCatchOk = await fetch(
+      `http://127.0.0.1:${port}/t-contract-veto/catch/docs/intro`,
+      { headers: { Accept: "text/html" } }
+    );
+    const contractCatchBad = await fetch(
+      `http://127.0.0.1:${port}/t-contract-veto/catch/docs/unknown`
+    );
+    if (contractCatchOk.status !== 200 || contractCatchBad.status !== 404) {
+      throw new Error(
+        `[Smoke] ${label} /t-contract-veto/catch allowISG=false check failed (${contractCatchOk.status}/${contractCatchBad.status})`
+      );
+    }
+    for (const [optUrl, expectedText] of [
+      ["/t-contract-veto/opt", "OptIndex:default"],
+      ["/t-contract-veto/opt/en/about", "OptAbout:en"],
+      ["/t-contract-veto/opt/es/about", "OptAbout:es"],
+    ]) {
+      const optRes = await fetch(`http://127.0.0.1:${port}${optUrl}`, {
+        headers: { Accept: "text/html" },
+      });
+      const optHtml = await optRes.text();
+      if (optRes.status !== 200 || !optHtml.includes(expectedText)) {
+        throw new Error(
+          `[Smoke] ${label} ${optUrl} failed optional [[locale]] layout_functions SSG check (${optRes.status})`
+        );
+      }
+    }
+    console.log(
+      `✅ [Smoke] ${label} verified /t-contract-veto (numeric & catch-all allowISG=false + optional [[locale]] layout getStaticPaths)`
+    );
+
     // Also probe a secondary route / RSC endpoint if available
     const candidateRoutes = ["/t-rigurous-hs", "/horizontal-segmentation-test", "/about"];
     for (const route of candidateRoutes) {
@@ -772,6 +831,27 @@ async function main() {
     throw new Error(
       "[Smoke] export-static out/t-slot-combo/index.html failed content check"
     );
+  }
+  for (const [relExportPath, expectedMarker] of [
+    ["t-contract-veto/acme/items/1/index.html", "Tenant:acme:Item:1"],
+    ["t-contract-veto/catch/docs/intro/index.html", "Catch:docs/intro"],
+    ["t-contract-veto/opt/index.html", "OptIndex:default"],
+    ["t-contract-veto/opt/en/about/index.html", "OptAbout:en"],
+    ["t-contract-veto/opt/es/about/index.html", "OptAbout:es"],
+  ]) {
+    const absExport = path.join(outDir, relExportPath);
+    if (!fs.existsSync(absExport)) {
+      throw new Error(`[Smoke] export-static missing out/${relExportPath}`);
+    }
+    const content = fs.readFileSync(absExport, "utf8");
+    if (
+      !content.includes(expectedMarker) ||
+      !content.includes("window.__DINOU_STATIC_EXPORT__=true;")
+    ) {
+      throw new Error(
+        `[Smoke] export-static out/${relExportPath} failed content check`
+      );
+    }
   }
   for (const netlifyArtifact of [
     ".dinou/netlify/functions/ssr.mjs",
