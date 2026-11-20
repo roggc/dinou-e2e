@@ -142,6 +142,12 @@ async function main() {
     "t-contract-veto/catch/[...slug]",
     "t-contract-veto/opt/[[locale]]",
     "t-contract-veto/opt/[[locale]]/about",
+    "t-pf-precedence/dyn",
+    "t-pf-precedence/static-override",
+    "t-pf-precedence/no-isg/[slug]",
+    "t-pf-precedence/yes-isg/[slug]",
+    "t-pf-precedence/default-fn/[slug]",
+    "t-pf-precedence/layout-override/[seg]",
   ];
   for (const rel of expectedRouteDirs) {
     assert(
@@ -227,6 +233,7 @@ async function main() {
     ...collectTsFiles(path.join(root, "src/t-ctx-router")),
     ...collectTsFiles(path.join(root, "src/t-slot-combo")),
     ...collectTsFiles(path.join(root, "src/t-contract-veto")),
+    ...collectTsFiles(path.join(root, "src/t-pf-precedence")),
   ];
   const rootNames = [
     ...fixtureFiles,

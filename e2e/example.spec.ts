@@ -16204,4 +16204,144 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
     });
   });
+
+  // =========================================================================
+  // PAGE_FUNCTIONS / LAYOUT_FUNCTIONS NAMED-OVER-DEFAULT PRECEDENCE (/t-pf-precedence)
+  // =========================================================================
+  test.describe("Page/Layout Functions Named-Over-Default Precedence (/t-pf-precedence)", () => {
+    test("1. Named revalidate & allowISG constants override default export functions in page_functions.ts & layout_functions.ts while default-only functions keep working", async ({
+      page,
+      request,
+      browserName,
+    }) => {
+      const pageErrors: string[] = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      // 1. Named revalidate = 0 overrides export default { revalidate: async () => 3600 }
+      const dynRes1 = await safeApiGet(request, "/t-pf-precedence/dyn");
+      expect(dynRes1.status()).toBe(200);
+      const dynHtml1 = await dynRes1.text();
+      const dynHit1 = dynHtml1.match(/hit:(\d+)/)?.[1];
+      expect(dynHit1).toBeTruthy();
+      expect(dynHtml1).toContain("spy:0");
+
+      const dynRes2 = await safeApiGet(request, "/t-pf-precedence/dyn");
+      expect(dynRes2.status()).toBe(200);
+      const dynHtml2 = await dynRes2.text();
+      const dynHit2 = dynHtml2.match(/hit:(\d+)/)?.[1];
+      expect(dynHit2).toBeTruthy();
+      expect(Number(dynHit2)).toBeGreaterThan(Number(dynHit1));
+      expect(dynHtml2).toContain("spy:0");
+
+      // 2. Named revalidate = false overrides export default { revalidate: () => 60 } (pure SSG in prod)
+      const staticRes1 = await safeApiGet(
+        request,
+        "/t-pf-precedence/static-override"
+      );
+      expect(staticRes1.status()).toBe(200);
+      const staticHtml1 = await staticRes1.text();
+      const staticHit1 = staticHtml1.match(/static-hit:(\d+)/)?.[1];
+      expect(staticHit1).toBeTruthy();
+      expect(staticHtml1).toContain("spy:0");
+      if (isProd) {
+        const staticRes2 = await safeApiGet(
+          request,
+          "/t-pf-precedence/static-override"
+        );
+        expect(staticRes2.status()).toBe(200);
+        expect(await staticRes2.text()).toContain(`static-hit:${staticHit1}`);
+      }
+
+      // 3. Named allowISG = false overrides export default { allowISG: async () => true }
+      const noIsgOk = await safeApiGet(
+        request,
+        "/t-pf-precedence/no-isg/allowed"
+      );
+      expect(noIsgOk.status()).toBe(200);
+      expect(await noIsgOk.text()).toContain("NoIsg:allowed|spy:0");
+
+      const noIsgBadHtml = await safeApiGet(
+        request,
+        "/t-pf-precedence/no-isg/unlisted"
+      );
+      expect(noIsgBadHtml.status()).toBe(404);
+      const noIsgBadRsc = await safeApiGet(
+        request,
+        "/____rsc_page____/t-pf-precedence/no-isg/unlisted"
+      );
+      expect(noIsgBadRsc.status()).toBe(404);
+
+      // 4. Named allowISG = true overrides export default { allowISG: () => false }
+      const uniqueIsgSlug = `ondemand-${browserName}-${Date.now()}`;
+      const yesIsgRes = await page.goto(
+        `/t-pf-precedence/yes-isg/${uniqueIsgSlug}`
+      );
+      expect(yesIsgRes?.status()).toBe(200);
+      await expect(page.getByTestId("pf-prec-yes-isg")).toHaveText(
+        `YesIsg:${uniqueIsgSlug}|spy:0`
+      );
+
+      // 5. Default-only functions (no named exports) still execute
+      const defOk = await safeApiGet(request, "/t-pf-precedence/default-fn/ok");
+      expect(defOk.status()).toBe(200);
+      expect(await defOk.text()).toContain("DefaultFn:ok");
+      const defBad = await safeApiGet(
+        request,
+        "/t-pf-precedence/default-fn/blocked"
+      );
+      expect(defBad.status()).toBe(404);
+
+      // 6. layout_functions.ts named revalidate = 0 + allowISG = false override default async functions
+      const lfRes1 = await safeApiGet(
+        request,
+        "/t-pf-precedence/layout-override/valid"
+      );
+      expect(lfRes1.status()).toBe(200);
+      const lfHtml1 = await lfRes1.text();
+      const lfHit1 = lfHtml1.match(/LfOverride:valid:hit:(\d+)/)?.[1];
+      expect(lfHit1).toBeTruthy();
+      expect(lfHtml1).toContain('data-spies="0:0"');
+
+      const lfRes2 = await safeApiGet(
+        request,
+        "/t-pf-precedence/layout-override/valid"
+      );
+      expect(lfRes2.status()).toBe(200);
+      const lfHtml2 = await lfRes2.text();
+      const lfHit2 = lfHtml2.match(/LfOverride:valid:hit:(\d+)/)?.[1];
+      expect(Number(lfHit2)).toBeGreaterThan(Number(lfHit1));
+      expect(lfHtml2).toContain('data-spies="0:0"');
+
+      const lfBadHtml = await safeApiGet(
+        request,
+        "/t-pf-precedence/layout-override/blocked"
+      );
+      expect(lfBadHtml.status()).toBe(404);
+      const lfBadRsc = await safeApiGet(
+        request,
+        "/____rsc_layout____/t-pf-precedence/layout-override/blocked"
+      );
+      expect(lfBadRsc.status()).toBe(404);
+
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("2. Unit & Tri-Bundler Page/Layout Functions Precedence Suite (tests/unit/page-functions-precedence.test.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "Page/layout functions tri-bundler precedence suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
+      test.setTimeout(360000);
+
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        ["--test", path.resolve("tests/unit/page-functions-precedence.test.mjs")],
+        { encoding: "utf8", timeout: 330000 }
+      );
+      expect(output).toContain("fail 0");
+    });
+  });
 });

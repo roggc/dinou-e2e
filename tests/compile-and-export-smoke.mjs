@@ -468,6 +468,68 @@ async function probeBinary(binaryPath, port, label) {
       `✅ [Smoke] ${label} verified /t-contract-veto (numeric & catch-all allowISG=false + optional [[locale]] layout getStaticPaths)`
     );
 
+    // Also probe /t-pf-precedence (named-over-default precedence for revalidate & allowISG)
+    const pfStaticRes = await fetch(
+      `http://127.0.0.1:${port}/t-pf-precedence/static-override`,
+      { headers: { Accept: "text/html" } }
+    );
+    const pfStaticHtml = await pfStaticRes.text();
+    if (
+      pfStaticRes.status !== 200 ||
+      !pfStaticHtml.includes("spy:0")
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-pf-precedence/static-override failed (${pfStaticRes.status})`
+      );
+    }
+    const pfNoIsgOk = await fetch(
+      `http://127.0.0.1:${port}/t-pf-precedence/no-isg/allowed`,
+      { headers: { Accept: "text/html" } }
+    );
+    const pfNoIsgBad = await fetch(
+      `http://127.0.0.1:${port}/t-pf-precedence/no-isg/unlisted`
+    );
+    if (pfNoIsgOk.status !== 200 || pfNoIsgBad.status !== 404) {
+      throw new Error(
+        `[Smoke] ${label} /t-pf-precedence/no-isg failed (${pfNoIsgOk.status}/${pfNoIsgBad.status})`
+      );
+    }
+    const pfYesIsgRes = await fetch(
+      `http://127.0.0.1:${port}/t-pf-precedence/yes-isg/smoke-isg`,
+      { headers: { Accept: "text/html" } }
+    );
+    const pfYesIsgHtml = await pfYesIsgRes.text();
+    if (
+      pfYesIsgRes.status !== 200 ||
+      !pfYesIsgHtml.includes("YesIsg:smoke-isg|spy:0")
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-pf-precedence/yes-isg/smoke-isg failed (${pfYesIsgRes.status})`
+      );
+    }
+    const pfDefOk = await fetch(
+      `http://127.0.0.1:${port}/t-pf-precedence/default-fn/ok`,
+      { headers: { Accept: "text/html" } }
+    );
+    const pfDefBad = await fetch(
+      `http://127.0.0.1:${port}/t-pf-precedence/default-fn/blocked`
+    );
+    const lfBad = await fetch(
+      `http://127.0.0.1:${port}/t-pf-precedence/layout-override/blocked`
+    );
+    if (
+      pfDefOk.status !== 200 ||
+      pfDefBad.status !== 404 ||
+      lfBad.status !== 404
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-pf-precedence default-fn/layout-override failed (${pfDefOk.status}/${pfDefBad.status}/${lfBad.status})`
+      );
+    }
+    console.log(
+      `✅ [Smoke] ${label} verified /t-pf-precedence (named-over-default revalidate & allowISG precedence)`
+    );
+
     // Also probe a secondary route / RSC endpoint if available
     const candidateRoutes = ["/t-rigurous-hs", "/horizontal-segmentation-test", "/about"];
     for (const route of candidateRoutes) {
@@ -838,6 +900,9 @@ async function main() {
     ["t-contract-veto/opt/index.html", "OptIndex:default"],
     ["t-contract-veto/opt/en/about/index.html", "OptAbout:en"],
     ["t-contract-veto/opt/es/about/index.html", "OptAbout:es"],
+    ["t-pf-precedence/static-override/index.html", "spy:0"],
+    ["t-pf-precedence/no-isg/allowed/index.html", "NoIsg:allowed|spy:0"],
+    ["t-pf-precedence/default-fn/ok/index.html", "DefaultFn:ok"],
   ]) {
     const absExport = path.join(outDir, relExportPath);
     if (!fs.existsSync(absExport)) {
@@ -850,6 +915,16 @@ async function main() {
     ) {
       throw new Error(
         `[Smoke] export-static out/${relExportPath} failed content check`
+      );
+    }
+  }
+  for (const forbiddenDynamicExport of [
+    "t-pf-precedence/dyn/index.html",
+    "t-pf-precedence/layout-override/valid/index.html",
+  ]) {
+    if (fs.existsSync(path.join(outDir, forbiddenDynamicExport))) {
+      throw new Error(
+        `[Smoke] export-static must NOT statically export dynamic named revalidate=0 route out/${forbiddenDynamicExport}`
       );
     }
   }
