@@ -682,11 +682,13 @@ async function DinouCacheSlot(props) {
     return await computeAnon();
   }
 
-  const allTags = Array.isArray(tags)
-    ? [...tags]
-    : tag
-    ? [tag]
-    : [];
+  const allTags = Array.from(
+    new Set(
+      [...(tag ? [tag] : []), ...(Array.isArray(tags) ? tags : [])].filter(
+        Boolean
+      )
+    )
+  );
   const slotTagsToCommit = Array.from(new Set([slotId, ...allTags].filter(Boolean)));
 
   const storageKey = `slots/${slotId}/slot.json`;
@@ -1114,11 +1116,11 @@ async function getSlotJSX(slotId, options = {}) {
         ? meta.revalidate
         : undefined;
 
-    const isNoCache = revalidateSeconds === 0;
+    const isNoCache = typeof revalidateSeconds === "number" && revalidateSeconds < 1;
     const isExpired =
       isNoCache ||
       (typeof revalidateSeconds === "number" &&
-        revalidateSeconds > 0 &&
+        revalidateSeconds >= 1 &&
         now > generatedAt + revalidateSeconds * 1000);
 
     const serveStaleWhileRevalidate =
@@ -1276,6 +1278,9 @@ async function getSlotJSX(slotId, options = {}) {
       slotRenderGenerations.set(storageKey, renderGen);
       const isLatestGen = () => slotRenderGenerations.get(storageKey) === renderGen;
 
+      const isEntryNoCache =
+        typeof entry.revalidate === "number" && entry.revalidate < 1;
+
       const renderPromise = (async () => {
         const resolved = await entry.render();
         const serialized = serializeJSX(resolved);
@@ -1285,7 +1290,7 @@ async function getSlotJSX(slotId, options = {}) {
             serialized,
           });
         }
-        if (storage && entry.revalidate !== 0 && isLatestGen()) {
+        if (storage && !isEntryNoCache && isLatestGen()) {
           await storage.set(storageKey, serialized, {
             tags: entry.tags,
             revalidate: entry.revalidate,
@@ -1314,7 +1319,7 @@ async function getSlotJSX(slotId, options = {}) {
 
       if (
         storage &&
-        entry.revalidate !== 0 &&
+        !isEntryNoCache &&
         !options.skipHostRevalidate &&
         options.currentPath &&
         isLatestGen()
@@ -1402,7 +1407,7 @@ async function hasExpiredSlots(slotTags) {
         : undefined;
     if (
       typeof revalidateSeconds === "number" &&
-      revalidateSeconds > 0 &&
+      revalidateSeconds >= 1 &&
       now > (meta.generatedAt || 0) + revalidateSeconds * 1000
     ) {
       return true;
