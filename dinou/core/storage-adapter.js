@@ -959,11 +959,14 @@ async function readDist2Fallback(storage, key, knownTags = []) {
           item.metadata?.generatedAt ||
           0
       );
+      const slotIdFromKey = writeKey.match(/^slots\/([^/]+)\//)?.[1];
       const combinedTags = new Set([
         ...(Array.isArray(item.metadata?.tags) ? item.metadata.tags : []),
         ...(!isShellJson && Array.isArray(item.metadata?.slotTags)
           ? item.metadata.slotTags
           : []),
+        ...(item.metadata?.slotId ? [item.metadata.slotId] : []),
+        ...(slotIdFromKey ? [slotIdFromKey] : []),
         ...(Array.isArray(knownTags) ? knownTags : []),
       ]);
       if (combinedTags.size > 0) {

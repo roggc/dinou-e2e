@@ -391,6 +391,24 @@ async function probeBinary(binaryPath, port, label) {
       `✅ [Smoke] ${label} verified /t-ctx-router & /t-ctx-router/child (contextual ./dinou + SSR/RSC rawPath & isRscRequest isolation)`
     );
 
+    // Also probe /t-slot-combo (SSG with <DinouCacheSlot id-only & tag+tags revalidate={false}>)
+    const slotComboRes = await fetch(`http://127.0.0.1:${port}/t-slot-combo`, {
+      headers: { Accept: "text/html" },
+    });
+    const slotComboHtml = await slotComboRes.text();
+    if (
+      slotComboRes.status !== 200 ||
+      !slotComboHtml.includes('data-testid="id-only-slot-value">id-v1<') ||
+      !slotComboHtml.includes('data-testid="combo-slot-value">combo-v1<')
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-slot-combo failed SSG DinouCacheSlot check (${slotComboRes.status})`
+      );
+    }
+    console.log(
+      `✅ [Smoke] ${label} verified /t-slot-combo (SSG id-only & tag+tags DinouCacheSlot)`
+    );
+
     // Also probe a secondary route / RSC endpoint if available
     const candidateRoutes = ["/t-rigurous-hs", "/horizontal-segmentation-test", "/about"];
     for (const route of candidateRoutes) {
@@ -733,6 +751,26 @@ async function main() {
   ) {
     throw new Error(
       "[Smoke] export-static out/t-ctx-router/index.html failed content check"
+    );
+  }
+  const outSlotComboHtmlPath = path.join(outDir, "t-slot-combo", "index.html");
+  const outSlotComboPageRscPath = path.join(outDir, "t-slot-combo", "page.rsc");
+  if (
+    !fs.existsSync(outSlotComboHtmlPath) ||
+    !fs.existsSync(outSlotComboPageRscPath)
+  ) {
+    throw new Error(
+      "[Smoke] export-static missing out/t-slot-combo/index.html or page.rsc"
+    );
+  }
+  const outSlotComboHtml = fs.readFileSync(outSlotComboHtmlPath, "utf8");
+  if (
+    !outSlotComboHtml.includes('data-testid="id-only-slot-value">id-v1<') ||
+    !outSlotComboHtml.includes('data-testid="combo-slot-value">combo-v1<') ||
+    !outSlotComboHtml.includes("window.__DINOU_STATIC_EXPORT__=true;")
+  ) {
+    throw new Error(
+      "[Smoke] export-static out/t-slot-combo/index.html failed content check"
     );
   }
   for (const netlifyArtifact of [

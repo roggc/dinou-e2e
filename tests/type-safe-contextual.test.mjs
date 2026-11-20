@@ -134,6 +134,8 @@ async function main() {
     "t-api-ref-nav/counter",
     "t-ctx-router",
     "t-ctx-router/child",
+    "t-slot-combo",
+    "t-slot-combo/[scope]",
   ];
   for (const rel of expectedRouteDirs) {
     assert(
@@ -217,6 +219,7 @@ async function main() {
     ...collectTsFiles(path.join(root, "src/t-eject")),
     ...collectTsFiles(path.join(root, "src/t-api-ref-nav")),
     ...collectTsFiles(path.join(root, "src/t-ctx-router")),
+    ...collectTsFiles(path.join(root, "src/t-slot-combo")),
   ];
   const rootNames = [
     ...fixtureFiles,

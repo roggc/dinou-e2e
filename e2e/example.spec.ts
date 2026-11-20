@@ -15848,4 +15848,166 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
     });
   });
+
+  // =========================================================================
+  // API REFERENCE BATCH 3: STORAGE ADAPTERS, <DinouCacheSlot> TAG+TAGS MERGE & COLD-POD REVALIDATION (/t-slot-combo)
+  // =========================================================================
+  test.describe("API Reference Batch 3: Storage Adapters, <DinouCacheSlot> Tag+Tags Merge & Cold-Pod Revalidation (/t-slot-combo)", () => {
+    test("1. Cold-pod revalidateTag(slotId) refreshes id-only slot without disturbing sibling slot, and tag+tags preserves singular tag", async ({
+      page,
+      request,
+      browserName,
+    }) => {
+      const pageErrors: string[] = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      // 1A. Verify unscoped SSG route /t-slot-combo responds 200 with both slot containers
+      const baseRes = await safeApiGet(request, "/t-slot-combo");
+      expect(baseRes.status()).toBe(200);
+      const baseHtml = await baseRes.text();
+      expect(baseHtml).toContain("Slot Tag &amp; Cold ID Revalidation");
+      expect(baseHtml).toContain('data-testid="id-only-slot-value"');
+      expect(baseHtml).toContain('data-testid="combo-slot-value"');
+
+      // 1B. Run live cold-pod slot revalidation on per-browser SSG route (/t-slot-combo/<browserName>)
+      //     so Chromium, Firefox & WebKit stay 100% isolated even under parallel local workers
+      const routePath = `/t-slot-combo/${browserName}`;
+      await page.goto(routePath);
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+
+      const idBefore = await page.getByTestId("id-only-slot-value").innerText();
+      const comboBefore = await page.getByTestId("combo-slot-value").innerText();
+      expect(idBefore).toBeTruthy();
+      expect(comboBefore).toBeTruthy();
+
+      const uniqueSuffix = `${browserName}-${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 6)}`;
+      const nextIdValue = `id-next-${uniqueSuffix}`;
+      const nextComboValue = `combo-next-${uniqueSuffix}`;
+
+      // Step 1: Clear in-memory slotRegistry (cold pod) & revalidate id-only slot by its `id`
+      await page.getByTestId("next-id-input").fill(nextIdValue);
+      await page.getByTestId("reval-id-only").click();
+      await expect(page.getByTestId("slot-action-status")).toHaveText(
+        `done-id:${nextIdValue}`,
+        { timeout: 15000 }
+      );
+
+      await page.reload();
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+      await expect(page.getByTestId("id-only-slot-value")).toHaveText(
+        nextIdValue,
+        { timeout: 15000 }
+      );
+      await expect(page.getByTestId("combo-slot-value")).toHaveText(
+        comboBefore,
+        { timeout: 15000 }
+      );
+
+      // Step 2: Revalidate combo slot using singular `tag` prop (coexisting with `tags={[...]}`)
+      await page.getByTestId("next-combo-input").fill(nextComboValue);
+      await page.getByTestId("reval-combo-primary").click();
+      await expect(page.getByTestId("slot-action-status")).toHaveText(
+        `done-combo:${nextComboValue}`,
+        { timeout: 15000 }
+      );
+
+      await page.reload();
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+      await expect(page.getByTestId("id-only-slot-value")).toHaveText(
+        nextIdValue,
+        { timeout: 15000 }
+      );
+      await expect(page.getByTestId("combo-slot-value")).toHaveText(
+        nextComboValue,
+        { timeout: 15000 }
+      );
+
+      // Step 3 (Chromium): Also verify live cold-pod revalidation on the unscoped /t-slot-combo route
+      if (browserName === "chromium") {
+        await page.goto("/t-slot-combo");
+        await page.waitForSelector('body[data-hydrated="true"]', {
+          state: "attached",
+          timeout: 15000,
+        });
+        const unscopedComboBefore = await page
+          .getByTestId("combo-slot-value")
+          .innerText();
+        const unscopedIdNext = `id-unscoped-${uniqueSuffix}`;
+        const unscopedComboNext = `combo-unscoped-${uniqueSuffix}`;
+
+        await page.getByTestId("next-id-input").fill(unscopedIdNext);
+        await page.getByTestId("reval-id-only").click();
+        await expect(page.getByTestId("slot-action-status")).toHaveText(
+          `done-id:${unscopedIdNext}`,
+          { timeout: 15000 }
+        );
+        await page.reload();
+        await page.waitForSelector('body[data-hydrated="true"]', {
+          state: "attached",
+          timeout: 15000,
+        });
+        await expect(page.getByTestId("id-only-slot-value")).toHaveText(
+          unscopedIdNext,
+          { timeout: 15000 }
+        );
+        await expect(page.getByTestId("combo-slot-value")).toHaveText(
+          unscopedComboBefore,
+          { timeout: 15000 }
+        );
+
+        await page.getByTestId("next-combo-input").fill(unscopedComboNext);
+        await page.getByTestId("reval-combo-primary").click();
+        await expect(page.getByTestId("slot-action-status")).toHaveText(
+          `done-combo:${unscopedComboNext}`,
+          { timeout: 15000 }
+        );
+        await page.reload();
+        await page.waitForSelector('body[data-hydrated="true"]', {
+          state: "attached",
+          timeout: 15000,
+        });
+        await expect(page.getByTestId("id-only-slot-value")).toHaveText(
+          unscopedIdNext,
+          { timeout: 15000 }
+        );
+        await expect(page.getByTestId("combo-slot-value")).toHaveText(
+          unscopedComboNext,
+          { timeout: 15000 }
+        );
+      }
+
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("2. Standalone API Reference Batch 3 Verification Suite (scripts/verify-api-reference-fixes-3-ci.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "API Reference Batch 3 CLI & tri-bundler verification suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
+      test.setTimeout(360000);
+
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        [path.resolve("scripts/verify-api-reference-fixes-3-ci.mjs")],
+        { encoding: "utf8", timeout: 330000 }
+      );
+      expect(output).toContain(
+        "All 4 Dinou v9.4.0 API Reference Batch 3 Storage Adapters, <DinouCacheSlot> & Cold-Pod Revalidation verification suites PASSED!"
+      );
+    });
+  });
 });
