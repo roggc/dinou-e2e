@@ -16430,12 +16430,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       });
       page.on("pageerror", (err) => pageErrors.push(err.message));
 
-      // 1A. Root route `/` raw HTTP check + CSS1Compat
+      // 1A. Root route `/` raw HTTP check + root `src/layout.tsx` CSS1Compat check
+      // (Use `/t-public-assets` for browser navigation on root layout so `src/page.tsx`'s mount `redirect()` Server Function isn't aborted mid-flight.)
       const rootRes = await safeApiGet(request, "/");
       expect(rootRes.status()).toBe(200);
       assertStandardsHeadOrdering(await rootRes.text(), "root /");
 
-      await page.goto("/");
+      await page.goto("/t-public-assets");
       await page.waitForSelector('body[data-hydrated="true"]', {
         state: "attached",
         timeout: 15000,
