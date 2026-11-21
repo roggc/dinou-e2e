@@ -16342,4 +16342,239 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(output).toContain("fail 0");
     });
   });
+
+  // =========================================================================
+  // HTML5 STANDARDS MODE & IMPORTMAP <HEAD> INJECTION ORDERING (/t-importmap-head)
+  // =========================================================================
+  test.describe("HTML5 Standards Mode & Importmap <head> Ordering (/t-importmap-head)", () => {
+    const assertStandardsHeadOrdering = (
+      html: string,
+      label: string,
+      { expectOgImage = false } = {}
+    ) => {
+      // 1. DOCTYPE must be at byte 0 (prevents Quirks Mode & HTML5 parse errors)
+      expect(
+        html.startsWith("<!DOCTYPE html>"),
+        `[${label}] HTML must start with <!DOCTYPE html> at byte 0, got: ${html.slice(0, 120)}`
+      ).toBe(true);
+
+      const headOpenIdx = html.search(/<head(?:\s[^>]*)?>/i);
+      const headCloseIdx = html.search(/<\/head>/i);
+      expect(headOpenIdx, `[${label}] missing <head>`).toBeGreaterThan(-1);
+      expect(headCloseIdx, `[${label}] missing </head>`).toBeGreaterThan(
+        headOpenIdx
+      );
+
+      const headHtml = html.slice(headOpenIdx, headCloseIdx);
+
+      if (expectOgImage) {
+        const ogImageAbsIdx = html.indexOf("og:image");
+        expect(
+          ogImageAbsIdx,
+          `[${label}] missing og:image meta tag`
+        ).toBeGreaterThan(-1);
+        expect(
+          Buffer.byteLength(html.slice(0, ogImageAbsIdx), "utf8"),
+          `[${label}] og:image must appear within first 4 KB (before any large importmap)`
+        ).toBeLessThan(4096);
+      }
+
+      // 2. Non-Webpack builds (Esbuild / Rollup) emit exactly 1 <script type="importmap"> strictly inside <head>
+      const importMapMatches = html.match(/<script\s+type="importmap">/g) || [];
+      expect(
+        importMapMatches.length,
+        `[${label}] must never emit duplicate importmap tags`
+      ).toBeLessThanOrEqual(1);
+
+      if (importMapMatches.length === 1) {
+        const importMapIdx = headHtml.indexOf('<script type="importmap">');
+        expect(
+          importMapIdx,
+          `[${label}] <script type="importmap"> must appear strictly inside <head>`
+        ).toBeGreaterThan(-1);
+
+        // All <title> and <meta> tags must appear BEFORE <script type="importmap">
+        const lastMetaIdx = Math.max(
+          headHtml.lastIndexOf("<meta "),
+          headHtml.lastIndexOf("<title>")
+        );
+        if (lastMetaIdx !== -1) {
+          expect(
+            lastMetaIdx,
+            `[${label}] <title>/<meta> tags must precede <script type="importmap">`
+          ).toBeLessThan(importMapIdx);
+        }
+
+        // Every <link rel="modulepreload"> in <head> must appear AFTER <script type="importmap">
+        const firstModulePreloadIdx = headHtml.search(
+          /<link\b[^>]*\brel="modulepreload"/i
+        );
+        if (firstModulePreloadIdx !== -1) {
+          expect(
+            importMapIdx,
+            `[${label}] <script type="importmap"> must precede <link rel="modulepreload">`
+          ).toBeLessThan(firstModulePreloadIdx);
+        }
+      }
+    };
+
+    test("1. Renders <!DOCTYPE html> at byte 0, CSS1Compat Standards Mode, valid <head> ordering & hydration across /, SSG, Dynamic SSR, PPR & no_layout", async ({
+      page,
+      request,
+      browserName,
+    }) => {
+      const consoleErrors: string[] = [];
+      const pageErrors: string[] = [];
+      page.on("console", (msg) => {
+        if (msg.type() === "error") consoleErrors.push(msg.text());
+      });
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      // 1A. Root route `/` raw HTTP check + CSS1Compat
+      const rootRes = await safeApiGet(request, "/");
+      expect(rootRes.status()).toBe(200);
+      assertStandardsHeadOrdering(await rootRes.text(), "root /");
+
+      await page.goto("/");
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+      expect(await page.evaluate(() => document.compatMode)).toBe("CSS1Compat");
+
+      // 1B. SSG route `/t-importmap-head` with OG/SEO <meta>, UTF-8 & client hydration
+      const ssgRes = await safeApiGet(request, "/t-importmap-head");
+      expect(ssgRes.status()).toBe(200);
+      const ssgHtml = await ssgRes.text();
+      assertStandardsHeadOrdering(ssgHtml, "SSG /t-importmap-head", {
+        expectOgImage: true,
+      });
+      expect(ssgHtml).toContain("Hola — Dinou 🚀");
+
+      await page.goto("/t-importmap-head");
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+      expect(await page.evaluate(() => document.compatMode)).toBe("CSS1Compat");
+      await expect(page.getByTestId("importmap-head-heading")).toHaveText(
+        "Hola — Dinou 🚀"
+      );
+      await page.getByTestId("importmap-count-btn-ssg").click();
+      await expect(page.getByTestId("importmap-count-val-ssg")).toHaveText(
+        "Count:1"
+      );
+
+      // 1C. Dynamic SSR route `/t-importmap-head/dynamic` (streaming path without waitForAll)
+      const dynTag = `ssr-${browserName}-${Date.now()}`;
+      const dynRes = await safeApiGet(
+        request,
+        `/t-importmap-head/dynamic?q=${dynTag}`
+      );
+      expect(dynRes.status()).toBe(200);
+      const dynHtml = await dynRes.text();
+      assertStandardsHeadOrdering(dynHtml, "Dynamic SSR /t-importmap-head/dynamic", {
+        expectOgImage: true,
+      });
+      expect(dynHtml).toContain(`Query:${dynTag}`);
+
+      await page.goto(`/t-importmap-head/dynamic?q=${dynTag}`);
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+      expect(await page.evaluate(() => document.compatMode)).toBe("CSS1Compat");
+      await expect(page.getByTestId("importmap-dynamic-query")).toHaveText(
+        `Query:${dynTag}`
+      );
+      await page.getByTestId("importmap-count-btn-dynamic").click();
+      await expect(page.getByTestId("importmap-count-val-dynamic")).toHaveText(
+        "Count:1"
+      );
+
+      // 1D. PPR route `/t-importmap-head/ppr` (shell + dynamic hole must emit <= 1 importmap & CSS1Compat)
+      const pprTag = `ppr-${browserName}-${Date.now()}`;
+      const pprRes = await safeApiGet(
+        request,
+        `/t-importmap-head/ppr?tag=${pprTag}`
+      );
+      expect(pprRes.status()).toBe(200);
+      const pprHtml = await pprRes.text();
+      assertStandardsHeadOrdering(pprHtml, "PPR /t-importmap-head/ppr", {
+        expectOgImage: true,
+      });
+      expect(pprHtml).toContain(`PPR Hole — ${pprTag} 🚀`);
+
+      await page.goto(`/t-importmap-head/ppr?tag=${pprTag}`);
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+      expect(await page.evaluate(() => document.compatMode)).toBe("CSS1Compat");
+      await expect(page.getByTestId("importmap-ppr-hole")).toHaveText(
+        `PPR Hole — ${pprTag} 🚀`
+      );
+      await page.getByTestId("importmap-count-btn-ppr").click();
+      await expect(page.getByTestId("importmap-count-val-ppr")).toHaveText(
+        "Count:1"
+      );
+
+      // 1E. Standalone `no_layout` full HTML document `/t-importmap-head/no-layout-full`
+      const noLayoutRes = await safeApiGet(
+        request,
+        "/t-importmap-head/no-layout-full"
+      );
+      expect(noLayoutRes.status()).toBe(200);
+      assertStandardsHeadOrdering(
+        await noLayoutRes.text(),
+        "no_layout full /t-importmap-head/no-layout-full",
+        { expectOgImage: true }
+      );
+
+      await page.goto("/t-importmap-head/no-layout-full");
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+      expect(await page.evaluate(() => document.compatMode)).toBe("CSS1Compat");
+      await page.getByTestId("importmap-count-btn-nolayout").click();
+      await expect(page.getByTestId("importmap-count-val-nolayout")).toHaveText(
+        "Count:1"
+      );
+
+      // 1F. Bare `no_layout` <header> fragment `/t-importmap-head/bare-fragment` (must never stall or confuse <header> with <head>)
+      const bareRes = await safeApiGet(
+        request,
+        "/t-importmap-head/bare-fragment"
+      );
+      expect(bareRes.status()).toBe(200);
+      const bareHtml = await bareRes.text();
+      expect(bareHtml).toContain("Bare Header — No Layout");
+      expect(bareHtml).toContain("Bare Fragment Body 🚀");
+
+      const fatalErrors = consoleErrors.filter((e) =>
+        /import map|hydration|418|419|422/i.test(e)
+      );
+      expect(fatalErrors).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("2. Unit & Tri-Bundler Importmap <head> Injection Suite (tests/unit/importmap-head-injection.test.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "Importmap head injection unit & tri-bundler suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
+      test.setTimeout(360000);
+
+      const { execFileSync } = await import("child_process");
+      const output = execFileSync(
+        process.execPath,
+        ["--test", path.resolve("tests/unit/importmap-head-injection.test.mjs")],
+        { encoding: "utf8", timeout: 330000 }
+      );
+      expect(output).toContain("fail 0");
+    });
+  });
 });

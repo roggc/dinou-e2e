@@ -22,6 +22,44 @@ function run(cmd) {
   });
 }
 
+function assertHeadImportmapOrder(html, label, { expectOgImage = false } = {}) {
+  if (!html.startsWith("<!DOCTYPE html>")) {
+    throw new Error(
+      `[Smoke] ${label} must start with <!DOCTYPE html> at byte 0, got: ${html.slice(0, 120)}`
+    );
+  }
+  const headOpen = html.search(/<head(?:\s[^>]*)?>/i);
+  const headClose = html.search(/<\/head>/i);
+  if (headOpen === -1 || headClose <= headOpen) {
+    throw new Error(`[Smoke] ${label} missing valid <head>...</head>`);
+  }
+  const headHtml = html.slice(headOpen, headClose);
+  const matches = html.match(/<script\s+type="importmap">/g) || [];
+  if (matches.length !== 1) {
+    throw new Error(
+      `[Smoke] ${label} expected exactly 1 importmap tag in esbuild build, got ${matches.length}`
+    );
+  }
+  const importMapIdx = headHtml.indexOf('<script type="importmap">');
+  if (importMapIdx === -1) {
+    throw new Error(`[Smoke] ${label} importmap must live strictly inside <head>`);
+  }
+  if (expectOgImage) {
+    const ogIdx = headHtml.indexOf("og:image");
+    if (ogIdx === -1 || ogIdx >= importMapIdx) {
+      throw new Error(
+        `[Smoke] ${label} og:image must appear inside <head> before <script type="importmap">`
+      );
+    }
+  }
+  const firstPreload = headHtml.search(/<link\b[^>]*\brel="modulepreload"/i);
+  if (firstPreload !== -1 && importMapIdx >= firstPreload) {
+    throw new Error(
+      `[Smoke] ${label} <script type="importmap"> must appear before <link rel="modulepreload">`
+    );
+  }
+}
+
 async function probeBinary(binaryPath, port, label) {
   console.log(`\n🚀 [Smoke] Spawning ${label} binary (${binaryPath}) on port ${port}...`);
   const child = spawn(binaryPath, [], {
@@ -530,6 +568,44 @@ async function probeBinary(binaryPath, port, label) {
       `✅ [Smoke] ${label} verified /t-pf-precedence (named-over-default revalidate & allowISG precedence)`
     );
 
+    // Also probe /t-importmap-head (SSG, Dynamic SSR, PPR & bare no_layout fragment: DOCTYPE byte 0 + <head> importmap ordering)
+    for (const [probeUrl, expectOg, expectedMarker] of [
+      ["/t-importmap-head", true, "Hola — Dinou 🚀"],
+      ["/t-importmap-head/dynamic?q=smoke", true, "Query:smoke"],
+      ["/t-importmap-head/ppr?tag=smoke", true, "PPR Hole — smoke 🚀"],
+      ["/t-importmap-head/no-layout-full", true, "Standalone — No Layout 🚀"],
+    ]) {
+      const impRes = await fetch(`http://127.0.0.1:${port}${probeUrl}`, {
+        headers: { Accept: "text/html" },
+      });
+      const impHtml = await impRes.text();
+      if (impRes.status !== 200 || !impHtml.includes(expectedMarker)) {
+        throw new Error(
+          `[Smoke] ${label} ${probeUrl} failed (${impRes.status})`
+        );
+      }
+      assertHeadImportmapOrder(impHtml, `${label} ${probeUrl}`, {
+        expectOgImage: expectOg,
+      });
+    }
+    const bareRes = await fetch(
+      `http://127.0.0.1:${port}/t-importmap-head/bare-fragment`,
+      { headers: { Accept: "text/html" } }
+    );
+    const bareHtml = await bareRes.text();
+    if (
+      bareRes.status !== 200 ||
+      !bareHtml.includes("Bare Header — No Layout") ||
+      !bareHtml.includes("Bare Fragment Body 🚀")
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-importmap-head/bare-fragment failed (${bareRes.status})`
+      );
+    }
+    console.log(
+      `✅ [Smoke] ${label} verified /t-importmap-head (DOCTYPE byte 0, <head> importmap ordering, PPR <=1 importmap & bare no_layout)`
+    );
+
     // Also probe a secondary route / RSC endpoint if available
     const candidateRoutes = ["/t-rigurous-hs", "/horizontal-segmentation-test", "/about"];
     for (const route of candidateRoutes) {
@@ -903,6 +979,8 @@ async function main() {
     ["t-pf-precedence/static-override/index.html", "spy:0"],
     ["t-pf-precedence/no-isg/allowed/index.html", "NoIsg:allowed|spy:0"],
     ["t-pf-precedence/default-fn/ok/index.html", "DefaultFn:ok"],
+    ["t-importmap-head/index.html", "Hola — Dinou 🚀"],
+    ["t-importmap-head/no-layout-full/index.html", "Standalone — No Layout 🚀"],
   ]) {
     const absExport = path.join(outDir, relExportPath);
     if (!fs.existsSync(absExport)) {
@@ -917,10 +995,17 @@ async function main() {
         `[Smoke] export-static out/${relExportPath} failed content check`
       );
     }
+    if (relExportPath.startsWith("t-importmap-head/")) {
+      assertHeadImportmapOrder(content, `export-static out/${relExportPath}`, {
+        expectOgImage: true,
+      });
+    }
   }
+  assertHeadImportmapOrder(outIndexHtml, "export-static out/index.html");
   for (const forbiddenDynamicExport of [
     "t-pf-precedence/dyn/index.html",
     "t-pf-precedence/layout-override/valid/index.html",
+    "t-importmap-head/dynamic/index.html",
   ]) {
     if (fs.existsSync(path.join(outDir, forbiddenDynamicExport))) {
       throw new Error(
