@@ -22,7 +22,7 @@ function resolveDinouRoot(): string {
 
 const dinouRoot = resolveDinouRoot();
 const cliPath = path.join(dinouRoot, "cli.js");
-const repoRoot = path.resolve(dinouRoot, "..");
+const repoRoot = process.cwd();
 
 async function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {

@@ -21,14 +21,17 @@ delete process.env.DINOU_BUILD_TOOL;
 
 const projectRoot = process.cwd();
 
-function resolveDinouInternal(relFromDinou) {
+function resolveDinouInternalPath(relFromDinou) {
   const candidates = [
     path.resolve(projectRoot, "dinou", relFromDinou),
     path.resolve(projectRoot, "node_modules/dinou/dinou", relFromDinou),
     path.resolve(projectRoot, "node_modules/dinou", relFromDinou),
   ];
-  const found = candidates.find((p) => fs.existsSync(p)) ?? candidates[0];
-  return pathToFileURL(found).href;
+  return candidates.find((p) => fs.existsSync(p)) ?? candidates[0];
+}
+
+function resolveDinouInternal(relFromDinou) {
+  return pathToFileURL(resolveDinouInternalPath(relFromDinou)).href;
 }
 
 const {
@@ -402,7 +405,7 @@ console.log(
     "deno/build.js",
   ];
   for (const relCompiler of compilerFiles) {
-    const absCompiler = path.resolve(projectRoot, "dinou", relCompiler);
+    const absCompiler = resolveDinouInternalPath(relCompiler);
     const src = fs.readFileSync(absCompiler, "utf8");
     assert.ok(
       src.includes("buildSsrServerReferenceModule"),
@@ -425,13 +428,11 @@ const proxyTmpDir = path.join(
 try {
   fs.mkdirSync(proxyTmpDir, { recursive: true });
 
-  const esmProxySrc = path.resolve(
-    projectRoot,
-    "dinou/core/server-function-proxy.js"
+  const esmProxySrc = resolveDinouInternalPath(
+    "core/server-function-proxy.js"
   );
-  const webpackProxySrc = path.resolve(
-    projectRoot,
-    "dinou/core/server-function-proxy-webpack.js"
+  const webpackProxySrc = resolveDinouInternalPath(
+    "core/server-function-proxy-webpack.js"
   );
   const esmProxyOut = path.join(proxyTmpDir, "esm-proxy.mjs");
   const webpackProxyOut = path.join(proxyTmpDir, "webpack-proxy.mjs");

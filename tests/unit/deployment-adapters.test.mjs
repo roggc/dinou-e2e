@@ -24,7 +24,7 @@ function resolveDinouRoot() {
 
 const dinouRoot = resolveDinouRoot();
 const cliPath = path.join(dinouRoot, "cli.js");
-const repoRoot = path.resolve(dinouRoot, "..");
+const repoRoot = path.resolve(__dirname, "../..");
 
 function createTmpBase() {
   const inRepoParent = path.join(repoRoot, ".dinou");

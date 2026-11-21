@@ -19,14 +19,17 @@ delete process.env.DINOU_DEV;
 
 const projectRoot = process.cwd();
 
-function resolveDinouInternal(relFromDinou) {
+function resolveDinouInternalPath(relFromDinou) {
   const candidates = [
     path.resolve(projectRoot, "dinou", relFromDinou),
     path.resolve(projectRoot, "node_modules/dinou/dinou", relFromDinou),
     path.resolve(projectRoot, "node_modules/dinou", relFromDinou),
   ];
-  const found = candidates.find((p) => fs.existsSync(p)) ?? candidates[0];
-  return pathToFileURL(found).href;
+  return candidates.find((p) => fs.existsSync(p)) ?? candidates[0];
+}
+
+function resolveDinouInternal(relFromDinou) {
+  return pathToFileURL(resolveDinouInternalPath(relFromDinou)).href;
 }
 
 const {
@@ -259,7 +262,7 @@ console.log(
 
   // Verify handler.js createServerFunctionContext sets _dynamicState: { value: true }
   const handlerSource = fs.readFileSync(
-    path.resolve(projectRoot, "dinou/core/handler.js"),
+    resolveDinouInternalPath("core/handler.js"),
     "utf8"
   );
   assert.match(
@@ -558,7 +561,7 @@ console.log(
   "4️⃣ Checking Client Component Flight Promise props vs. nested Server JSX elements..."
 );
 {
-  function ClientResults() {}
+  function ClientResults() { }
   Object.defineProperties(ClientResults, {
     $$typeof: { value: Symbol.for("react.client.reference") },
     $$id: { value: "file:///src/search/client-results.tsx#ClientResults" },
@@ -959,7 +962,7 @@ export default function IsgCatalogPage({ params }: { params: { slug: string } })
   process.chdir(projectRoot);
   try {
     await esbuild.stop();
-  } catch {}
+  } catch { }
   try {
     fs.rmSync(miniRoot, {
       recursive: true,
@@ -967,7 +970,7 @@ export default function IsgCatalogPage({ params }: { params: { slug: string } })
       maxRetries: 5,
       retryDelay: 80,
     });
-  } catch {}
+  } catch { }
 }
 
 console.log(

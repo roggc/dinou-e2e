@@ -15193,9 +15193,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           srv.on("error", reject);
         });
 
-        const staticAssetsUrl = pathToFileURL(
-          path.resolve(process.cwd(), "dinou/core/static-assets.js")
-        ).href;
+        const staticAssetsUrl = resolveDinouCoreModuleUrl("static-assets.js");
         const netlifySsrUrl = pathToFileURL(netlifySsrPath).href;
 
         const simCode = [
