@@ -188,7 +188,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "dinou": "file:./dinou",
+    "dinou": "^10.0.1",
     "jotai-wrapper": "^1.0.3",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
