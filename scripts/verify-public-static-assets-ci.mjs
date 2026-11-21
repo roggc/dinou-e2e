@@ -1615,6 +1615,117 @@ console.log(
   }
 }
 
+console.log(
+  "7️⃣ Verifying static-export client RSC buffering & Firefox unload stream-abort protection (client.jsx & client-webpack.jsx)..."
+);
+{
+  for (const relClient of ["core/client.jsx", "core/client-webpack.jsx"]) {
+    const clientSrc = fs.readFileSync(path.join(dinouRoot, relClient), "utf8");
+    assert.ok(
+      clientSrc.includes("const bufferStaticExportResponse = (res) =>"),
+      `${relClient} must define bufferStaticExportResponse(res) to buffer static-export .rsc payloads before createFromFetch`
+    );
+    const callCount = (
+      clientSrc.match(/return bufferStaticExportResponse\(res\);/g) || []
+    ).length;
+    assert.equal(
+      callCount,
+      2,
+      `${relClient} must invoke bufferStaticExportResponse(res) in both getPagePayload and getLayoutPayload (found ${callCount})`
+    );
+    assert.ok(
+      clientSrc.includes("res.arrayBuffer().then("),
+      `${relClient} bufferStaticExportResponse must read res.arrayBuffer() before creating an in-memory Response`
+    );
+    assert.match(
+      clientSrc,
+      /const onUncaughtError = \(error\) => \{\s*if \(isStaticExportUnloading\(\)\)/,
+      `${relClient} must guard onUncaughtError against isStaticExportUnloading()`
+    );
+    assert.match(
+      clientSrc,
+      /const onCaughtError = \(error\) => \{\s*if \(isStaticExportUnloading\(\)\)/,
+      `${relClient} must guard onCaughtError against isStaticExportUnloading()`
+    );
+    assert.match(
+      clientSrc,
+      /hydrateRoot\(document,\s*app,\s*\{\s*onRecoverableError,\s*onUncaughtError,\s*onCaughtError,?\s*\}\)/,
+      `${relClient} must pass onRecoverableError, onUncaughtError, and onCaughtError to hydrateRoot`
+    );
+
+    // Execute the exact bufferStaticExportResponse helper from the file to verify
+    // Firefox "Error in input stream" rejection is swallowed during static-export unload,
+    // while valid static-export payloads buffer into an in-memory Response cleanly.
+    const helperMatch = clientSrc.match(
+      /const isStaticExportUnloading = [\s\S]*?const bufferStaticExportResponse = \(res\) => \{[\s\S]*?\n\};/
+    );
+    assert.ok(
+      helperMatch,
+      `Could not extract bufferStaticExportResponse from ${relClient}`
+    );
+    const mockWindow = { __DINOU_STATIC_EXPORT_UNLOADING__: false };
+    const bufferFn = new Function(
+      "window",
+      "Response",
+      `${helperMatch[0]}\nreturn bufferStaticExportResponse;`
+    )(mockWindow, Response);
+
+    // 7a. Normal static-export response buffers into an in-memory Response
+    const okRes = new Response('0:"buffered-layout"\n', {
+      status: 200,
+      headers: { "Content-Type": "text/x-component" },
+    });
+    const buffered = await bufferFn(okRes);
+    assert.equal(buffered.status, 200);
+    assert.equal(await buffered.text(), '0:"buffered-layout"\n');
+
+    // 7b. In-flight arrayBuffer() aborted by Firefox ("Error in input stream")
+    // after window.__DINOU_STATIC_EXPORT_UNLOADING__ = true stays pending (no rejection)
+    let rejectStream;
+    const abortingRes = {
+      status: 200,
+      statusText: "OK",
+      headers: new Headers({ "Content-Type": "text/x-component" }),
+      arrayBuffer: () =>
+        new Promise((_resolve, reject) => {
+          rejectStream = reject;
+        }),
+    };
+    let settledDuringUnload = false;
+    const unloadPromise = bufferFn(abortingRes).then(
+      () => {
+        settledDuringUnload = true;
+      },
+      () => {
+        settledDuringUnload = true;
+      }
+    );
+    mockWindow.__DINOU_STATIC_EXPORT_UNLOADING__ = true;
+    rejectStream(new TypeError("Error in input stream"));
+    await new Promise((r) => setTimeout(r, 25));
+    assert.equal(
+      settledDuringUnload,
+      false,
+      `${relClient}: bufferStaticExportResponse must keep promise pending (zero rejection) when Firefox aborts stream during unload`
+    );
+    void unloadPromise;
+
+    // 7c. Real stream failure when NOT unloading still propagates
+    mockWindow.__DINOU_STATIC_EXPORT_UNLOADING__ = false;
+    const failingRes = {
+      status: 200,
+      statusText: "OK",
+      headers: new Headers({ "Content-Type": "text/x-component" }),
+      arrayBuffer: () => Promise.reject(new TypeError("Real network failure")),
+    };
+    await assert.rejects(
+      () => bufferFn(failingRes),
+      /Real network failure/,
+      `${relClient}: bufferStaticExportResponse must rethrow errors when not unloading`
+    );
+  }
+}
+
 // Guard: verify projectRoot/.dinou/dist1 and .dinou/node-dev manifests were never mutated
 for (const [rel, before] of manifestSnapshotBefore.entries()) {
   const abs = path.join(projectRoot, rel);
