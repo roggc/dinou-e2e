@@ -28,6 +28,11 @@ import {
   deserializeJSX,
   refreshNestedSlotsInTree,
 } from "./cache-slot.js";
+import {
+  renderSingleLayoutLevel,
+  composeLayoutChainFromOwnFragments,
+  hydrateActiveChainPpr,
+} from "./layout-composition.js";
 import { fetchCloudflareDist2Asset } from "./static-assets.js";
 
 const INFLIGHT_LAYOUT_REVAL_KEY = Symbol.for("dinou.layout.inflight.revalidations");
@@ -314,6 +319,7 @@ async function revalidatePage(reqPath, internalOptions = {}) {
     const rscKey = cleanPathKey ? `${cleanPathKey}/page.rsc` : "page.rsc";
     const shellRscKey = cleanPathKey ? `${cleanPathKey}/shell.rsc` : "shell.rsc";
     const shellPageKey = cleanPathKey ? `${cleanPathKey}/shell.page.json` : "shell.page.json";
+    const shellPageOldKey = cleanPathKey ? `${cleanPathKey}/shell.page._old.json` : "shell.page._old.json";
     const oldRscKey = cleanPathKey ? `${cleanPathKey}/page._old.rsc` : "page._old.rsc";
     const legacyRscKey = cleanPathKey ? `${cleanPathKey}/rsc.rsc` : "rsc.rsc";
 
@@ -388,11 +394,16 @@ async function revalidatePage(reqPath, internalOptions = {}) {
     let leafSuspenseCount = 0;
     let leafHoles = [];
     let hasActiveLayoutChain = false;
+    let hasDynamicLayoutInChain = false;
     try {
       const activeChain = getActiveLayoutChain(reqSegments, {}, srcFolder);
       if (activeChain.length > 0) {
         hasActiveLayoutChain = true;
         for (const entry of activeChain) {
+          let lCfg = null;
+          try {
+            lCfg = await resolveLayoutFunctionsConfig(entry.layoutPath, entry.dParams);
+          } catch (e) {}
           const lMetaKey = entry.cleanLayoutKey
             ? `${entry.cleanLayoutKey}/layout.metadata.json`
             : "layout.metadata.json";
@@ -408,73 +419,80 @@ async function revalidatePage(reqPath, internalOptions = {}) {
           entry.layoutGeneratedAt = Number(lMetaObj?.layoutGeneratedAt || lGen || 0);
           entry.suspenseCount = Number(lMetaObj?.suspenseCount || 0);
           entry.holes = Array.isArray(lMetaObj?.holes) ? lMetaObj.holes : [];
+          entry.isDynamic = Boolean(lCfg?.isDynamic || lMetaObj?.dynamic);
+          if (entry.isDynamic) {
+            hasDynamicLayoutInChain = true;
+          }
           if (lGen > maxActiveLayoutGenTime) {
             maxActiveLayoutGenTime = lGen;
           }
         }
-        const leafLayout = activeChain[0];
-        const leafRscKey = leafLayout.cleanLayoutKey
-          ? `${leafLayout.cleanLayoutKey}/layout.rsc`
-          : "layout.rsc";
-        let leafRscItem = await readEdgeStorageOrAsset(storage, leafRscKey);
-        let hasValidLeafRsc = Boolean(
-          leafRscItem &&
-            leafRscItem.content &&
-            !leafRscItem.content.trimStart().startsWith("<")
-        );
-        const ancestors = activeChain.length > 1 ? activeChain.slice(1) : [];
-        const maxAncestorGen =
-          ancestors.length > 0
-            ? Math.max(0, ...ancestors.map((l) => l.generatedAt || 0))
-            : 0;
-        const maxAncestorOwnGen =
-          ancestors.length > 0
-            ? Math.max(
-                0,
-                ...ancestors.map((l) => l.layoutGeneratedAt || l.generatedAt || 0)
-              )
-            : 0;
-        const leafGen = leafLayout.generatedAt || 0;
-        const leafOwnGen = leafLayout.layoutGeneratedAt || leafGen;
-        const isLeafMissing =
-          !hasValidLeafRsc && (isEdgeRuntime() || maxAncestorGen > 0 || onlyRefreshSlots);
-        const isAncestorOwnNewer = leafOwnGen > 0 && maxAncestorOwnGen > leafOwnGen;
-        const isAncestorSlotOnlyNewer =
-          !isAncestorOwnNewer && leafGen > 0 && maxAncestorGen > leafGen;
-        if (isLeafMissing || isAncestorOwnNewer || isAncestorSlotOnlyNewer) {
-          await revalidateLayout(leafLayout.layoutRoutePath, {
-            onlyRefreshSlots:
-              !isAncestorOwnNewer && (isAncestorSlotOnlyNewer || isLeafMissing),
-          });
-          const refreshedMetaKey = leafLayout.cleanLayoutKey
-            ? `${leafLayout.cleanLayoutKey}/layout.metadata.json`
-            : "layout.metadata.json";
-          const refreshedItem = await readEdgeStorageOrAsset(storage, refreshedMetaKey);
-          if (refreshedItem?.content) {
-            try {
-              const parsed = JSON.parse(refreshedItem.content);
-              leafLayout.generatedAt = Number(parsed?.generatedAt || leafLayout.generatedAt || 0);
-              leafLayout.layoutGeneratedAt = Number(
-                parsed?.layoutGeneratedAt || leafLayout.generatedAt || 0
-              );
-              leafLayout.suspenseCount = Number(parsed?.suspenseCount || 0);
-              leafLayout.holes = Array.isArray(parsed?.holes) ? parsed.holes : [];
-              if (leafLayout.generatedAt > maxActiveLayoutGenTime) {
-                maxActiveLayoutGenTime = leafLayout.generatedAt;
-              }
-            } catch (e) {}
-          }
-          leafRscItem = await readEdgeStorageOrAsset(storage, leafRscKey);
-          hasValidLeafRsc = Boolean(
+        if (!hasDynamicLayoutInChain) {
+          const leafLayout = activeChain[0];
+          const leafRscKey = leafLayout.cleanLayoutKey
+            ? `${leafLayout.cleanLayoutKey}/layout.rsc`
+            : "layout.rsc";
+          let leafRscItem = await readEdgeStorageOrAsset(storage, leafRscKey);
+          let hasValidLeafRsc = Boolean(
             leafRscItem &&
               leafRscItem.content &&
               !leafRscItem.content.trimStart().startsWith("<")
           );
-        }
-        leafSuspenseCount = Number(leafLayout.suspenseCount || 0);
-        leafHoles = Array.isArray(leafLayout.holes) ? leafLayout.holes : [];
-        if (hasValidLeafRsc) {
-          activeLayoutRscText = leafRscItem.content;
+          const ancestors = activeChain.length > 1 ? activeChain.slice(1) : [];
+          const maxAncestorGen =
+            ancestors.length > 0
+              ? Math.max(0, ...ancestors.map((l) => l.generatedAt || 0))
+              : 0;
+          const maxAncestorOwnGen =
+            ancestors.length > 0
+              ? Math.max(
+                  0,
+                  ...ancestors.map((l) => l.layoutGeneratedAt || l.generatedAt || 0)
+                )
+              : 0;
+          const leafGen = leafLayout.generatedAt || 0;
+          const leafOwnGen = leafLayout.layoutGeneratedAt || leafGen;
+          const isLeafMissing =
+            !hasValidLeafRsc && (isEdgeRuntime() || maxAncestorGen > 0 || onlyRefreshSlots);
+          const isAncestorOwnNewer = leafOwnGen > 0 && maxAncestorOwnGen > leafOwnGen;
+          const isAncestorSlotOnlyNewer =
+            !isAncestorOwnNewer && leafGen > 0 && maxAncestorGen > leafGen;
+          if (isLeafMissing || isAncestorOwnNewer || isAncestorSlotOnlyNewer) {
+            await revalidateLayout(leafLayout.layoutRoutePath, {
+              recomposeOnly: !isLeafMissing && isAncestorOwnNewer,
+              onlyRefreshSlots:
+                !isAncestorOwnNewer && (isAncestorSlotOnlyNewer || isLeafMissing),
+            });
+            const refreshedMetaKey = leafLayout.cleanLayoutKey
+              ? `${leafLayout.cleanLayoutKey}/layout.metadata.json`
+              : "layout.metadata.json";
+            const refreshedItem = await readEdgeStorageOrAsset(storage, refreshedMetaKey);
+            if (refreshedItem?.content) {
+              try {
+                const parsed = JSON.parse(refreshedItem.content);
+                leafLayout.generatedAt = Number(parsed?.generatedAt || leafLayout.generatedAt || 0);
+                leafLayout.layoutGeneratedAt = Number(
+                  parsed?.layoutGeneratedAt || leafLayout.generatedAt || 0
+                );
+                leafLayout.suspenseCount = Number(parsed?.suspenseCount || 0);
+                leafLayout.holes = Array.isArray(parsed?.holes) ? parsed.holes : [];
+                if (leafLayout.generatedAt > maxActiveLayoutGenTime) {
+                  maxActiveLayoutGenTime = leafLayout.generatedAt;
+                }
+              } catch (e) {}
+            }
+            leafRscItem = await readEdgeStorageOrAsset(storage, leafRscKey);
+            hasValidLeafRsc = Boolean(
+              leafRscItem &&
+                leafRscItem.content &&
+                !leafRscItem.content.trimStart().startsWith("<")
+            );
+          }
+          leafSuspenseCount = Number(leafLayout.suspenseCount || 0);
+          leafHoles = Array.isArray(leafLayout.holes) ? leafLayout.holes : [];
+          if (hasValidLeafRsc) {
+            activeLayoutRscText = leafRscItem.content;
+          }
         }
       }
     } catch (e) {}
@@ -708,7 +726,7 @@ async function revalidatePage(reqPath, internalOptions = {}) {
             } catch (composeErr) {}
           }
 
-          if (!composedFromCachedLayout) {
+          if (!composedFromCachedLayout && !hasDynamicLayoutInChain) {
             let fullJsx = null;
             if (isRoutePpr) {
               await runWithPprContext({ isPpr: true }, async () => {
@@ -804,6 +822,12 @@ async function revalidatePage(reqPath, internalOptions = {}) {
       if (existingPageRsc && existingPageRsc.content) {
         await storage.set(oldRscKey, existingPageRsc.content);
       }
+      if (pendingShellPageJson) {
+        const prevShellPage = await readEdgeStorageOrAsset(storage, shellPageKey);
+        if (prevShellPage && prevShellPage.content) {
+          await storage.set(shellPageOldKey, prevShellPage.content);
+        }
+      }
     } catch (e) {}
 
     const commitGenTime = nextMonotonicGenTime(newGenTime);
@@ -888,12 +912,14 @@ async function revalidatePage(reqPath, internalOptions = {}) {
       }
     } catch (e) {}
 
-    await storage.set(htmlKey, newHtml, currentMeta);
-    if (isRoutePpr) {
-      await storage.set(shellHtmlKey, newHtml, currentMeta);
-    }
-    if (cleanPathKey) {
-      await storage.set(cleanPathKey, newHtml, currentMeta);
+    if (newHtml && !hasDynamicLayoutInChain) {
+      await storage.set(htmlKey, newHtml, currentMeta);
+      if (isRoutePpr) {
+        await storage.set(shellHtmlKey, newHtml, currentMeta);
+      }
+      if (cleanPathKey) {
+        await storage.set(cleanPathKey, newHtml, currentMeta);
+      }
     }
 
     console.log(`✅ [Edge Revalidate] Successfully revalidated page ${cleanPath} (generatedAt: ${commitGenTime})`);
@@ -945,7 +971,8 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
   const targetPath = normalizeRevalidatePath(reqPath);
   const onlyRefreshSlots = Boolean(internalOptions?.onlyRefreshSlots);
   const onlyIfExpired = Boolean(internalOptions?.onlyIfExpired);
-  const inFlightKey = `${targetPath}:${onlyRefreshSlots ? "slots" : "full"}:${onlyIfExpired ? "ttl" : "force"}`;
+  const recomposeOnly = Boolean(internalOptions?.recomposeOnly);
+  const inFlightKey = `${targetPath}:${recomposeOnly ? "recompose" : onlyRefreshSlots ? "slots" : "full"}:${onlyIfExpired ? "ttl" : "force"}`;
 
   if (inflightLayoutRevalidations.has(inFlightKey)) {
     return inflightLayoutRevalidations.get(inFlightKey);
@@ -958,6 +985,8 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
       const layoutOldRscKey = cleanPathKey ? `${cleanPathKey}/layout._old.rsc` : "layout._old.rsc";
       const layoutMetaKey = cleanPathKey ? `${cleanPathKey}/layout.metadata.json` : "layout.metadata.json";
       const shellLayoutKey = cleanPathKey ? `${cleanPathKey}/shell.layout.json` : "shell.layout.json";
+      const shellLayoutOwnKey = cleanPathKey ? `${cleanPathKey}/shell.layout.own.json` : "shell.layout.own.json";
+      const shellLayoutOldKey = cleanPathKey ? `${cleanPathKey}/shell.layout._old.json` : "shell.layout._old.json";
 
       let cached = await readEdgeStorageOrAsset(storage, layoutRscKey);
       let currentMeta = (cached && cached.metadata) || {};
@@ -973,6 +1002,7 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
       const reqSegments = targetPath.split("/").filter(Boolean);
       const srcFolder = path.resolve(process.cwd(), "src");
       let resolvedLayoutFilePath = null;
+      let isTargetLayoutDynamic = false;
       try {
         const [layoutPath, layoutParams] = getFilePathAndDynamicParams(
           reqSegments,
@@ -987,6 +1017,9 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
         resolvedLayoutFilePath = layoutPath || null;
         if (layoutPath) {
           const layoutCfg = await resolveLayoutFunctionsConfig(layoutPath, layoutParams || {});
+          if (layoutCfg.isDynamic) {
+            isTargetLayoutDynamic = true;
+          }
           if (Array.isArray(layoutCfg.tags) && layoutCfg.tags.length > 0) {
             currentMeta.tags = layoutCfg.tags;
           } else if (!Array.isArray(currentMeta.tags)) {
@@ -1002,10 +1035,17 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
         currentMeta.ppr = Boolean(anyLayoutPpr);
       } catch (e) {}
 
-      if (onlyIfExpired && !onlyRefreshSlots) {
+      if (isTargetLayoutDynamic) {
+        return false;
+      }
+
+      if (onlyIfExpired && !onlyRefreshSlots && !recomposeOnly) {
         const latestLayoutReval = currentMeta.revalidate;
         const latestLayoutGenAt = Number(
-          currentMeta.layoutGeneratedAt || currentMeta.generatedAt || 0
+          currentMeta.ownGeneratedAt ||
+            currentMeta.layoutGeneratedAt ||
+            currentMeta.generatedAt ||
+            0
         );
         const stillExpired =
           typeof latestLayoutReval === "number" &&
@@ -1020,6 +1060,12 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
       const prevGenTime = (currentMeta && currentMeta.generatedAt) || 0;
       const prevLayoutOwnGenTime =
         (currentMeta && (currentMeta.layoutGeneratedAt || currentMeta.generatedAt)) || 0;
+      const prevLayoutOwnLevelGenTime =
+        (currentMeta &&
+          (currentMeta.ownGeneratedAt ||
+            currentMeta.layoutGeneratedAt ||
+            currentMeta.generatedAt)) ||
+        0;
       const now = Date.now();
       const newGenTime = nextMonotonicGenTime(prevGenTime);
       currentMeta.generatedAt = newGenTime;
@@ -1031,6 +1077,9 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
       let newLayoutRsc = cached && cached.content ? cached.content : "";
       let didRenderFreshLayout = false;
       let didSpliceOnlyLayoutSlots = false;
+      let didRecomposeOnly = false;
+      let pendingShellLayoutJson = null;
+      let pendingShellLayoutOwnJson = null;
       try {
         const revalDynamicState = { value: false };
         const rawHeaders = {
@@ -1081,13 +1130,48 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
           (typeof globalThis !== "undefined" && globalThis.__DINOU_CLIENT_MANIFEST__) || {};
         await requestStorage.run(revalContext, async () => {
           let resolvedLayoutJsx = null;
-          if (onlyRefreshSlots) {
+          const activeChain = getActiveLayoutChain(reqSegments, {}, srcFolder, {
+            ignoreNoLayout: true,
+          });
+          if (activeChain.length > 0) {
+            await hydrateActiveChainPpr(activeChain, reqSegments, {}, srcFolder, {
+              ignoreNoLayout: true,
+            });
+          }
+          const hasExactOwnLayout =
+            activeChain.length > 0 && activeChain[0].cleanLayoutKey === cleanPathKey;
+
+          // 1. Recompose-only path (an ancestor layout updated; preserve THIS layout's cached own shell!)
+          if (recomposeOnly && hasExactOwnLayout) {
+            try {
+              const composed = await composeLayoutChainFromOwnFragments(activeChain, storage, {
+                currentPath: reqPathWithSlash,
+              });
+              if (composed && composed.layoutOnlyTree) {
+                resolvedLayoutJsx = composed.layoutOnlyTree;
+                didRecomposeOnly = true;
+                pendingShellLayoutJson = serializeJSX(resolvedLayoutJsx);
+                currentMeta.ppr = Boolean(composed.anyLayoutPpr);
+                currentMeta.suspenseCount = composed.suspenseCount;
+                if (composed.holes.length > 0) {
+                  currentMeta.holes = composed.holes;
+                } else {
+                  delete currentMeta.holes;
+                }
+                if (composed.slotTags.length > 0) {
+                  currentMeta.slotTags = composed.slotTags;
+                }
+              }
+            } catch (e) {
+              resolvedLayoutJsx = null;
+            }
+          }
+
+          // 2. Slot-only refresh path (refresh <DinouCacheSlot> without re-executing layout host)
+          if (!resolvedLayoutJsx && onlyRefreshSlots) {
             try {
               let hasNewerAncestorOwnLayout = false;
-              if (prevLayoutOwnGenTime > 0) {
-                const activeChain = getActiveLayoutChain(reqSegments, {}, srcFolder, {
-                  ignoreNoLayout: true,
-                });
+              if (prevLayoutOwnGenTime > 0 && activeChain.length > 1) {
                 for (const anc of activeChain.slice(1)) {
                   const ancMetaKey = anc.cleanLayoutKey
                     ? `${anc.cleanLayoutKey}/layout.metadata.json`
@@ -1108,7 +1192,30 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
                   }
                 }
               }
-              if (!hasNewerAncestorOwnLayout) {
+              if (hasExactOwnLayout) {
+                const composed = await composeLayoutChainFromOwnFragments(activeChain, storage, {
+                  refreshSlotsForKeys: "all",
+                  persistRefreshedOwnKeys: new Set([cleanPathKey]),
+                  currentPath: reqPathWithSlash,
+                });
+                if (composed && composed.layoutOnlyTree) {
+                  resolvedLayoutJsx = composed.layoutOnlyTree;
+                  didSpliceOnlyLayoutSlots = !hasNewerAncestorOwnLayout;
+                  didRecomposeOnly = hasNewerAncestorOwnLayout;
+                  pendingShellLayoutJson = serializeJSX(resolvedLayoutJsx);
+                  currentMeta.ppr = Boolean(composed.anyLayoutPpr);
+                  currentMeta.suspenseCount = composed.suspenseCount;
+                  if (composed.holes.length > 0) {
+                    currentMeta.holes = composed.holes;
+                  } else {
+                    delete currentMeta.holes;
+                  }
+                  if (composed.slotTags.length > 0) {
+                    currentMeta.slotTags = composed.slotTags;
+                  }
+                }
+              }
+              if (!resolvedLayoutJsx && !hasNewerAncestorOwnLayout) {
                 const existingShellLayout = await readEdgeStorageOrAsset(storage, shellLayoutKey);
                 if (existingShellLayout && existingShellLayout.content) {
                   const deserialized = deserializeJSX(existingShellLayout.content);
@@ -1119,7 +1226,7 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
                   );
                   if (resolvedLayoutJsx) {
                     didSpliceOnlyLayoutSlots = true;
-                    await storage.set(shellLayoutKey, serializeJSX(resolvedLayoutJsx));
+                    pendingShellLayoutJson = serializeJSX(resolvedLayoutJsx);
                   }
                 }
               }
@@ -1127,6 +1234,49 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
               resolvedLayoutJsx = null;
             }
           }
+
+          // 3. Per-level isolated layout revalidation: render ONLY this layout level and splice into cached ancestors!
+          if (!resolvedLayoutJsx && hasExactOwnLayout) {
+            try {
+              const leafEntry = activeChain[0];
+              const single = await renderSingleLayoutLevel(leafEntry, {
+                reqSegments,
+                queryObj: {},
+                isDevelopment: false,
+                usePprContext: true,
+              });
+              if (single && single.ownTree && !revalDynamicState.value) {
+                pendingShellLayoutOwnJson = serializeJSX(single.ownTree);
+                const overrides = new Map([[cleanPathKey, single]]);
+                const composed = await composeLayoutChainFromOwnFragments(activeChain, storage, {
+                  overrides,
+                  currentPath: reqPathWithSlash,
+                });
+                if (composed && composed.layoutOnlyTree) {
+                  resolvedLayoutJsx = composed.layoutOnlyTree;
+                  pendingShellLayoutJson = serializeJSX(resolvedLayoutJsx);
+                  currentMeta.ownHoles = single.ownHoles;
+                  currentMeta.ownSuspenseCount = single.ownSuspenseCount;
+                  currentMeta.ownSlotTags = single.ownSlotTags;
+                  currentMeta.ownPpr = Boolean(single.effectivePpr);
+                  currentMeta.ppr = Boolean(composed.anyLayoutPpr);
+                  currentMeta.suspenseCount = composed.suspenseCount;
+                  if (composed.holes.length > 0) {
+                    currentMeta.holes = composed.holes;
+                  } else {
+                    delete currentMeta.holes;
+                  }
+                  if (composed.slotTags.length > 0) {
+                    currentMeta.slotTags = composed.slotTags;
+                  }
+                }
+              }
+            } catch (e) {
+              resolvedLayoutJsx = null;
+            }
+          }
+
+          // 4. Fallback: full layout chain render via getJSX (e.g. missing ancestor shell.layout.own.json)
           if (!resolvedLayoutJsx) {
             const isLayoutPpr = Boolean(
               currentMeta.ppr || (Array.isArray(currentMeta.holes) && currentMeta.holes.length > 0)
@@ -1145,9 +1295,7 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
               }
               currentMeta.suspenseCount = getPprHoleCounter();
               if (resolvedLayoutJsx) {
-                try {
-                  await storage.set(shellLayoutKey, serializeJSX(resolvedLayoutJsx));
-                } catch (e) {}
+                pendingShellLayoutJson = serializeJSX(resolvedLayoutJsx);
               }
             });
           }
@@ -1161,9 +1309,11 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
               didRenderFreshLayout = true;
             }
           }
-          const layoutSlotTags = revalContext._layoutSlotTags || revalContext._slotTags;
-          if (layoutSlotTags && layoutSlotTags.size > 0) {
-            currentMeta.slotTags = Array.from(layoutSlotTags);
+          if (!Array.isArray(currentMeta.slotTags) || currentMeta.slotTags.length === 0) {
+            const layoutSlotTags = revalContext._layoutSlotTags || revalContext._slotTags;
+            if (layoutSlotTags && layoutSlotTags.size > 0) {
+              currentMeta.slotTags = Array.from(layoutSlotTags);
+            }
           }
         });
       } catch (e) {
@@ -1174,7 +1324,7 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
 
       if (!didRenderFreshLayout && !isEdgeRuntime()) {
         await Promise.all(
-          [layoutRscKey, layoutOldRscKey, layoutMetaKey, shellLayoutKey].map((k) =>
+          [layoutRscKey, layoutOldRscKey, layoutMetaKey, shellLayoutKey, shellLayoutOwnKey, shellLayoutOldKey].map((k) =>
             Promise.resolve(storage.delete(k)).catch(() => {})
           )
         );
@@ -1189,6 +1339,12 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
         if (cached && cached.content) {
           await storage.set(layoutOldRscKey, cached.content);
         }
+        if (pendingShellLayoutJson) {
+          const prevShellLayout = await readEdgeStorageOrAsset(storage, shellLayoutKey);
+          if (prevShellLayout && prevShellLayout.content) {
+            await storage.set(shellLayoutOldKey, prevShellLayout.content);
+          }
+        }
       } catch (e) {}
 
       if (newLayoutRsc && now <= prevGenTime) {
@@ -1201,7 +1357,21 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
         didSpliceOnlyLayoutSlots && prevLayoutOwnGenTime > 0
           ? prevLayoutOwnGenTime
           : newGenTime;
+      currentMeta.ownGeneratedAt =
+        (didSpliceOnlyLayoutSlots || didRecomposeOnly) && prevLayoutOwnLevelGenTime > 0
+          ? prevLayoutOwnLevelGenTime
+          : newGenTime;
       await storage.set(layoutMetaKey, JSON.stringify(currentMeta));
+      if (pendingShellLayoutOwnJson) {
+        try {
+          await storage.set(shellLayoutOwnKey, pendingShellLayoutOwnJson);
+        } catch (e) {}
+      }
+      if (pendingShellLayoutJson) {
+        try {
+          await storage.set(shellLayoutKey, pendingShellLayoutJson);
+        } catch (e) {}
+      }
       if (newLayoutRsc) {
         await storage.set(layoutRscKey, newLayoutRsc, currentMeta);
       }

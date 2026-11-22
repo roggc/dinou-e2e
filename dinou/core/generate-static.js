@@ -109,6 +109,7 @@ async function generateStatic() {
               status: 200,
               generatedAt: ssgLayoutGen,
               layoutGeneratedAt: ssgLayoutGen,
+              ownGeneratedAt: ssgLayoutGen,
               revalidate: undefined,
               tags: [],
             };
@@ -132,6 +133,13 @@ async function generateStatic() {
                   layoutMeta.slotTags = parsedSlotTags;
                 }
               }
+              const ownSlotTagsHeader = layoutRes.headers.get("x-dinou-own-slot-tags");
+              if (ownSlotTagsHeader) {
+                const parsedOwnSlotTags = JSON.parse(ownSlotTagsHeader);
+                if (Array.isArray(parsedOwnSlotTags)) {
+                  layoutMeta.ownSlotTags = parsedOwnSlotTags;
+                }
+              }
               const holesHeader = layoutRes.headers.get("x-dinou-ppr-holes");
               if (holesHeader) {
                 const parsedHoles = JSON.parse(holesHeader);
@@ -139,9 +147,24 @@ async function generateStatic() {
                   layoutMeta.holes = parsedHoles;
                 }
               }
+              const ownHolesHeader = layoutRes.headers.get("x-dinou-own-ppr-holes");
+              if (ownHolesHeader) {
+                const parsedOwnHoles = JSON.parse(ownHolesHeader);
+                if (Array.isArray(parsedOwnHoles)) {
+                  layoutMeta.ownHoles = parsedOwnHoles;
+                }
+              }
               const suspenseCountHeader = layoutRes.headers.get("x-dinou-suspense-count");
               if (suspenseCountHeader !== null) {
                 layoutMeta.suspenseCount = Number(suspenseCountHeader) || 0;
+              }
+              const ownSuspenseCountHeader = layoutRes.headers.get("x-dinou-own-suspense-count");
+              if (ownSuspenseCountHeader !== null) {
+                layoutMeta.ownSuspenseCount = Number(ownSuspenseCountHeader) || 0;
+              }
+              const ownPprHeader = layoutRes.headers.get("x-dinou-own-ppr");
+              if (ownPprHeader !== null) {
+                layoutMeta.ownPpr = ownPprHeader === "true";
               }
               if (layoutRes.headers.get("x-dinou-ppr") === "true") {
                 layoutMeta.ppr = true;
@@ -150,6 +173,7 @@ async function generateStatic() {
                 layoutMeta.dynamic = true;
                 layoutMeta.ppr = false;
                 delete layoutMeta.holes;
+                delete layoutMeta.ownHoles;
               }
             } catch (e) {}
 

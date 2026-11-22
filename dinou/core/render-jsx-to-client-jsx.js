@@ -88,7 +88,10 @@ function useServerId() {
   const layoutStore = getActiveLayoutSegmentStore();
   if (layoutStore && layoutStore.active) {
     layoutStore.idCount = (layoutStore.idCount || 0) + 1;
-    return `_layout_dS_${layoutStore.idCount.toString(32)}_`;
+    const prefix = layoutStore.scopePrefix
+      ? `_layout_${layoutStore.scopePrefix}_dS_`
+      : "_layout_dS_";
+    return `${prefix}${layoutStore.idCount.toString(32)}_`;
   }
   const reqCtx = getContext();
   if (reqCtx) {

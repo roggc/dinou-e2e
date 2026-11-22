@@ -568,5 +568,5 @@ async function getJSX(
   return jsx;
 }
 
-export { getJSX };
+export { getJSX, createDinouPageSlotElement };
 export default getJSX;

@@ -677,6 +677,8 @@ async function handlePprResume({
   getDiscoveredLayouts,
   createRequestContext,
   copyCustomContextProperties,
+  preloadedPageShellJson,
+  preloadedLayoutShellJson,
 }) {
   let shellHtml = cachedItem.content;
   if (typeof shellHtml === "string") {
@@ -754,9 +756,13 @@ async function handlePprResume({
         ? `http://${simReq.headers?.host || "localhost:3000"}${simReq.url}`
         : null;
       const [pageShellJson, layoutShellJson] = await Promise.all([
-        readShellJsonFromStorage(storage, shellPageKey, platformContext, reqOriginUrl),
+        preloadedPageShellJson !== undefined
+          ? Promise.resolve(preloadedPageShellJson)
+          : readShellJsonFromStorage(storage, shellPageKey, platformContext, reqOriginUrl),
         hasActiveLayout
-          ? readShellJsonFromStorage(storage, shellLayoutKey, platformContext, reqOriginUrl)
+          ? preloadedLayoutShellJson !== undefined
+            ? Promise.resolve(preloadedLayoutShellJson)
+            : readShellJsonFromStorage(storage, shellLayoutKey, platformContext, reqOriginUrl)
           : Promise.resolve(null),
       ]);
 
@@ -916,9 +922,11 @@ export {
   streamDynamicHoles,
   handlePprResume,
   spliceDynamicHolesIntoShell,
+  readShellJsonFromStorage,
 };
 export default {
   streamDynamicHoles,
   handlePprResume,
   spliceDynamicHolesIntoShell,
+  readShellJsonFromStorage,
 };

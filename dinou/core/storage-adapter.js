@@ -143,8 +143,11 @@ class FileSystemStorage extends StorageAdapter {
     let metadata = null;
     const isLayoutKey =
       cleanKey.includes("layout.rsc") ||
+      cleanKey.includes("layout._old.rsc") ||
       cleanKey.includes("layout.metadata.json") ||
-      cleanKey.includes("shell.layout.json");
+      cleanKey.includes("shell.layout.json") ||
+      cleanKey.includes("shell.layout.own.json") ||
+      cleanKey.includes("shell.layout._old.json");
     const normSlotKey = cleanKey.replace(/^\/+/, "");
     const isSlotKey = normSlotKey.startsWith("slots/") || normSlotKey.endsWith("/slot.json") || normSlotKey.endsWith("/slot.metadata.json");
     const metaFileName = isLayoutKey
@@ -179,8 +182,11 @@ class FileSystemStorage extends StorageAdapter {
     if (metadata && !isMetaJson) {
       const isLayoutKey =
         cleanKey.includes("layout.rsc") ||
+        cleanKey.includes("layout._old.rsc") ||
         cleanKey.includes("layout.metadata.json") ||
-        cleanKey.includes("shell.layout.json");
+        cleanKey.includes("shell.layout.json") ||
+        cleanKey.includes("shell.layout.own.json") ||
+        cleanKey.includes("shell.layout._old.json");
       const normSlotKey = cleanKey.replace(/^\/+/, "");
       const isSlotKey = normSlotKey.startsWith("slots/") || normSlotKey.endsWith("/slot.json") || normSlotKey.endsWith("/slot.metadata.json");
       const metaFileName = isLayoutKey
@@ -950,11 +956,16 @@ async function readDist2Fallback(storage, key, knownTags = []) {
     const isMetaFile = writeKey.endsWith("metadata.json");
     const isShellJson =
       writeKey.endsWith("shell.page.json") ||
-      writeKey.endsWith("shell.layout.json");
+      writeKey.endsWith("shell.page._old.json") ||
+      writeKey.endsWith("shell.layout.json") ||
+      writeKey.endsWith("shell.layout.own.json") ||
+      writeKey.endsWith("shell.layout._old.json");
 
     if (!isMetaFile) {
       const generatedAt = Number(
         (writeKey.endsWith("shell.page.json") && item.metadata?.pageGeneratedAt) ||
+          (writeKey.endsWith("shell.layout.own.json") &&
+            (item.metadata?.ownGeneratedAt || item.metadata?.layoutGeneratedAt)) ||
           (writeKey.endsWith("shell.layout.json") && item.metadata?.layoutGeneratedAt) ||
           item.metadata?.generatedAt ||
           0
@@ -1005,7 +1016,10 @@ async function readDist2Fallback(storage, key, knownTags = []) {
       ) {
         const isLayoutKey =
           writeKey.endsWith("layout.rsc") ||
-          writeKey.endsWith("shell.layout.json");
+          writeKey.endsWith("layout._old.rsc") ||
+          writeKey.endsWith("shell.layout.json") ||
+          writeKey.endsWith("shell.layout.own.json") ||
+          writeKey.endsWith("shell.layout._old.json");
         const isSlotKey =
           writeKey.startsWith("slots/") || writeKey.endsWith("/slot.json");
         const dirPrefix = writeKey.includes("/")
