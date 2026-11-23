@@ -18858,7 +18858,438 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(pageErrors).toEqual([]);
     });
 
-    test("22. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
+    test("22. [Stage 4 / Check #56] Pairwise X+Y Asymmetric: <DinouCacheSlot> Inside Dynamic Layout (revalidate=0) + Static L1/Page", async ({
+      page,
+    }) => {
+      test.skip(!isProd, "Asymmetric X+Y slot caching inside dynamic layout requires production mode");
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      await page.goto("/t-3d-cube/pair-xy-asym/dyn-l2");
+      await waitCubeReady(page);
+
+      const baseL1 = Number(await page.locator("#pxy-l1-host-seq").textContent());
+      const baseL1Slot = Number(await page.locator("#pxy-l1-slot-seq").textContent());
+      const baseDynL2 = Number(await page.locator("#pxy-dyn-l2-host-seq").textContent());
+      const baseDynL2Slot = Number(await page.locator("#pxy-dyn-l2-slot-seq").textContent());
+      const basePage = Number(await page.locator("#pxy-page-host-seq").textContent());
+      const basePageSlot = Number(await page.locator("#pxy-page-slot-seq").textContent());
+      const poison1 =
+        Math.max(baseL1, baseL1Slot, baseDynL2, baseDynL2Slot, basePage, basePageSlot) + 899;
+
+      // 1. Poison L1, L1 slot, L2 slot, Page, Page slot; bump ONLY dynamic L2 host -> L2 host live, ALL others (including L2 slot!) stay cached
+      const nextDynL2_1 = baseDynL2 + 811;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          pairXyL1HostSeq: poison1,
+          pairXyL1SlotSeq: poison1,
+          pairXyDynL2HostSeq: nextDynL2_1,
+          pairXyDynL2SlotSeq: poison1,
+          pairXyPageHostSeq: poison1,
+          pairXyPageSlotSeq: poison1,
+        }
+      );
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#pxy-l1-host-seq")).toHaveText(String(baseL1));
+      await expect(page.locator("#pxy-l1-slot-seq")).toHaveText(String(baseL1Slot));
+      await expect(page.locator("#pxy-dyn-l2-host-seq")).toHaveText(String(nextDynL2_1));
+      await expect(page.locator("#pxy-dyn-l2-slot-seq")).toHaveText(String(baseDynL2Slot));
+      await expect(page.locator("#pxy-page-host-seq")).toHaveText(String(basePage));
+      await expect(page.locator("#pxy-page-slot-seq")).toHaveText(String(basePageSlot));
+
+      // 2. Live refreshSlot on L2 slot (inside dynamic L2) preserves client counts & persists across F5
+      await page.click("#probe-inc-pxy-l1");
+      await page.click("#probe-inc-pxy-l2");
+      await expect(page.locator("#probe-count-pxy-l1")).toHaveText("1");
+      await expect(page.locator("#probe-count-pxy-l2")).toHaveText("1");
+
+      const nextDynL2Slot = baseDynL2Slot + 812;
+      const nextDynL2_2 = nextDynL2_1 + 1;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          pairXyL1HostSeq: poison1,
+          pairXyL1SlotSeq: poison1,
+          pairXyDynL2HostSeq: nextDynL2_2,
+          pairXyDynL2SlotSeq: nextDynL2Slot,
+          pairXyPageHostSeq: poison1,
+          pairXyPageSlotSeq: poison1,
+        }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.refreshSlot("cube-xy-dyn-l2-slot", true)
+      );
+      await expect(page.locator("#pxy-dyn-l2-slot-seq")).toHaveText(String(nextDynL2Slot), {
+        timeout: 10000,
+      });
+      await expect(page.locator("#probe-count-pxy-l1")).toHaveText("1");
+      await expect(page.locator("#probe-count-pxy-l2")).toHaveText("1");
+      await expect(page.locator("#pxy-l1-host-seq")).toHaveText(String(baseL1));
+      await expect(page.locator("#pxy-page-host-seq")).toHaveText(String(basePage));
+
+      await page.waitForTimeout(350);
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#pxy-l1-host-seq")).toHaveText(String(baseL1));
+      await expect(page.locator("#pxy-l1-slot-seq")).toHaveText(String(baseL1Slot));
+      await expect(page.locator("#pxy-dyn-l2-host-seq")).toHaveText(String(nextDynL2_2));
+      await expect(page.locator("#pxy-dyn-l2-slot-seq")).toHaveText(String(nextDynL2Slot));
+      await expect(page.locator("#pxy-page-host-seq")).toHaveText(String(basePage));
+      await expect(page.locator("#pxy-page-slot-seq")).toHaveText(String(basePageSlot));
+
+      // 3. Surgical revalidateTag on L1 slot & Page slot never touches L2 slot or freezes dynamic L2
+      const nextL1Slot = baseL1Slot + 814;
+      const nextPageSlot = basePageSlot + 815;
+      const nextDynL2_3 = nextDynL2_2 + 1;
+      const poison2 = Math.max(poison1, nextDynL2Slot, nextL1Slot, nextPageSlot) + 899;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          pairXyL1HostSeq: poison2,
+          pairXyL1SlotSeq: nextL1Slot,
+          pairXyDynL2HostSeq: nextDynL2_3,
+          pairXyDynL2SlotSeq: poison2,
+          pairXyPageHostSeq: poison2,
+          pairXyPageSlotSeq: nextPageSlot,
+        }
+      );
+      await page.evaluate(async () => {
+        await (window as any).__CUBE_3D__.revalTag("cube-xy-l1-slot-tag");
+        await (window as any).__CUBE_3D__.revalTag("cube-xy-page-slot-tag");
+      });
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#pxy-l1-host-seq")).toHaveText(String(baseL1));
+      await expect(page.locator("#pxy-l1-slot-seq")).toHaveText(String(nextL1Slot));
+      await expect(page.locator("#pxy-dyn-l2-host-seq")).toHaveText(String(nextDynL2_3));
+      await expect(page.locator("#pxy-dyn-l2-slot-seq")).toHaveText(String(nextDynL2Slot));
+      await expect(page.locator("#pxy-page-host-seq")).toHaveText(String(basePage));
+      await expect(page.locator("#pxy-page-slot-seq")).toHaveText(String(nextPageSlot));
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("23. [Stage 4 / Check #57] Pairwise X+Z Asymmetric: L1 PPR (3600s) -> L2 Dynamic (revalidate=0) -> Page PPR (3600s)", async ({
+      page,
+      context,
+    }) => {
+      test.skip(!isProd, "Asymmetric X+Z (dynamic layout + PPR child page) requires production mode");
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      await context.addCookies([
+        { name: "pxz_user", value: "cygnus", url: "http://localhost:3000" },
+      ]);
+      await page.goto("/t-3d-cube/pair-xz-asym/dyn-l2?mode=alpha");
+      await waitCubeReady(page);
+
+      const baseL1Shell = Number(await page.locator("#pxz-l1-shell-seq").textContent());
+      const basePageShell = Number(await page.locator("#pxz-page-shell-seq").textContent());
+      const basePageStaticSusp = Number(
+        await page.locator("#pxz-page-static-susp-seq").textContent()
+      );
+      const baseDynL2 = Number(await page.locator("#pxz-dyn-l2-seq").textContent());
+      const baseL1Hole = Number(await page.locator("#pxz-l1-hole-seq").textContent());
+      const basePageHole = Number(await page.locator("#pxz-page-hole-seq").textContent());
+      await expect(page.locator("#pxz-l1-hole-user")).toHaveText("cygnus");
+      await expect(page.locator("#pxz-page-hole-mode")).toHaveText("alpha");
+
+      // 1. Poison L1 shell, Page shell, Page noDynamic() static Suspense; bump L1 hole, dynamic L2, Page hole
+      const poison1 =
+        Math.max(baseL1Shell, basePageShell, basePageStaticSusp, baseDynL2, baseL1Hole, basePageHole) +
+        899;
+      const nextL1Hole = baseL1Hole + 821;
+      const nextDynL2_1 = baseDynL2 + 822;
+      const nextPageHole = basePageHole + 823;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          pairXzL1ShellSeq: poison1,
+          pairXzPageShellSeq: poison1,
+          pairXzPageStaticSuspSeq: poison1,
+          pairXzL1HoleSeq: nextL1Hole,
+          pairXzDynL2Seq: nextDynL2_1,
+          pairXzPageHoleSeq: nextPageHole,
+        }
+      );
+      await context.addCookies([
+        { name: "pxz_user", value: "vega", url: "http://localhost:3000" },
+      ]);
+      await page.goto("/t-3d-cube/pair-xz-asym/dyn-l2?mode=omega");
+      await waitCubeReady(page);
+
+      // L1 shell, Page shell & Page noDynamic() stay frozen; dynamic L2 & both PPR holes execute live!
+      await expect(page.locator("#pxz-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#pxz-l1-hole-user")).toHaveText("vega");
+      await expect(page.locator("#pxz-l1-hole-seq")).toHaveText(String(nextL1Hole));
+      await expect(page.locator("#pxz-dyn-l2-seq")).toHaveText(String(nextDynL2_1));
+      await expect(page.locator("#pxz-page-shell-seq")).toHaveText(String(basePageShell));
+      await expect(page.locator("#pxz-page-static-susp-seq")).toHaveText(
+        String(basePageStaticSusp)
+      );
+      await expect(page.locator("#pxz-page-hole-mode")).toHaveText("omega");
+      await expect(page.locator("#pxz-page-hole-seq")).toHaveText(String(nextPageHole));
+
+      // Interactive probes hydrate cleanly with 0 #418
+      await page.click("#probe-inc-pxz-l1");
+      await page.click("#probe-inc-pxz-l2");
+      await expect(page.locator("#probe-count-pxz-l1")).toHaveText("1");
+      await expect(page.locator("#probe-count-pxz-l2")).toHaveText("1");
+
+      // 2. revalidatePage updates ONLY Page shell & static Suspense without caching L2 or re-executing L1 shell
+      const nextPageShell = basePageShell + 824;
+      const nextPageStaticSusp = basePageStaticSusp + 825;
+      const nextDynL2_2 = nextDynL2_1 + 1;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          pairXzL1ShellSeq: poison1,
+          pairXzPageShellSeq: nextPageShell,
+          pairXzPageStaticSuspSeq: nextPageStaticSusp,
+          pairXzDynL2Seq: nextDynL2_2,
+        }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.revalPage("/t-3d-cube/pair-xz-asym/dyn-l2")
+      );
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#pxz-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#pxz-dyn-l2-seq")).toHaveText(String(nextDynL2_2));
+      await expect(page.locator("#pxz-page-shell-seq")).toHaveText(String(nextPageShell));
+      await expect(page.locator("#pxz-page-static-susp-seq")).toHaveText(
+        String(nextPageStaticSusp)
+      );
+      await expect(page.locator("#pxz-page-hole-mode")).toHaveText("omega");
+
+      // 3. revalidateLayout(L1) updates ONLY L1 shell while keeping Page shell frozen & L2 dynamic
+      const nextL1Shell = baseL1Shell + 827;
+      const nextDynL2_3 = nextDynL2_2 + 1;
+      const poison2 = Math.max(poison1, nextPageShell, nextL1Shell) + 899;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          pairXzL1ShellSeq: nextL1Shell,
+          pairXzPageShellSeq: poison2,
+          pairXzPageStaticSuspSeq: poison2,
+          pairXzDynL2Seq: nextDynL2_3,
+        }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.revalLayout("/t-3d-cube/pair-xz-asym")
+      );
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#pxz-l1-shell-seq")).toHaveText(String(nextL1Shell));
+      await expect(page.locator("#pxz-dyn-l2-seq")).toHaveText(String(nextDynL2_3));
+      await expect(page.locator("#pxz-page-shell-seq")).toHaveText(String(nextPageShell));
+      await expect(page.locator("#pxz-page-static-susp-seq")).toHaveText(
+        String(nextPageStaticSusp)
+      );
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("24. [Stage 4 / Check #58] Pairwise X+Z Per-Level TTL: L1 PPR (1s) -> L2 PPR (3600s) -> Page PPR (3600s)", async ({
+      page,
+    }) => {
+      test.skip(!isProd, "PPR layout 1s TTL SWR requires production mode");
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      await page.goto("/t-3d-cube/pair-xz-ttl/l2");
+      await waitCubeReady(page);
+      await page.waitForTimeout(450);
+      await page.reload();
+      await waitCubeReady(page);
+
+      const baseL1Shell = Number(await page.locator("#pxzttl-l1-shell-seq").textContent());
+      const baseL2Shell = Number(await page.locator("#pxzttl-l2-shell-seq").textContent());
+      const basePageShell = Number(await page.locator("#pxzttl-page-shell-seq").textContent());
+      const baseHoleMax = Math.max(
+        Number(await page.locator("#pxzttl-l1-hole-seq").textContent()),
+        Number(await page.locator("#pxzttl-l2-hole-seq").textContent()),
+        Number(await page.locator("#pxzttl-page-hole-seq").textContent())
+      );
+      const poison = Math.max(baseL1Shell, baseL2Shell, basePageShell, baseHoleMax) + 899;
+
+      const nextL1Shell = baseL1Shell + 831;
+      const nextL1Hole = baseHoleMax + 832;
+      const nextL2Hole = baseHoleMax + 833;
+      const nextPageHole = baseHoleMax + 834;
+
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          pairXzTtlL1ShellSeq: nextL1Shell,
+          pairXzTtlL2ShellSeq: poison,
+          pairXzTtlPageShellSeq: poison,
+          pairXzTtlL1HoleSeq: nextL1Hole,
+          pairXzTtlL2HoleSeq: nextL2Hole,
+          pairXzTtlPageHoleSeq: nextPageHole,
+        }
+      );
+      await page.waitForTimeout(1300);
+
+      // Reload #1 triggers L1 1s TTL refresh; L2 & Page shells stay frozen, all 3 holes stream live, 0 #418!
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#pxzttl-l2-shell-seq")).toHaveText(String(baseL2Shell));
+      await expect(page.locator("#pxzttl-page-shell-seq")).toHaveText(String(basePageShell));
+      await expect(page.locator("#pxzttl-l1-hole-seq")).toHaveText(String(nextL1Hole));
+      await expect(page.locator("#pxzttl-l2-hole-seq")).toHaveText(String(nextL2Hole));
+      await expect(page.locator("#pxzttl-page-hole-seq")).toHaveText(String(nextPageHole));
+
+      // Reload #2 after settle: L1 shell updated, L2 & Page shells STILL frozen, all 3 holes live, 0 #418!
+      await page.waitForTimeout(500);
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#pxzttl-l1-shell-seq")).toHaveText(String(nextL1Shell));
+      await expect(page.locator("#pxzttl-l2-shell-seq")).toHaveText(String(baseL2Shell));
+      await expect(page.locator("#pxzttl-page-shell-seq")).toHaveText(String(basePageShell));
+      await expect(page.locator("#pxzttl-l1-hole-seq")).toHaveText(String(nextL1Hole));
+      await expect(page.locator("#pxzttl-l2-hole-seq")).toHaveText(String(nextL2Hole));
+      await expect(page.locator("#pxzttl-page-hole-seq")).toHaveText(String(nextPageHole));
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("25. [Stage 4 / Check #59] Pairwise Y+Z Deep: Nested <DinouCacheSlot> (Outer -> Inner + 1s InnerTtl) Inside PPR Dynamic Hole", async ({
+      page,
+      context,
+    }) => {
+      test.skip(!isProd, "Nested <DinouCacheSlot> inside PPR dynamic hole requires production mode");
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      await context.addCookies([
+        { name: "pyz_user", value: "lyra", url: "http://localhost:3000" },
+      ]);
+      await page.goto("/t-3d-cube/pair-yz-nested-hole");
+      await waitCubeReady(page);
+      await page.waitForTimeout(450);
+      await page.reload();
+      await waitCubeReady(page);
+
+      const baseShell = Number(await page.locator("#pyz-shell-seq").textContent());
+      const baseHoleHost = Number(await page.locator("#pyz-hole-host-seq").textContent());
+      const baseOuter = Number(await page.locator("#pyz-hole-outer-seq").textContent());
+      const baseInner = Number(await page.locator("#pyz-hole-inner-seq").textContent());
+      const baseInnerTtl = Number(await page.locator("#pyz-hole-inner-ttl-seq").textContent());
+      const poison1 =
+        Math.max(baseShell, baseHoleHost, baseOuter, baseInner, baseInnerTtl) + 899;
+
+      await expect(page.locator("#pyz-hole-user")).toHaveText("lyra");
+
+      // Increment client probes in shell, outer slot, and inner slot
+      await page.click("#probe-inc-pyz-shell");
+      await page.click("#probe-inc-pyz-outer");
+      await page.click("#probe-inc-pyz-inner");
+      await expect(page.locator("#probe-count-pyz-shell")).toHaveText("1");
+      await expect(page.locator("#probe-count-pyz-outer")).toHaveText("1");
+      await expect(page.locator("#probe-count-pyz-inner")).toHaveText("1");
+
+      // 1. Live refreshSlot("cube-yz-hole-outer", true) with inner poisoned -> outer updates, inner stays frozen!
+      const nextOuter = baseOuter + 841;
+      const nextHoleHost_1 = baseHoleHost + 842;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          pairYzShellSeq: poison1,
+          pairYzHoleHostSeq: nextHoleHost_1,
+          pairYzHoleOuterSeq: nextOuter,
+          pairYzHoleInnerSeq: poison1,
+        }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.refreshSlot("cube-yz-hole-outer", true)
+      );
+      await expect(page.locator("#pyz-hole-outer-seq")).toHaveText(String(nextOuter), {
+        timeout: 10000,
+      });
+      await expect(page.locator("#pyz-hole-inner-seq")).toHaveText(String(baseInner));
+      await expect(page.locator("#pyz-shell-seq")).toHaveText(String(baseShell));
+      await expect(page.locator("#probe-count-pyz-shell")).toHaveText("1");
+      await expect(page.locator("#probe-count-pyz-inner")).toHaveText("1");
+
+      await page.waitForTimeout(350);
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#pyz-shell-seq")).toHaveText(String(baseShell));
+      await expect(page.locator("#pyz-hole-host-seq")).toHaveText(String(nextHoleHost_1));
+      await expect(page.locator("#pyz-hole-outer-seq")).toHaveText(String(nextOuter));
+      await expect(page.locator("#pyz-hole-inner-seq")).toHaveText(String(baseInner));
+
+      // 2. Live refreshSlot("cube-yz-hole-inner", true) with shell & outer poisoned -> inner updates, outer stays frozen!
+      const nextInner = baseInner + 843;
+      const poison2 = Math.max(poison1, nextOuter, nextInner, nextHoleHost_1) + 899;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          pairYzShellSeq: poison2,
+          pairYzHoleOuterSeq: poison2,
+          pairYzHoleInnerSeq: nextInner,
+        }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.refreshSlot("cube-yz-hole-inner", true)
+      );
+      await expect(page.locator("#pyz-hole-inner-seq")).toHaveText(String(nextInner), {
+        timeout: 10000,
+      });
+      await expect(page.locator("#pyz-hole-outer-seq")).toHaveText(String(nextOuter));
+
+      await page.waitForTimeout(350);
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#pyz-shell-seq")).toHaveText(String(baseShell));
+      await expect(page.locator("#pyz-hole-outer-seq")).toHaveText(String(nextOuter));
+      await expect(page.locator("#pyz-hole-inner-seq")).toHaveText(String(nextInner));
+
+      // 3. 1s TTL inner sibling slot inside 3600s outer slot inside PPR hole expires cleanly with 0 #418
+      const nextInnerTtl = baseInnerTtl + 844;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          pairYzShellSeq: poison2,
+          pairYzHoleOuterSeq: poison2,
+          pairYzHoleInnerSeq: poison2,
+          pairYzHoleInnerTtlSeq: nextInnerTtl,
+        }
+      );
+      await page.waitForTimeout(1300);
+
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#pyz-shell-seq")).toHaveText(String(baseShell));
+      await expect(page.locator("#pyz-hole-outer-seq")).toHaveText(String(nextOuter));
+      await expect(page.locator("#pyz-hole-inner-seq")).toHaveText(String(nextInner));
+
+      const afterFirst = await page.locator("#pyz-hole-inner-ttl-seq").textContent();
+      if (afterFirst !== String(nextInnerTtl)) {
+        await page.waitForTimeout(500);
+        await page.reload();
+        await waitCubeReady(page);
+      }
+      await expect(page.locator("#pyz-hole-inner-ttl-seq")).toHaveText(String(nextInnerTtl));
+      await expect(page.locator("#pyz-shell-seq")).toHaveText(String(baseShell));
+      await expect(page.locator("#pyz-hole-outer-seq")).toHaveText(String(nextOuter));
+      await expect(page.locator("#pyz-hole-inner-seq")).toHaveText(String(nextInner));
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("26. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
       browserName,
     }) => {
       test.skip(

@@ -156,6 +156,37 @@ export interface Cube3DState {
   pprEdgeShellSeq: number;
   pprEdgeHoleASeq: number;
   pprEdgeHoleBSeq: number;
+
+  // Stage 4 — Check #56: X+Y Asymmetric (<DinouCacheSlot> inside dynamic L2)
+  pairXyL1HostSeq: number;
+  pairXyL1SlotSeq: number;
+  pairXyDynL2HostSeq: number;
+  pairXyDynL2SlotSeq: number;
+  pairXyPageHostSeq: number;
+  pairXyPageSlotSeq: number;
+
+  // Stage 4 — Check #57: X+Z Asymmetric (L1 PPR -> L2 Dynamic -> Page PPR)
+  pairXzL1ShellSeq: number;
+  pairXzL1HoleSeq: number;
+  pairXzDynL2Seq: number;
+  pairXzPageShellSeq: number;
+  pairXzPageStaticSuspSeq: number;
+  pairXzPageHoleSeq: number;
+
+  // Stage 4 — Check #58: X+Z Per-Level TTL (L1 PPR 1s -> L2 PPR 3600s -> Page PPR 3600s)
+  pairXzTtlL1ShellSeq: number;
+  pairXzTtlL1HoleSeq: number;
+  pairXzTtlL2ShellSeq: number;
+  pairXzTtlL2HoleSeq: number;
+  pairXzTtlPageShellSeq: number;
+  pairXzTtlPageHoleSeq: number;
+
+  // Stage 4 — Check #59: Y+Z Deep (Nested <DinouCacheSlot> inside PPR dynamic hole)
+  pairYzShellSeq: number;
+  pairYzHoleHostSeq: number;
+  pairYzHoleOuterSeq: number;
+  pairYzHoleInnerSeq: number;
+  pairYzHoleInnerTtlSeq: number;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -297,6 +328,33 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   pprEdgeShellSeq: 100,
   pprEdgeHoleASeq: 100,
   pprEdgeHoleBSeq: 100,
+
+  pairXyL1HostSeq: 100,
+  pairXyL1SlotSeq: 100,
+  pairXyDynL2HostSeq: 100,
+  pairXyDynL2SlotSeq: 100,
+  pairXyPageHostSeq: 100,
+  pairXyPageSlotSeq: 100,
+
+  pairXzL1ShellSeq: 100,
+  pairXzL1HoleSeq: 100,
+  pairXzDynL2Seq: 100,
+  pairXzPageShellSeq: 100,
+  pairXzPageStaticSuspSeq: 100,
+  pairXzPageHoleSeq: 100,
+
+  pairXzTtlL1ShellSeq: 100,
+  pairXzTtlL1HoleSeq: 100,
+  pairXzTtlL2ShellSeq: 100,
+  pairXzTtlL2HoleSeq: 100,
+  pairXzTtlPageShellSeq: 100,
+  pairXzTtlPageHoleSeq: 100,
+
+  pairYzShellSeq: 100,
+  pairYzHoleHostSeq: 100,
+  pairYzHoleOuterSeq: 100,
+  pairYzHoleInnerSeq: 100,
+  pairYzHoleInnerTtlSeq: 100,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {

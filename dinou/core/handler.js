@@ -82,6 +82,7 @@ import {
 } from "./render-jsx-to-client-jsx.js";
 import {
   renderSingleLayoutLevel,
+  spliceSingleLayoutOwnHoles,
   composeLayoutChainFromOwnFragments,
   hydrateActiveChainPpr,
   readStorageArtifact,
@@ -2902,6 +2903,20 @@ async function handleRequest(request, platformContext = {}) {
                     if (single && single.ownTree) {
                       overrides.set(entry.cleanLayoutKey || "", single);
                     }
+                  } else if (
+                    lMeta?.ownPpr &&
+                    Array.isArray(lMeta.ownHoles) &&
+                    lMeta.ownHoles.length > 0
+                  ) {
+                    const spliced = await spliceSingleLayoutOwnHoles(entry, storage, {
+                      platformContext,
+                      reqUrl: request.url,
+                      currentPath: reqPath,
+                    });
+                    if (context._hasRedirected) break;
+                    if (spliced && spliced.ownTree) {
+                      overrides.set(entry.cleanLayoutKey || "", spliced);
+                    }
                   }
                 }
                 if (!context._hasRedirected && overrides.size > 0) {
@@ -3911,22 +3926,22 @@ async function handleRequest(request, platformContext = {}) {
               !isDevelopment &&
               !platformContext?.isSSG &&
               (hasDynamicLayoutConfig || isDynamicConfig || dynamicState.value || !cachedItem) &&
-              !isPprConfig &&
+              (!isPprConfig || hasDynamicLayoutConfig || isDynamicConfig || dynamicState.value) &&
               activeLayoutsForRoute.length > 0 &&
               pagePath &&
               queryObj.ssr_crash !== "true"
             ) {
               // Per-level layout composition for BOTH:
-              //  (a) Asymmetric dynamic layout(s) + static ancestor/descendant layout(s) + static/dynamic page, AND
-              //  (b) Dynamic / uncached page under 100% static cached layout chain (S -> S -> D).
-              // Reuses every static layout's cached `shell.layout.own.json` without re-executing static layouts!
+              //  (a) Asymmetric dynamic layout(s) + static/PPR ancestor/descendant layout(s) + static/PPR/dynamic page, AND
+              //  (b) Dynamic / uncached page under static/PPR cached layout chain (S -> S -> D).
+              // Reuses every static/PPR layout's cached `shell.layout.own.json` and splices live PPR holes without re-executing static shells!
               await requestStorage.run(context, async () => {
                 let composedAsymmetric = false;
                 let pageClientJsx;
                 const canReuseStaticPage =
                   hasDynamicLayoutConfig &&
                   !isDynamicConfig &&
-                  Object.keys(queryObj).length === 0;
+                  (Boolean(isPagePprConfig) || Object.keys(queryObj).length === 0);
                 if (canReuseStaticPage && !isRouteDeletedInStorage) {
                   try {
                     const shellPageKey = cleanPath
@@ -4017,6 +4032,26 @@ async function handleRequest(request, platformContext = {}) {
                           }
                         }
                       }
+                      if (pageClientJsx !== undefined && isPagePprConfig) {
+                        const prevPageResume = context._isPprRuntimeResume;
+                        context._isPprRuntimeResume = true;
+                        try {
+                          const splicedPage = await spliceDynamicHolesIntoShell(
+                            pageClientJsx,
+                            () =>
+                              getJSX(reqPath, queryObj, isNotFound, isDevelopment, !pagePath, {
+                                skipLayoutProbe: true,
+                                segment: "page",
+                              }),
+                            0
+                          );
+                          pageClientJsx = await runInPageSegment(() =>
+                            asyncRenderJSXToClientJSX(splicedPage)
+                          );
+                        } finally {
+                          context._isPprRuntimeResume = prevPageResume;
+                        }
+                      }
                     } else if (allowISGValue !== false) {
                       const staticPageDynState = { value: false };
                       const staticPageSimReq = simReq
@@ -4031,18 +4066,39 @@ async function handleRequest(request, platformContext = {}) {
                       );
                       staticPageCtx._isStaticHtmlRender = true;
                       copyCustomContextProperties(rootContext, staticPageCtx);
-                      const staticPageJsx = await requestStorage.run(staticPageCtx, () =>
-                        getJSX(reqPath, {}, isNotFound, isDevelopment, !pagePath, {
-                          segment: "page",
-                        })
-                      );
+                      let staticPageJsx;
+                      let staticPageHoles = [];
+                      if (isPagePprConfig) {
+                        await requestStorage.run(staticPageCtx, async () => {
+                          await runWithPprContext({ isPpr: true }, async () => {
+                            const rawPprPage = await getJSX(
+                              reqPath,
+                              {},
+                              isNotFound,
+                              isDevelopment,
+                              !pagePath,
+                              { segment: "page" }
+                            );
+                            resetPprHoles(0);
+                            staticPageJsx = await runInPageSegment(() =>
+                              asyncRenderJSXToClientJSX(rawPprPage)
+                            );
+                            staticPageHoles = getRegisteredHoles();
+                          });
+                        });
+                      } else {
+                        staticPageJsx = await requestStorage.run(staticPageCtx, () =>
+                          getJSX(reqPath, {}, isNotFound, isDevelopment, !pagePath, {
+                            segment: "page",
+                          })
+                        );
+                      }
                       if (
                         !staticPageDynState.value &&
                         !staticPageCtx._hasRedirected &&
                         !isNotFound.value &&
                         staticPageJsx !== undefined
                       ) {
-                        pageClientJsx = staticPageJsx;
                         try {
                           const nowPageGen = Date.now();
                           const pageSlotTags =
@@ -4054,8 +4110,9 @@ async function handleRequest(request, platformContext = {}) {
                             revalidate: combinedRevalidate,
                             pageRevalidate: revalidate !== undefined ? revalidate : null,
                             tags: tags || [],
-                            ppr: false,
-                            pagePpr: false,
+                            ppr: Boolean(isPagePprConfig),
+                            pagePpr: Boolean(isPagePprConfig),
+                            ...(staticPageHoles.length > 0 ? { holes: staticPageHoles } : {}),
                             ...(pageSlotTags && pageSlotTags.size > 0
                               ? { slotTags: Array.from(pageSlotTags) }
                               : {}),
@@ -4072,6 +4129,28 @@ async function handleRequest(request, platformContext = {}) {
                           }
                           await storage.set(metaKey, JSON.stringify(newPageMeta));
                         } catch (e) {}
+                        if (isPagePprConfig) {
+                          const prevPageResume = context._isPprRuntimeResume;
+                          context._isPprRuntimeResume = true;
+                          try {
+                            const splicedPage = await spliceDynamicHolesIntoShell(
+                              staticPageJsx,
+                              () =>
+                                getJSX(reqPath, queryObj, isNotFound, isDevelopment, !pagePath, {
+                                  skipLayoutProbe: true,
+                                  segment: "page",
+                                }),
+                              0
+                            );
+                            pageClientJsx = await runInPageSegment(() =>
+                              asyncRenderJSXToClientJSX(splicedPage)
+                            );
+                          } finally {
+                            context._isPprRuntimeResume = prevPageResume;
+                          }
+                        } else {
+                          pageClientJsx = staticPageJsx;
+                        }
                       }
                     }
                   } catch (staticPageCacheErr) {
@@ -4131,6 +4210,7 @@ async function handleRequest(request, platformContext = {}) {
                           overrides.set(entry.cleanLayoutKey || "", single);
                         }
                       } else if (lMeta) {
+                        let effectiveLMeta = lMeta;
                         const ownGen = Number(
                           lMeta.ownGeneratedAt ||
                             lMeta.layoutGeneratedAt ||
@@ -4151,6 +4231,14 @@ async function handleRequest(request, platformContext = {}) {
                           await revalidateLayout(entry.layoutRoutePath, {
                             onlyIfExpired: true,
                           });
+                          effectiveLMeta =
+                            (await readMetaFromStorage(
+                              storage,
+                              lMetaKey,
+                              lRscKey,
+                              platformContext,
+                              request.url
+                            )) || lMeta;
                         } else if (
                           Array.isArray(lMeta.slotTags) &&
                           lMeta.slotTags.length > 0
@@ -4164,6 +4252,14 @@ async function handleRequest(request, platformContext = {}) {
                             await revalidateLayout(entry.layoutRoutePath, {
                               onlyRefreshSlots: true,
                             });
+                            effectiveLMeta =
+                              (await readMetaFromStorage(
+                                storage,
+                                lMetaKey,
+                                lRscKey,
+                                platformContext,
+                                request.url
+                              )) || lMeta;
                           } else if (lSlotFresh.hasExpired) {
                             const layoutSlotRevalKey = `layout-slot:${entry.layoutRoutePath}`;
                             const lSlotPromise = (async () => {
@@ -4189,6 +4285,21 @@ async function handleRequest(request, platformContext = {}) {
                             ) {
                               platformContext.ctx.waitUntil(lSlotPromise);
                             }
+                          }
+                        }
+                        if (
+                          effectiveLMeta?.ownPpr &&
+                          Array.isArray(effectiveLMeta.ownHoles) &&
+                          effectiveLMeta.ownHoles.length > 0
+                        ) {
+                          const splicedOwn = await spliceSingleLayoutOwnHoles(entry, storage, {
+                            platformContext,
+                            reqUrl: request.url,
+                            currentPath: reqPath,
+                          });
+                          if (context._hasRedirected) break;
+                          if (splicedOwn && splicedOwn.ownTree) {
+                            overrides.set(entry.cleanLayoutKey || "", splicedOwn);
                           }
                         }
                       }

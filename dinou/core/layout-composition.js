@@ -31,6 +31,7 @@ import {
 } from "./cache-slot.js";
 import { readDist2Fallback } from "./storage-adapter.js";
 import { fetchCloudflareDist2Asset } from "./static-assets.js";
+import { spliceDynamicHolesIntoShell } from "./ppr-runtime.js";
 
 function sanitizeLayoutScope(key) {
   return String(key || "root").replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -584,10 +585,115 @@ async function hydrateActiveChainPpr(activeChain, reqSegments, queryObj, srcFold
   return { layoutPprMap, defaultPpr, anyLayoutPpr };
 }
 
+/**
+ * Splices live dynamic PPR holes into a single static PPR layout level's cached
+ * `shell.layout.own.json` without re-executing the layout's static shell.
+ * Used when composing a static PPR layout alongside a dynamic sibling/child layout
+ * (e.g., L1 PPR -> L2 Dynamic -> Page PPR) on both SSR GET and /____rsc_layout____.
+ */
+async function spliceSingleLayoutOwnHoles(entry, storage, options = {}) {
+  const {
+    platformContext = null,
+    reqUrl = null,
+    currentPath = "/",
+  } = options;
+
+  const key = entry.cleanLayoutKey || "";
+  const ownKey = key ? `${key}/shell.layout.own.json` : "shell.layout.own.json";
+  const [ownItem, lMeta] = await Promise.all([
+    readStorageArtifact(storage, ownKey, platformContext, reqUrl),
+    readLayoutMeta(storage, key, platformContext, reqUrl),
+  ]);
+  if (!ownItem || !ownItem.content || !ownItem.content.trim().startsWith("{")) {
+    return null;
+  }
+  if (lMeta?.dynamic) {
+    return null;
+  }
+  let cachedOwnTree;
+  try {
+    cachedOwnTree = deserializeJSX(ownItem.content);
+  } catch (e) {
+    return null;
+  }
+
+  const layoutModule = await importModule(entry.layoutPath);
+  const Layout = layoutModule.default ?? layoutModule;
+  const slots = entry.slots || {};
+  const dParams = entry.dParams || {};
+  const rawSlots = {};
+
+  for (const [slotName, slotValue] of Object.entries(slots)) {
+    const slotParams = slotValue?.slotParams || slotValue?.props?.params || dParams || {};
+    if (slotValue && slotValue.slotPath) {
+      const slotModule = await importModule(slotValue.slotPath);
+      const Slot = slotModule.default ?? slotModule;
+      rawSlots[slotName] = React.createElement(Slot, {
+        params: slotParams,
+        key: slotName,
+        __modulePath: slotValue.slotPath,
+      });
+    } else {
+      rawSlots[slotName] = slotValue;
+    }
+  }
+
+  const ctx = getContext();
+  const layoutProps = await getLayoutProps(entry.layoutPath, dParams);
+  if (ctx?._hasRedirected) {
+    return null;
+  }
+
+  const placeholder = createLayoutChildrenPlaceholder();
+  const props = { params: dParams, ...rawSlots, ...(layoutProps ?? {}) };
+  const liveRawLayoutEl = markLayoutRootElement(
+    React.createElement(Layout, props, placeholder),
+    true,
+    sanitizeLayoutScope(key)
+  );
+
+  const prevResume = ctx?._isPprRuntimeResume;
+  if (ctx) ctx._isPprRuntimeResume = true;
+  let resolvedOwnTree;
+  try {
+    const splicedTree = await spliceDynamicHolesIntoShell(
+      cachedOwnTree,
+      liveRawLayoutEl,
+      0
+    );
+    const renderSegStore = {
+      active: true,
+      idCount: 0,
+      holeCount: 0,
+      scopePrefix: sanitizeLayoutScope(key),
+    };
+    resolvedOwnTree = await runInLayoutSegment(
+      () => asyncRenderJSXToClientJSX(splicedTree),
+      renderSegStore
+    );
+  } finally {
+    if (ctx) ctx._isPprRuntimeResume = prevResume;
+  }
+
+  if (ctx?._hasRedirected) {
+    return null;
+  }
+
+  return {
+    ownTree: resolvedOwnTree,
+    ownHoles: [],
+    ownSuspenseCount: 0,
+    ownSlotTags: Array.isArray(lMeta?.ownSlotTags) ? lMeta.ownSlotTags : [],
+    effectivePpr: false,
+    placeholder,
+  };
+}
+
 export {
   shiftPprHoleIdsInTree,
   shiftPprHoleEntry,
   renderSingleLayoutLevel,
+  spliceSingleLayoutOwnHoles,
   composeLayoutChainFromOwnFragments,
   hydrateActiveChainPpr,
   readStorageArtifact,
@@ -597,6 +703,7 @@ export default {
   shiftPprHoleIdsInTree,
   shiftPprHoleEntry,
   renderSingleLayoutLevel,
+  spliceSingleLayoutOwnHoles,
   composeLayoutChainFromOwnFragments,
   hydrateActiveChainPpr,
   readStorageArtifact,

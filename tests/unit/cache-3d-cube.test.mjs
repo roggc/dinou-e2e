@@ -1994,3 +1994,379 @@ console.log("STAGE3_AXIS_Z_OK");
     removeDirSafe(tmpApp);
   }
 });
+
+test("13. Stage 4 Pairwise (X+Y, X+Z, Y+Z) compiled Node AOT integration: slot inside dynamic L2, L1 PPR -> L2 Dynamic -> Page PPR, 1s PPR L1 TTL & nested slots inside PPR hole", async () => {
+  const tmpApp = createFixtureDir("tmp-3d-stage4-");
+  try {
+    for (const relDir of [
+      "src/xy/dyn-l2",
+      "src/xz/dyn-l2",
+      "src/xz-ttl/l2",
+      "src/yz",
+    ]) {
+      fs.mkdirSync(path.join(tmpApp, relDir), { recursive: true });
+    }
+
+    fs.writeFileSync(
+      path.join(tmpApp, "package.json"),
+      JSON.stringify({ name: "cube-3d-stage4-fixture", private: true, type: "module" }, null, 2)
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "tsconfig.json"),
+      JSON.stringify(
+        {
+          compilerOptions: {
+            target: "ES2022",
+            module: "ESNext",
+            moduleResolution: "bundler",
+            jsx: "react-jsx",
+          },
+        },
+        null,
+        2
+      )
+    );
+    writeDinouShim(tmpApp);
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src", "state.ts"),
+      `import fs from "node:fs";
+import path from "node:path";
+const FILE = path.resolve(process.cwd(), "s4-state.json");
+const DEF = {
+  xyL1: 100, xyL2: 100, xyL2Slot: 100, xyPage: 100,
+  xzL1Shell: 100, xzL1Hole: 100, xzDynL2: 100, xzPageShell: 100, xzPageStatic: 100, xzPageHole: 100,
+  xztL1Shell: 100, xztL1Hole: 100, xztL2Shell: 100, xztL2Hole: 100, xztPageShell: 100, xztPageHole: 100,
+  yzShell: 100, yzHoleHost: 100, yzOuter: 100, yzInner: 100,
+};
+export function readS() {
+  try { if (fs.existsSync(FILE)) return { ...DEF, ...JSON.parse(fs.readFileSync(FILE, "utf8")) }; } catch {}
+  return { ...DEF };
+}
+export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+`
+    );
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src", "layout.tsx"),
+      `import type { ReactNode } from "react";
+export default function Root({ children }: { children: ReactNode }) {
+  return <html><head><title>S4</title></head><body>{children}</body></html>;
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src", "page.tsx"),
+      `export default function Home() { return <main>home</main>; }\n`
+    );
+
+    // 1. Check #56 (X+Y Asymmetric)
+    fs.writeFileSync(path.join(tmpApp, "src/xy/layout_functions.ts"), `export const revalidate = 3600;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/xy/layout.tsx"),
+      `import type { ReactNode } from "react";
+import { readS } from "../state";
+export default function XyL1({ children }: { children: ReactNode }) {
+  return <section><span id="xy-l1">{readS().xyL1}</span>{children}</section>;
+}
+`
+    );
+    fs.writeFileSync(path.join(tmpApp, "src/xy/dyn-l2/layout_functions.ts"), `export const revalidate = 0;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/xy/dyn-l2/layout.tsx"),
+      `import type { ReactNode } from "react";
+import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../../state";
+export default function XyDynL2({ children }: { children: ReactNode }) {
+  return (
+    <div>
+      <span id="xy-l2">{readS().xyL2}</span>
+      <DinouCacheSlot id="s4-xy-l2-slot" revalidate={3600}>
+        {async () => <span id="xy-l2-slot">{readS().xyL2Slot}</span>}
+      </DinouCacheSlot>
+      {children}
+    </div>
+  );
+}
+`
+    );
+    fs.writeFileSync(path.join(tmpApp, "src/xy/dyn-l2/page_functions.ts"), `export const revalidate = 3600;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/xy/dyn-l2/page.tsx"),
+      `import { readS } from "../../state";
+export default function XyPage() { return <main><span id="xy-page">{readS().xyPage}</span></main>; }
+`
+    );
+
+    // 2. Check #57 (X+Z Asymmetric: L1 PPR -> L2 Dynamic -> Page PPR)
+    fs.writeFileSync(path.join(tmpApp, "src/xz/layout_functions.ts"), `export const ppr = true;\nexport const revalidate = 3600;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/xz/layout.tsx"),
+      `import { Suspense, type ReactNode } from "react";
+import { getContext } from "dinou";
+import { readS, sleep } from "../state";
+async function L1Hole() {
+  const u = String(getContext()?.req?.cookies?.u || "anon");
+  await sleep(10);
+  return <span id="xz-l1-h">{\`\${u}-\${readS().xzL1Hole}\`}</span>;
+}
+export default function XzL1({ children }: { children: ReactNode }) {
+  return <section><span id="xz-l1-s">{readS().xzL1Shell}</span><Suspense fallback={<span>f1</span>}><L1Hole /></Suspense>{children}</section>;
+}
+`
+    );
+    fs.writeFileSync(path.join(tmpApp, "src/xz/dyn-l2/layout_functions.ts"), `export const revalidate = 0;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/xz/dyn-l2/layout.tsx"),
+      `import type { ReactNode } from "react";
+import { readS } from "../../state";
+export default function XzDynL2({ children }: { children: ReactNode }) {
+  return <div><span id="xz-l2">{readS().xzDynL2}</span>{children}</div>;
+}
+`
+    );
+    fs.writeFileSync(path.join(tmpApp, "src/xz/dyn-l2/page_functions.ts"), `export const ppr = true;\nexport const revalidate = 3600;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/xz/dyn-l2/page.tsx"),
+      `import { Suspense } from "react";
+import { getContext, noDynamic } from "dinou";
+import { readS, sleep } from "../../state";
+async function StaticSusp() {
+  noDynamic();
+  await sleep(5);
+  return <span id="xz-p-st">{readS().xzPageStatic}</span>;
+}
+async function PageHole() {
+  const m = String(getContext()?.req?.query?.m || "std");
+  await sleep(10);
+  return <span id="xz-p-h">{\`\${m}-\${readS().xzPageHole}\`}</span>;
+}
+export default function XzPage() {
+  return (
+    <main>
+      <span id="xz-p-s">{readS().xzPageShell}</span>
+      <Suspense fallback={<span>fs</span>}><StaticSusp /></Suspense>
+      <Suspense fallback={<span>fp</span>}><PageHole /></Suspense>
+    </main>
+  );
+}
+`
+    );
+
+    // 3. Check #58 (X+Z Per-Level TTL: L1 PPR 1s -> L2 PPR 3600s -> Page PPR 3600s)
+    fs.writeFileSync(path.join(tmpApp, "src/xz-ttl/layout_functions.ts"), `export const ppr = true;\nexport const revalidate = 1;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/xz-ttl/layout.tsx"),
+      `import { Suspense, type ReactNode } from "react";
+import { readS, sleep } from "../state";
+async function H1() { await sleep(10); return <span id="xzt-l1-h">{readS().xztL1Hole}</span>; }
+export default function XztL1({ children }: { children: ReactNode }) {
+  return <section><span id="xzt-l1-s">{readS().xztL1Shell}</span><Suspense fallback={<span>f</span>}><H1 /></Suspense>{children}</section>;
+}
+`
+    );
+    fs.writeFileSync(path.join(tmpApp, "src/xz-ttl/l2/layout_functions.ts"), `export const ppr = true;\nexport const revalidate = 3600;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/xz-ttl/l2/layout.tsx"),
+      `import { Suspense, type ReactNode } from "react";
+import { readS, sleep } from "../../state";
+async function H2() { await sleep(10); return <span id="xzt-l2-h">{readS().xztL2Hole}</span>; }
+export default function XztL2({ children }: { children: ReactNode }) {
+  return <div><span id="xzt-l2-s">{readS().xztL2Shell}</span><Suspense fallback={<span>f</span>}><H2 /></Suspense>{children}</div>;
+}
+`
+    );
+    fs.writeFileSync(path.join(tmpApp, "src/xz-ttl/l2/page_functions.ts"), `export const ppr = true;\nexport const revalidate = 3600;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/xz-ttl/l2/page.tsx"),
+      `import { Suspense } from "react";
+import { readS, sleep } from "../../state";
+async function HP() { await sleep(10); return <span id="xzt-p-h">{readS().xztPageHole}</span>; }
+export default function XztPage() {
+  return <main><span id="xzt-p-s">{readS().xztPageShell}</span><Suspense fallback={<span>f</span>}><HP /></Suspense></main>;
+}
+`
+    );
+
+    // 4. Check #59 (Y+Z Nested <DinouCacheSlot> inside PPR dynamic hole)
+    fs.writeFileSync(path.join(tmpApp, "src/yz/page_functions.ts"), `export const ppr = true;\nexport const revalidate = 3600;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/yz/page.tsx"),
+      `import { Suspense } from "react";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep } from "../state";
+async function HoleSlots() {
+  await sleep(10);
+  return (
+    <div>
+      <span id="yz-hh">{readS().yzHoleHost}</span>
+      <DinouCacheSlot id="s4-yz-outer" revalidate={3600}>
+        {async () => (
+          <div>
+            <span id="yz-o">{readS().yzOuter}</span>
+            <DinouCacheSlot id="s4-yz-inner" revalidate={3600}>
+              {async () => <span id="yz-i">{readS().yzInner}</span>}
+            </DinouCacheSlot>
+          </div>
+        )}
+      </DinouCacheSlot>
+    </div>
+  );
+}
+export default function YzPage() {
+  return <main><span id="yz-s">{readS().yzShell}</span><Suspense fallback={<span>f</span>}><HoleSlots /></Suspense></main>;
+}
+`
+    );
+
+    const buildRes = spawnSync(process.execPath, [CLI_PATH, "build:node:esbuild"], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 120_000,
+    });
+    assert.equal(
+      buildRes.status,
+      0,
+      `Stage 4 fixture build failed:\n${buildRes.stdout}\n${buildRes.stderr}`
+    );
+
+    const verifyScript = path.join(tmpApp, "verify-stage4.mjs");
+    fs.writeFileSync(
+      verifyScript,
+      `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const { FileSystemStorage, setStorageAdapter } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/storage-adapter.js")).href
+      )});
+const { revalidatePage, revalidateLayout } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/cache-revalidate.js")).href
+      )});
+setStorageAdapter(new FileSystemStorage(path.resolve(".dinou/dist2")));
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+globalThis.__DINOU_RENDER_HTML_STREAM__ = ssrMod.renderHtml;
+const opts = { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml };
+
+const textById = (html, id) => {
+  const m = html.match(new RegExp('id="' + id + '"[^>]*>([^<]*)<'));
+  return m ? m[1] : null;
+};
+const writeS = (patch) => {
+  const f = path.resolve("s4-state.json");
+  const cur = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : {};
+  fs.writeFileSync(f, JSON.stringify({ ...cur, ...patch }), "utf8");
+};
+const get = async (u, headers = {}) => {
+  const r = await rscMod.handleRequest(new Request("http://localhost" + u, { headers }), opts);
+  assert.equal(r.status, 200, "Expected 200 for " + u);
+  return await r.text();
+};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// 1. Check #56 (X+Y Asymmetric): L2 slot stays cached while L2 host executes live
+writeS({ xyL1: 999, xyL2: 501, xyL2Slot: 999, xyPage: 999 });
+const xy1 = await get("/xy/dyn-l2");
+assert.equal(textById(xy1, "xy-l1"), "100");
+assert.equal(textById(xy1, "xy-l2"), "501");
+assert.equal(textById(xy1, "xy-l2-slot"), "100");
+assert.equal(textById(xy1, "xy-page"), "100");
+
+writeS({ xyL1: 999, xyL2: 502, xyL2Slot: 601, xyPage: 999 });
+await get("/____rsc_slot____/s4-xy-l2-slot?fresh=1", { "x-dinou-current-path": "/xy/dyn-l2" });
+const xy2 = await get("/xy/dyn-l2");
+assert.equal(textById(xy2, "xy-l2"), "502");
+assert.equal(textById(xy2, "xy-l2-slot"), "601");
+assert.equal(textById(xy2, "xy-l1"), "100");
+assert.equal(textById(xy2, "xy-page"), "100");
+
+// 2. Check #57 (X+Z Asymmetric): L1 PPR -> L2 Dynamic -> Page PPR
+// SSG must have persisted shell.page.json for Page PPR without caching L2!
+assert.equal(
+  fs.existsSync(path.resolve(".dinou/dist2/xz/dyn-l2/shell.page.json")),
+  true,
+  "PPR Page under dynamic L2 MUST persist shell.page.json at SSG"
+);
+assert.equal(
+  fs.existsSync(path.resolve(".dinou/dist2/xz/dyn-l2/layout.rsc")),
+  false,
+  "Dynamic L2 must NEVER freeze layout.rsc"
+);
+
+writeS({ xzL1Shell: 999, xzPageShell: 999, xzPageStatic: 999, xzL1Hole: 701, xzDynL2: 702, xzPageHole: 703 });
+const xz1 = await get("/xz/dyn-l2?m=omega", { cookie: "u=vega" });
+assert.equal(textById(xz1, "xz-l1-s"), "100", "L1 PPR static shell MUST stay frozen 100");
+assert.equal(textById(xz1, "xz-l1-h"), "vega-701", "L1 PPR hole streams live");
+assert.equal(textById(xz1, "xz-l2"), "702", "Dynamic L2 executes live");
+assert.equal(textById(xz1, "xz-p-s"), "100", "Page PPR static shell MUST stay frozen 100");
+assert.equal(textById(xz1, "xz-p-st"), "100", "Page noDynamic() static Suspense MUST stay frozen 100");
+assert.equal(textById(xz1, "xz-p-h"), "omega-703", "Page PPR hole streams live");
+
+// revalidatePage updates ONLY Page shell without caching L2 or re-executing L1 shell
+writeS({ xzL1Shell: 999, xzPageShell: 704, xzPageStatic: 705, xzDynL2: 706 });
+await revalidatePage("/xz/dyn-l2");
+const xz2 = await get("/xz/dyn-l2?m=omega", { cookie: "u=vega" });
+assert.equal(textById(xz2, "xz-l1-s"), "100");
+assert.equal(textById(xz2, "xz-l2"), "706");
+assert.equal(textById(xz2, "xz-p-s"), "704");
+assert.equal(textById(xz2, "xz-p-st"), "705");
+
+// revalidateLayout(L1) updates ONLY L1 shell while Page shell stays frozen & L2 dynamic
+writeS({ xzL1Shell: 707, xzPageShell: 999, xzPageStatic: 999, xzDynL2: 708 });
+await revalidateLayout("/xz");
+const xz3 = await get("/xz/dyn-l2?m=omega", { cookie: "u=vega" });
+assert.equal(textById(xz3, "xz-l1-s"), "707");
+assert.equal(textById(xz3, "xz-l2"), "708");
+assert.equal(textById(xz3, "xz-p-s"), "704");
+assert.equal(textById(xz3, "xz-p-st"), "705");
+
+// 3. Check #58 (X+Z Per-Level TTL): 1s PPR L1 expires without re-executing L2 or Page shells
+writeS({ xztL1Shell: 801, xztL2Shell: 999, xztPageShell: 999, xztL1Hole: 802, xztL2Hole: 803, xztPageHole: 804 });
+await sleep(1250);
+const xzt1 = await get("/xz-ttl/l2");
+assert.equal(textById(xzt1, "xzt-l2-s"), "100");
+assert.equal(textById(xzt1, "xzt-p-s"), "100");
+await sleep(300);
+const xzt2 = await get("/xz-ttl/l2");
+assert.equal(textById(xzt2, "xzt-l1-s"), "801", "L1 PPR 1s shell updated");
+assert.equal(textById(xzt2, "xzt-l2-s"), "100", "L2 PPR 3600s shell stayed frozen");
+assert.equal(textById(xzt2, "xzt-p-s"), "100", "Page PPR 3600s shell stayed frozen");
+assert.equal(textById(xzt2, "xzt-l1-h"), "802");
+assert.equal(textById(xzt2, "xzt-l2-h"), "803");
+assert.equal(textById(xzt2, "xzt-p-h"), "804");
+
+// 4. Check #59 (Y+Z Nested <DinouCacheSlot> inside PPR dynamic hole)
+await get("/yz"); // warm hole slots
+writeS({ yzShell: 999, yzHoleHost: 901, yzOuter: 902, yzInner: 999 });
+await get("/____rsc_slot____/s4-yz-outer?fresh=1", { "x-dinou-current-path": "/yz" });
+const yz2 = await get("/yz");
+assert.equal(textById(yz2, "yz-s"), "100");
+assert.equal(textById(yz2, "yz-hh"), "901");
+assert.equal(textById(yz2, "yz-o"), "902");
+assert.equal(textById(yz2, "yz-i"), "100", "Nested inner slot inside PPR hole stays frozen on outer refresh!");
+
+console.log("STAGE4_PAIRWISE_OK");
+`
+    );
+
+    const runRes = spawnSync(process.execPath, [verifyScript], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+      timeout: 60_000,
+    });
+    assert.equal(
+      runRes.status,
+      0,
+      `Stage 4 compiled integration failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+    );
+    assert.ok(runRes.stdout.includes("STAGE4_PAIRWISE_OK"));
+  } finally {
+    removeDirSafe(tmpApp);
+  }
+});
