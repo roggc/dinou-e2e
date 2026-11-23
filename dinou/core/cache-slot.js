@@ -1336,10 +1336,14 @@ async function getSlotJSX(slotId, options = {}) {
           });
         }
         if (storage && !isEntryNoCache && isLatestGen()) {
+          const nextSlotGenAt = Math.max(
+            Date.now(),
+            Number(cached?.metadata?.generatedAt || 0) + 1
+          );
           await storage.set(storageKey, serialized, {
             tags: entry.tags,
             revalidate: entry.revalidate,
-            generatedAt: Date.now(),
+            generatedAt: nextSlotGenAt,
             slotId: targetId,
             inStaticShell: Boolean(cached?.metadata?.inStaticShell),
             inStaticSuspense: Boolean(cached?.metadata?.inStaticSuspense),

@@ -521,6 +521,8 @@ export function DinouCacheSlotBoundary({ id, tags, children }) {
     }, [override.content]);
   }
 
+  const tagsKey = Array.isArray(tags) ? tags.join("\0") : "";
+
   useEffect(() => {
     const applyResolved = (resolved, resolvedBatchId = 0) => {
       const baseRef = childrenRef.current;
@@ -587,7 +589,7 @@ export function DinouCacheSlotBoundary({ id, tags, children }) {
         mountedClientSlots.delete(id);
       }
     };
-  }, [id, tags]);
+  }, [id, tagsKey]);
 
   const wrapWithBatch = (content, batchId) => {
     if (SlotRenderBatchContext) {

@@ -2391,6 +2391,7 @@ test("14. Stage 5 Triple Synergy (X+Y+Z) compiled Node AOT integration: L1 PPR+S
     for (const relDir of [
       "src/ta/dyn-l2/l3",
       "src/st/sibling",
+      "src/ts-cascade",
     ]) {
       fs.mkdirSync(path.join(tmpApp, relDir), { recursive: true });
     }
@@ -2591,6 +2592,31 @@ export default function StSib() { return <main><span id="st-sib">{readS().stSib}
 `
     );
 
+    // 3. Same-millisecond revalidatePath (Bun/Linux CI #418 regression guard)
+    fs.writeFileSync(
+      path.join(tmpApp, "src/ts-cascade/layout_functions.ts"),
+      `export const revalidate = 1000000;\nexport function getCacheTags() { return ["ts-lay"]; }\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/ts-cascade/layout.tsx"),
+      `import type { ReactNode } from "react";
+export default function TsCascadeLayout({ children }: { children: ReactNode }) {
+  return <div id="ts-wrap"><span id="ts-l">{new Date().toISOString()}</span>{children}</div>;
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/ts-cascade/page_functions.ts"),
+      `export const revalidate = 1000000;\nexport function getCacheTags() { return ["ts-pg"]; }\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/ts-cascade/page.tsx"),
+      `export default function TsCascadePage() {
+  return <main><span id="ts-p">{new Date().toISOString()}</span></main>;
+}
+`
+    );
+
     const buildRes = spawnSync(process.execPath, [CLI_PATH, "build:node:esbuild"], {
       cwd: tmpApp,
       encoding: "utf8",
@@ -2614,7 +2640,7 @@ import { pathToFileURL } from "node:url";
 const { FileSystemStorage, setStorageAdapter } = await import(${JSON.stringify(
         pathToFileURL(path.join(DINOU_ROOT, "core/storage-adapter.js")).href
       )});
-const { revalidateLayout, revalidateTag } = await import(${JSON.stringify(
+const { revalidateLayout, revalidateTag, revalidatePath } = await import(${JSON.stringify(
         pathToFileURL(path.join(DINOU_ROOT, "core/cache-revalidate.js")).href
       )});
 setStorageAdapter(new FileSystemStorage(path.resolve(".dinou/dist2")));
@@ -2715,6 +2741,35 @@ assert.equal(textById(sib1, "st-l1"), "801");
 assert.equal(textById(sib1, "st-sl"), "802");
 assert.equal(textById(sib1, "st-un"), "100");
 assert.equal(textById(sib1, "st-sib"), "100", "Unrelated sibling page stays frozen");
+
+// 3. Same-millisecond revalidatePath (revalidateLayout + revalidatePage in same ms -> zero #418 mismatch!)
+const origNow = Date.now;
+const frozenMs = origNow() + 10000;
+Date.now = () => frozenMs;
+try {
+  await revalidatePath("/ts-cascade");
+} finally {
+  Date.now = origNow;
+}
+const tsHtml = await get("/ts-cascade");
+const tsLayoutRsc = fs.readFileSync(path.resolve(".dinou/dist2/ts-cascade/layout.rsc"), "utf8");
+const tsPageRsc = fs.readFileSync(path.resolve(".dinou/dist2/ts-cascade/page.rsc"), "utf8");
+const htmlLayoutTs = textById(tsHtml, "ts-l");
+const htmlPageTs = textById(tsHtml, "ts-p");
+const rscLayoutTs = (tsLayoutRsc.match(/\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z/) || [])[0];
+const rscPageTs = (tsPageRsc.match(/\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z/) || [])[0];
+assert.ok(htmlLayoutTs && rscLayoutTs, "Expected ISO timestamps in layout HTML & layout.rsc");
+assert.ok(htmlPageTs && rscPageTs, "Expected ISO timestamps in page HTML & page.rsc");
+assert.equal(
+  htmlLayoutTs,
+  rscLayoutTs,
+  "Same-ms revalidatePage MUST NOT overwrite layout ISO timestamp in index.html (causes React #418)!"
+);
+assert.equal(
+  htmlPageTs,
+  rscPageTs,
+  "Same-ms revalidatePage HTML page timestamp MUST match page.rsc!"
+);
 
 console.log("STAGE5_TRIPLE_SYNERGY_OK");
 `

@@ -507,6 +507,7 @@ async function revalidatePage(reqPath, internalOptions = {}) {
 
     let newHtml = cached ? cached.content : "";
     let renderedRsc = "";
+    let pageRscForCompose = "";
     let renderedFullRsc = "";
     let pendingShellPageJson = null;
     let composedFromCachedLayout = false;
@@ -687,10 +688,29 @@ async function revalidatePage(reqPath, internalOptions = {}) {
               },
             });
 
-          if (activeLayoutRscText && renderedRsc && typeof renderHtmlStream === "function") {
+          const shouldBumpSameMsPageTs = Boolean(
+            renderedRsc && !didSpliceOnlyPageSlots && now <= prevGenTime
+          );
+          const sameMsPageIso = shouldBumpSameMsPageTs
+            ? new Date(newGenTime).toISOString()
+            : "";
+          pageRscForCompose = shouldBumpSameMsPageTs
+            ? renderedRsc.replace(
+                /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g,
+                sameMsPageIso
+              )
+            : renderedRsc;
+          if (shouldBumpSameMsPageTs && pendingShellPageJson) {
+            pendingShellPageJson = pendingShellPageJson.replace(
+              /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g,
+              sameMsPageIso
+            );
+          }
+
+          if (activeLayoutRscText && pageRscForCompose && typeof renderHtmlStream === "function") {
             try {
               const htmlStream = await renderHtmlStream(toStream(activeLayoutRscText), {
-                pageRscStream: toStream(renderedRsc),
+                pageRscStream: toStream(pageRscForCompose),
                 bootstrapModules: [clientEntry],
                 bootstrapScriptContent,
                 waitForAll: true,
@@ -707,19 +727,19 @@ async function revalidatePage(reqPath, internalOptions = {}) {
             }
           } else if (
             !hasActiveLayoutChain &&
-            didSpliceOnlyPageSlots &&
-            renderedRsc &&
+            (didSpliceOnlyPageSlots || shouldBumpSameMsPageTs) &&
+            pageRscForCompose &&
             typeof renderHtmlStream === "function"
           ) {
             try {
-              const htmlStream = await renderHtmlStream(toStream(renderedRsc), {
+              const htmlStream = await renderHtmlStream(toStream(pageRscForCompose), {
                 bootstrapModules: [clientEntry],
                 bootstrapScriptContent,
                 waitForAll: true,
               });
               const htmlText = await new Response(htmlStream).text();
               if (htmlText) {
-                renderedFullRsc = renderedRsc;
+                renderedFullRsc = pageRscForCompose;
                 newHtml = htmlText;
                 composedFromCachedLayout = true;
               }
@@ -839,7 +859,7 @@ async function revalidatePage(reqPath, internalOptions = {}) {
     }
     currentMeta.generatedAt = commitGenTime;
 
-    if (newHtml && ((!renderedFullRsc && !composedFromCachedLayout) || now <= prevGenTime)) {
+    if (newHtml && !renderedFullRsc && !composedFromCachedLayout) {
       newHtml = newHtml.replace(
         /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g,
         new Date(commitGenTime).toISOString()
@@ -853,21 +873,9 @@ async function revalidatePage(reqPath, internalOptions = {}) {
     let finalPageRscToWrite = "";
     let finalFullRscToWrite = "";
     if (renderedRsc) {
-      finalPageRscToWrite =
-        now <= prevGenTime
-          ? renderedRsc.replace(
-              /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g,
-              new Date(commitGenTime).toISOString()
-            )
-          : renderedRsc;
+      finalPageRscToWrite = pageRscForCompose || renderedRsc;
       if (renderedFullRsc) {
-        finalFullRscToWrite =
-          now <= prevGenTime
-            ? renderedFullRsc.replace(
-                /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g,
-                new Date(commitGenTime).toISOString()
-              )
-            : renderedFullRsc;
+        finalFullRscToWrite = renderedFullRsc;
       }
     } else {
       try {
@@ -1404,11 +1412,29 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
 
       const commitLayoutGenTime = Math.max(newGenTime, Date.now());
       currentMeta.generatedAt = commitLayoutGenTime;
-      if (newLayoutRsc && now <= prevGenTime) {
+      if (
+        newLayoutRsc &&
+        !didRecomposeOnly &&
+        !didSpliceOnlyLayoutSlots &&
+        now <= prevGenTime
+      ) {
+        const layoutIsoCommit = new Date(commitLayoutGenTime).toISOString();
         newLayoutRsc = newLayoutRsc.replace(
           /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g,
-          new Date(commitLayoutGenTime).toISOString()
+          layoutIsoCommit
         );
+        if (pendingShellLayoutJson) {
+          pendingShellLayoutJson = pendingShellLayoutJson.replace(
+            /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g,
+            layoutIsoCommit
+          );
+        }
+        if (pendingShellLayoutOwnJson) {
+          pendingShellLayoutOwnJson = pendingShellLayoutOwnJson.replace(
+            /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g,
+            layoutIsoCommit
+          );
+        }
       }
       currentMeta.layoutGeneratedAt =
         didSpliceOnlyLayoutSlots && prevLayoutOwnGenTime > 0
