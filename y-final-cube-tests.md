@@ -9,7 +9,7 @@ All 5 checks below are designed to be implemented and verified **incrementally (
 ## Master Checklist (Phase 3)
 
 - [x] **Stage 1 — Check `#62`:** Dynamic Route Params (`[id]` / `[...slug]`) + On-Demand ISG (`allowISG = true`) under 3D Triple Synergy *(PASS across Chromium/Firefox/WebKit + Test 15 Node AOT; fixed missing per-instance `shell.layout.own.json` / `layout.metadata.json` / `layout.rsc` population on cold on-demand ISG in `handler.js` + implicit dynamic bailout guard in `cache-revalidate.js`)*
-- [ ] **Stage 2 — Check `#63`:** Distributed Storage Verification (`CloudflareKVStorage` Per-Request Bindings & Multi-Instance `RedisStorage`)
+- [x] **Stage 2 — Check `#63`:** Distributed Storage Verification (`CloudflareKVStorage` Per-Request Bindings & Multi-Instance `RedisStorage`) *(PASS 4/4 in `tests/unit/cache-3d-distributed-storage.test.mjs` + existing `api-reference-cache-storage.test.mjs` & `cache-3d-cube.test.mjs`; fixed `CloudflareKVStorage` distributed tombstones, cross-isolate tag invalidations, 1024-byte metadata overflow guard with lossless companion metadata recovery, and empty-key `""` root route safety in `dinou/core/storage-adapter.js`)*
 - [ ] **Stage 3 — Check `#64`:** Parallel Routes (`@sidebar` / `@modal`) Inside Asymmetric Chains (`S → D → S`) with PPR & `<DinouCacheSlot>`
 - [ ] **Stage 4 — Check `#65`:** Client Lifecycle Stress (`refreshSlot` → `reset_layout` / `no_layout` → Browser `Back` / `Forward`)
 - [ ] **Stage 5 — Check `#66`:** `notFound()` Inside a PPR Dynamic Hole (Streaming Behavior, Error/404 Isolation & Shell Integrity)
