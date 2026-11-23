@@ -3108,3 +3108,482 @@ console.log("PHASE3_STAGE1_ISG_PARAM_OK");
     removeDirSafe(tmpApp);
   }
 });
+
+test("16. Phase 3 Stage 3 (Check #64) compiled Node AOT integration: Parallel routes (@sidebar / @panel) in asymmetric S->D->S chains with PPR, <DinouCacheSlot>, soft-nav RSC & @slot error isolation", async () => {
+  const tmpApp = createFixtureDir("tmp-3d-p3-s3-parallel-");
+  try {
+    fs.mkdirSync(path.join(tmpApp, "src/pa/@sidebar"), { recursive: true });
+    fs.mkdirSync(path.join(tmpApp, "src/pa/dyn-l2/@panel"), { recursive: true });
+    fs.mkdirSync(path.join(tmpApp, "src/pa/alt-l2/@panel"), { recursive: true });
+    fs.mkdirSync(path.join(tmpApp, "src/pa-err/@sidebar"), { recursive: true });
+    fs.mkdirSync(path.join(tmpApp, "src/pa-err/dyn"), { recursive: true });
+
+    fs.writeFileSync(
+      path.join(tmpApp, "package.json"),
+      JSON.stringify(
+        {
+          name: "tmp-3d-p3-s3-parallel",
+          private: true,
+          type: "module",
+          dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+        },
+        null,
+        2
+      )
+    );
+    writeDinouShim(tmpApp);
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src/state.ts"),
+      `import fs from "node:fs";
+import path from "node:path";
+const FILE = path.resolve(process.cwd(), "p3s3-state.json");
+const DEF = {
+  l1S: 100, l1Sl: 100, l1H: 100,
+  sbS: 100, sbSl: 100, sbH: 100,
+  dL2H: 100, dPanH: 100, dPanSl: 100,
+  dPS: 100, dPSl: 100, dPH: 100,
+  aL2S: 100, aPanS: 100, aPanSl: 100, aPanH: 100,
+  aPS: 100, aPH: 100,
+  errL1S: 100, errL1H: 100, errDynL2: 100, errPS: 100,
+};
+export function readS() {
+  try { if (fs.existsSync(FILE)) return { ...DEF, ...JSON.parse(fs.readFileSync(FILE, "utf8")) }; } catch {}
+  return { ...DEF };
+}
+export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+`
+    );
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src/layout.tsx"),
+      `import type { ReactNode } from "react";
+export default function Root({ children }: { children: ReactNode }) {
+  return <html><head><title>P3S3</title></head><body>{children}</body></html>;
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/page.tsx"),
+      `export default function Home() { return <main>home</main>; }\n`
+    );
+
+    // L1 Static PPR + @sidebar(Slot + PPR Hole)
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pa/layout_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\nexport function getCacheTags() { return ["p3s3-l1-tag"]; }\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pa/layout.tsx"),
+      `import { Suspense, type ReactNode } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep } from "../state";
+
+async function L1Hole() {
+  const u = String(getContext()?.req?.cookies?.u || "anon");
+  await sleep(10);
+  return <span id="l1-h">{\`\${u}-\${readS().l1H}\`}</span>;
+}
+
+export default function PaL1({ children, sidebar }: { children: ReactNode; sidebar?: ReactNode }) {
+  return (
+    <section id="pa-l1">
+      <span id="l1-s">{readS().l1S}</span>
+      <DinouCacheSlot id="p3s3-l1-slot" tag="p3s3-l1-slot-tag" revalidate={3600}>
+        {async () => <span id="l1-sl">{readS().l1Sl}</span>}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>l1-fb</span>}><L1Hole /></Suspense>
+      {sidebar}
+      <main>{children}</main>
+    </section>
+  );
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pa/@sidebar/page.tsx"),
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep } from "../../state";
+
+async function SbHole() {
+  const sb = String(getContext()?.req?.cookies?.sb || "sb0");
+  await sleep(10);
+  return <span id="sb-h">{\`\${sb}-\${readS().sbH}\`}</span>;
+}
+
+export default function PaSidebar() {
+  return (
+    <aside id="pa-sb">
+      <span id="sb-s">{readS().sbS}</span>
+      <DinouCacheSlot id="p3s3-sb-slot" tag="p3s3-sb-slot-tag" revalidate={3600}>
+        {async () => <span id="sb-sl">{readS().sbSl}</span>}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>sb-fb</span>}><SbHole /></Suspense>
+    </aside>
+  );
+}
+`
+    );
+
+    // Branch A: Dynamic L2 + @panel(Live + Slot) + Static PPR Page(Slot + Hole)
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pa/dyn-l2/layout_functions.ts"),
+      `export const revalidate = 0;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pa/dyn-l2/layout.tsx"),
+      `import type { ReactNode } from "react";
+import { readS } from "../../state";
+export default function DynL2({ children, panel }: { children: ReactNode; panel?: ReactNode }) {
+  return (
+    <div id="dyn-l2">
+      <span id="dl2-h">{readS().dL2H}</span>
+      {panel}
+      {children}
+    </div>
+  );
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pa/dyn-l2/@panel/page.tsx"),
+      `import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../../../state";
+export default function DynPanel() {
+  const u = String(getContext()?.req?.cookies?.u || "anon");
+  return (
+    <aside id="dyn-pan">
+      <span id="dpan-h">{\`\${u}-\${readS().dPanH}\`}</span>
+      <DinouCacheSlot id="p3s3-dpan-slot" tag="p3s3-dpan-slot-tag" revalidate={3600}>
+        {async () => <span id="dpan-sl">{readS().dPanSl}</span>}
+      </DinouCacheSlot>
+    </aside>
+  );
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pa/dyn-l2/page_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pa/dyn-l2/page.tsx"),
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep } from "../../state";
+
+async function DynPageHole() {
+  const p = String(getContext()?.req?.query?.p || "p0");
+  await sleep(10);
+  return <span id="dp-h">{\`\${p}-\${readS().dPH}\`}</span>;
+}
+
+export default function DynPage() {
+  return (
+    <article id="dyn-p">
+      <span id="dp-s">{readS().dPS}</span>
+      <DinouCacheSlot id="p3s3-dp-slot" tag="p3s3-dp-slot-tag" revalidate={3600}>
+        {async () => <span id="dp-sl">{readS().dPSl}</span>}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>dp-fb</span>}><DynPageHole /></Suspense>
+    </article>
+  );
+}
+`
+    );
+
+    // Branch B: Static PPR Alt L2 + @panel(Slot + PPR Hole) + Static PPR Page
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pa/alt-l2/layout_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pa/alt-l2/layout.tsx"),
+      `import type { ReactNode } from "react";
+import { readS } from "../../state";
+export default function AltL2({ children, panel }: { children: ReactNode; panel?: ReactNode }) {
+  return (
+    <div id="alt-l2">
+      <span id="al2-s">{readS().aL2S}</span>
+      {panel}
+      {children}
+    </div>
+  );
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pa/alt-l2/@panel/page.tsx"),
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep } from "../../../state";
+
+async function AltPanHole() {
+  const u = String(getContext()?.req?.cookies?.u || "anon");
+  await sleep(10);
+  return <span id="apan-h">{\`\${u}-\${readS().aPanH}\`}</span>;
+}
+
+export default function AltPanel() {
+  return (
+    <aside id="alt-pan">
+      <span id="apan-s">{readS().aPanS}</span>
+      <DinouCacheSlot id="p3s3-apan-slot" tag="p3s3-apan-slot-tag" revalidate={3600}>
+        {async () => <span id="apan-sl">{readS().aPanSl}</span>}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>apan-fb</span>}><AltPanHole /></Suspense>
+    </aside>
+  );
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pa/alt-l2/page_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pa/alt-l2/page.tsx"),
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { readS, sleep } from "../../state";
+
+async function AltPageHole() {
+  const p = String(getContext()?.req?.query?.p || "p0");
+  await sleep(10);
+  return <span id="ap-h">{\`\${p}-\${readS().aPH}\`}</span>;
+}
+
+export default function AltPage() {
+  return (
+    <article id="alt-p">
+      <span id="ap-s">{readS().aPS}</span>
+      <Suspense fallback={<span>ap-fb</span>}><AltPageHole /></Suspense>
+    </article>
+  );
+}
+`
+    );
+
+    // Branch C: Asymmetric PPR L1 with throwing @sidebar + @sidebar/error.tsx -> Dynamic L2 -> Static Page
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pa-err/layout_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pa-err/layout.tsx"),
+      `import { Suspense, type ReactNode } from "react";
+import { getContext } from "dinou";
+import { readS, sleep } from "../state";
+
+async function ErrL1Hole() {
+  const u = String(getContext()?.req?.cookies?.u || "anon");
+  await sleep(10);
+  return <span id="el1-h">{\`\${u}-\${readS().errL1H}\`}</span>;
+}
+
+export default function PaErrL1({ children, sidebar }: { children: ReactNode; sidebar?: ReactNode }) {
+  return (
+    <section id="pa-err-l1">
+      <span id="el1-s">{readS().errL1S}</span>
+      {sidebar}
+      <Suspense fallback={<span>el1-fb</span>}><ErrL1Hole /></Suspense>
+      <main>{children}</main>
+    </section>
+  );
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pa-err/@sidebar/page.tsx"),
+      `export default function BrokenSidebar() {
+  throw new Error("sidebar-boom");
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pa-err/@sidebar/error.tsx"),
+      `export default function SidebarError({ error }: { error: { message: string } }) {
+  return <aside id="sb-err-fb">{\`isolated:\${error?.message}\`}</aside>;
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pa-err/dyn/layout_functions.ts"),
+      `export const revalidate = 0;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pa-err/dyn/layout.tsx"),
+      `import type { ReactNode } from "react";
+import { readS } from "../../state";
+export default function ErrDynL2({ children }: { children: ReactNode }) {
+  return <div id="edyn-l2"><span id="edyn-h">{readS().errDynL2}</span>{children}</div>;
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pa-err/dyn/page_functions.ts"),
+      `export const revalidate = 3600;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pa-err/dyn/page.tsx"),
+      `import { readS } from "../../state";
+export default function ErrDynPage() {
+  return <article id="ep"><span id="ep-s">{readS().errPS}</span></article>;
+}
+`
+    );
+
+    const buildRes = spawnSync(process.execPath, [CLI_PATH, "build:node:esbuild"], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 120_000,
+    });
+    assert.equal(
+      buildRes.status,
+      0,
+      `Phase 3 Stage 3 build failed:\n${buildRes.stdout}\n${buildRes.stderr}`
+    );
+
+    const verifyScript = path.join(tmpApp, "verify-p3-stage3.mjs");
+    fs.writeFileSync(
+      verifyScript,
+      `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const { FileSystemStorage, setStorageAdapter } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/storage-adapter.js")).href
+      )});
+const { revalidateTag } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/cache-revalidate.js")).href
+      )});
+setStorageAdapter(new FileSystemStorage(path.resolve(".dinou/dist2")));
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+globalThis.__DINOU_RENDER_HTML_STREAM__ = ssrMod.renderHtml;
+const opts = { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml };
+
+const writeS = (patch) => {
+  const f = path.resolve("p3s3-state.json");
+  const cur = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : {};
+  fs.writeFileSync(f, JSON.stringify({ ...cur, ...patch }), "utf8");
+};
+const get = async (u, headers = {}) => {
+  const r = await rscMod.handleRequest(new Request("http://localhost" + u, { headers }), opts);
+  assert.equal(r.status, 200, "Expected 200 for " + u + " got " + r.status);
+  return await r.text();
+};
+const textById = (html, id) => {
+  const m = html.match(new RegExp('id="' + id + '"[^>]*>([\\\\s\\\\S]*?)<\\\\/'));
+  assert.ok(m, "Missing #" + id + " in HTML");
+  return m[1].replace(/<!--\\s*\\/?\\s*-->/g, "");
+};
+
+// 1. Poison ALL static shells & slots; bump ONLY dynamic L2 / @panel host / PPR holes!
+writeS({
+  l1S: 999, l1Sl: 999, l1H: 201,
+  sbS: 999, sbSl: 999, sbH: 202,
+  dL2H: 203, dPanH: 204, dPanSl: 999,
+  dPS: 999, dPSl: 999, dPH: 205,
+  aL2S: 999, aPanS: 999, aPanSl: 999, aPanH: 206,
+  aPS: 999, aPH: 207,
+  errL1S: 999, errL1H: 208, errDynL2: 209, errPS: 999,
+});
+
+const dynHtml = await get("/pa/dyn-l2?p=d1", { cookie: "u=vega; sb=sbA" });
+assert.equal(textById(dynHtml, "l1-s"), "100", "L1 shell must stay frozen");
+assert.equal(textById(dynHtml, "l1-sl"), "100", "L1 slot must stay frozen");
+assert.equal(textById(dynHtml, "l1-h"), "vega-201", "L1 PPR hole must stream live");
+assert.equal(textById(dynHtml, "sb-s"), "100", "@sidebar shell must stay frozen");
+assert.equal(textById(dynHtml, "sb-sl"), "100", "@sidebar slot must stay frozen");
+assert.equal(textById(dynHtml, "sb-h"), "sbA-202", "@sidebar PPR hole must stream live");
+assert.equal(textById(dynHtml, "dl2-h"), "203", "Dynamic L2 must execute live");
+assert.equal(textById(dynHtml, "dpan-h"), "vega-204", "Dynamic L2 @panel host must execute live");
+assert.equal(textById(dynHtml, "dpan-sl"), "100", "Dynamic L2 @panel cached slot must stay frozen");
+assert.equal(textById(dynHtml, "dp-s"), "100", "Page shell must stay frozen");
+assert.equal(textById(dynHtml, "dp-sl"), "100", "Page slot must stay frozen");
+assert.equal(textById(dynHtml, "dp-h"), "d1-205", "Page PPR hole must stream live");
+
+// 2. Sibling static PPR branch (alt-l2 with its own PPR @panel)
+const altHtml = await get("/pa/alt-l2?p=a1", { cookie: "u=vega; sb=sbA" });
+assert.equal(textById(altHtml, "l1-s"), "100");
+assert.equal(textById(altHtml, "sb-s"), "100");
+assert.equal(textById(altHtml, "sb-h"), "sbA-202");
+assert.equal(textById(altHtml, "al2-s"), "100", "Alt L2 shell must stay frozen");
+assert.equal(textById(altHtml, "apan-s"), "100", "Alt @panel shell must stay frozen");
+assert.equal(textById(altHtml, "apan-sl"), "100", "Alt @panel slot must stay frozen");
+assert.equal(textById(altHtml, "apan-h"), "vega-206", "Alt @panel PPR hole must stream live");
+assert.equal(textById(altHtml, "ap-s"), "100", "Alt Page shell must stay frozen");
+assert.equal(textById(altHtml, "ap-h"), "a1-207", "Alt Page PPR hole must stream live");
+
+// 3. Live /____rsc_slot____ refresh on @sidebar slot & dyn-l2 @panel slot -> persists on reload!
+writeS({ sbSl: 301, dPanSl: 302 });
+await get("/____rsc_slot____/p3s3-sb-slot?fresh=1", { "x-dinou-current-path": "/pa/dyn-l2" });
+await get("/____rsc_slot____/p3s3-dpan-slot?fresh=1", { "x-dinou-current-path": "/pa/dyn-l2" });
+const dynAfterSlot = await get("/pa/dyn-l2?p=d2", { cookie: "u=rigel; sb=sbB" });
+assert.equal(textById(dynAfterSlot, "l1-s"), "100");
+assert.equal(textById(dynAfterSlot, "sb-s"), "100");
+assert.equal(textById(dynAfterSlot, "sb-sl"), "301", "@sidebar refreshed slot must persist");
+assert.equal(textById(dynAfterSlot, "sb-h"), "sbB-202");
+assert.equal(textById(dynAfterSlot, "dpan-sl"), "302", "dyn @panel refreshed slot must persist");
+assert.equal(textById(dynAfterSlot, "dpan-h"), "rigel-204");
+assert.equal(textById(dynAfterSlot, "dp-s"), "100");
+
+// 4. Surgical revalidateTag on @sidebar slot -> MUST reflect in BOTH /____rsc_layout____/pa/dyn-l2 AND /____rsc_layout____/pa/alt-l2 while L1 & @sidebar shells stay frozen!
+writeS({ l1S: 888, sbS: 888, sbSl: 401, dL2H: 402, dPanH: 403 });
+await revalidateTag("p3s3-sb-slot-tag");
+
+const dynLayoutRsc = await get("/____rsc_layout____/pa/dyn-l2", { cookie: "u=nova; sb=sbC" });
+assert.ok(dynLayoutRsc.includes('"id":"sb-sl","children":401') || dynLayoutRsc.includes('401'), "Soft-nav /____rsc_layout____/pa/dyn-l2 MUST reflect fresh @sidebar slot 401 after revalidateTag!");
+assert.ok(!dynLayoutRsc.includes("888"), "Soft-nav /____rsc_layout____/pa/dyn-l2 MUST NOT re-execute poisoned L1/@sidebar shells 888!");
+assert.ok(dynLayoutRsc.includes("402") && dynLayoutRsc.includes("403"), "Soft-nav /____rsc_layout____/pa/dyn-l2 must include fresh dynamic L2 & @panel");
+assert.ok(dynLayoutRsc.includes("sbC-202"), "Soft-nav /____rsc_layout____/pa/dyn-l2 must splice live @sidebar PPR hole");
+
+const altLayoutRsc = await get("/____rsc_layout____/pa/alt-l2", { cookie: "u=nova; sb=sbC" });
+assert.ok(altLayoutRsc.includes("401"), "Soft-nav /____rsc_layout____/pa/alt-l2 MUST reflect fresh @sidebar slot 401!");
+assert.ok(!altLayoutRsc.includes("888"), "Soft-nav /____rsc_layout____/pa/alt-l2 MUST NOT re-execute poisoned L1/@sidebar shells 888!");
+assert.ok(altLayoutRsc.includes("nova-206"), "Soft-nav /____rsc_layout____/pa/alt-l2 must splice live alt @panel PPR hole");
+
+// 5. @sidebar/error.tsx error isolation inside asymmetric PPR L1 -> Dynamic L2 -> Static Page
+const errHtml = await get("/pa-err/dyn", { cookie: "u=lyra" });
+assert.equal(textById(errHtml, "el1-s"), "100", "L1 shell must stay frozen even when @sidebar threw & fell back to error.tsx");
+assert.equal(textById(errHtml, "el1-h"), "lyra-208", "L1 PPR hole must STILL stream cleanly when @sidebar failed to error.tsx!");
+assert.equal(textById(errHtml, "sb-err-fb"), "isolated:sidebar-boom", "@sidebar/error.tsx fallback must render cleanly");
+assert.equal(textById(errHtml, "edyn-h"), "209", "Dynamic L2 underneath erroring @sidebar must still execute live");
+assert.equal(textById(errHtml, "ep-s"), "100", "Static Page underneath must stay frozen");
+
+const errLayoutRsc = await get("/____rsc_layout____/pa-err/dyn", { cookie: "u=lyra" });
+assert.ok(errLayoutRsc.includes("isolated:sidebar-boom"), "Soft-nav /____rsc_layout____/pa-err/dyn must preserve @sidebar/error.tsx fallback");
+assert.ok(errLayoutRsc.includes("lyra-208"), "Soft-nav /____rsc_layout____/pa-err/dyn must still splice L1 PPR hole without crashing on throwing @sidebar!");
+assert.ok(!errLayoutRsc.includes("999"), "Soft-nav /____rsc_layout____/pa-err/dyn must NOT re-execute poisoned L1 shell");
+
+console.log("PHASE3_STAGE3_PARALLEL_ASYM_OK");
+`
+    );
+
+    const runRes = spawnSync(process.execPath, [verifyScript], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+      timeout: 60_000,
+    });
+    assert.equal(
+      runRes.status,
+      0,
+      `Phase 3 Stage 3 compiled integration failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+    );
+    assert.ok(runRes.stdout.includes("PHASE3_STAGE3_PARALLEL_ASYM_OK"));
+  } finally {
+    removeDirSafe(tmpApp);
+  }
+});

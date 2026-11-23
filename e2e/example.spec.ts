@@ -19820,7 +19820,250 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(pageErrors).toEqual([]);
     });
 
-    test("29. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
+    test("29. [Phase 3 / Stage 3 / Check #64] Parallel Routes (@sidebar / @panel) Inside Asymmetric Chains (S -> D -> S) with PPR, <DinouCacheSlot> & Soft-Nav", async ({
+      page,
+      context,
+    }) => {
+      test.skip(
+        !isProd,
+        "Parallel routes inside asymmetric 3D caching chains require production mode"
+      );
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      await context.addCookies([
+        { name: "pa_user", value: "vega", url: "http://localhost:3000" },
+        { name: "pa_sb", value: "sb1", url: "http://localhost:3000" },
+      ]);
+
+      // 1. Baseline load of dyn-l2 branch (L1 Static PPR + @sidebar -> L2 Dynamic + @panel -> Page Static PPR)
+      await page.goto("/t-3d-cube/parallel-asym/dyn-l2?p=d1");
+      await waitCubeReady(page);
+      await expect(page.locator("#pa-l1-hole-user")).toHaveText("vega");
+      await expect(page.locator("#pa-sidebar-hole-val")).toHaveText("sb1");
+      await expect(page.locator("#pa-dyn-panel-user")).toHaveText("vega");
+      await expect(page.locator("#pa-dyn-page-hole-val")).toHaveText("d1");
+
+      const baseL1Shell = Number(await page.locator("#pa-l1-shell-seq").textContent());
+      const baseL1Slot = Number(await page.locator("#pa-l1-slot-seq").textContent());
+      const baseL1Hole = Number(await page.locator("#pa-l1-hole-seq").textContent());
+      const baseSbShell = Number(await page.locator("#pa-sidebar-shell-seq").textContent());
+      const baseSbSlot = Number(await page.locator("#pa-sidebar-slot-seq").textContent());
+      const baseSbHole = Number(await page.locator("#pa-sidebar-hole-seq").textContent());
+      const baseDynL2Host = Number(await page.locator("#pa-dyn-l2-host-seq").textContent());
+      const baseDynPanelHost = Number(await page.locator("#pa-dyn-panel-host-seq").textContent());
+      const baseDynPanelSlot = Number(await page.locator("#pa-dyn-panel-slot-seq").textContent());
+      const baseDynPageShell = Number(await page.locator("#pa-dyn-page-shell-seq").textContent());
+      const baseDynPageSlot = Number(await page.locator("#pa-dyn-page-slot-seq").textContent());
+      const baseDynPageHole = Number(await page.locator("#pa-dyn-page-hole-seq").textContent());
+
+      // Baseline of sibling static PPR branch (alt-l2 + alt @panel)
+      await page.goto("/t-3d-cube/parallel-asym/alt-l2?p=a1");
+      await waitCubeReady(page);
+      await expect(page.locator("#pa-alt-panel-hole-user")).toHaveText("vega");
+      await expect(page.locator("#pa-alt-page-hole-val")).toHaveText("a1");
+
+      const baseAltL2Shell = Number(await page.locator("#pa-alt-l2-shell-seq").textContent());
+      const baseAltPanelShell = Number(await page.locator("#pa-alt-panel-shell-seq").textContent());
+      const baseAltPanelSlot = Number(await page.locator("#pa-alt-panel-slot-seq").textContent());
+      const baseAltPanelHole = Number(await page.locator("#pa-alt-panel-hole-seq").textContent());
+      const baseAltPageShell = Number(await page.locator("#pa-alt-page-shell-seq").textContent());
+      const baseAltPageHole = Number(await page.locator("#pa-alt-page-hole-seq").textContent());
+
+      // 2. Poison ALL static shells & cached slots; bump ONLY dynamic L2, dyn @panel host & PPR holes!
+      const poison1 =
+        Math.max(
+          baseL1Shell,
+          baseL1Slot,
+          baseL1Hole,
+          baseSbShell,
+          baseSbSlot,
+          baseSbHole,
+          baseDynL2Host,
+          baseDynPanelHost,
+          baseDynPanelSlot,
+          baseDynPageShell,
+          baseDynPageSlot,
+          baseDynPageHole,
+          baseAltL2Shell,
+          baseAltPanelShell,
+          baseAltPanelSlot,
+          baseAltPanelHole,
+          baseAltPageShell,
+          baseAltPageHole
+        ) + 899;
+
+      const nextL1Hole = baseL1Hole + 641;
+      const nextSbHole = baseSbHole + 642;
+      const nextDynL2Host = baseDynL2Host + 643;
+      const nextDynPanelHost = baseDynPanelHost + 644;
+      const nextDynPageHole = baseDynPageHole + 645;
+      const nextAltPanelHole = baseAltPanelHole + 646;
+      const nextAltPageHole = baseAltPageHole + 647;
+
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          paL1ShellSeq: poison1,
+          paL1SlotSeq: poison1,
+          paL1HoleSeq: nextL1Hole,
+          paSidebarShellSeq: poison1,
+          paSidebarSlotSeq: poison1,
+          paSidebarHoleSeq: nextSbHole,
+          paDynL2HostSeq: nextDynL2Host,
+          paDynPanelHostSeq: nextDynPanelHost,
+          paDynPanelSlotSeq: poison1,
+          paDynPageShellSeq: poison1,
+          paDynPageSlotSeq: poison1,
+          paDynPageHoleSeq: nextDynPageHole,
+          paAltL2ShellSeq: poison1,
+          paAltPanelShellSeq: poison1,
+          paAltPanelSlotSeq: poison1,
+          paAltPanelHoleSeq: nextAltPanelHole,
+          paAltPageShellSeq: poison1,
+          paAltPageHoleSeq: nextAltPageHole,
+        }
+      );
+      await context.addCookies([
+        { name: "pa_user", value: "rigel", url: "http://localhost:3000" },
+        { name: "pa_sb", value: "sb2", url: "http://localhost:3000" },
+      ]);
+
+      await page.goto("/t-3d-cube/parallel-asym/dyn-l2?p=d2");
+      await waitCubeReady(page);
+      await expect(page.locator("#pa-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#pa-l1-slot-seq")).toHaveText(String(baseL1Slot));
+      await expect(page.locator("#pa-l1-hole-user")).toHaveText("rigel");
+      await expect(page.locator("#pa-l1-hole-seq")).toHaveText(String(nextL1Hole));
+      await expect(page.locator("#pa-sidebar-shell-seq")).toHaveText(String(baseSbShell));
+      await expect(page.locator("#pa-sidebar-slot-seq")).toHaveText(String(baseSbSlot));
+      await expect(page.locator("#pa-sidebar-hole-val")).toHaveText("sb2");
+      await expect(page.locator("#pa-sidebar-hole-seq")).toHaveText(String(nextSbHole));
+      await expect(page.locator("#pa-dyn-l2-host-seq")).toHaveText(String(nextDynL2Host));
+      await expect(page.locator("#pa-dyn-panel-host-seq")).toHaveText(String(nextDynPanelHost));
+      await expect(page.locator("#pa-dyn-panel-user")).toHaveText("rigel");
+      await expect(page.locator("#pa-dyn-panel-slot-seq")).toHaveText(String(baseDynPanelSlot));
+      await expect(page.locator("#pa-dyn-page-shell-seq")).toHaveText(String(baseDynPageShell));
+      await expect(page.locator("#pa-dyn-page-slot-seq")).toHaveText(String(baseDynPageSlot));
+      await expect(page.locator("#pa-dyn-page-hole-val")).toHaveText("d2");
+      await expect(page.locator("#pa-dyn-page-hole-seq")).toHaveText(String(nextDynPageHole));
+
+      // 3. Live refreshSlot on @sidebar slot & dyn @panel slot -> preserves client state & persists across F5!
+      await page.click("#probe-inc-pa-l1");
+      await page.click("#probe-inc-pa-dyn-l2");
+      await page.click("#probe-inc-pa-dyn-page");
+      await expect(page.locator("#probe-count-pa-l1")).toHaveText("1");
+      await expect(page.locator("#probe-count-pa-dyn-l2")).toHaveText("1");
+      await expect(page.locator("#probe-count-pa-dyn-page")).toHaveText("1");
+      const l1MountId = await page.locator("#probe-mount-pa-l1").textContent();
+
+      const nextSbSlot = baseSbSlot + 651;
+      const nextDynPanelSlot = baseDynPanelSlot + 652;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          paL1ShellSeq: poison1,
+          paSidebarShellSeq: poison1,
+          paSidebarSlotSeq: nextSbSlot,
+          paDynPanelSlotSeq: nextDynPanelSlot,
+          paDynPageShellSeq: poison1,
+        }
+      );
+
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.refreshSlot("cube-pa-sidebar-slot", true)
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.refreshSlot("cube-pa-dyn-panel-slot", true)
+      );
+
+      await expect(page.locator("#pa-sidebar-slot-seq")).toHaveText(String(nextSbSlot), { timeout: 10000 });
+      await expect(page.locator("#pa-dyn-panel-slot-seq")).toHaveText(String(nextDynPanelSlot), { timeout: 10000 });
+      await expect(page.locator("#probe-mount-pa-l1")).toHaveText(String(l1MountId));
+      await expect(page.locator("#probe-count-pa-l1")).toHaveText("1");
+      await expect(page.locator("#probe-count-pa-dyn-l2")).toHaveText("1");
+      await expect(page.locator("#probe-count-pa-dyn-page")).toHaveText("1");
+
+      // F5 reload confirms refreshed parallel slots persisted while shells stayed frozen
+      await page.waitForTimeout(300);
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#pa-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#pa-sidebar-shell-seq")).toHaveText(String(baseSbShell));
+      await expect(page.locator("#pa-sidebar-slot-seq")).toHaveText(String(nextSbSlot));
+      await expect(page.locator("#pa-dyn-panel-slot-seq")).toHaveText(String(nextDynPanelSlot));
+      await expect(page.locator("#pa-dyn-page-shell-seq")).toHaveText(String(baseDynPageShell));
+
+      // 4. Surgical revalidateTag on @sidebar slot + Soft <Link> nav dyn-l2 -> alt-l2 -> dyn-l2!
+      await page.click("#probe-inc-pa-l1");
+      await expect(page.locator("#probe-count-pa-l1")).toHaveText("1");
+      const l1NavMountId = await page.locator("#probe-mount-pa-l1").textContent();
+
+      const nextSbSlotV3 = nextSbSlot + 661;
+      const nextDynL2HostV3 = nextDynL2Host + 662;
+      const nextDynPanelHostV3 = nextDynPanelHost + 663;
+      const poison2 = Math.max(poison1, nextSbSlotV3, nextDynPanelHostV3) + 899;
+
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          paL1ShellSeq: poison2,
+          paL1SlotSeq: poison2,
+          paSidebarShellSeq: poison2,
+          paSidebarSlotSeq: nextSbSlotV3,
+          paDynL2HostSeq: nextDynL2HostV3,
+          paDynPanelHostSeq: nextDynPanelHostV3,
+          paDynPanelSlotSeq: poison2,
+          paDynPageShellSeq: poison2,
+          paAltL2ShellSeq: poison2,
+          paAltPanelShellSeq: poison2,
+          paAltPanelSlotSeq: poison2,
+          paAltPageShellSeq: poison2,
+        }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.revalTag("cube-pa-sidebar-slot-tag")
+      );
+
+      // Soft-nav dyn-l2 -> alt-l2: L1 mountId & count survive, @panel swaps to static PPR alt @panel, @sidebar slot updates to V3!
+      await page.click("#link-pa-alt");
+      await expect(page.locator("#pa-alt-l2")).toBeVisible({ timeout: 15000 });
+      await expect(page.locator("#pa-alt-panel")).toBeVisible({ timeout: 15000 });
+      await expect(page.locator("#probe-mount-pa-l1")).toHaveText(String(l1NavMountId));
+      await expect(page.locator("#probe-count-pa-l1")).toHaveText("1");
+      await expect(page.locator("#pa-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#pa-sidebar-shell-seq")).toHaveText(String(baseSbShell));
+      await expect(page.locator("#pa-sidebar-slot-seq")).toHaveText(String(nextSbSlotV3), { timeout: 10000 });
+      await expect(page.locator("#pa-alt-l2-shell-seq")).toHaveText(String(baseAltL2Shell));
+      await expect(page.locator("#pa-alt-panel-shell-seq")).toHaveText(String(baseAltPanelShell));
+      await expect(page.locator("#pa-alt-panel-slot-seq")).toHaveText(String(baseAltPanelSlot));
+      await expect(page.locator("#pa-alt-panel-hole-user")).toHaveText("rigel");
+      await expect(page.locator("#pa-alt-panel-hole-seq")).toHaveText(String(nextAltPanelHole));
+      await expect(page.locator("#pa-alt-page-shell-seq")).toHaveText(String(baseAltPageShell));
+      await expect(page.locator("#pa-alt-page-hole-val")).toHaveText("nav-alt");
+      await expect(page.locator("#pa-alt-page-hole-seq")).toHaveText(String(nextAltPageHole));
+
+      // Soft-nav alt-l2 -> dyn-l2: L1 mountId & count survive, @panel swaps back to live dyn @panel, @sidebar slot stays V3!
+      await page.click("#link-pa-dyn");
+      await expect(page.locator("#pa-dyn-l2")).toBeVisible({ timeout: 15000 });
+      await expect(page.locator("#pa-dyn-panel")).toBeVisible({ timeout: 15000 });
+      await expect(page.locator("#probe-mount-pa-l1")).toHaveText(String(l1NavMountId));
+      await expect(page.locator("#probe-count-pa-l1")).toHaveText("1");
+      await expect(page.locator("#pa-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#pa-sidebar-shell-seq")).toHaveText(String(baseSbShell));
+      await expect(page.locator("#pa-sidebar-slot-seq")).toHaveText(String(nextSbSlotV3), { timeout: 10000 });
+      await expect(page.locator("#pa-dyn-l2-host-seq")).toHaveText(String(nextDynL2HostV3));
+      await expect(page.locator("#pa-dyn-panel-host-seq")).toHaveText(String(nextDynPanelHostV3));
+      await expect(page.locator("#pa-dyn-panel-slot-seq")).toHaveText(String(nextDynPanelSlot));
+      await expect(page.locator("#pa-dyn-page-shell-seq")).toHaveText(String(baseDynPageShell));
+      await expect(page.locator("#pa-dyn-page-hole-val")).toHaveText("nav-dyn");
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("30. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
       browserName,
     }) => {
       test.skip(

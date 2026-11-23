@@ -226,6 +226,26 @@ export interface Cube3DState {
   isgBetaPageShellSeq: number;
   isgBetaPageSlotSeq: number;
   isgBetaPageHoleSeq: number;
+
+  // Phase 3 — Stage 3 — Check #64: Parallel Routes (@sidebar / @panel) in Asymmetric Chains (S -> D -> S)
+  paL1ShellSeq: number;
+  paL1SlotSeq: number;
+  paL1HoleSeq: number;
+  paSidebarShellSeq: number;
+  paSidebarSlotSeq: number;
+  paSidebarHoleSeq: number;
+  paDynL2HostSeq: number;
+  paDynPanelHostSeq: number;
+  paDynPanelSlotSeq: number;
+  paDynPageShellSeq: number;
+  paDynPageSlotSeq: number;
+  paDynPageHoleSeq: number;
+  paAltL2ShellSeq: number;
+  paAltPanelShellSeq: number;
+  paAltPanelSlotSeq: number;
+  paAltPanelHoleSeq: number;
+  paAltPageShellSeq: number;
+  paAltPageHoleSeq: number;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -430,6 +450,25 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   isgBetaPageShellSeq: 100,
   isgBetaPageSlotSeq: 100,
   isgBetaPageHoleSeq: 100,
+
+  paL1ShellSeq: 100,
+  paL1SlotSeq: 100,
+  paL1HoleSeq: 100,
+  paSidebarShellSeq: 100,
+  paSidebarSlotSeq: 100,
+  paSidebarHoleSeq: 100,
+  paDynL2HostSeq: 100,
+  paDynPanelHostSeq: 100,
+  paDynPanelSlotSeq: 100,
+  paDynPageShellSeq: 100,
+  paDynPageSlotSeq: 100,
+  paDynPageHoleSeq: 100,
+  paAltL2ShellSeq: 100,
+  paAltPanelShellSeq: 100,
+  paAltPanelSlotSeq: 100,
+  paAltPanelHoleSeq: 100,
+  paAltPageShellSeq: 100,
+  paAltPageHoleSeq: 100,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {

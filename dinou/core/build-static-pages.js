@@ -1041,58 +1041,81 @@ async function buildStaticPages(onProgress = null) {
       let revalidate;
       let cacheTags = [];
       let capturedHoles = [];
+      let hasDynamicLayout = false;
+      let pageOnlyStatic = false;
+      let pageCapturedHoles = [];
       const jsx = await requestStorage.run(mockContext, async () => {
-        return await runWithPprContext({ isPpr: Boolean(pageIsPpr) }, async () => {
-          const [pagePath] = getFilePathAndDynamicParams(
-            segments,
-            {},
-            folderPath,
-            "page",
-            true,
-            true,
-            undefined,
-            segments.length,
-          );
-          const pageModule = await importModule(pagePath);
-          const Page = pageModule.default ?? pageModule;
+        const [pagePath] = getFilePathAndDynamicParams(
+          segments,
+          {},
+          folderPath,
+          "page",
+          true,
+          true,
+          undefined,
+          segments.length,
+        );
+        const pageModule = await importModule(pagePath);
+        const Page = pageModule.default ?? pageModule;
 
-          let props = { params };
+        let props = { params };
 
-          const [pageFunctionsPath] = getFilePathAndDynamicParams(
-            segments,
-            {},
-            folderPath,
-            "page_functions",
-            true,
-            true,
-            undefined,
-            segments.length,
-          );
+        const [pageFunctionsPath] = getFilePathAndDynamicParams(
+          segments,
+          {},
+          folderPath,
+          "page_functions",
+          true,
+          true,
+          undefined,
+          segments.length,
+        );
 
-          let pageFunctionsProps;
+        let pageFunctionsProps;
 
-          if (pageFunctionsPath) {
-            const pageFunctionsModule = await importModule(pageFunctionsPath);
-            const defMod = pageFunctionsModule.default?.default ? pageFunctionsModule.default.default : pageFunctionsModule.default;
-            const getProps = pageFunctionsModule.getProps || defMod?.getProps;
-            revalidate = pageFunctionsModule.revalidate ?? defMod?.revalidate;
-            const rawTags = pageFunctionsModule.getCacheTags ?? defMod?.getCacheTags;
-            if (typeof rawTags === "function") {
-              try {
-                cacheTags = await rawTags(params);
-              } catch (e) {
-                console.error("Error running getCacheTags in buildStaticPages:", e);
-              }
-            } else if (Array.isArray(rawTags)) {
-              cacheTags = rawTags;
+        if (pageFunctionsPath) {
+          const pageFunctionsModule = await importModule(pageFunctionsPath);
+          const defMod = pageFunctionsModule.default?.default ? pageFunctionsModule.default.default : pageFunctionsModule.default;
+          const getProps = pageFunctionsModule.getProps || defMod?.getProps;
+          revalidate = pageFunctionsModule.revalidate ?? defMod?.revalidate;
+          const rawTags = pageFunctionsModule.getCacheTags ?? defMod?.getCacheTags;
+          if (typeof rawTags === "function") {
+            try {
+              cacheTags = await rawTags(params);
+            } catch (e) {
+              console.error("Error running getCacheTags in buildStaticPages:", e);
             }
-            pageFunctionsProps = await getProps?.(params);
-            if (mockRes._redirectUrl || mockContext._hasRedirected) {
-              return null;
-            }
-            props = { ...props, ...(pageFunctionsProps ?? {}) };
+          } else if (Array.isArray(rawTags)) {
+            cacheTags = rawTags;
           }
+          pageFunctionsProps = await getProps?.(params);
+          if (mockRes._redirectUrl || mockContext._hasRedirected) {
+            return null;
+          }
+          props = { ...props, ...(pageFunctionsProps ?? {}) };
+        }
 
+        // Phase A: Probe ONLY the Page segment first so a dynamic ancestor layout
+        // (or a dynamic layout's @slot reading cookies/headers/query) never prevents
+        // pre-rendering a static/PPR Page's isolated `page.rsc` / `shell.page.json`.
+        const rawPageElement = markPageRootElement(
+          { ...React.createElement(Page, props), __modulePath: pagePath },
+          Boolean(pageEffectivePpr),
+        );
+        await runWithPprContext({ isPpr: Boolean(pageEffectivePpr) }, async () => {
+          resetPprHoles();
+          await asyncRenderJSXToClientJSX(rawPageElement);
+          pageCapturedHoles = pageEffectivePpr ? getRegisteredHoles() : [];
+        });
+        if (!isStatic) {
+          return null;
+        }
+        if (mockRes._redirectUrl || mockContext._hasRedirected) {
+          return null;
+        }
+        pageOnlyStatic = true;
+
+        return await runWithPprContext({ isPpr: Boolean(pageIsPpr) }, async () => {
           let jsx = markPageRootElement(
             { ...React.createElement(Page, props), __modulePath: pagePath },
             Boolean(pageEffectivePpr),
@@ -1117,6 +1140,10 @@ async function buildStaticPages(onProgress = null) {
             if (layouts && Array.isArray(layouts)) {
               let index = 0;
               for (const [layoutPath, dParams, slots] of layouts.reverse()) {
+                const layoutConfig = await resolveLayoutFunctionsConfig(layoutPath, dParams);
+                if (layoutConfig.isDynamic) {
+                  hasDynamicLayout = true;
+                }
                 const layoutModule = await importModule(layoutPath);
                 const Layout = layoutModule.default ?? layoutModule;
                 const layoutFolderPath = path.dirname(layoutPath);
@@ -1237,7 +1264,8 @@ async function buildStaticPages(onProgress = null) {
         });
       });
 
-      if (!isStatic) {
+      const layoutBailedOut = pageOnlyStatic && (!isStatic || hasDynamicLayout);
+      if (!isStatic && !pageOnlyStatic) {
         // ❌ DO NOT save file.
         // Will behave as pure SSR at runtime.
         if (process.env.DINOU_DEBUG) {
@@ -1250,23 +1278,40 @@ async function buildStaticPages(onProgress = null) {
         continue;
       }
 
-      const sideEffects = {
-        redirect: mockRes._redirectUrl,
-        cookies: mockRes._cookies,
-      };
+      const sideEffects = layoutBailedOut
+        ? { redirect: null, cookies: [] }
+        : {
+            redirect: mockRes._redirectUrl,
+            cookies: mockRes._cookies,
+          };
 
-      const holes = pageIsPpr ? capturedHoles : [];
+      const resolvedRevalidate =
+        typeof revalidate === "function" ? await revalidate() : revalidate;
+      const effectiveIsPpr = layoutBailedOut
+        ? Boolean(pageEffectivePpr)
+        : Boolean(pageIsPpr);
+      const holes = layoutBailedOut
+        ? pageEffectivePpr
+          ? pageCapturedHoles
+          : []
+        : pageIsPpr
+        ? capturedHoles
+        : [];
       staticRoutes.add(reqPath);
       staticMetadata.set(reqPath, {
-        revalidate: typeof revalidate === "function" ? await revalidate() : revalidate,
+        revalidate: resolvedRevalidate,
+        pageRevalidate: resolvedRevalidate,
         effects: sideEffects,
         tags: cacheTags,
-        ppr: Boolean(pageIsPpr),
+        ppr: effectiveIsPpr,
         pagePpr: Boolean(pageEffectivePpr),
+        hasDynamicLayout: Boolean(layoutBailedOut),
         holes,
       });
       if (process.env.DINOU_DEBUG) {
-        console.log(`Registered static page at ${reqPath}${pageIsPpr ? " (PPR)" : ""}`);
+        console.log(
+          `Registered static page at ${reqPath}${effectiveIsPpr ? " (PPR)" : ""}${layoutBailedOut ? " (page-only under dynamic layout)" : ""}`
+        );
       }
     } catch (err) {
       console.error(`Error building page ${segments.join("/")}:`, err);

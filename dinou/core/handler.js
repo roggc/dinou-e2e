@@ -2892,7 +2892,7 @@ async function handleRequest(request, platformContext = {}) {
                   const lRscKey = entry.cleanLayoutKey
                     ? `${entry.cleanLayoutKey}/layout.rsc`
                     : "layout.rsc";
-                  const lMeta = await readMetaFromStorage(
+                  let lMeta = await readMetaFromStorage(
                     storage,
                     lMetaKey,
                     lRscKey,
@@ -2910,19 +2910,103 @@ async function handleRequest(request, platformContext = {}) {
                     if (single && single.ownTree) {
                       overrides.set(entry.cleanLayoutKey || "", single);
                     }
-                  } else if (
-                    lMeta?.ownPpr &&
-                    Array.isArray(lMeta.ownHoles) &&
-                    lMeta.ownHoles.length > 0
-                  ) {
-                    const spliced = await spliceSingleLayoutOwnHoles(entry, storage, {
-                      platformContext,
-                      reqUrl: request.url,
-                      currentPath: reqPath,
-                    });
-                    if (context._hasRedirected) break;
-                    if (spliced && spliced.ownTree) {
-                      overrides.set(entry.cleanLayoutKey || "", spliced);
+                  } else if (lMeta) {
+                    const ownGen = Number(
+                      lMeta.ownGeneratedAt ||
+                        lMeta.layoutGeneratedAt ||
+                        lMeta.generatedAt ||
+                        0
+                    );
+                    const lReval =
+                      typeof lMeta.revalidate === "number"
+                        ? lMeta.revalidate
+                        : lCfg.revalidate;
+                    const lSlotTags = Array.from(
+                      new Set([
+                        ...(Array.isArray(lMeta.ownSlotTags) ? lMeta.ownSlotTags : []),
+                        ...(Array.isArray(lMeta.slotTags) ? lMeta.slotTags : []),
+                      ])
+                    );
+                    if (
+                      typeof lReval === "number" &&
+                      lReval >= 1 &&
+                      ownGen > 0 &&
+                      Date.now() > ownGen + lReval * 1000
+                    ) {
+                      const { revalidateLayout } = await import("./cache-revalidate.js");
+                      await revalidateLayout(entry.layoutRoutePath, {
+                        onlyIfExpired: true,
+                      });
+                      lMeta =
+                        (await readMetaFromStorage(
+                          storage,
+                          lMetaKey,
+                          lRscKey,
+                          platformContext,
+                          request.url
+                        )) || lMeta;
+                    } else if (lSlotTags.length > 0) {
+                      const lSlotFresh = await inspectSlotsFreshness(
+                        lSlotTags,
+                        lMeta.generatedAt || 0
+                      );
+                      if (lSlotFresh.hasNewer) {
+                        const { revalidateLayout } = await import("./cache-revalidate.js");
+                        await revalidateLayout(entry.layoutRoutePath, {
+                          onlyRefreshSlots: true,
+                        });
+                        lMeta =
+                          (await readMetaFromStorage(
+                            storage,
+                            lMetaKey,
+                            lRscKey,
+                            platformContext,
+                            request.url
+                          )) || lMeta;
+                      } else if (lSlotFresh.hasExpired) {
+                        const layoutSlotRevalKey = `layout-slot:${entry.layoutRoutePath}`;
+                        const lSlotPromise = (async () => {
+                          if (regenerating.has(layoutSlotRevalKey)) return;
+                          regenerating.add(layoutSlotRevalKey);
+                          try {
+                            const { revalidateLayout } = await import("./cache-revalidate.js");
+                            await revalidateLayout(entry.layoutRoutePath, {
+                              onlyRefreshSlots: true,
+                            });
+                          } catch (err) {
+                            console.error(
+                              `❌ [Slot ISR] Error refreshing layout slots for ${entry.layoutRoutePath}:`,
+                              err
+                            );
+                          } finally {
+                            regenerating.delete(layoutSlotRevalKey);
+                          }
+                        })();
+                        if (
+                          platformContext?.ctx &&
+                          typeof platformContext.ctx.waitUntil === "function"
+                        ) {
+                          platformContext.ctx.waitUntil(lSlotPromise);
+                        }
+                      }
+                    }
+                    if (
+                      lMeta?.ownPpr &&
+                      Array.isArray(lMeta.ownHoles) &&
+                      lMeta.ownHoles.length > 0
+                    ) {
+                      const spliced = await spliceSingleLayoutOwnHoles(entry, storage, {
+                        platformContext,
+                        reqUrl: request.url,
+                        currentPath: reqPath,
+                        reqSegments,
+                        queryObj,
+                        isDevelopment,
+                      });
+                      if (context._hasRedirected) break;
+                      if (spliced && spliced.ownTree) {
+                        overrides.set(entry.cleanLayoutKey || "", spliced);
+                      }
                     }
                   }
                 }
@@ -4347,6 +4431,9 @@ async function handleRequest(request, platformContext = {}) {
                             platformContext,
                             reqUrl: request.url,
                             currentPath: reqPath,
+                            reqSegments,
+                            queryObj,
+                            isDevelopment,
                           });
                           if (context._hasRedirected) break;
                           if (splicedOwn && splicedOwn.ownTree) {
