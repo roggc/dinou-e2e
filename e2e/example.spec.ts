@@ -20280,7 +20280,109 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(pageErrors).toEqual([]);
     });
 
-    test("31. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
+    test("31. [Phase 3 / Stage 5 / Check #66] 404 / not_found.tsx & res.status(404) / res.cookie() Inside PPR Dynamic Holes (Streaming, Shell Integrity & Soft-Nav)", async ({
+      page,
+    }) => {
+      test.skip(
+        !isProd,
+        "PPR dynamic hole 404 & not_found.tsx isolation under cached PPR layouts requires production mode"
+      );
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      // 1. Baseline healthy load of /t-3d-cube/ppr-not-found
+      await page.goto("/t-3d-cube/ppr-not-found?ok=init");
+      await waitCubeReady(page);
+      await expect(page.locator("#ppr-nf-hole-a-val")).toHaveText("init");
+
+      const baseL1Shell = Number(await page.locator("#ppr-nf-l1-shell-seq").textContent());
+      const baseL1Slot = Number(await page.locator("#ppr-nf-l1-slot-seq").textContent());
+      const baseL1Hole = Number(await page.locator("#ppr-nf-l1-hole-seq").textContent());
+      const basePageShell = Number(await page.locator("#ppr-nf-page-shell-seq").textContent());
+      const baseHoleA = Number(await page.locator("#ppr-nf-hole-a-seq").textContent());
+      const baseHoleB = Number(await page.locator("#ppr-nf-hole-b-seq").textContent());
+
+      // Poison ALL static shells & slots; bump ONLY dynamic holes!
+      const poison1 =
+        Math.max(baseL1Shell, baseL1Slot, baseL1Hole, basePageShell, baseHoleA, baseHoleB) + 899;
+      const nextL1Hole = baseL1Hole + 661;
+      const nextHoleA = baseHoleA + 662;
+      const nextHoleB = baseHoleB + 663;
+
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          pprNfL1ShellSeq: poison1,
+          pprNfL1SlotSeq: poison1,
+          pprNfL1HoleSeq: nextL1Hole,
+          pprNfPageShellSeq: poison1,
+          pprNfHoleASeq: nextHoleA,
+          pprNfHoleBSeq: nextHoleB,
+        }
+      );
+
+      // 2. Direct SSR load where PPR dynamic Hole B triggers res.status(404) + res.cookie() after HTTP 200 shell prelude flush
+      const hole404Res = await page.goto(
+        "/t-3d-cube/ppr-not-found?missing=1&setCookie=1&ok=alive"
+      );
+      expect(hole404Res?.status()).toBe(200);
+      await waitCubeReady(page);
+      await expect(page.locator("#ppr-nf-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#ppr-nf-l1-slot-seq")).toHaveText(String(baseL1Slot));
+      await expect(page.locator("#ppr-nf-l1-hole-seq")).toHaveText(String(nextL1Hole));
+      await expect(page.locator("#ppr-nf-page-shell-seq")).toHaveText(String(basePageShell));
+      await expect(page.locator("#ppr-nf-hole-a-val")).toHaveText("alive");
+      await expect(page.locator("#ppr-nf-hole-a-seq")).toHaveText(String(nextHoleA));
+      await expect(page.locator("#ppr-nf-hole-missing")).toBeVisible();
+      const docCookie = await page.evaluate(() => document.cookie);
+      expect(docCookie).toContain("ppr_nf_seen=yes");
+
+      // 3. Subsequent healthy load proves cached static shell was NOT poisoned or evicted
+      const healthyRes = await page.goto("/t-3d-cube/ppr-not-found?missing=0&ok=recovered");
+      expect(healthyRes?.status()).toBe(200);
+      await waitCubeReady(page);
+      await expect(page.locator("#ppr-nf-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#ppr-nf-page-shell-seq")).toHaveText(String(basePageShell));
+      await expect(page.locator("#ppr-nf-hole-a-val")).toHaveText("recovered");
+      await expect(page.locator("#ppr-nf-hole-b-seq")).toHaveText(String(nextHoleB));
+
+      // 4. Soft <Link> navigation from healthy PPR -> missing child route (not_found.tsx) -> back to healthy PPR preserves L1 client state!
+      await page.click("#probe-inc-ppr-nf-l1");
+      await expect(page.locator("#probe-count-ppr-nf-l1")).toHaveText("1");
+      const l1MountId = await page.locator("#probe-mount-ppr-nf-l1").textContent();
+
+      await page.click("#link-ppr-nf-missing-route");
+      await expect(page.locator("#ppr-nf-boundary")).toBeVisible({ timeout: 15000 });
+      await expect(page.locator("#ppr-nf-boundary-reason")).toHaveText("soft-missing");
+      await expect(page.locator("#probe-mount-ppr-nf-l1")).toHaveText(String(l1MountId));
+      await expect(page.locator("#probe-count-ppr-nf-l1")).toHaveText("1");
+      await expect(page.locator("#ppr-nf-l1-shell-seq")).toHaveText(String(baseL1Shell));
+
+      await page.click("#link-ppr-nf-recover");
+      await expect(page.locator("#ppr-nf-page")).toBeVisible({ timeout: 15000 });
+      await expect(page.locator("#ppr-nf-hole-a-val")).toHaveText("recovered");
+      await expect(page.locator("#probe-mount-ppr-nf-l1")).toHaveText(String(l1MountId));
+      await expect(page.locator("#probe-count-ppr-nf-l1")).toHaveText("1");
+
+      // 5. Direct SSR 404 visit (/t-3d-cube/ppr-not-found/does-not-exist?reason=direct-404):
+      //    HTTP 404 + custom not_found.tsx + cached L1 shell & slot stay FROZEN (zero #418!)
+      const direct404Res = await page.goto(
+        "/t-3d-cube/ppr-not-found/does-not-exist?reason=direct-404"
+      );
+      expect(direct404Res?.status()).toBe(404);
+      await waitCubeReady(page);
+      await expect(page.locator("#ppr-nf-boundary")).toBeVisible();
+      await expect(page.locator("#ppr-nf-boundary-reason")).toHaveText("direct-404");
+      await expect(page.locator("#ppr-nf-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#ppr-nf-l1-slot-seq")).toHaveText(String(baseL1Slot));
+      await expect(page.locator("#ppr-nf-l1-hole-seq")).toHaveText(String(nextL1Hole));
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("32. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
       browserName,
     }) => {
       test.skip(

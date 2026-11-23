@@ -3695,3 +3695,242 @@ test("17. Phase 3 Stage 4 (Check #65) unit guard: slot.js prevents unmounted & m
   );
   assert.ok(runRes.stdout.includes("PHASE3_STAGE4_SLOT_LIFECYCLE_OK"));
 });
+
+test("18. Phase 3 Stage 5 (Check #66) compiled Node AOT integration: res.status(404) + res.cookie() inside PPR dynamic hole & not_found.tsx under cached Static PPR L1 layout", async () => {
+  const tmpApp = createFixtureDir("tmp-3d-p3-s5-ppr-nf-");
+  try {
+    fs.mkdirSync(path.join(tmpApp, "src/pnf"), { recursive: true });
+
+    fs.writeFileSync(
+      path.join(tmpApp, "package.json"),
+      JSON.stringify(
+        {
+          name: "tmp-3d-p3-s5-ppr-nf",
+          private: true,
+          type: "module",
+          dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+        },
+        null,
+        2
+      )
+    );
+    writeDinouShim(tmpApp);
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src/state.ts"),
+      `import fs from "node:fs";
+import path from "node:path";
+const FILE = path.resolve(process.cwd(), "p3s5-state.json");
+const DEF = { l1S: 100, l1Sl: 100, l1H: 100, pS: 100, hA: 100, hB: 100 };
+export function readS() {
+  try { if (fs.existsSync(FILE)) return { ...DEF, ...JSON.parse(fs.readFileSync(FILE, "utf8")) }; } catch {}
+  return { ...DEF };
+}
+export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+`
+    );
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src/layout.tsx"),
+      `import type { ReactNode } from "react";
+export default function Root({ children }: { children: ReactNode }) {
+  return <html><head><title>P3S5</title></head><body>{children}</body></html>;
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/page.tsx"),
+      `export default function Home() { return <main>home</main>; }\n`
+    );
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pnf/layout_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pnf/layout.tsx"),
+      `import { Suspense, type ReactNode } from "react";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep } from "../state";
+
+async function L1Hole() {
+  await sleep(10);
+  return <span id="l1-h">{readS().l1H}</span>;
+}
+
+export default function PnfLayout({ children }: { children: ReactNode }) {
+  return (
+    <section id="pnf-l1">
+      <span id="l1-s">{readS().l1S}</span>
+      <DinouCacheSlot id="p3s5-l1-slot" revalidate={3600}>
+        {async () => <span id="l1-sl">{readS().l1Sl}</span>}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>l1-fb</span>}><L1Hole /></Suspense>
+      <main>{children}</main>
+    </section>
+  );
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pnf/page_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pnf/page.tsx"),
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { readS, sleep } from "../state";
+
+async function HoleA() {
+  const ok = String(getContext()?.req?.query?.ok || "base");
+  await sleep(10);
+  return <span id="h-a">{\`\${ok}-\${readS().hA}\`}</span>;
+}
+
+async function HoleB() {
+  const ctx = getContext();
+  const q = ctx?.req?.query || {};
+  await sleep(10);
+  if (q.setCookie === "1") {
+    ctx?.res?.cookie?.("p3s5_ck", "applied", { path: "/" });
+  }
+  if (q.missing === "1") {
+    ctx?.res?.status?.(404);
+    return <div id="h-missing">not-found-in-hole</div>;
+  }
+  return <span id="h-b">{readS().hB}</span>;
+}
+
+export default function PnfPage() {
+  return (
+    <article id="pnf-p">
+      <span id="p-s">{readS().pS}</span>
+      <Suspense fallback={<span>a-fb</span>}><HoleA /></Suspense>
+      <Suspense fallback={<span>b-fb</span>}><HoleB /></Suspense>
+    </article>
+  );
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/pnf/not_found.tsx"),
+      `import { getContext } from "dinou";
+export default function PnfNotFound() {
+  const reason = String(getContext()?.req?.query?.reason || "none");
+  return <div id="nf-boundary">{\`404:\${reason}\`}</div>;
+}
+`
+    );
+
+    const buildRes = spawnSync(process.execPath, [CLI_PATH, "build:node:esbuild"], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 120_000,
+    });
+    assert.equal(
+      buildRes.status,
+      0,
+      `Phase 3 Stage 5 build failed:\n${buildRes.stdout}\n${buildRes.stderr}`
+    );
+
+    const verifyScript = path.join(tmpApp, "verify-p3-stage5.mjs");
+    fs.writeFileSync(
+      verifyScript,
+      `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const { FileSystemStorage, setStorageAdapter } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/storage-adapter.js")).href
+      )});
+setStorageAdapter(new FileSystemStorage(path.resolve(".dinou/dist2")));
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+globalThis.__DINOU_RENDER_HTML_STREAM__ = ssrMod.renderHtml;
+const opts = { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml };
+
+const writeS = (patch) => {
+  const f = path.resolve("p3s5-state.json");
+  const cur = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : {};
+  fs.writeFileSync(f, JSON.stringify({ ...cur, ...patch }), "utf8");
+};
+const fetchRaw = async (u) => {
+  const r = await rscMod.handleRequest(new Request("http://localhost" + u), opts);
+  return { status: r.status, text: await r.text() };
+};
+const textById = (html, id) => {
+  const m = html.match(new RegExp('id="' + id + '"[^>]*>([\\\\s\\\\S]*?)<\\\\/'));
+  assert.ok(m, "Missing #" + id + " in HTML");
+  return m[1].replace(/<!--\\s*\\/?\\s*-->/g, "");
+};
+
+// Poison ALL static shells & slots; bump ONLY dynamic holes!
+writeS({ l1S: 999, l1Sl: 999, l1H: 201, pS: 999, hA: 202, hB: 203 });
+
+// 1. PPR dynamic hole calling res.status(404) + res.cookie() after HTTP 200 shell prelude flush
+const hole404 = await fetchRaw("/pnf?missing=1&setCookie=1&ok=alive");
+assert.equal(hole404.status, 200, "PPR shell prelude already flushed HTTP 200");
+assert.equal(textById(hole404.text, "l1-s"), "100", "L1 static shell stays frozen");
+assert.equal(textById(hole404.text, "l1-sl"), "100", "L1 slot stays frozen");
+assert.equal(textById(hole404.text, "l1-h"), "201", "L1 PPR hole streams live");
+assert.equal(textById(hole404.text, "p-s"), "100", "Page static shell stays frozen");
+assert.equal(textById(hole404.text, "h-a"), "alive-202", "Healthy sibling Hole A streams live");
+assert.equal(textById(hole404.text, "h-missing"), "not-found-in-hole", "Hole B 404 fallback streams cleanly");
+assert.ok(hole404.text.includes("__DINOU_RSC_P__"), "Inline RSC must still be emitted for zero #418");
+assert.ok(
+  hole404.text.includes("document.cookie") && hole404.text.includes("p3s5_ck=applied"),
+  "Non-HttpOnly res.cookie() set inside PPR dynamic hole MUST flush script to client!"
+);
+
+// 2. Subsequent healthy request confirms cached static shell was NOT poisoned or evicted
+const healthy = await fetchRaw("/pnf?missing=0&ok=recovered");
+assert.equal(healthy.status, 200);
+assert.equal(textById(healthy.text, "l1-s"), "100");
+assert.equal(textById(healthy.text, "p-s"), "100");
+assert.equal(textById(healthy.text, "h-a"), "recovered-202");
+assert.equal(textById(healthy.text, "h-b"), "203");
+
+// 3. Real 404 route (not_found.tsx) underneath cached Static PPR L1 layout:
+//    HTTP 404 + not_found.tsx rendered + L1 static shell & slot STAY FROZEN (100, NOT poisoned 999!) + never cached!
+const route404 = await fetchRaw("/pnf/does-not-exist?reason=gone");
+assert.equal(route404.status, 404, "Missing child route must return HTTP 404");
+assert.equal(textById(route404.text, "nf-boundary"), "404:gone", "Custom not_found.tsx must render");
+assert.equal(textById(route404.text, "l1-s"), "100", "Cached L1 static shell MUST be reused on 404 route instead of re-executing poisoned 999!");
+assert.equal(textById(route404.text, "l1-sl"), "100", "Cached L1 slot MUST stay frozen on 404 route");
+assert.equal(textById(route404.text, "l1-h"), "201", "L1 PPR hole MUST stream live on 404 route");
+assert.equal(
+  fs.existsSync(path.resolve(".dinou/dist2/pnf/does-not-exist/index.html")),
+  false,
+  "404 route must NEVER be cached to .dinou/dist2"
+);
+
+// 4. Soft-nav /____rsc_page____ for missing route returns 404 + not_found.tsx RSC payload
+const rsc404 = await fetchRaw("/____rsc_page____/pnf/does-not-exist?reason=soft");
+assert.equal(rsc404.status, 404);
+assert.ok(rsc404.text.includes("404:soft"));
+
+console.log("PHASE3_STAGE5_PPR_NOT_FOUND_OK");
+`
+    );
+
+    const runRes = spawnSync(process.execPath, [verifyScript], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+      timeout: 60_000,
+    });
+    assert.equal(
+      runRes.status,
+      0,
+      `Phase 3 Stage 5 compiled integration failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+    );
+    assert.ok(runRes.stdout.includes("PHASE3_STAGE5_PPR_NOT_FOUND_OK"));
+  } finally {
+    removeDirSafe(tmpApp);
+  }
+});

@@ -3975,6 +3975,22 @@ async function handleRequest(request, platformContext = {}) {
         const context = createRequestContext(simReq, bridge, platformContext, dynamicState);
         copyCustomContextProperties(rootContext, context);
         const isNotFound = { value: !pagePath };
+        let hasNoLayoutNotFound = false;
+        if (!pagePath) {
+          try {
+            const [nfPath] = getFilePathAndDynamicParams(
+              reqSegments,
+              queryObj,
+              srcFolder,
+              "not_found",
+              true,
+              false
+            );
+            if (nfPath && existsSync(path.join(path.dirname(nfPath), "no_layout_not_found"))) {
+              hasNoLayoutNotFound = true;
+            }
+          } catch (e) {}
+        }
         const isSsrCrash = queryObj.ssr_crash === "true";
         let isError = isSsrCrash;
         let caughtError = isSsrCrash
@@ -4061,19 +4077,21 @@ async function handleRequest(request, platformContext = {}) {
               !isDevelopment &&
               !platformContext?.isSSG &&
               (hasDynamicLayoutConfig || isDynamicConfig || dynamicState.value || !cachedItem) &&
-              (!isPprConfig || hasDynamicLayoutConfig || isDynamicConfig || dynamicState.value) &&
+              (!isPprConfig || hasDynamicLayoutConfig || isDynamicConfig || dynamicState.value || !pagePath) &&
               activeLayoutsForRoute.length > 0 &&
-              pagePath &&
+              (pagePath || !hasNoLayoutNotFound) &&
               queryObj.ssr_crash !== "true"
             ) {
-              // Per-level layout composition for BOTH:
-              //  (a) Asymmetric dynamic layout(s) + static/PPR ancestor/descendant layout(s) + static/PPR/dynamic page, AND
-              //  (b) Dynamic / uncached page under static/PPR cached layout chain (S -> S -> D).
+              // Per-level layout composition for:
+              //  (a) Asymmetric dynamic layout(s) + static/PPR ancestor/descendant layout(s) + static/PPR/dynamic page,
+              //  (b) Dynamic / uncached page under static/PPR cached layout chain (S -> S -> D), and
+              //  (c) 404 / not_found.tsx routes under cached static/PPR layouts (reusing cached layout shells without caching the 404).
               // Reuses every static/PPR layout's cached `shell.layout.own.json` and splices live PPR holes without re-executing static shells!
               await requestStorage.run(context, async () => {
                 let composedAsymmetric = false;
                 let pageClientJsx;
                 const canReuseStaticPage =
+                  Boolean(pagePath) &&
                   hasDynamicLayoutConfig &&
                   !isDynamicConfig &&
                   (Boolean(isPagePprConfig) || Object.keys(queryObj).length === 0);
@@ -4305,7 +4323,11 @@ async function handleRequest(request, platformContext = {}) {
                 }
 
                 try {
-                  if (!context._hasRedirected && !isNotFound.value && pageClientJsx !== undefined) {
+                  if (
+                    !context._hasRedirected &&
+                    (!isNotFound.value || !pagePath) &&
+                    pageClientJsx !== undefined
+                  ) {
                     await hydrateActiveChainPpr(
                       activeLayoutsForRoute,
                       reqSegments,

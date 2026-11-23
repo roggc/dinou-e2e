@@ -261,6 +261,14 @@ export interface Cube3DState {
   lcResetLayoutSlotSeq: number;
   lcResetPageShellSeq: number;
   lcResetPageSlotSeq: number;
+
+  // Phase 3 — Stage 5 — Check #66: 404 / not_found.tsx & res.status(404) / res.cookie() Inside PPR Dynamic Holes
+  pprNfL1ShellSeq: number;
+  pprNfL1SlotSeq: number;
+  pprNfL1HoleSeq: number;
+  pprNfPageShellSeq: number;
+  pprNfHoleASeq: number;
+  pprNfHoleBSeq: number;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -498,6 +506,13 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   lcResetLayoutSlotSeq: 100,
   lcResetPageShellSeq: 100,
   lcResetPageSlotSeq: 100,
+
+  pprNfL1ShellSeq: 100,
+  pprNfL1SlotSeq: 100,
+  pprNfL1HoleSeq: 100,
+  pprNfPageShellSeq: 100,
+  pprNfHoleASeq: 100,
+  pprNfHoleBSeq: 100,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {
