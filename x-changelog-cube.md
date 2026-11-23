@@ -1,0 +1,56 @@
+# Dinou 10.0.3 Changelog — 3D Caching Cube Hardening (`x-changelog-cube.md`)
+
+> **Purpose:** Living changelog tracking every Dinou core bug discovered and fixed throughout the **3D Caching Cube** verification and stress-testing phase (`Axis X: Horizontal Segmentation` × `Axis Y: Vertical Segmentation / <DinouCacheSlot>` × `Axis Z: Partial Prerendering / PPR`).
+> As Stages 2–5 of `x-3d-completion.md` execute, any additional bugs uncovered and fixed in `./dinou/` will be appended directly into the `## [10.0.3]` release section and the tracking table below.
+
+---
+
+## [10.0.3] - Unreleased
+
+### Fixed
+
+#### PPR & Causal Snapshot Consistency
+- **Eliminated React `#418` hydration mismatches during PPR Stale-While-Revalidate (SWR) expiration** (`dinou/core/handler.js`, `dinou/core/ppr-runtime.js`, `dinou/core/cache-revalidate.js`, `dinou/core/storage-adapter.js`): Preloaded causal snapshots of `shell.page.json` and `shell.layout.json` — automatically falling back to atomic previous snapshots (`shell.page._old.json` / `shell.layout._old.json`) when storage `metadata.generatedAt` advances past the served HTML's timestamp — **before** launching background SWR revalidations (`revalidatePage` / `revalidateLayout` for 1s PPR shell TTLs, page shell slot TTLs, and layout shell slot TTLs) and `/____rsc_page____` SWR refreshes. Prevents stale SSR HTML from being paired with newly overwritten inline Flight payloads (`__DINOU_RSC_P__` / `__DINOU_RSC_L__`).
+
+#### Multi-Level Horizontal Segmentation & Per-Level Layout Isolation
+- **Decoupled multi-level layout stacks (`Root → L1 → L2 → ...`) via per-level own-fragment composition** (`dinou/core/layout-composition.js`, `dinou/core/handler.js`, `dinou/core/cache-revalidate.js`, `dinou/core/generate-static.js`, `dinou/core/storage-adapter.js`, `dinou/core/get-jsx.js`):
+  - Persisted isolated per-level `shell.layout.own.json` fragments along with `ownGeneratedAt`, `ownHoles`, `ownSuspenseCount`, `ownSlotTags`, and `ownPpr` metadata, plus deterministic PPR hole ID offset shifting (`shiftPprHoleIdsInTree`) during chain composition.
+  - **Surgical child layout revalidation:** Calling `revalidateLayout(L2)` now renders only `L2` and splices it into cached ancestor `shell.layout.own.json` fragments without re-executing `L1` or higher ancestors.
+  - **Non-re-executing ancestor cascades (`recomposeOnly`):** Revalidating an ancestor layout (`L1`) now recomposes descendant layouts (`L2`, `L3`) from their cached `shell.layout.own.json` without re-executing descendant layout components and without resetting descendant `ownGeneratedAt` ISR TTL clocks.
+  - **Slot persistence across layout recompositions:** Refreshing a `<DinouCacheSlot>` inside a layout (`onlyRefreshSlots: true`) now updates that level's `shell.layout.own.json`, ensuring subsequent descendant recompositions retain refreshed slot values rather than reverting to build-time snapshots.
+- **Preserved static ancestor & page caching under asymmetric dynamic layouts (`revalidate = 0`)** (`dinou/core/handler.js`, `dinou/core/cache-revalidate.js`, `dinou/core/layout-composition.js`):
+  - Persisted `shell.page.json` unconditionally for all static and PPR pages (not only routes with PPR or `<DinouCacheSlot>`).
+  - Executed only dynamic layout levels (`revalidate = 0`) fresh in the live request context while composing cached static ancestor layouts (`shell.layout.own.json`) and cached static pages (`shell.page.json`) on both full-page `GET` and `/____rsc_layout____` requests.
+  - Prevented `revalidateLayout` and `revalidatePath` from ever caching or freezing `revalidate = 0` layouts into `layout.rsc` / `shell.layout.own.json`, and prevented `revalidatePage` under a dynamic layout from falling back to full `getJSX` or re-executing static ancestors.
+- **Fixed alternating static/dynamic layout chains (`S → D → S → S` and `S → D → S → D`)** (`dinou/core/handler.js`, `dinou/core/generate-static.js`, `dinou/core/cache-revalidate.js`):
+  - Isolated per-level `ownDynamicState` during SSG Pass 1 so a dynamic ancestor layout (`revalidate = 0`) no longer pollutes static descendant layouts with `dynamic: true` or blocks persisting their `shell.layout.own.json`.
+  - Emitted `X-Dinou-Own-Static` / `X-Dinou-Has-Dynamic-Ancestor` headers during SSG and recorded `hasDynamicAncestor: true` in `layout.metadata.json` (without freezing a stale composed `layout.rsc` across the dynamic ancestor).
+  - Handled `hasDynamicAncestor` on `/____rsc_layout____` requests to splice live dynamic ancestors between cached static levels, and added surgical `ownOnlyUnderDynamicAncestor` support in `revalidateLayout` so revalidating `L3` under a dynamic `L2` updates only `L3/shell.layout.own.json` without re-executing `L1` or `Page` or caching `L2`.
+- **Reused cached static layout chains when serving dynamic pages (`S → S → D`)** (`dinou/core/handler.js`): Generalized per-level layout composition on production `GET` requests to cover dynamic or uncached non-PPR pages (`revalidate = 0` or implicit cookie/header bailout) beneath all-static layouts, rendering only `segment: "page"` live with the real request context and splicing it into cached `shell.layout.own.json` ancestors instead of falling back to full `getJSX` and re-executing every layout on every request.
+- **Detected implicit dynamic bailout layouts (`lMeta?.dynamic`) on `GET` requests** (`dinou/core/handler.js`): Checked persisted `layout.metadata.json` (`lMeta?.dynamic === true`) alongside explicit `layoutConfig.isDynamic` (`revalidate = 0`) when building `activeLayoutsForRoute`, ensuring layouts that implicitly bail out by reading cookies or headers trigger asymmetric per-level composition (live layout execution with cached static ancestors and static child pages).
+- **Fixed shared `isDynamic` route-map pollution breaking `page.rsc` caching on soft `<Link>` navigation** (`dinou/core/handler.js`): Kept `isDynamic.get(reqPath)` isolated for page-level dynamic state and used a request-local `dynamicState` object whenever dynamicity originates only from an ancestor layout, preventing soft `<Link>` navigations (`/____rsc_page____/<route>`) to static pages under dynamic layouts from bypassing cached `page.rsc` and re-executing the page live.
+
+#### Vertical Segmentation (`<DinouCacheSlot>`)
+- **Fixed nested `<DinouCacheSlot>` `fresh: true` propagation leak** (`dinou/core/cache-slot.js`): Updated `refreshNestedSlotsInTree` to pass `fresh: false` when hydrating nested child `<DinouCacheSlot>` boundaries inside a refreshed parent slot, ensuring `refreshSlot("outer", { fresh: true })` refreshes only the outer slot while preserving cached inner slots.
+
+#### React `useId()` & Client Router Context Integrity
+- **Unified per-level scoped layout `useId()` generation between SSR HTML and `layout.rsc`** (`dinou/core/ppr-context.js`, `dinou/core/render-jsx-to-client-jsx.js`, `dinou/core/get-jsx.js`, `dinou/core/layout-composition.js`): Scoped layout `useId()` IDs per layout level (`_layout_<scope>_dS_<n>_`) to prevent collisions across independently rendered layout levels, and propagated `scopePrefix` via `markLayoutRootElement` / `getLayoutRootScope` during full `getJSX` renders so SSR HTML and independently compiled `layout.rsc` payloads always emit identical IDs with zero hydration mismatches.
+- **Made `RouterContext` a `globalThis` singleton in client bundles** (`dinou/core/navigation.js`): Stored `RouterContext` on `globalThis.__DINOU_ROUTER_CONTEXT__` (matching `DinouPageContext`), resolving `"warning: navigate called outside Router"` where `"use client"` components importing `{ Link, useRouter } from "dinou"` in ejected or workspace-linked monorepo setups received a separate `RouterContext` instance from the runtime shell.
+
+---
+
+## Tracking Log by Verification Stage
+
+| # | Stage / Source | Bug Summary | Core Files Modified | Commit |
+| :-: | --- | --- | --- | --- |
+| 1 | Pre-Phase (`x-fixes-dinou.md`, `#39`, `#41`, `#22`) | PPR SWR `#418` hydration race (causal `shell.*.json` / `shell.*._old.json` preload before background SWR) | `handler.js`, `ppr-runtime.js`, `cache-revalidate.js`, `storage-adapter.js` | `e6bc964` |
+| 2 | Pre-Phase (`x-fixes-dinou.md`, `#37`, `#40`, `#46`) | Flattened multi-level layout coupling → per-level `shell.layout.own.json` composition (`recomposeOnly`, surgical `revalidateLayout`, asymmetric `revalidate=0` layouts, `ownGeneratedAt`, scoped layout `useId()`) | `layout-composition.js`, `handler.js`, `cache-revalidate.js`, `generate-static.js`, `storage-adapter.js`, `render-jsx-to-client-jsx.js`, `get-jsx.js` | `e6bc964` |
+| 3 | Pre-Phase (`x-fixes-dinou.md`, `#14–#17`, `#23–#25`, `#32`) | Duplicate `RouterContext` in ejected/monorepo client bundles (`globalThis.__DINOU_ROUTER_CONTEXT__`) | `navigation.js` | `e6bc964` |
+| 4 | Phase 1 (`#42`, Unit Test #9) | `refreshNestedSlotsInTree` leaked `fresh: true` into nested child `<DinouCacheSlot>`s | `cache-slot.js` | `a5a8597` |
+| 5 | Phase 1 (`/t-use-id` regression) | Layout `useId()` `scopePrefix` mismatch between `getJSX` SSR HTML and `layout.rsc` | `ppr-context.js`, `render-jsx-to-client-jsx.js`, `get-jsx.js`, `layout-composition.js` | `a5a8597` |
+| 6 | Phase 2 — Stage 1 (`#47`, `S → D → S`) | Dynamic ancestor polluted static descendant `shell.layout.own.json` / `layout.metadata.json` and broke surgical `revalidateLayout(L3)` + `/____rsc_layout____` | `handler.js`, `generate-static.js`, `cache-revalidate.js` | `8c2db31` |
+| 7 | Phase 2 — Stage 1 (`#48`, `S → S → D`) | Dynamic pages (`revalidate=0` / implicit bailout) under all-static layouts fell back to full `getJSX` and re-executed `L1`/`L2` | `handler.js` | `8c2db31` |
+| 8 | Phase 2 — Stage 1 (`#49`, Implicit Bailout Layout) | `handler.js` checked only `revalidate=0` and ignored persisted `lMeta?.dynamic === true` on `GET` | `handler.js` | `8c2db31` |
+| 9 | Phase 2 — Stage 1 (`#47` Soft Nav) | Dynamic layout mutated shared `isDynamic.get(reqPath)`, poisoning `/____rsc_page____` and bypassing `page.rsc` on `<Link>` transitions | `handler.js` | `8c2db31` |
+
+*(Stages 2–5 fixes will be appended below as they are discovered and resolved.)*
