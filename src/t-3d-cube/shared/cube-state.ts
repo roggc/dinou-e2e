@@ -97,6 +97,33 @@ export interface Cube3DState {
   tsNestedPprShellSeq: number;
   tsNestedPprHoleHostSeq: number;
   tsNestedStaticHostSeq: number;
+
+  // Stage 1 — Check #47: Alternating Static/Dynamic (S->D->S->S & S->D->S->D)
+  hsAltL1Seq: number;
+  hsAltDynL2Seq: number;
+  hsAltStaticL3Seq: number;
+  hsAltStaticPageSeq: number;
+  hsAltDynPageSeq: number;
+
+  // Stage 1 — Check #48: Static Layout Chain + Dynamic Page (S->S->D explicit & bailout)
+  hsSdpL1Seq: number;
+  hsSdpL2Seq: number;
+  hsSdpStaticPageSeq: number;
+  hsSdpDynExplicitSeq: number;
+  hsSdpDynBailoutSeq: number;
+
+  // Stage 1 — Check #49: Implicit Dynamic Bailout Layout + Static Page
+  hsImpL1Seq: number;
+  hsImpL2Seq: number;
+  hsImpPageSeq: number;
+
+  // Stage 1 — Check #50: Asymmetric Per-Level Layout ISR TTLs
+  hsTtlAL1FastSeq: number;
+  hsTtlAL2SlowSeq: number;
+  hsTtlAPageSlowSeq: number;
+  hsTtlBL1SlowSeq: number;
+  hsTtlBL2FastSeq: number;
+  hsTtlBPageSlowSeq: number;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -188,6 +215,29 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   tsNestedPprShellSeq: 100,
   tsNestedPprHoleHostSeq: 100,
   tsNestedStaticHostSeq: 100,
+
+  hsAltL1Seq: 100,
+  hsAltDynL2Seq: 100,
+  hsAltStaticL3Seq: 100,
+  hsAltStaticPageSeq: 100,
+  hsAltDynPageSeq: 100,
+
+  hsSdpL1Seq: 100,
+  hsSdpL2Seq: 100,
+  hsSdpStaticPageSeq: 100,
+  hsSdpDynExplicitSeq: 100,
+  hsSdpDynBailoutSeq: 100,
+
+  hsImpL1Seq: 100,
+  hsImpL2Seq: 100,
+  hsImpPageSeq: 100,
+
+  hsTtlAL1FastSeq: 100,
+  hsTtlAL2SlowSeq: 100,
+  hsTtlAPageSlowSeq: 100,
+  hsTtlBL1SlowSeq: 100,
+  hsTtlBL2FastSeq: 100,
+  hsTtlBPageSlowSeq: 100,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {

@@ -17815,7 +17815,449 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(pageErrors).toEqual([]);
     });
 
-    test("13. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
+    test("13. [Stage 1 / Check #47] Axis X Alternating Static/Dynamic Chains (S->D->S->S & S->D->S->D), Surgical L1/L3 Reval & Soft Nav", async ({
+      page,
+      request,
+    }) => {
+      test.skip(!isProd, "Alternating static/dynamic HS composition requires production mode");
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      // 1. Direct SSR on S -> D -> S -> S
+      await page.goto("/t-3d-cube/hs-alt/dyn-l2/static-l3");
+      await waitCubeReady(page);
+      const baseL1 = Number(await page.locator("#hsalt-l1-seq").textContent());
+      const baseL3 = Number(await page.locator("#hsalt-static-l3-seq").textContent());
+      const basePageS = Number(await page.locator("#hsalt-page-s-seq").textContent());
+
+      // Poison L1, L3, Page S; mutate ONLY dynamic L2 -> L2 executes fresh, L1/L3/Page S stay frozen!
+      const poison = Math.max(baseL1, baseL3, basePageS) + 899;
+      const dynL2_1 = baseL1 + 547;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          hsAltL1Seq: poison,
+          hsAltDynL2Seq: dynL2_1,
+          hsAltStaticL3Seq: poison,
+          hsAltStaticPageSeq: poison,
+        }
+      );
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#hsalt-dyn-l2-seq")).toHaveText(String(dynL2_1));
+      await expect(page.locator("#hsalt-l1-seq")).toHaveText(String(baseL1));
+      await expect(page.locator("#hsalt-static-l3-seq")).toHaveText(String(baseL3));
+      await expect(page.locator("#hsalt-page-s-seq")).toHaveText(String(basePageS));
+
+      // 2. Direct /____rsc_layout____ wire check for /t-3d-cube/hs-alt/dyn-l2/static-l3
+      const dynL2_2 = dynL2_1 + 1;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        { hsAltDynL2Seq: dynL2_2 }
+      );
+      const rscLayoutRes = await safeApiGet(
+        request,
+        "/____rsc_layout____/t-3d-cube/hs-alt/dyn-l2/static-l3"
+      );
+      expect(rscLayoutRes.status()).toBe(200);
+      const rscLayoutText = await rscLayoutRes.text();
+      expect(rscLayoutText).toContain(String(dynL2_2));
+      expect(rscLayoutText).not.toContain(String(poison));
+
+      // 3. Surgical revalidateLayout(L3) underneath dynamic L2 -> L3 updates, L2 live, L1 & Page S frozen!
+      const nextL3 = baseL3 + 548;
+      const dynL2_3 = dynL2_2 + 1;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          hsAltL1Seq: poison,
+          hsAltDynL2Seq: dynL2_3,
+          hsAltStaticL3Seq: nextL3,
+          hsAltStaticPageSeq: poison,
+        }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.revalLayout("/t-3d-cube/hs-alt/dyn-l2/static-l3")
+      );
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#hsalt-l1-seq")).toHaveText(String(baseL1));
+      await expect(page.locator("#hsalt-dyn-l2-seq")).toHaveText(String(dynL2_3));
+      await expect(page.locator("#hsalt-static-l3-seq")).toHaveText(String(nextL3));
+      await expect(page.locator("#hsalt-page-s-seq")).toHaveText(String(basePageS));
+
+      // 4. Surgical revalidateLayout(L1) above dynamic L2 -> L1 updates, L2 live, L3 & Page S frozen!
+      const nextL1 = baseL1 + 549;
+      const dynL2_4 = dynL2_3 + 1;
+      const poisonL3 = nextL3 + 899;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          hsAltL1Seq: nextL1,
+          hsAltDynL2Seq: dynL2_4,
+          hsAltStaticL3Seq: poisonL3,
+          hsAltStaticPageSeq: poison,
+        }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.revalLayout("/t-3d-cube/hs-alt")
+      );
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#hsalt-l1-seq")).toHaveText(String(nextL1));
+      await expect(page.locator("#hsalt-dyn-l2-seq")).toHaveText(String(dynL2_4));
+      await expect(page.locator("#hsalt-static-l3-seq")).toHaveText(String(nextL3));
+      await expect(page.locator("#hsalt-page-s-seq")).toHaveText(String(basePageS));
+
+      // 5. Direct SSR on S -> D -> S -> D (dynamic leaf page under alternating layout chain!)
+      const dynL2_5 = dynL2_4 + 1;
+      const dynPage1 = basePageS + 551;
+      const poisonL1 = nextL1 + 899;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          hsAltL1Seq: poisonL1,
+          hsAltDynL2Seq: dynL2_5,
+          hsAltStaticL3Seq: poisonL3,
+          hsAltDynPageSeq: dynPage1,
+        }
+      );
+      await page.goto("/t-3d-cube/hs-alt/dyn-l2/static-l3/dyn-page");
+      await waitCubeReady(page);
+      await expect(page.locator("#hsalt-l1-seq")).toHaveText(String(nextL1));
+      await expect(page.locator("#hsalt-dyn-l2-seq")).toHaveText(String(dynL2_5));
+      await expect(page.locator("#hsalt-static-l3-seq")).toHaveText(String(nextL3));
+      await expect(page.locator("#hsalt-page-d-seq")).toHaveText(String(dynPage1));
+
+      // 6. Soft <Link> navigation between S->D->S->D and S->D->S->S preserves L1 & L3 state!
+      await expect(page.locator("#probe-mount-hsalt-l1")).not.toHaveText("ssr");
+      await expect(page.locator("#probe-mount-hsalt-l3")).not.toHaveText("ssr");
+      const l1Mount = await page.locator("#probe-mount-hsalt-l1").textContent();
+      const l3Mount = await page.locator("#probe-mount-hsalt-l3").textContent();
+      await page.click("#probe-inc-hsalt-l1");
+      await page.click("#probe-inc-hsalt-l3");
+      await page.click("#link-hsalt-s");
+      await expect(page.locator("#cube-hsalt-page-s")).toBeVisible({ timeout: 15000 });
+      await expect(page.locator("#hsalt-page-s-seq")).toHaveText(String(basePageS));
+      await expect(page.locator("#probe-mount-hsalt-l1")).toHaveText(l1Mount!);
+      await expect(page.locator("#probe-mount-hsalt-l3")).toHaveText(l3Mount!);
+      await expect(page.locator("#probe-count-hsalt-l1")).toHaveText("1");
+      await expect(page.locator("#probe-count-hsalt-l3")).toHaveText("1");
+
+      // Verify dynamic L2 never created static layout cache files on disk (Node local)
+      if (!isCloudflare && !isDeno) {
+        expect(
+          fs.existsSync(
+            path.resolve(".dinou/dist2/t-3d-cube/hs-alt/dyn-l2/layout.rsc")
+          )
+        ).toBe(false);
+        expect(
+          fs.existsSync(
+            path.resolve(".dinou/dist2/t-3d-cube/hs-alt/dyn-l2/shell.layout.own.json")
+          )
+        ).toBe(false);
+      }
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("14. [Stage 1 / Check #48] Axis X Static Layout Chain + Dynamic Page (S->S->D Explicit & Implicit Bailout) with Poisoning & Soft Nav", async ({
+      page,
+      context,
+    }) => {
+      test.skip(!isProd, "Static layout reuse under dynamic pages requires production mode");
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      // Capture baselines on static leaf
+      await page.goto("/t-3d-cube/hs-static-dyn-page/l2");
+      await waitCubeReady(page);
+      const baseL1 = Number(await page.locator("#hssdp-l1-seq").textContent());
+      const baseL2 = Number(await page.locator("#hssdp-l2-seq").textContent());
+      const basePageS = Number(await page.locator("#hssdp-page-s-seq").textContent());
+
+      // Poison L1 & L2; test direct SSR on explicit revalidate=0 dynamic page across 2 reloads
+      const poison = Math.max(baseL1, baseL2) + 899;
+      const dynExp1 = baseL1 + 561;
+      const dynExp2 = baseL1 + 562;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          hsSdpL1Seq: poison,
+          hsSdpL2Seq: poison,
+          hsSdpDynExplicitSeq: dynExp1,
+        }
+      );
+      await page.goto("/t-3d-cube/hs-static-dyn-page/l2/dyn-explicit");
+      await waitCubeReady(page);
+      await expect(page.locator("#hssdp-dyn-exp-seq")).toHaveText(String(dynExp1));
+      await expect(page.locator("#hssdp-l1-seq")).toHaveText(String(baseL1));
+      await expect(page.locator("#hssdp-l2-seq")).toHaveText(String(baseL2));
+
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        { hsSdpDynExplicitSeq: dynExp2 }
+      );
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#hssdp-dyn-exp-seq")).toHaveText(String(dynExp2));
+      await expect(page.locator("#hssdp-l1-seq")).toHaveText(String(baseL1));
+      await expect(page.locator("#hssdp-l2-seq")).toHaveText(String(baseL2));
+
+      // Test direct SSR on implicit-bailout dynamic page (cookie read without revalidate=0)
+      const dynBail1 = baseL1 + 563;
+      const dynBail2 = baseL1 + 564;
+      await context.addCookies([
+        { name: "hssdp_user", value: "atlas", url: "http://localhost:3000" },
+      ]);
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        { hsSdpDynBailoutSeq: dynBail1 }
+      );
+      await page.goto("/t-3d-cube/hs-static-dyn-page/l2/dyn-bailout");
+      await waitCubeReady(page);
+      await expect(page.locator("#hssdp-dyn-bail-seq")).toHaveText(String(dynBail1));
+      await expect(page.locator("#hssdp-dyn-bail-user")).toHaveText("atlas");
+      await expect(page.locator("#hssdp-l1-seq")).toHaveText(String(baseL1));
+      await expect(page.locator("#hssdp-l2-seq")).toHaveText(String(baseL2));
+
+      await context.addCookies([
+        { name: "hssdp_user", value: "zephyr", url: "http://localhost:3000" },
+      ]);
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        { hsSdpDynBailoutSeq: dynBail2 }
+      );
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#hssdp-dyn-bail-seq")).toHaveText(String(dynBail2));
+      await expect(page.locator("#hssdp-dyn-bail-user")).toHaveText("zephyr");
+      await expect(page.locator("#hssdp-l1-seq")).toHaveText(String(baseL1));
+      await expect(page.locator("#hssdp-l2-seq")).toHaveText(String(baseL2));
+
+      // Soft <Link> round-trip: dyn-bailout -> static -> dyn-explicit -> dyn-bailout preserves L1 & L2 mountId & counts!
+      await expect(page.locator("#probe-mount-hssdp-l1")).not.toHaveText("ssr");
+      await expect(page.locator("#probe-mount-hssdp-l2")).not.toHaveText("ssr");
+      const l1Mount = await page.locator("#probe-mount-hssdp-l1").textContent();
+      const l2Mount = await page.locator("#probe-mount-hssdp-l2").textContent();
+      await page.click("#probe-inc-hssdp-l1");
+      await page.click("#probe-inc-hssdp-l2");
+      await page.click("#probe-inc-hssdp-l2");
+
+      await page.click("#link-hssdp-static");
+      await expect(page.locator("#hssdp-page-s-seq")).toHaveText(String(basePageS), {
+        timeout: 15000,
+      });
+      await expect(page.locator("#probe-mount-hssdp-l1")).toHaveText(l1Mount!);
+      await expect(page.locator("#probe-mount-hssdp-l2")).toHaveText(l2Mount!);
+
+      const dynExp3 = dynExp2 + 1;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        { hsSdpDynExplicitSeq: dynExp3 }
+      );
+      await page.click("#link-hssdp-dyn-exp");
+      await expect(page.locator("#hssdp-dyn-exp-seq")).toHaveText(String(dynExp3), {
+        timeout: 15000,
+      });
+      await expect(page.locator("#probe-mount-hssdp-l1")).toHaveText(l1Mount!);
+      await expect(page.locator("#probe-mount-hssdp-l2")).toHaveText(l2Mount!);
+      await expect(page.locator("#probe-count-hssdp-l1")).toHaveText("1");
+      await expect(page.locator("#probe-count-hssdp-l2")).toHaveText("2");
+
+      // Surgical revalidateLayout(L2) updates ONLY L2 while L1 stays frozen & dyn-explicit stays live
+      const nextL2 = baseL2 + 565;
+      const dynExp4 = dynExp3 + 1;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          hsSdpL1Seq: poison,
+          hsSdpL2Seq: nextL2,
+          hsSdpDynExplicitSeq: dynExp4,
+        }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.revalLayout("/t-3d-cube/hs-static-dyn-page/l2")
+      );
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#hssdp-l1-seq")).toHaveText(String(baseL1));
+      await expect(page.locator("#hssdp-l2-seq")).toHaveText(String(nextL2));
+      await expect(page.locator("#hssdp-dyn-exp-seq")).toHaveText(String(dynExp4));
+
+      // Verify neither dynamic page wrote stale index.html/page.rsc to dist2
+      if (!isCloudflare && !isDeno) {
+        expect(
+          fs.existsSync(
+            path.resolve(".dinou/dist2/t-3d-cube/hs-static-dyn-page/l2/dyn-explicit/index.html")
+          )
+        ).toBe(false);
+        expect(
+          fs.existsSync(
+            path.resolve(".dinou/dist2/t-3d-cube/hs-static-dyn-page/l2/dyn-bailout/index.html")
+          )
+        ).toBe(false);
+      }
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("15. [Stage 1 / Check #49] Axis X Implicit Dynamic Bailout Layout (Cookie Read without revalidate=0) + Static Page", async ({
+      page,
+      context,
+    }) => {
+      test.skip(!isProd, "Implicit dynamic layout bailout caching requires production mode");
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      await context.addCookies([
+        { name: "hs_imp_user", value: "nova", url: "http://localhost:3000" },
+      ]);
+      await page.goto("/t-3d-cube/hs-implicit-dyn/cookie-l2");
+      await waitCubeReady(page);
+      await expect(page.locator("#hsimp-l2-user")).toHaveText("nova");
+
+      const baseL1 = Number(await page.locator("#hsimp-l1-seq").textContent());
+      const basePage = Number(await page.locator("#hsimp-page-seq").textContent());
+      const poison = Math.max(baseL1, basePage) + 899;
+      const impL2_1 = baseL1 + 571;
+
+      await context.addCookies([
+        { name: "hs_imp_user", value: "orion", url: "http://localhost:3000" },
+      ]);
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          hsImpL1Seq: poison,
+          hsImpL2Seq: impL2_1,
+          hsImpPageSeq: poison,
+        }
+      );
+
+      // Hard reload: implicit-bailout L2 executes live (orion / impL2_1), while L1 & Static Page stay frozen!
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#hsimp-l2-user")).toHaveText("orion");
+      await expect(page.locator("#hsimp-l2-seq")).toHaveText(String(impL2_1));
+      await expect(page.locator("#hsimp-l1-seq")).toHaveText(String(baseL1));
+      await expect(page.locator("#hsimp-page-seq")).toHaveText(String(basePage));
+
+      // Surgical revalidatePage updates ONLY static page; L1 stays frozen, implicit L2 stays live!
+      const nextPage = basePage + 572;
+      const impL2_2 = impL2_1 + 1;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          hsImpL1Seq: poison,
+          hsImpL2Seq: impL2_2,
+          hsImpPageSeq: nextPage,
+        }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.revalPage("/t-3d-cube/hs-implicit-dyn/cookie-l2")
+      );
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#hsimp-l1-seq")).toHaveText(String(baseL1));
+      await expect(page.locator("#hsimp-l2-seq")).toHaveText(String(impL2_2));
+      await expect(page.locator("#hsimp-page-seq")).toHaveText(String(nextPage));
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("16. [Stage 1 / Check #50] Axis X Asymmetric Per-Level Layout ISR TTLs (Fast L1 1s -> Slow L2/Page 3600s & Slow L1 3600s -> Fast L2 1s)", async ({
+      page,
+    }) => {
+      test.skip(!isProd, "Per-level layout ISR TTL SWR requires production mode");
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      // Branch A: Fast L1 (1s) -> Slow L2 (3600s) -> Slow Page (3600s)
+      await page.goto("/t-3d-cube/hs-ttl/fast-l1/l2");
+      await waitCubeReady(page);
+      await page.waitForTimeout(450);
+      await page.reload();
+      await waitCubeReady(page);
+
+      const baseAL1 = Number(await page.locator("#hsttl-a-l1-seq").textContent());
+      const baseAL2 = Number(await page.locator("#hsttl-a-l2-seq").textContent());
+      const baseAPage = Number(await page.locator("#hsttl-a-page-seq").textContent());
+      const poisonA = Math.max(baseAL1, baseAL2, baseAPage) + 899;
+      const nextAL1 = baseAL1 + 581;
+
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          hsTtlAL1FastSeq: nextAL1,
+          hsTtlAL2SlowSeq: poisonA,
+          hsTtlAPageSlowSeq: poisonA,
+        }
+      );
+      await page.waitForTimeout(1300);
+
+      // Reload #1 triggers background SWR for expired L1 ONLY (0 #418)
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#hsttl-a-l2-seq")).toHaveText(String(baseAL2));
+      await expect(page.locator("#hsttl-a-page-seq")).toHaveText(String(baseAPage));
+
+      // Reload #2 after SWR settle: L1 updated to nextAL1, L2 & Page stayed frozen!
+      await page.waitForTimeout(500);
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#hsttl-a-l1-seq")).toHaveText(String(nextAL1));
+      await expect(page.locator("#hsttl-a-l2-seq")).toHaveText(String(baseAL2));
+      await expect(page.locator("#hsttl-a-page-seq")).toHaveText(String(baseAPage));
+
+      // Branch B: Slow L1 (3600s) -> Fast L2 (1s) -> Slow Page (3600s)
+      await page.goto("/t-3d-cube/hs-ttl/fast-l2/l2");
+      await waitCubeReady(page);
+      await page.waitForTimeout(450);
+      await page.reload();
+      await waitCubeReady(page);
+
+      const baseBL1 = Number(await page.locator("#hsttl-b-l1-seq").textContent());
+      const baseBL2 = Number(await page.locator("#hsttl-b-l2-seq").textContent());
+      const baseBPage = Number(await page.locator("#hsttl-b-page-seq").textContent());
+      const poisonB = Math.max(baseBL1, baseBL2, baseBPage) + 899;
+      const nextBL2 = baseBL2 + 582;
+
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          hsTtlBL1SlowSeq: poisonB,
+          hsTtlBL2FastSeq: nextBL2,
+          hsTtlBPageSlowSeq: poisonB,
+        }
+      );
+      await page.waitForTimeout(1300);
+
+      // Reload #1 triggers background SWR for expired L2 ONLY (0 #418)
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#hsttl-b-l1-seq")).toHaveText(String(baseBL1));
+      await expect(page.locator("#hsttl-b-page-seq")).toHaveText(String(baseBPage));
+
+      // Reload #2 after SWR settle: L2 updated to nextBL2, L1 & Page stayed frozen!
+      await page.waitForTimeout(500);
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#hsttl-b-l1-seq")).toHaveText(String(baseBL1));
+      await expect(page.locator("#hsttl-b-l2-seq")).toHaveText(String(nextBL2));
+      await expect(page.locator("#hsttl-b-page-seq")).toHaveText(String(baseBPage));
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("17. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
       browserName,
     }) => {
       test.skip(

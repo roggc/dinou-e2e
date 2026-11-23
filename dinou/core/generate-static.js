@@ -169,15 +169,27 @@ async function generateStatic() {
               if (layoutRes.headers.get("x-dinou-ppr") === "true") {
                 layoutMeta.ppr = true;
               }
-              if (layoutRes.headers.get("x-dinou-dynamic") === "true") {
+              const isOwnStatic = layoutRes.headers.get("x-dinou-own-static") === "true";
+              const hasDynAncestor = layoutRes.headers.get("x-dinou-has-dynamic-ancestor") === "true";
+              if (layoutRes.headers.get("x-dinou-dynamic") === "true" && !isOwnStatic) {
                 layoutMeta.dynamic = true;
                 layoutMeta.ppr = false;
                 delete layoutMeta.holes;
                 delete layoutMeta.ownHoles;
+              } else if (hasDynAncestor && isOwnStatic) {
+                layoutMeta.hasDynamicAncestor = true;
+                delete layoutMeta.dynamic;
               }
             } catch (e) {}
 
-            await storage.set(layoutRscKey, layoutRscText, layoutMeta);
+            if (layoutMeta.hasDynamicAncestor || layoutMeta.dynamic) {
+              const layoutMetaKey = cleanLayoutPath
+                ? `${cleanLayoutPath}/layout.metadata.json`
+                : "layout.metadata.json";
+              await storage.set(layoutMetaKey, JSON.stringify(layoutMeta));
+            } else {
+              await storage.set(layoutRscKey, layoutRscText, layoutMeta);
+            }
           }
         } else if (
           !layoutRes.headers.has("x-rsc-redirect") &&

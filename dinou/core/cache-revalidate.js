@@ -1236,6 +1236,7 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
           }
 
           // 3. Per-level isolated layout revalidation: render ONLY this layout level and splice into cached ancestors!
+          let ownOnlyUnderDynamicAncestor = false;
           if (!resolvedLayoutJsx && hasExactOwnLayout) {
             try {
               const leafEntry = activeChain[0];
@@ -1247,27 +1248,60 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
               });
               if (single && single.ownTree && !revalDynamicState.value) {
                 pendingShellLayoutOwnJson = serializeJSX(single.ownTree);
-                const overrides = new Map([[cleanPathKey, single]]);
-                const composed = await composeLayoutChainFromOwnFragments(activeChain, storage, {
-                  overrides,
-                  currentPath: reqPathWithSlash,
-                });
-                if (composed && composed.layoutOnlyTree) {
-                  resolvedLayoutJsx = composed.layoutOnlyTree;
-                  pendingShellLayoutJson = serializeJSX(resolvedLayoutJsx);
-                  currentMeta.ownHoles = single.ownHoles;
-                  currentMeta.ownSuspenseCount = single.ownSuspenseCount;
-                  currentMeta.ownSlotTags = single.ownSlotTags;
-                  currentMeta.ownPpr = Boolean(single.effectivePpr);
-                  currentMeta.ppr = Boolean(composed.anyLayoutPpr);
-                  currentMeta.suspenseCount = composed.suspenseCount;
-                  if (composed.holes.length > 0) {
-                    currentMeta.holes = composed.holes;
-                  } else {
-                    delete currentMeta.holes;
+                currentMeta.ownHoles = single.ownHoles;
+                currentMeta.ownSuspenseCount = single.ownSuspenseCount;
+                currentMeta.ownSlotTags = single.ownSlotTags;
+                currentMeta.ownPpr = Boolean(single.effectivePpr);
+
+                let hasDynAncestor = false;
+                for (const anc of activeChain.slice(1)) {
+                  const ancCfg = await resolveLayoutFunctionsConfig(anc.layoutPath, anc.dParams);
+                  if (ancCfg.isDynamic) {
+                    hasDynAncestor = true;
+                    break;
                   }
-                  if (composed.slotTags.length > 0) {
-                    currentMeta.slotTags = composed.slotTags;
+                  const ancMetaKey = anc.cleanLayoutKey
+                    ? `${anc.cleanLayoutKey}/layout.metadata.json`
+                    : "layout.metadata.json";
+                  const ancItem = await readEdgeStorageOrAsset(storage, ancMetaKey);
+                  let ancMetaObj = ancItem?.metadata || null;
+                  if (!ancMetaObj && ancItem?.content) {
+                    try {
+                      ancMetaObj = JSON.parse(ancItem.content);
+                    } catch (e) {}
+                  }
+                  if (ancMetaObj?.dynamic) {
+                    hasDynAncestor = true;
+                    break;
+                  }
+                }
+
+                if (hasDynAncestor) {
+                  // This layout itself is static, but an ancestor is dynamic (S -> D -> S).
+                  // Persist ONLY this level's own fragment & metadata — never freeze the dynamic ancestor!
+                  currentMeta.hasDynamicAncestor = true;
+                  delete currentMeta.dynamic;
+                  didRenderFreshLayout = true;
+                  ownOnlyUnderDynamicAncestor = true;
+                } else {
+                  const overrides = new Map([[cleanPathKey, single]]);
+                  const composed = await composeLayoutChainFromOwnFragments(activeChain, storage, {
+                    overrides,
+                    currentPath: reqPathWithSlash,
+                  });
+                  if (composed && composed.layoutOnlyTree) {
+                    resolvedLayoutJsx = composed.layoutOnlyTree;
+                    pendingShellLayoutJson = serializeJSX(resolvedLayoutJsx);
+                    currentMeta.ppr = Boolean(composed.anyLayoutPpr);
+                    currentMeta.suspenseCount = composed.suspenseCount;
+                    if (composed.holes.length > 0) {
+                      currentMeta.holes = composed.holes;
+                    } else {
+                      delete currentMeta.holes;
+                    }
+                    if (composed.slotTags.length > 0) {
+                      currentMeta.slotTags = composed.slotTags;
+                    }
                   }
                 }
               }
@@ -1277,7 +1311,7 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
           }
 
           // 4. Fallback: full layout chain render via getJSX (e.g. missing ancestor shell.layout.own.json)
-          if (!resolvedLayoutJsx) {
+          if (!resolvedLayoutJsx && !ownOnlyUnderDynamicAncestor) {
             const isLayoutPpr = Boolean(
               currentMeta.ppr || (Array.isArray(currentMeta.holes) && currentMeta.holes.length > 0)
             );

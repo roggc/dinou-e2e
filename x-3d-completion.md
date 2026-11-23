@@ -37,7 +37,7 @@ Phase 2 is organized into **5 incremental stages**, to be implemented and verifi
 
 ## Master Progress Checklist
 
-- [ ] **Stage 1 — Axis X (HS):** Checks `#47`, `#48`, `#49`, `#50`
+- [x] **Stage 1 — Axis X (HS):** Checks `#47`, `#48`, `#49`, `#50` (4/4 Playwright PASS + 4 core bugs fixed in `handler.js`, `generate-static.js`, `cache-revalidate.js`)
 - [ ] **Stage 2 — Axis Y (VS / `<DinouCacheSlot>`):** Checks `#51`, `#52`, `#53`
 - [ ] **Stage 3 — Axis Z (PPR):** Checks `#54`, `#55`
 - [ ] **Stage 4 — Pairwise (`X+Y`, `X+Z`, `Y+Z`):** Checks `#56`, `#57`, `#58`, `#59`
@@ -260,8 +260,8 @@ Phase 1 validates Triple Synergy on symmetric all-PPR chains (`L1 PPR → L2 PPR
 ## Execution Order
 
 We will execute one stage per iteration:
-1. **Stage 1 (Axis X — Checks `#47–#50`)** ← *Next up once confirmed*
-2. **Stage 2 (Axis Y — Checks `#51–#53`)**
+1. **Stage 1 (Axis X — Checks `#47–#50`)** — ✅ Done (4/4 Playwright PASS + 4 core bugs fixed)
+2. **Stage 2 (Axis Y — Checks `#51–#53`)** ← *Next up once confirmed*
 3. **Stage 3 (Axis Z — Checks `#54–#55`)**
 4. **Stage 4 (Pairwise `X+Y`, `X+Z`, `Y+Z` — Checks `#56–#59`)**
 5. **Stage 5 (Triple Synergy `X+Y+Z` — Checks `#60–#61`) + Final Full Chromium Regression Sweep**

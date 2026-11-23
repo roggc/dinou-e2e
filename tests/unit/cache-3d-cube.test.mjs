@@ -1146,3 +1146,303 @@ test("9. refreshNestedSlotsInTree does NOT propagate fresh:true into valid cache
     setStorageAdapter(prevStorage);
   }
 });
+
+test("10. Stage 1 Axis X compiled Node AOT integration: S->D->S->S/D alternation, S->S->D static layout reuse, implicit dynamic layout bailout & /____rsc_page____ isolation", async () => {
+  const tmpApp = createFixtureDir("tmp-3d-stage1-");
+  try {
+    for (const relDir of [
+      "src/alt/dyn-l2/static-l3/dyn-page",
+      "src/sdp/l2/dyn-page",
+      "src/imp/cookie-l2",
+    ]) {
+      fs.mkdirSync(path.join(tmpApp, relDir), { recursive: true });
+    }
+
+    fs.writeFileSync(
+      path.join(tmpApp, "package.json"),
+      JSON.stringify({ name: "cube-3d-stage1-fixture", private: true, type: "module" }, null, 2)
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "tsconfig.json"),
+      JSON.stringify(
+        {
+          compilerOptions: {
+            target: "ES2022",
+            module: "ESNext",
+            moduleResolution: "bundler",
+            jsx: "react-jsx",
+          },
+        },
+        null,
+        2
+      )
+    );
+    writeDinouShim(tmpApp);
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src", "state.ts"),
+      `import fs from "node:fs";
+import path from "node:path";
+const FILE = path.resolve(process.cwd(), "s1-state.json");
+const DEF = {
+  altL1: 100, altL2: 100, altL3: 100, altPageS: 100, altPageD: 100,
+  sdpL1: 100, sdpL2: 100, sdpPageD: 100,
+  impL1: 100, impL2: 100, impPageS: 100,
+};
+export function readS() {
+  try { if (fs.existsSync(FILE)) return { ...DEF, ...JSON.parse(fs.readFileSync(FILE, "utf8")) }; } catch {}
+  return { ...DEF };
+}
+export function writeS(patch: Partial<typeof DEF>) {
+  const next = { ...readS(), ...patch };
+  fs.writeFileSync(FILE, JSON.stringify(next), "utf8");
+  return next;
+}
+`
+    );
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src", "layout.tsx"),
+      `import type { ReactNode } from "react";
+export default function Root({ children }: { children: ReactNode }) {
+  return <html><head><title>S1</title></head><body>{children}</body></html>;
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src", "page.tsx"),
+      `export default function Home() { return <main>home</main>; }\n`
+    );
+
+    // 1. S -> D -> S -> S & S -> D -> S -> D
+    fs.writeFileSync(path.join(tmpApp, "src/alt/layout_functions.ts"), `export const revalidate = 3600;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/alt/layout.tsx"),
+      `import type { ReactNode } from "react";
+import { readS } from "../state";
+export default function L1({ children }: { children: ReactNode }) {
+  return <section><span id="alt-l1">{readS().altL1}</span>{children}</section>;
+}
+`
+    );
+    fs.writeFileSync(path.join(tmpApp, "src/alt/dyn-l2/layout_functions.ts"), `export const revalidate = 0;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/alt/dyn-l2/layout.tsx"),
+      `import type { ReactNode } from "react";
+import { readS } from "../../state";
+export default function L2({ children }: { children: ReactNode }) {
+  return <div><span id="alt-l2">{readS().altL2}</span>{children}</div>;
+}
+`
+    );
+    fs.writeFileSync(path.join(tmpApp, "src/alt/dyn-l2/static-l3/layout_functions.ts"), `export const revalidate = 3600;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/alt/dyn-l2/static-l3/layout.tsx"),
+      `import type { ReactNode } from "react";
+import { readS } from "../../../state";
+export default function L3({ children }: { children: ReactNode }) {
+  return <div><span id="alt-l3">{readS().altL3}</span>{children}</div>;
+}
+`
+    );
+    fs.writeFileSync(path.join(tmpApp, "src/alt/dyn-l2/static-l3/page_functions.ts"), `export const revalidate = 3600;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/alt/dyn-l2/static-l3/page.tsx"),
+      `import { readS } from "../../../state";
+export default function PageS() { return <main><span id="alt-ps">{readS().altPageS}</span></main>; }
+`
+    );
+    fs.writeFileSync(path.join(tmpApp, "src/alt/dyn-l2/static-l3/dyn-page/page_functions.ts"), `export const revalidate = 0;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/alt/dyn-l2/static-l3/dyn-page/page.tsx"),
+      `import { readS } from "../../../../state";
+export default function PageD() { return <main><span id="alt-pd">{readS().altPageD}</span></main>; }
+`
+    );
+
+    // 2. S -> S -> D (static L1 & L2 + dynamic page)
+    fs.writeFileSync(path.join(tmpApp, "src/sdp/layout_functions.ts"), `export const revalidate = 3600;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/sdp/layout.tsx"),
+      `import type { ReactNode } from "react";
+import { readS } from "../state";
+export default function SdpL1({ children }: { children: ReactNode }) {
+  return <section><span id="sdp-l1">{readS().sdpL1}</span>{children}</section>;
+}
+`
+    );
+    fs.writeFileSync(path.join(tmpApp, "src/sdp/l2/layout_functions.ts"), `export const revalidate = 3600;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/sdp/l2/layout.tsx"),
+      `import type { ReactNode } from "react";
+import { readS } from "../../state";
+export default function SdpL2({ children }: { children: ReactNode }) {
+  return <div><span id="sdp-l2">{readS().sdpL2}</span>{children}</div>;
+}
+`
+    );
+    fs.writeFileSync(path.join(tmpApp, "src/sdp/l2/dyn-page/page_functions.ts"), `export const revalidate = 0;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/sdp/l2/dyn-page/page.tsx"),
+      `import { readS } from "../../../state";
+export default function SdpPageD() { return <main><span id="sdp-pd">{readS().sdpPageD}</span></main>; }
+`
+    );
+
+    // 3. Implicit dynamic bailout layout + static page
+    fs.writeFileSync(path.join(tmpApp, "src/imp/layout_functions.ts"), `export const revalidate = 3600;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/imp/layout.tsx"),
+      `import type { ReactNode } from "react";
+import { readS } from "../state";
+export default function ImpL1({ children }: { children: ReactNode }) {
+  return <section><span id="imp-l1">{readS().impL1}</span>{children}</section>;
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/imp/cookie-l2/layout.tsx"),
+      `import type { ReactNode } from "react";
+import { getContext } from "dinou";
+import { readS } from "../../state";
+export default function ImpL2({ children }: { children: ReactNode }) {
+  const user = String(getContext()?.req?.cookies?.u || "anon");
+  return <div><span id="imp-l2">{readS().impL2}</span><span id="imp-u">{user}</span>{children}</div>;
+}
+`
+    );
+    fs.writeFileSync(path.join(tmpApp, "src/imp/cookie-l2/page_functions.ts"), `export const revalidate = 3600;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/imp/cookie-l2/page.tsx"),
+      `import { readS } from "../../state";
+export default function ImpPageS() { return <main><span id="imp-ps">{readS().impPageS}</span></main>; }
+`
+    );
+
+    const buildRes = spawnSync(process.execPath, [CLI_PATH, "build:node:esbuild"], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 120_000,
+    });
+    assert.equal(
+      buildRes.status,
+      0,
+      `Stage 1 fixture build failed:\n${buildRes.stdout}\n${buildRes.stderr}`
+    );
+
+    // Static L3 underneath dynamic L2 MUST have shell.layout.own.json and dynamic !== true
+    assert.equal(
+      fs.existsSync(path.join(tmpApp, ".dinou/dist2/alt/dyn-l2/static-l3/shell.layout.own.json")),
+      true,
+      "Static L3 underneath dynamic L2 must persist shell.layout.own.json"
+    );
+    const l3Meta = JSON.parse(
+      fs.readFileSync(path.join(tmpApp, ".dinou/dist2/alt/dyn-l2/static-l3/layout.metadata.json"), "utf8")
+    );
+    assert.equal(l3Meta.hasDynamicAncestor, true);
+    assert.notEqual(l3Meta.dynamic, true);
+
+    const verifyScript = path.join(tmpApp, "verify-stage1.mjs");
+    fs.writeFileSync(
+      verifyScript,
+      `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const { FileSystemStorage, setStorageAdapter } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/storage-adapter.js")).href
+      )});
+const { revalidateLayout } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/cache-revalidate.js")).href
+      )});
+setStorageAdapter(new FileSystemStorage(path.resolve(".dinou/dist2")));
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+globalThis.__DINOU_RENDER_HTML_STREAM__ = ssrMod.renderHtml;
+const opts = { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml };
+
+const textById = (html, id) => {
+  const m = html.match(new RegExp('id="' + id + '"[^>]*>([^<]*)<'));
+  return m ? m[1] : null;
+};
+const writeS = (patch) => {
+  const f = path.resolve("s1-state.json");
+  const cur = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : {};
+  fs.writeFileSync(f, JSON.stringify({ ...cur, ...patch }), "utf8");
+};
+const get = async (u, headers = {}) => {
+  const r = await rscMod.handleRequest(new Request("http://localhost" + u, { headers }), opts);
+  assert.equal(r.status, 200, "Expected 200 for " + u);
+  return await r.text();
+};
+
+// A. S->D->S->S: poison L1, L3, PageS; bump L2
+writeS({ altL1: 999, altL2: 501, altL3: 999, altPageS: 999 });
+const altS = await get("/alt/dyn-l2/static-l3");
+assert.equal(textById(altS, "alt-l1"), "100");
+assert.equal(textById(altS, "alt-l2"), "501");
+assert.equal(textById(altS, "alt-l3"), "100");
+assert.equal(textById(altS, "alt-ps"), "100");
+
+// Soft-nav /____rsc_page____ for PageS must NOT be poisoned by dynamic L2!
+const altPageRsc = await get("/____rsc_page____/alt/dyn-l2/static-l3");
+assert.ok(altPageRsc.includes("100") && !altPageRsc.includes("999"), "page.rsc must stay cached 100");
+
+// Revalidate L3 under dynamic L2 -> updates ONLY L3 without freezing L2 or touching L1
+writeS({ altL1: 999, altL2: 502, altL3: 603, altPageS: 999 });
+await revalidateLayout("/alt/dyn-l2/static-l3");
+const altS2 = await get("/alt/dyn-l2/static-l3");
+assert.equal(textById(altS2, "alt-l1"), "100");
+assert.equal(textById(altS2, "alt-l2"), "502");
+assert.equal(textById(altS2, "alt-l3"), "603");
+assert.equal(textById(altS2, "alt-ps"), "100");
+
+// S->D->S->D: dynamic page under alternating layouts
+writeS({ altL1: 999, altL2: 503, altL3: 999, altPageD: 701 });
+const altD = await get("/alt/dyn-l2/static-l3/dyn-page");
+assert.equal(textById(altD, "alt-l1"), "100");
+assert.equal(textById(altD, "alt-l2"), "503");
+assert.equal(textById(altD, "alt-l3"), "603");
+assert.equal(textById(altD, "alt-pd"), "701");
+
+// B. S->S->D: static L1 & L2 never re-execute when serving dynamic page
+writeS({ sdpL1: 999, sdpL2: 999, sdpPageD: 801 });
+const sdp1 = await get("/sdp/l2/dyn-page");
+assert.equal(textById(sdp1, "sdp-l1"), "100");
+assert.equal(textById(sdp1, "sdp-l2"), "100");
+assert.equal(textById(sdp1, "sdp-pd"), "801");
+
+// C. Implicit dynamic bailout layout + static page
+writeS({ impL1: 100, impL2: 100, impPageS: 100 });
+await get("/imp/cookie-l2", { cookie: "u=nova" });
+writeS({ impL1: 999, impL2: 901, impPageS: 999 });
+const imp2 = await get("/imp/cookie-l2", { cookie: "u=orion" });
+assert.equal(textById(imp2, "imp-l1"), "100");
+assert.equal(textById(imp2, "imp-l2"), "901");
+assert.equal(textById(imp2, "imp-u"), "orion");
+assert.equal(textById(imp2, "imp-ps"), "100");
+
+console.log("STAGE1_AXIS_X_OK");
+`
+    );
+
+    const runRes = spawnSync(process.execPath, [verifyScript], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+      timeout: 60_000,
+    });
+    assert.equal(
+      runRes.status,
+      0,
+      `Stage 1 compiled integration failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+    );
+    assert.ok(runRes.stdout.includes("STAGE1_AXIS_X_OK"));
+  } finally {
+    removeDirSafe(tmpApp);
+  }
+});

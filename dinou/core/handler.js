@@ -2260,7 +2260,7 @@ async function handleRequest(request, platformContext = {}) {
         if (edgeMeta) {
           currentGeneratedAt = edgeMeta.generatedAt || null;
           if (isLayoutReq) {
-            if (edgeMeta.dynamic) {
+            if (edgeMeta.dynamic || edgeMeta.hasDynamicAncestor) {
               dynamicState.value = true;
             }
             if (edgeMeta.ppr !== undefined) {
@@ -2289,7 +2289,7 @@ async function handleRequest(request, platformContext = {}) {
           const metaObj = JSON.parse(readFileSync(metadataPath, "utf8"));
           currentGeneratedAt = metaObj.generatedAt || null;
           if (isLayoutReq) {
-            if (metaObj.dynamic) {
+            if (metaObj.dynamic || metaObj.hasDynamicAncestor) {
               dynamicState.value = true;
             }
             if (metaObj.ppr !== undefined) {
@@ -2589,19 +2589,42 @@ async function handleRequest(request, platformContext = {}) {
                   ignoreNoLayout: true,
                 });
                 const leafEntry = activeChain[0];
-                const single = await renderSingleLayoutLevel(leafEntry, {
-                  reqSegments,
-                  queryObj,
-                  isDevelopment,
-                  usePprContext: true,
-                });
-                if (!rscDynamicState.value && single && single.ownTree) {
+                const leafLayoutCfg = await resolveLayoutFunctionsConfig(
+                  leafEntry.layoutPath,
+                  leafEntry.dParams
+                );
+                // Isolate THIS layout level's own dynamic state from any dynamic ancestor
+                // so a static L3 underneath a dynamic L2 still persists its own shell.layout.own.json!
+                const ownDynamicState = { value: Boolean(leafLayoutCfg.isDynamic) };
+                const ownCtx = createRequestContext(
+                  simReq,
+                  bridge,
+                  platformContext,
+                  ownDynamicState
+                );
+                copyCustomContextProperties(rootContext, ownCtx);
+                const single = await requestStorage.run(ownCtx, () =>
+                  renderSingleLayoutLevel(leafEntry, {
+                    reqSegments,
+                    queryObj,
+                    isDevelopment,
+                    usePprContext: true,
+                  })
+                );
+                if (ownDynamicState.value) {
+                  bridge.setHeader("X-Dinou-Dynamic", "true");
+                  if (single && single.ownTree) {
+                    jsx = single.ownTree;
+                    handledPerLevelSsgLayout = true;
+                  }
+                } else if (single && single.ownTree) {
                   const ownKey = cleanRel
                     ? `${cleanRel}/shell.layout.own.json`
                     : "shell.layout.own.json";
                   try {
                     await storage.set(ownKey, serializeJSX(single.ownTree));
                   } catch (e) {}
+                  bridge.setHeader("X-Dinou-Own-Static", "true");
                   bridge.setHeader(
                     "X-Dinou-Own-Suspense-Count",
                     String(single.ownSuspenseCount || 0)
@@ -2663,6 +2686,13 @@ async function handleRequest(request, platformContext = {}) {
                       String(composed.suspenseCount || 0)
                     );
                     jsx = composed.layoutOnlyTree;
+                    handledPerLevelSsgLayout = true;
+                  } else {
+                    // This layout level itself is static, but an ancestor layout is dynamic.
+                    // Keep shell.layout.own.json and mark metadata with hasDynamicAncestor
+                    // instead of falsely marking THIS layout dynamic:true!
+                    bridge.setHeader("X-Dinou-Has-Dynamic-Ancestor", "true");
+                    jsx = single.ownTree;
                     handledPerLevelSsgLayout = true;
                   }
                 }
@@ -2912,7 +2942,8 @@ async function handleRequest(request, platformContext = {}) {
   if (!isDynamic.has(reqPath)) {
     isDynamic.set(reqPath, { value: false });
   }
-  const dynamicState = isDynamic.get(reqPath);
+  const pageDynamicStateRef = isDynamic.get(reqPath);
+  let dynamicState = pageDynamicStateRef;
   if (platformContext?.isSSG) {
     dynamicState.value = false;
   }
@@ -2970,9 +3001,37 @@ async function handleRequest(request, platformContext = {}) {
         }
 
         if (layoutConfig.isDynamic) {
-          dynamicState.value = true;
+          // Do NOT mutate shared pageDynamicStateRef: a dynamic layout must never poison
+          // /____rsc_page____/<route> caching for static child pages underneath it!
+          dynamicState = { value: true };
           hasStaticDynamicConfig = true;
           hasDynamicLayoutConfig = true;
+        } else if (
+          !isDevelopment &&
+          !platformContext?.isSSG &&
+          isEdgeRuntime(platformContext)
+        ) {
+          try {
+            const storageForMeta = getStorageAdapter();
+            const lMetaKey = entry.cleanLayoutKey
+              ? `${entry.cleanLayoutKey}/layout.metadata.json`
+              : "layout.metadata.json";
+            const lRscKey = entry.cleanLayoutKey
+              ? `${entry.cleanLayoutKey}/layout.rsc`
+              : "layout.rsc";
+            const lMeta = await readMetaFromStorage(
+              storageForMeta,
+              lMetaKey,
+              lRscKey,
+              platformContext,
+              request.url
+            );
+            if (lMeta?.dynamic) {
+              entry.isDynamicConfig = true;
+              dynamicState = { value: true };
+              hasDynamicLayoutConfig = true;
+            }
+          } catch (e) {}
         }
 
         if (typeof layoutConfig.revalidate === "number" && layoutConfig.revalidate >= 0) {
@@ -3015,6 +3074,7 @@ async function handleRequest(request, platformContext = {}) {
     isPagePprConfig = pageCfg.pagePpr;
 
     if (isDynamicConfig) {
+      pageDynamicStateRef.value = true;
       dynamicState.value = true;
       hasStaticDynamicConfig = true;
     }
@@ -3781,21 +3841,25 @@ async function handleRequest(request, platformContext = {}) {
             } else if (
               !isDevelopment &&
               !platformContext?.isSSG &&
-              hasDynamicLayoutConfig &&
+              (hasDynamicLayoutConfig || isDynamicConfig || dynamicState.value || !cachedItem) &&
               !isPprConfig &&
               activeLayoutsForRoute.length > 0 &&
-              pagePath
+              pagePath &&
+              queryObj.ssr_crash !== "true"
             ) {
-              // Asymmetric Dynamic Layout + Static Ancestor Layout(s) + Static/Dynamic Page composition:
-              // Reuses cached static ancestor layouts (`shell.layout.own.json`) and cached static page
-              // (`shell.page.json`) while executing ONLY the dynamic layout level(s) fresh per request.
+              // Per-level layout composition for BOTH:
+              //  (a) Asymmetric dynamic layout(s) + static ancestor/descendant layout(s) + static/dynamic page, AND
+              //  (b) Dynamic / uncached page under 100% static cached layout chain (S -> S -> D).
+              // Reuses every static layout's cached `shell.layout.own.json` without re-executing static layouts!
               await requestStorage.run(context, async () => {
                 let composedAsymmetric = false;
-                try {
-                  let pageClientJsx;
-                  const canReuseStaticPage =
-                    !isDynamicConfig && Object.keys(queryObj).length === 0;
-                  if (canReuseStaticPage && !isRouteDeletedInStorage) {
+                let pageClientJsx;
+                const canReuseStaticPage =
+                  hasDynamicLayoutConfig &&
+                  !isDynamicConfig &&
+                  Object.keys(queryObj).length === 0;
+                if (canReuseStaticPage && !isRouteDeletedInStorage) {
+                  try {
                     const shellPageKey = cleanPath
                       ? `${cleanPath}/shell.page.json`
                       : "shell.page.json";
@@ -3922,20 +3986,24 @@ async function handleRequest(request, platformContext = {}) {
                         } catch (e) {}
                       }
                     }
+                  } catch (staticPageCacheErr) {
+                    pageClientJsx = undefined;
                   }
+                }
 
-                  if (pageClientJsx === undefined) {
-                    pageClientJsx = await getJSX(
-                      reqPath,
-                      queryObj,
-                      isNotFound,
-                      isDevelopment,
-                      !pagePath,
-                      { segment: "page" }
-                    );
-                  }
+                if (pageClientJsx === undefined) {
+                  pageClientJsx = await getJSX(
+                    reqPath,
+                    queryObj,
+                    isNotFound,
+                    isDevelopment,
+                    !pagePath,
+                    { segment: "page" }
+                  );
+                }
 
-                  if (!context._hasRedirected && pageClientJsx !== undefined) {
+                try {
+                  if (!context._hasRedirected && !isNotFound.value && pageClientJsx !== undefined) {
                     await hydrateActiveChainPpr(
                       activeLayoutsForRoute,
                       reqSegments,
@@ -3943,6 +4011,7 @@ async function handleRequest(request, platformContext = {}) {
                       srcFolder
                     );
                     const overrides = new Map();
+                    let anyDynamicInChain = false;
                     for (let i = activeLayoutsForRoute.length - 1; i >= 0; i--) {
                       const entry = activeLayoutsForRoute[i];
                       const lMetaKey = entry.cleanLayoutKey
@@ -3962,6 +4031,7 @@ async function handleRequest(request, platformContext = {}) {
                         entry.isDynamicConfig || lMeta?.dynamic
                       );
                       if (isEntryDynamic) {
+                        anyDynamicInChain = true;
                         const single = await renderSingleLayoutLevel(entry, {
                           reqSegments,
                           queryObj,
@@ -4026,7 +4096,7 @@ async function handleRequest(request, platformContext = {}) {
                       }
                     }
 
-                    if (!context._hasRedirected && overrides.size > 0) {
+                    if (!context._hasRedirected && (!anyDynamicInChain || overrides.size > 0)) {
                       const composed = await composeLayoutChainFromOwnFragments(
                         activeLayoutsForRoute,
                         storage,
