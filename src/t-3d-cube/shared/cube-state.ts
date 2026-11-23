@@ -124,6 +124,29 @@ export interface Cube3DState {
   hsTtlBL1SlowSeq: number;
   hsTtlBL2FastSeq: number;
   hsTtlBPageSlowSeq: number;
+
+  // Stage 2 — Check #51: 3-Level Nested <DinouCacheSlot> + Deep 1s TTL
+  csDeepHostSeq: number;
+  csDeepOuterSeq: number;
+  csDeepMiddleSeq: number;
+  csDeepInnerSeq: number;
+  csDeepTtlOuterSeq: number;
+  csDeepTtlMiddleSeq: number;
+  csDeepTtlInnerSeq: number;
+
+  // Stage 2 — Check #52: Shared <DinouCacheSlot> Across Routes & Layout+Page
+  csSharedHostASeq: number;
+  csSharedHostBSeq: number;
+  csSharedSlotSeq: number;
+  csSharedL1HostSeq: number;
+  csSharedLpPageHostSeq: number;
+  csSharedLpSlotSeq: number;
+
+  // Stage 2 — Check #53: <DinouCacheSlot> Error Resilience
+  csErrHostSeq: number;
+  csFragileSeq: number;
+  csHealthySeq: number;
+  csFragileShouldThrow: boolean;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -238,6 +261,26 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   hsTtlBL1SlowSeq: 100,
   hsTtlBL2FastSeq: 100,
   hsTtlBPageSlowSeq: 100,
+
+  csDeepHostSeq: 100,
+  csDeepOuterSeq: 100,
+  csDeepMiddleSeq: 100,
+  csDeepInnerSeq: 100,
+  csDeepTtlOuterSeq: 100,
+  csDeepTtlMiddleSeq: 100,
+  csDeepTtlInnerSeq: 100,
+
+  csSharedHostASeq: 100,
+  csSharedHostBSeq: 100,
+  csSharedSlotSeq: 100,
+  csSharedL1HostSeq: 100,
+  csSharedLpPageHostSeq: 100,
+  csSharedLpSlotSeq: 100,
+
+  csErrHostSeq: 100,
+  csFragileSeq: 100,
+  csHealthySeq: 100,
+  csFragileShouldThrow: false,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {

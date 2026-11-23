@@ -65,6 +65,7 @@ import {
   deserializeJSX,
   refreshNestedSlotsInTree,
   hasExpiredSlots,
+  inspectSlotsFreshness,
 } from "./cache-slot.js";
 import {
   runWithPprContext,
@@ -2159,10 +2160,13 @@ async function handleRequest(request, platformContext = {}) {
                 entry.revalidate >= 1 &&
                 entry.ownGeneratedAt > 0 &&
                 Date.now() > entry.ownGeneratedAt + entry.revalidate * 1000;
-              const isLayoutSlotTtlExpired =
-                !isLayoutTtlExpired &&
-                entry.slotTags.length > 0 &&
-                (await hasExpiredSlots(entry.slotTags));
+              const layoutSlotFreshness =
+                !isLayoutTtlExpired && entry.slotTags.length > 0
+                  ? await inspectSlotsFreshness(entry.slotTags, entry.generatedAt)
+                  : { hasExpired: false, hasNewer: false };
+              const isLayoutSlotTtlExpired = layoutSlotFreshness.hasExpired;
+              const isLayoutSlotNewer =
+                !internalBuildId && layoutSlotFreshness.hasNewer;
               const ancestors =
                 i < activeChain.length - 1 ? activeChain.slice(i + 1) : [];
               const maxAncestorGen =
@@ -2184,7 +2188,12 @@ async function handleRequest(request, platformContext = {}) {
                 entry.generatedAt > 0 &&
                 maxAncestorGen > entry.generatedAt;
               const isAncestorNewer = isAncestorOwnNewer || isAncestorSlotOnlyNewer;
-              if (isLayoutSlotTtlExpired && !isLayoutTtlExpired && !(isLayoutReq && isAncestorNewer)) {
+              if (
+                isLayoutSlotTtlExpired &&
+                !isLayoutSlotNewer &&
+                !isLayoutTtlExpired &&
+                !(isLayoutReq && isAncestorNewer)
+              ) {
                 const layoutSlotRevalKey = `layout-slot:${entry.layoutRoutePath}`;
                 const layoutSlotRevalPromise = (async () => {
                   if (regenerating.has(layoutSlotRevalKey)) return;
@@ -2201,13 +2210,20 @@ async function handleRequest(request, platformContext = {}) {
                 if (platformContext && platformContext.ctx && typeof platformContext.ctx.waitUntil === "function") {
                   platformContext.ctx.waitUntil(layoutSlotRevalPromise);
                 }
-              } else if (isLayoutTtlExpired || (isLayoutReq && isAncestorNewer)) {
+              } else if (
+                isLayoutTtlExpired ||
+                isLayoutSlotNewer ||
+                (isLayoutReq && isAncestorNewer)
+              ) {
                 const { revalidateLayout } = await import("./cache-revalidate.js");
                 await revalidateLayout(entry.layoutRoutePath, {
-                  recomposeOnly: !isLayoutTtlExpired && isAncestorOwnNewer,
+                  recomposeOnly: !isLayoutTtlExpired && !isLayoutSlotNewer && isAncestorOwnNewer,
                   onlyRefreshSlots:
-                    !isLayoutTtlExpired && !isAncestorOwnNewer && isAncestorSlotOnlyNewer,
-                  onlyIfExpired: isLayoutTtlExpired && !(isLayoutReq && isAncestorNewer),
+                    !isLayoutTtlExpired &&
+                    !isAncestorOwnNewer &&
+                    (isLayoutSlotNewer || isAncestorSlotOnlyNewer),
+                  onlyIfExpired:
+                    isLayoutTtlExpired && !isLayoutSlotNewer && !(isLayoutReq && isAncestorNewer),
                 });
                 const lMetaKey = entry.cleanLayoutKey
                   ? `${entry.cleanLayoutKey}/layout.metadata.json`
@@ -2417,6 +2433,7 @@ async function handleRequest(request, platformContext = {}) {
               const pMeta =
                 cached.metadata ||
                 (await readMetaFromStorage(storage, pMetaKey, pRscBaseKey, platformContext, request.url));
+              let isSlotNewer = false;
               if (pMeta) {
                 const pReval =
                   pMeta.pageRevalidate !== undefined && pMeta.pageRevalidate !== null
@@ -2426,10 +2443,22 @@ async function handleRequest(request, platformContext = {}) {
                 if (typeof pReval === "number" && pReval >= 1 && pGen > 0 && Date.now() > pGen + pReval * 1000) {
                   isExpired = true;
                 } else if (Array.isArray(pMeta.slotTags) && pMeta.slotTags.length > 0) {
-                  isSlotOnlyExpired = await hasExpiredSlots(pMeta.slotTags);
+                  const slotFreshness = await inspectSlotsFreshness(
+                    pMeta.slotTags,
+                    pMeta.generatedAt || 0
+                  );
+                  isSlotNewer = slotFreshness.hasNewer;
+                  isSlotOnlyExpired = !isSlotNewer && slotFreshness.hasExpired;
                 }
               }
-              if (isSlotOnlyExpired && !isExpired) {
+              if (isSlotNewer && !isExpired) {
+                const { revalidatePage } = await import("./cache-revalidate.js");
+                await revalidatePage(cleanPath, { onlyRefreshSlots: true });
+                const refreshedCached = await storage.get(rscKey);
+                if (refreshedCached && refreshedCached.content) {
+                  cached = refreshedCached;
+                }
+              } else if (isSlotOnlyExpired && !isExpired) {
                 const slotRevalKey = `slot:${reqPath}`;
                 const slotRevalPromise = (async () => {
                   if (
@@ -3257,10 +3286,12 @@ async function handleRequest(request, platformContext = {}) {
               entry.revalidate >= 1 &&
               entry.ownGeneratedAt > 0 &&
               Date.now() > entry.ownGeneratedAt + entry.revalidate * 1000;
-            const isLayoutSlotTtlExpired =
-              !isLayoutTtlExpired &&
-              entry.slotTags.length > 0 &&
-              (await hasExpiredSlots(entry.slotTags));
+            const layoutSlotFreshness =
+              !isLayoutTtlExpired && entry.slotTags.length > 0
+                ? await inspectSlotsFreshness(entry.slotTags, entry.generatedAt)
+                : { hasExpired: false, hasNewer: false };
+            const isLayoutSlotTtlExpired = layoutSlotFreshness.hasExpired;
+            const isLayoutSlotNewer = layoutSlotFreshness.hasNewer;
             const ancestors =
               i < activeLayoutChain.length - 1 ? activeLayoutChain.slice(i + 1) : [];
             const maxAncestorGen =
@@ -3282,15 +3313,17 @@ async function handleRequest(request, platformContext = {}) {
               entry.generatedAt > 0 &&
               maxAncestorGen > entry.generatedAt;
             const isAncestorNewer = isAncestorOwnNewer || isAncestorSlotOnlyNewer;
-            if (isLayoutSlotTtlExpired && !isLayoutTtlExpired && !isAncestorNewer) {
+            if (isLayoutSlotTtlExpired && !isLayoutSlotNewer && !isLayoutTtlExpired && !isAncestorNewer) {
               pendingLayoutSlotRevalPaths.push(entry.layoutRoutePath);
-            } else if (isLayoutTtlExpired || isAncestorNewer) {
+            } else if (isLayoutTtlExpired || isLayoutSlotNewer || isAncestorNewer) {
               const { revalidateLayout } = await import("./cache-revalidate.js");
               await revalidateLayout(entry.layoutRoutePath, {
-                recomposeOnly: !isLayoutTtlExpired && isAncestorOwnNewer,
+                recomposeOnly: !isLayoutTtlExpired && !isLayoutSlotNewer && isAncestorOwnNewer,
                 onlyRefreshSlots:
-                  !isLayoutTtlExpired && !isAncestorOwnNewer && isAncestorSlotOnlyNewer,
-                onlyIfExpired: isLayoutTtlExpired && !isAncestorNewer,
+                  !isLayoutTtlExpired &&
+                  !isAncestorOwnNewer &&
+                  (isLayoutSlotNewer || isAncestorSlotOnlyNewer),
+                onlyIfExpired: isLayoutTtlExpired && !isLayoutSlotNewer && !isAncestorNewer,
               });
               const refreshedMeta = await readMetaFromStorage(
                 storage,
@@ -3408,6 +3441,32 @@ async function handleRequest(request, platformContext = {}) {
         console.warn(`⚠️ [Dinou] Error during lazy HTML re-composition for ${reqPath}:`, lazyErr?.message || lazyErr);
       }
 
+      // Synchronously splice any shared <DinouCacheSlot> already refreshed elsewhere (slot.generatedAt > page.generatedAt)
+      // BEFORE snapshotting PPR shell JSONs so cross-route shared slots reflect fresh cached JSX on the first hit with 0 #418.
+      let isPageSlotTtlExpired = false;
+      if (Array.isArray(cachedItem.metadata?.slotTags) && cachedItem.metadata.slotTags.length > 0) {
+        try {
+          const pageSlotFreshness = await inspectSlotsFreshness(
+            cachedItem.metadata.slotTags,
+            cachedItem.metadata?.generatedAt || 0
+          );
+          if (pageSlotFreshness.hasNewer) {
+            const { revalidatePage } = await import("./cache-revalidate.js");
+            await revalidatePage(reqPath, { onlyRefreshSlots: true });
+            const refreshedHtml =
+              (await storage.get(htmlKey)) ||
+              (isPprConfig
+                ? await storage.get(cleanPath ? `${cleanPath}/shell.html` : "shell.html")
+                : null);
+            if (refreshedHtml && refreshedHtml.content) {
+              cachedItem = refreshedHtml;
+            }
+          } else {
+            isPageSlotTtlExpired = pageSlotFreshness.hasExpired;
+          }
+        } catch (slotSyncErr) {}
+      }
+
       // Snapshot PPR shell JSONs causally matching `cachedItem.content` BEFORE launching ANY background SWR,
       // eliminating the SWR hydration race (#418) where background revalidation overwrites shell.page.json / shell.layout.json
       // while handlePprResume is streaming the stale shellPrelude HTML.
@@ -3488,26 +3547,23 @@ async function handleRequest(request, platformContext = {}) {
           platformContext.ctx.waitUntil(layoutSlotRevalPromise);
         }
       }
-      if (Array.isArray(cachedItem.metadata?.slotTags) && cachedItem.metadata.slotTags.length > 0) {
+      if (isPageSlotTtlExpired) {
         try {
-          const isPageSlotTtlExpired = await hasExpiredSlots(cachedItem.metadata.slotTags);
-          if (isPageSlotTtlExpired) {
-            const slotRevalKey = `slot:${reqPath}`;
-            const slotRevalPromise = (async () => {
-              if (regenerating.has(slotRevalKey) || regenerating.has(reqPath)) return;
-              regenerating.add(slotRevalKey);
-              try {
-                const { revalidatePage } = await import("./cache-revalidate.js");
-                await revalidatePage(reqPath, { onlyRefreshSlots: true });
-              } catch (slotTtlErr) {
-                console.error(`❌ [Slot ISR] Error refreshing slots for ${reqPath}:`, slotTtlErr);
-              } finally {
-                regenerating.delete(slotRevalKey);
-              }
-            })();
-            if (platformContext && platformContext.ctx && typeof platformContext.ctx.waitUntil === "function") {
-              platformContext.ctx.waitUntil(slotRevalPromise);
+          const slotRevalKey = `slot:${reqPath}`;
+          const slotRevalPromise = (async () => {
+            if (regenerating.has(slotRevalKey) || regenerating.has(reqPath)) return;
+            regenerating.add(slotRevalKey);
+            try {
+              const { revalidatePage } = await import("./cache-revalidate.js");
+              await revalidatePage(reqPath, { onlyRefreshSlots: true });
+            } catch (slotTtlErr) {
+              console.error(`❌ [Slot ISR] Error refreshing slots for ${reqPath}:`, slotTtlErr);
+            } finally {
+              regenerating.delete(slotRevalKey);
             }
+          })();
+          if (platformContext && platformContext.ctx && typeof platformContext.ctx.waitUntil === "function") {
+            platformContext.ctx.waitUntil(slotRevalPromise);
           }
         } catch (slotTtlErr) {}
       }
@@ -3908,24 +3964,43 @@ async function handleRequest(request, platformContext = {}) {
                           }
                         } else if (
                           Array.isArray(pageMeta.slotTags) &&
-                          pageMeta.slotTags.length > 0 &&
-                          (await hasExpiredSlots(pageMeta.slotTags))
+                          pageMeta.slotTags.length > 0
                         ) {
-                          const slotRevalKey = `slot:${reqPath}`;
-                          const pSlotPromise = (async () => {
-                            if (regenerating.has(slotRevalKey) || regenerating.has(reqPath)) return;
-                            regenerating.add(slotRevalKey);
-                            try {
-                              const { revalidatePage } = await import("./cache-revalidate.js");
-                              await revalidatePage(reqPath, { onlyRefreshSlots: true });
-                            } catch (err) {
-                              console.error(`❌ [Slot ISR] Error refreshing page slots for ${reqPath}:`, err);
-                            } finally {
-                              regenerating.delete(slotRevalKey);
+                          const pSlotFresh = await inspectSlotsFreshness(
+                            pageMeta.slotTags,
+                            pageMeta.generatedAt || 0
+                          );
+                          if (pSlotFresh.hasNewer) {
+                            const { revalidatePage } = await import("./cache-revalidate.js");
+                            await revalidatePage(reqPath, { onlyRefreshSlots: true });
+                            const refreshedPageShell = await readStorageArtifact(
+                              storage,
+                              shellPageKey,
+                              platformContext,
+                              request.url
+                            );
+                            if (refreshedPageShell?.content?.trim().startsWith("{")) {
+                              try {
+                                pageClientJsx = deserializeJSX(refreshedPageShell.content);
+                              } catch (e) {}
                             }
-                          })();
-                          if (platformContext?.ctx && typeof platformContext.ctx.waitUntil === "function") {
-                            platformContext.ctx.waitUntil(pSlotPromise);
+                          } else if (pSlotFresh.hasExpired) {
+                            const slotRevalKey = `slot:${reqPath}`;
+                            const pSlotPromise = (async () => {
+                              if (regenerating.has(slotRevalKey) || regenerating.has(reqPath)) return;
+                              regenerating.add(slotRevalKey);
+                              try {
+                                const { revalidatePage } = await import("./cache-revalidate.js");
+                                await revalidatePage(reqPath, { onlyRefreshSlots: true });
+                              } catch (err) {
+                                console.error(`❌ [Slot ISR] Error refreshing page slots for ${reqPath}:`, err);
+                              } finally {
+                                regenerating.delete(slotRevalKey);
+                              }
+                            })();
+                            if (platformContext?.ctx && typeof platformContext.ctx.waitUntil === "function") {
+                              platformContext.ctx.waitUntil(pSlotPromise);
+                            }
                           }
                         }
                       }
@@ -4065,32 +4140,42 @@ async function handleRequest(request, platformContext = {}) {
                           });
                         } else if (
                           Array.isArray(lMeta.slotTags) &&
-                          lMeta.slotTags.length > 0 &&
-                          (await hasExpiredSlots(lMeta.slotTags))
+                          lMeta.slotTags.length > 0
                         ) {
-                          const layoutSlotRevalKey = `layout-slot:${entry.layoutRoutePath}`;
-                          const lSlotPromise = (async () => {
-                            if (regenerating.has(layoutSlotRevalKey)) return;
-                            regenerating.add(layoutSlotRevalKey);
-                            try {
-                              const { revalidateLayout } = await import("./cache-revalidate.js");
-                              await revalidateLayout(entry.layoutRoutePath, {
-                                onlyRefreshSlots: true,
-                              });
-                            } catch (err) {
-                              console.error(
-                                `❌ [Slot ISR] Error refreshing layout slots for ${entry.layoutRoutePath}:`,
-                                err
-                              );
-                            } finally {
-                              regenerating.delete(layoutSlotRevalKey);
+                          const lSlotFresh = await inspectSlotsFreshness(
+                            lMeta.slotTags,
+                            lMeta.generatedAt || 0
+                          );
+                          if (lSlotFresh.hasNewer) {
+                            const { revalidateLayout } = await import("./cache-revalidate.js");
+                            await revalidateLayout(entry.layoutRoutePath, {
+                              onlyRefreshSlots: true,
+                            });
+                          } else if (lSlotFresh.hasExpired) {
+                            const layoutSlotRevalKey = `layout-slot:${entry.layoutRoutePath}`;
+                            const lSlotPromise = (async () => {
+                              if (regenerating.has(layoutSlotRevalKey)) return;
+                              regenerating.add(layoutSlotRevalKey);
+                              try {
+                                const { revalidateLayout } = await import("./cache-revalidate.js");
+                                await revalidateLayout(entry.layoutRoutePath, {
+                                  onlyRefreshSlots: true,
+                                });
+                              } catch (err) {
+                                console.error(
+                                  `❌ [Slot ISR] Error refreshing layout slots for ${entry.layoutRoutePath}:`,
+                                  err
+                                );
+                              } finally {
+                                regenerating.delete(layoutSlotRevalKey);
+                              }
+                            })();
+                            if (
+                              platformContext?.ctx &&
+                              typeof platformContext.ctx.waitUntil === "function"
+                            ) {
+                              platformContext.ctx.waitUntil(lSlotPromise);
                             }
-                          })();
-                          if (
-                            platformContext?.ctx &&
-                            typeof platformContext.ctx.waitUntil === "function"
-                          ) {
-                            platformContext.ctx.waitUntil(lSlotPromise);
                           }
                         }
                       }

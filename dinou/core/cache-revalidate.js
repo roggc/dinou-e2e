@@ -1381,20 +1381,22 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
         }
       } catch (e) {}
 
+      const commitLayoutGenTime = Math.max(newGenTime, Date.now());
+      currentMeta.generatedAt = commitLayoutGenTime;
       if (newLayoutRsc && now <= prevGenTime) {
         newLayoutRsc = newLayoutRsc.replace(
           /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g,
-          new Date(newGenTime).toISOString()
+          new Date(commitLayoutGenTime).toISOString()
         );
       }
       currentMeta.layoutGeneratedAt =
         didSpliceOnlyLayoutSlots && prevLayoutOwnGenTime > 0
           ? prevLayoutOwnGenTime
-          : newGenTime;
+          : commitLayoutGenTime;
       currentMeta.ownGeneratedAt =
         (didSpliceOnlyLayoutSlots || didRecomposeOnly) && prevLayoutOwnLevelGenTime > 0
           ? prevLayoutOwnLevelGenTime
-          : newGenTime;
+          : commitLayoutGenTime;
       await storage.set(layoutMetaKey, JSON.stringify(currentMeta));
       if (pendingShellLayoutOwnJson) {
         try {
@@ -1409,7 +1411,7 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
       if (newLayoutRsc) {
         await storage.set(layoutRscKey, newLayoutRsc, currentMeta);
       }
-      console.log(`✅ [Edge Revalidate] Successfully revalidated layout ${targetPath} (generatedAt: ${newGenTime})`);
+      console.log(`✅ [Edge Revalidate] Successfully revalidated layout ${targetPath} (generatedAt: ${commitLayoutGenTime})`);
       return true;
   });
 
@@ -1572,6 +1574,25 @@ async function revalidateTag(tag, options) {
         }
       }
 
+      // 0. Snapshot invalidated slot artifacts before deletion so if slot regeneration throws during
+      // static host revalidation, we can restore last-known-good slot.json without losing fallback cache.
+      const failedSlotSet = (globalThis[Symbol.for("dinou.slot.failed.renders")] ||= new Set());
+      const slotBackups = new Map();
+      const affectedSlotIds = new Set();
+      for (const k of targetSlotKeys) {
+        const m = String(k || "").match(/^slots\/([^/]+)\//);
+        if (m) affectedSlotIds.add(m[1]);
+      }
+      for (const sid of affectedSlotIds) {
+        failedSlotSet.delete(sid);
+        try {
+          const prevJson = await readKeyOrFallback(`slots/${sid}/slot.json`);
+          if (prevJson && prevJson.content) {
+            slotBackups.set(sid, prevJson);
+          }
+        } catch (e) {}
+      }
+
       // 1. Delete invalidated slot artifacts first so subsequent layout/page revalidations re-render the fresh slot
       await Promise.all(Array.from(targetSlotKeys).map((k) => storage.delete(k)));
 
@@ -1587,6 +1608,18 @@ async function revalidateTag(tag, options) {
       await Promise.all(
         Array.from(targetPaths.entries()).map(([p, opts]) => revalidatePage(p, opts))
       );
+
+      // 4. Restore last-known-good slot cache ONLY for slots whose regeneration threw an error
+      for (const [sid, backup] of slotBackups.entries()) {
+        if (!failedSlotSet.has(sid)) continue;
+        failedSlotSet.delete(sid);
+        try {
+          const existing = await storage.get(`slots/${sid}/slot.json`);
+          if (!existing || !existing.content) {
+            await storage.set(`slots/${sid}/slot.json`, backup.content, backup.metadata || { slotId: sid });
+          }
+        } catch (e) {}
+      }
     }
     return;
   }

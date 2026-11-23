@@ -323,32 +323,107 @@ const mountedClientSlots =
         globalThis.__DINOU_MOUNTED_CLIENT_SLOTS__ || new Set())
     : new Set();
 
+function ensureKnownSlotEntry(id, tags, children) {
+  let entry = knownClientSlots.get(id);
+  if (!entry) {
+    entry = {
+      id,
+      tags: Array.isArray(tags) ? tags : [],
+      baseChildren: children,
+      routePath: typeof window !== "undefined" ? window.location.pathname : "/",
+      pendingPromise: null,
+      pendingReqId: 0,
+      latestReqId: 0,
+      subscribers: new Set(),
+    };
+    knownClientSlots.set(id, entry);
+  } else {
+    if (!(entry.subscribers instanceof Set)) {
+      entry.subscribers = new Set();
+    }
+    if (Array.isArray(tags) && tags.length > 0) {
+      entry.tags = Array.from(new Set([...(entry.tags || []), ...tags]));
+    }
+    entry.baseChildren = children;
+    if (typeof window !== "undefined") {
+      entry.routePath = window.location.pathname;
+    }
+  }
+  return entry;
+}
+
+function getSlotOverrideForChildren(id, children) {
+  const cachedOverride = slotOverrideCache.get(id);
+  if (!cachedOverride || cachedOverride.content === null) return null;
+  if (cachedOverride.baseChildrenSet instanceof Set) {
+    return cachedOverride.baseChildrenSet.has(children) ? cachedOverride.content : null;
+  }
+  return cachedOverride.baseChildren === children ? cachedOverride.content : null;
+}
+
 if (
   typeof window !== "undefined" &&
-  !window.__DINOU_UNMOUNTED_SLOT_LISTENER_INSTALLED__
+  !window.__DINOU_SLOT_REFRESH_DISPATCHER_INSTALLED__
 ) {
-  window.__DINOU_UNMOUNTED_SLOT_LISTENER_INSTALLED__ = true;
+  window.__DINOU_SLOT_REFRESH_DISPATCHER_INSTALLED__ = true;
   window.addEventListener("dinou:refresh-slot", (e) => {
     const targetId = e?.detail?.id;
     const options = e?.detail?.options;
     if (typeof window.__DINOU_FETCH_SLOT__ !== "function") return;
 
     for (const [slotId, entry] of knownClientSlots.entries()) {
-      if (mountedClientSlots.has(slotId)) continue;
       const matchesTag =
         Array.isArray(entry.tags) && targetId && entry.tags.includes(targetId);
       if (!e || !e.detail || targetId === slotId || targetId === "*" || matchesTag) {
-        const fetchOpts = {
-          ...(options || {}),
-          currentPath: entry.routePath || window.location.pathname,
-        };
+        const hasMountedSubscribers =
+          entry.subscribers instanceof Set && entry.subscribers.size > 0;
+        if (
+          targetId === "*" &&
+          !hasMountedSubscribers &&
+          entry.routePath &&
+          entry.routePath !== window.location.pathname
+        ) {
+          continue;
+        }
+        const fetchOpts = hasMountedSubscribers
+          ? options
+          : {
+              ...(options || {}),
+              currentPath: entry.routePath || window.location.pathname,
+            };
         const promise = window.__DINOU_FETCH_SLOT__(slotId, fetchOpts);
+        const reqId = (entry.latestReqId || 0) + 1;
+        entry.latestReqId = reqId;
+
+        const commitResolved = (resolved) => {
+          flushPendingSsrStreams();
+          const baseChildrenSet = new Set();
+          if (entry.subscribers instanceof Set && entry.subscribers.size > 0) {
+            for (const sub of entry.subscribers) {
+              try {
+                baseChildrenSet.add(sub.getBase());
+              } catch (err) {}
+            }
+          } else {
+            baseChildrenSet.add(entry.baseChildren);
+          }
+          slotOverrideCache.set(slotId, {
+            baseChildren: entry.baseChildren,
+            baseChildrenSet,
+            content: resolved,
+          });
+          if (entry.subscribers instanceof Set && entry.subscribers.size > 0) {
+            for (const sub of Array.from(entry.subscribers)) {
+              try {
+                sub.apply(resolved);
+              } catch (err) {}
+            }
+          }
+        };
+
         if (promise && typeof promise.then === "function") {
-          const reqId = (entry.latestReqId || 0) + 1;
-          entry.latestReqId = reqId;
           entry.pendingPromise = promise;
           entry.pendingReqId = reqId;
-          const baseRef = entry.baseChildren;
           const settledPromise = promise.then(
             (resolved) => {
               if (entry.latestReqId !== reqId) {
@@ -357,23 +432,23 @@ if (
               if (entry.pendingPromise === promise) {
                 entry.pendingPromise = null;
               }
-              slotOverrideCache.set(slotId, {
-                baseChildren: baseRef,
-                content: resolved,
-              });
-              if (typeof entry.notifyMounted === "function") {
-                entry.notifyMounted(resolved, baseRef);
-              }
+              commitResolved(resolved);
             },
-            () => {
+            (err) => {
               if (entry.pendingPromise === promise) {
                 entry.pendingPromise = null;
+              }
+              if (hasMountedSubscribers) {
+                console.error(`[Dinou] Failed to refresh slot "${slotId}":`, err);
               }
             }
           );
           if (Array.isArray(e?.detail?.promises)) {
             e.detail.promises.push(settledPromise);
           }
+        } else if (promise) {
+          entry.pendingPromise = null;
+          commitResolved(promise);
         }
       }
     }
@@ -385,11 +460,7 @@ export function DinouCacheSlotBoundary({ id, tags, children }) {
     return children;
   }
   const isBrowser = typeof window !== "undefined";
-  const cachedOverride = isBrowser ? slotOverrideCache.get(id) : null;
-  const initialContent =
-    cachedOverride && cachedOverride.baseChildren === children
-      ? cachedOverride.content
-      : null;
+  const initialContent = isBrowser ? getSlotOverrideForChildren(id, children) : null;
 
   const [override, setOverride] = useState({
     baseChildren: children,
@@ -400,24 +471,7 @@ export function DinouCacheSlotBoundary({ id, tags, children }) {
   childrenRef.current = children;
 
   if (isBrowser) {
-    const existingKnown = knownClientSlots.get(id);
-    if (!existingKnown || existingKnown.baseChildren !== children) {
-      knownClientSlots.set(id, {
-        id,
-        tags: Array.isArray(tags) ? tags : [],
-        baseChildren: children,
-        routePath: window.location.pathname,
-        pendingPromise: existingKnown?.pendingPromise || null,
-        pendingReqId: existingKnown?.pendingReqId || 0,
-        latestReqId: existingKnown?.latestReqId || 0,
-        notifyMounted: existingKnown?.notifyMounted || null,
-      });
-    } else if (Array.isArray(tags)) {
-      existingKnown.tags = tags;
-    }
-    if (cachedOverride && cachedOverride.baseChildren !== children) {
-      slotOverrideCache.delete(id);
-    }
+    ensureKnownSlotEntry(id, tags, children);
   }
 
   if (typeof useLayoutEffect === "function" && isBrowser) {
@@ -429,13 +483,8 @@ export function DinouCacheSlotBoundary({ id, tags, children }) {
   }
 
   useEffect(() => {
-    mountedClientSlots.add(id);
-    const applyResolved = (resolved, baseRef = childrenRef.current) => {
-      flushPendingSsrStreams();
-      slotOverrideCache.set(id, {
-        baseChildren: baseRef,
-        content: resolved,
-      });
+    const applyResolved = (resolved) => {
+      const baseRef = childrenRef.current;
       const applyFn = () => {
         setOverride({
           baseChildren: baseRef,
@@ -449,112 +498,56 @@ export function DinouCacheSlotBoundary({ id, tags, children }) {
       }
     };
 
-    const knownEntry = knownClientSlots.get(id);
-    if (knownEntry) {
-      knownEntry.routePath = window.location.pathname;
-      knownEntry.baseChildren = childrenRef.current;
-      knownEntry.notifyMounted = applyResolved;
-      if (Array.isArray(tags)) {
-        knownEntry.tags = tags;
-      }
-      if (knownEntry.pendingPromise) {
-        const pending = knownEntry.pendingPromise;
-        const pendingReqId = knownEntry.pendingReqId;
-        pending.then(
-          (resolved) => {
-            if (knownEntry.latestReqId !== pendingReqId) {
-              return;
-            }
-            if (knownEntry.pendingPromise === pending) {
-              knownEntry.pendingPromise = null;
-            }
-            applyResolved(resolved, childrenRef.current);
-          },
-          () => {}
-        );
-      }
-    }
+    const entry = ensureKnownSlotEntry(id, tags, childrenRef.current);
+    const subscriber = {
+      apply: applyResolved,
+      getBase: () => childrenRef.current,
+    };
+    entry.subscribers.add(subscriber);
+    mountedClientSlots.add(id);
 
-    const latestCached = slotOverrideCache.get(id);
-    if (
-      latestCached &&
-      latestCached.baseChildren === childrenRef.current &&
-      latestCached.content !== null
-    ) {
-      setOverride((prev) =>
-        prev.content === latestCached.content && prev.baseChildren === childrenRef.current
-          ? prev
-          : { baseChildren: childrenRef.current, content: latestCached.content }
+    if (entry.pendingPromise) {
+      const pending = entry.pendingPromise;
+      const pendingReqId = entry.pendingReqId;
+      pending.then(
+        (resolved) => {
+          if (entry.latestReqId !== pendingReqId) {
+            return;
+          }
+          if (entry.pendingPromise === pending) {
+            entry.pendingPromise = null;
+          }
+          const curCache = slotOverrideCache.get(id);
+          if (curCache && curCache.baseChildrenSet instanceof Set) {
+            curCache.baseChildrenSet.add(childrenRef.current);
+          }
+          applyResolved(resolved);
+        },
+        () => {}
       );
     }
 
-    const handleRefresh = (e) => {
-      const targetId = e?.detail?.id;
-      const matchesTag = Array.isArray(tags) && targetId && tags.includes(targetId);
-      if (!e || !e.detail || targetId === id || targetId === "*" || matchesTag) {
-        if (
-          typeof window !== "undefined" &&
-          typeof window.__DINOU_FETCH_SLOT__ === "function"
-        ) {
-          const curEntry = knownClientSlots.get(id);
-          const promise = window.__DINOU_FETCH_SLOT__(id, e.detail?.options);
-          const reqId = curEntry ? (curEntry.latestReqId || 0) + 1 : 0;
-          if (curEntry) {
-            curEntry.latestReqId = reqId;
-          }
-          if (promise && typeof promise.then === "function") {
-            if (curEntry) {
-              curEntry.pendingPromise = promise;
-              curEntry.pendingReqId = reqId;
-            }
-            const settledPromise = promise.then(
-              (resolved) => {
-                if (curEntry && curEntry.latestReqId !== reqId) {
-                  return;
-                }
-                if (curEntry && curEntry.pendingPromise === promise) {
-                  curEntry.pendingPromise = null;
-                }
-                applyResolved(resolved, childrenRef.current);
-              },
-              (err) => {
-                if (curEntry && curEntry.pendingPromise === promise) {
-                  curEntry.pendingPromise = null;
-                }
-                console.error(`[Dinou] Failed to refresh slot "${id}":`, err);
-              }
-            );
-            if (Array.isArray(e?.detail?.promises)) {
-              e.detail.promises.push(settledPromise);
-            }
-          } else if (promise) {
-            if (curEntry) {
-              curEntry.pendingPromise = null;
-            }
-            applyResolved(promise, childrenRef.current);
-          }
-        }
-      }
-    };
-    window.addEventListener("dinou:refresh-slot", handleRefresh);
+    const latestCachedContent = getSlotOverrideForChildren(id, childrenRef.current);
+    if (latestCachedContent !== null) {
+      setOverride((prev) =>
+        prev.content === latestCachedContent && prev.baseChildren === childrenRef.current
+          ? prev
+          : { baseChildren: childrenRef.current, content: latestCachedContent }
+      );
+    }
+
     return () => {
-      mountedClientSlots.delete(id);
-      const curKnown = knownClientSlots.get(id);
-      if (curKnown && curKnown.notifyMounted === applyResolved) {
-        curKnown.notifyMounted = null;
+      entry.subscribers.delete(subscriber);
+      if (entry.subscribers.size === 0) {
+        mountedClientSlots.delete(id);
       }
-      window.removeEventListener("dinou:refresh-slot", handleRefresh);
     };
   }, [id, tags]);
 
   if (isBrowser) {
-    const latestCached = slotOverrideCache.get(id);
-    if (
-      latestCached &&
-      latestCached.content !== null &&
-      latestCached.baseChildren === children
-    ) {
-      return latestCached.content;
+    const latestCachedContent = getSlotOverrideForChildren(id, children);
+    if (latestCachedContent !== null) {
+      return latestCachedContent;
     }
   }
   if (override.content !== null && override.baseChildren === children) {

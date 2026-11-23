@@ -157,6 +157,7 @@ test("1. Syntax check on all 9 Dinou core modules from commit e6bc964", () => {
     "core/get-jsx.js",
     "core/navigation.js",
     "core/cache-slot.js",
+    "core/slot.js",
   ]) {
     const abs = path.join(DINOU_ROOT, rel);
     const check = spawnSync(process.execPath, ["--check", abs], {
@@ -1442,6 +1443,290 @@ console.log("STAGE1_AXIS_X_OK");
       `Stage 1 compiled integration failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
     );
     assert.ok(runRes.stdout.includes("STAGE1_AXIS_X_OK"));
+  } finally {
+    removeDirSafe(tmpApp);
+  }
+});
+
+test("11. Stage 2 Axis Y compiled Node AOT integration: 3-level nested slots, cross-route shared slot propagation & error resilience", async () => {
+  const tmpApp = createFixtureDir("tmp-3d-stage2-");
+  try {
+    for (const relDir of [
+      "src/deep",
+      "src/shared-a",
+      "src/shared-b",
+      "src/err",
+    ]) {
+      fs.mkdirSync(path.join(tmpApp, relDir), { recursive: true });
+    }
+
+    fs.writeFileSync(
+      path.join(tmpApp, "package.json"),
+      JSON.stringify({ name: "cube-3d-stage2-fixture", private: true, type: "module" }, null, 2)
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "tsconfig.json"),
+      JSON.stringify(
+        {
+          compilerOptions: {
+            target: "ES2022",
+            module: "ESNext",
+            moduleResolution: "bundler",
+            jsx: "react-jsx",
+          },
+        },
+        null,
+        2
+      )
+    );
+    writeDinouShim(tmpApp);
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src", "state.ts"),
+      `import fs from "node:fs";
+import path from "node:path";
+const FILE = path.resolve(process.cwd(), "s2-state.json");
+const DEF = {
+  deepHost: 100, deepOuter: 100, deepMid: 100, deepInner: 100,
+  sharedHostA: 100, sharedHostB: 100, sharedSlot: 100,
+  errHost: 100, errFragile: 100, errHealthy: 100, errThrow: false,
+};
+export function readS() {
+  try { if (fs.existsSync(FILE)) return { ...DEF, ...JSON.parse(fs.readFileSync(FILE, "utf8")) }; } catch {}
+  return { ...DEF };
+}
+`
+    );
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src", "layout.tsx"),
+      `import type { ReactNode } from "react";
+export default function Root({ children }: { children: ReactNode }) {
+  return <html><head><title>S2</title></head><body>{children}</body></html>;
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src", "page.tsx"),
+      `export default function Home() { return <main>home</main>; }\n`
+    );
+
+    // 1. 3-level nested slots
+    fs.writeFileSync(path.join(tmpApp, "src/deep/page_functions.ts"), `export const revalidate = 3600;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/deep/page.tsx"),
+      `import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../state";
+export default function DeepPage() {
+  return (
+    <main>
+      <span id="d-host">{readS().deepHost}</span>
+      <DinouCacheSlot id="s2-outer" tag="s2-tag-outer" revalidate={3600}>
+        {async () => (
+          <div>
+            <span id="d-outer">{readS().deepOuter}</span>
+            <DinouCacheSlot id="s2-mid" tag="s2-tag-mid" revalidate={3600}>
+              {async () => (
+                <div>
+                  <span id="d-mid">{readS().deepMid}</span>
+                  <DinouCacheSlot id="s2-inner" tag="s2-tag-inner" revalidate={3600}>
+                    {async () => <span id="d-inner">{readS().deepInner}</span>}
+                  </DinouCacheSlot>
+                </div>
+              )}
+            </DinouCacheSlot>
+          </div>
+        )}
+      </DinouCacheSlot>
+    </main>
+  );
+}
+`
+    );
+
+    // 2. Shared slot across route-a and route-b
+    fs.writeFileSync(path.join(tmpApp, "src/shared-a/page_functions.ts"), `export const revalidate = 3600;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/shared-a/page.tsx"),
+      `import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../state";
+export default function SharedA() {
+  return (
+    <main>
+      <span id="sa-host">{readS().sharedHostA}</span>
+      <DinouCacheSlot id="s2-shared" tags={["s2-shared-tag"]} revalidate={3600}>
+        {async () => <span id="s-val">{readS().sharedSlot}</span>}
+      </DinouCacheSlot>
+    </main>
+  );
+}
+`
+    );
+    fs.writeFileSync(path.join(tmpApp, "src/shared-b/page_functions.ts"), `export const revalidate = 3600;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/shared-b/page.tsx"),
+      `import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../state";
+export default function SharedB() {
+  return (
+    <main>
+      <span id="sb-host">{readS().sharedHostB}</span>
+      <DinouCacheSlot id="s2-shared" tags={["s2-shared-tag"]} revalidate={3600}>
+        {async () => <span id="s-val">{readS().sharedSlot}</span>}
+      </DinouCacheSlot>
+    </main>
+  );
+}
+`
+    );
+
+    // 3. Fragile error-resilience slot
+    fs.writeFileSync(path.join(tmpApp, "src/err/page_functions.ts"), `export const revalidate = 3600;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/err/page.tsx"),
+      `import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../state";
+export default function ErrPage() {
+  return (
+    <main>
+      <span id="e-host">{readS().errHost}</span>
+      <DinouCacheSlot id="s2-fragile" tag="s2-fragile-tag" revalidate={3600}>
+        {async () => {
+          const s = readS();
+          if (s.errThrow) throw new Error("boom-fragile");
+          return <span id="e-fragile">{s.errFragile}</span>;
+        }}
+      </DinouCacheSlot>
+      <DinouCacheSlot id="s2-healthy" tag="s2-healthy-tag" revalidate={3600}>
+        {async () => <span id="e-healthy">{readS().errHealthy}</span>}
+      </DinouCacheSlot>
+    </main>
+  );
+}
+`
+    );
+
+    const buildRes = spawnSync(process.execPath, [CLI_PATH, "build:node:esbuild"], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 120_000,
+    });
+    assert.equal(
+      buildRes.status,
+      0,
+      `Stage 2 fixture build failed:\n${buildRes.stdout}\n${buildRes.stderr}`
+    );
+
+    const verifyScript = path.join(tmpApp, "verify-stage2.mjs");
+    fs.writeFileSync(
+      verifyScript,
+      `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const { FileSystemStorage, setStorageAdapter } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/storage-adapter.js")).href
+      )});
+const { revalidateTag } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/cache-revalidate.js")).href
+      )});
+setStorageAdapter(new FileSystemStorage(path.resolve(".dinou/dist2")));
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+globalThis.__DINOU_RENDER_HTML_STREAM__ = ssrMod.renderHtml;
+const opts = { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml };
+
+const textById = (html, id) => {
+  const m = html.match(new RegExp('id="' + id + '"[^>]*>([^<]*)<'));
+  return m ? m[1] : null;
+};
+const writeS = (patch) => {
+  const f = path.resolve("s2-state.json");
+  const cur = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : {};
+  fs.writeFileSync(f, JSON.stringify({ ...cur, ...patch }), "utf8");
+};
+const get = async (u, headers = {}) => {
+  const r = await rscMod.handleRequest(new Request("http://localhost" + u, { headers }), opts);
+  assert.equal(r.status, 200, "Expected 200 for " + u);
+  return await r.text();
+};
+
+// 1. 3-level nested slots: refresh middle via /____rsc_slot____ -> only middle updates
+writeS({ deepHost: 999, deepOuter: 999, deepMid: 501, deepInner: 999 });
+await get("/____rsc_slot____/s2-mid?fresh=1", { "x-dinou-current-path": "/deep" });
+const deepHtml1 = await get("/deep");
+assert.equal(textById(deepHtml1, "d-host"), "100");
+assert.equal(textById(deepHtml1, "d-outer"), "100");
+assert.equal(textById(deepHtml1, "d-mid"), "501");
+assert.equal(textById(deepHtml1, "d-inner"), "100");
+
+// Refresh outer via /____rsc_slot____ -> middle & inner stay frozen
+writeS({ deepHost: 999, deepOuter: 502, deepMid: 999, deepInner: 999 });
+await get("/____rsc_slot____/s2-outer?fresh=1", { "x-dinou-current-path": "/deep" });
+const deepHtml2 = await get("/deep");
+assert.equal(textById(deepHtml2, "d-host"), "100");
+assert.equal(textById(deepHtml2, "d-outer"), "502");
+assert.equal(textById(deepHtml2, "d-mid"), "501");
+assert.equal(textById(deepHtml2, "d-inner"), "100");
+
+// 2. Shared slot across route-a and route-b: refreshSlot triggered on route-a MUST propagate to route-b (SSR AND soft-nav page.rsc)!
+writeS({ sharedHostA: 999, sharedHostB: 999, sharedSlot: 601 });
+await get("/____rsc_slot____/s2-shared?fresh=1", { "x-dinou-current-path": "/shared-a" });
+const htmlA = await get("/shared-a");
+const rscB = await get("/____rsc_page____/shared-b");
+assert.ok(rscB.includes("601") && !rscB.includes("999"), "soft-nav /____rsc_page____/shared-b MUST reflect refreshed shared slot without re-executing shared-b host!");
+const htmlB = await get("/shared-b");
+assert.equal(textById(htmlA, "sa-host"), "100", "shared-a host stays frozen");
+assert.equal(textById(htmlA, "s-val"), "601", "shared-a shows refreshed shared slot");
+assert.equal(textById(htmlB, "sb-host"), "100", "shared-b host stays frozen");
+assert.equal(textById(htmlB, "s-val"), "601", "shared-b MUST reflect shared slot refreshed from route-a!");
+
+// 3. Fragile slot error resilience on refreshSlot AND revalidateTag + clean recovery
+writeS({ errHost: 999, errHealthy: 999, errFragile: 701, errThrow: true });
+await get("/____rsc_slot____/s2-fragile?fresh=1", { "x-dinou-current-path": "/err" });
+const errHtml1 = await get("/err");
+assert.equal(textById(errHtml1, "e-host"), "100");
+assert.equal(textById(errHtml1, "e-fragile"), "100", "refreshSlot error must fall back to cached 100");
+assert.equal(textById(errHtml1, "e-healthy"), "100");
+
+writeS({ errHost: 999, errHealthy: 999, errFragile: 702, errThrow: true });
+await revalidateTag("s2-fragile-tag");
+const errHtml2 = await get("/err");
+assert.equal(textById(errHtml2, "e-host"), "100");
+assert.equal(textById(errHtml2, "e-fragile"), "100", "revalidateTag error must keep last-known-good 100");
+assert.equal(textById(errHtml2, "e-healthy"), "100");
+
+// Subsequent refreshSlot while STILL throwing must STILL return 200 fallback (backup restored!) instead of 404
+const stillThrowingSlotRsc = await get("/____rsc_slot____/s2-fragile?fresh=1", { "x-dinou-current-path": "/err" });
+assert.ok(stillThrowingSlotRsc.includes("100"), "slot backup must survive failed revalidateTag so subsequent refreshSlot still falls back to 100");
+
+writeS({ errHost: 999, errHealthy: 999, errFragile: 703, errThrow: false });
+await get("/____rsc_slot____/s2-fragile?fresh=1", { "x-dinou-current-path": "/err" });
+const errHtml3 = await get("/err");
+assert.equal(textById(errHtml3, "e-host"), "100");
+assert.equal(textById(errHtml3, "e-fragile"), "703", "recovered fragile slot must persist");
+assert.equal(textById(errHtml3, "e-healthy"), "100");
+
+console.log("STAGE2_AXIS_Y_OK");
+`
+    );
+
+    const runRes = spawnSync(process.execPath, [verifyScript], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+      timeout: 60_000,
+    });
+    assert.equal(
+      runRes.status,
+      0,
+      `Stage 2 compiled integration failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+    );
+    assert.ok(runRes.stdout.includes("STAGE2_AXIS_Y_OK"));
   } finally {
     removeDirSafe(tmpApp);
   }

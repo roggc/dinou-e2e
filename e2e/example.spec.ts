@@ -18257,7 +18257,427 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(pageErrors).toEqual([]);
     });
 
-    test("17. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
+    test("17. [Stage 2 / Check #51] Axis Y 3-Level Nested <DinouCacheSlot> (Outer -> Middle -> Inner) Surgical Isolation & Deep 1s TTL", async ({
+      page,
+    }) => {
+      test.skip(!isProd, "3-level nested <DinouCacheSlot> caching requires production mode");
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      await page.goto("/t-3d-cube/cs-deep");
+      await waitCubeReady(page);
+
+      const baseHost = Number(await page.locator("#csdeep-host-seq").textContent());
+      const baseOuter = Number(await page.locator("#csdeep-outer-seq").textContent());
+      const baseMiddle = Number(await page.locator("#csdeep-middle-seq").textContent());
+      const baseInner = Number(await page.locator("#csdeep-inner-seq").textContent());
+      const poison1 = Math.max(baseHost, baseOuter, baseMiddle, baseInner) + 899;
+
+      // 1. Middle-only revalidateTag -> Middle updates, Host + Outer + Inner stay frozen
+      const nextMiddle1 = baseMiddle + 611;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          csDeepHostSeq: poison1,
+          csDeepOuterSeq: poison1,
+          csDeepMiddleSeq: nextMiddle1,
+          csDeepInnerSeq: poison1,
+        }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.revalTag("cube-csdeep-tag-middle")
+      );
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#csdeep-host-seq")).toHaveText(String(baseHost));
+      await expect(page.locator("#csdeep-outer-seq")).toHaveText(String(baseOuter));
+      await expect(page.locator("#csdeep-middle-seq")).toHaveText(String(nextMiddle1));
+      await expect(page.locator("#csdeep-inner-seq")).toHaveText(String(baseInner));
+
+      // 2. Middle-only live refreshSlot({ fresh: true }) -> preserves Outer & Inner (data + client mounts/counts)
+      await page.click("#probe-inc-csdeep-outer");
+      await page.click("#probe-inc-csdeep-middle");
+      await page.click("#probe-inc-csdeep-inner");
+      await expect(page.locator("#probe-count-csdeep-outer")).toHaveText("1");
+      await expect(page.locator("#probe-count-csdeep-middle")).toHaveText("1");
+      await expect(page.locator("#probe-count-csdeep-inner")).toHaveText("1");
+      const outerMount = await page.locator("#probe-mount-csdeep-outer").textContent();
+      const innerMount = await page.locator("#probe-mount-csdeep-inner").textContent();
+
+      const nextMiddle2 = nextMiddle1 + 1;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          csDeepHostSeq: poison1,
+          csDeepOuterSeq: poison1,
+          csDeepMiddleSeq: nextMiddle2,
+          csDeepInnerSeq: poison1,
+        }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.refreshSlot("cube-csdeep-middle", true)
+      );
+      await expect(page.locator("#csdeep-middle-seq")).toHaveText(String(nextMiddle2), {
+        timeout: 10000,
+      });
+      await expect(page.locator("#csdeep-host-seq")).toHaveText(String(baseHost));
+      await expect(page.locator("#csdeep-outer-seq")).toHaveText(String(baseOuter));
+      await expect(page.locator("#csdeep-inner-seq")).toHaveText(String(baseInner));
+      await expect(page.locator("#probe-count-csdeep-outer")).toHaveText("1");
+      await expect(page.locator("#probe-count-csdeep-inner")).toHaveText("1");
+      expect(await page.locator("#probe-mount-csdeep-outer").textContent()).toBe(outerMount);
+      expect(await page.locator("#probe-mount-csdeep-inner").textContent()).toBe(innerMount);
+
+      await page.waitForTimeout(350);
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#csdeep-host-seq")).toHaveText(String(baseHost));
+      await expect(page.locator("#csdeep-outer-seq")).toHaveText(String(baseOuter));
+      await expect(page.locator("#csdeep-middle-seq")).toHaveText(String(nextMiddle2));
+      await expect(page.locator("#csdeep-inner-seq")).toHaveText(String(baseInner));
+
+      // 3. Outer-only live refreshSlot({ fresh: true }) -> Middle & Inner BOTH stay frozen (recursive fresh:false)
+      const nextOuter1 = baseOuter + 613;
+      const poison2 = Math.max(poison1, nextOuter1, nextMiddle2) + 899;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          csDeepHostSeq: poison2,
+          csDeepOuterSeq: nextOuter1,
+          csDeepMiddleSeq: poison2,
+          csDeepInnerSeq: poison2,
+        }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.refreshSlot("cube-csdeep-outer", true)
+      );
+      await expect(page.locator("#csdeep-outer-seq")).toHaveText(String(nextOuter1), {
+        timeout: 10000,
+      });
+      await expect(page.locator("#csdeep-host-seq")).toHaveText(String(baseHost));
+      await expect(page.locator("#csdeep-middle-seq")).toHaveText(String(nextMiddle2));
+      await expect(page.locator("#csdeep-inner-seq")).toHaveText(String(baseInner));
+
+      await page.waitForTimeout(350);
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#csdeep-host-seq")).toHaveText(String(baseHost));
+      await expect(page.locator("#csdeep-outer-seq")).toHaveText(String(nextOuter1));
+      await expect(page.locator("#csdeep-middle-seq")).toHaveText(String(nextMiddle2));
+      await expect(page.locator("#csdeep-inner-seq")).toHaveText(String(baseInner));
+
+      // 4. Deep 1s TTL (OuterTtl 3600s -> MiddleTtl 3600s -> InnerFast 1s): SWR updates ONLY InnerFast
+      await page.waitForTimeout(450);
+      await page.reload();
+      await waitCubeReady(page);
+
+      const baseTtlOuter = Number(await page.locator("#csdeep-ttl-outer-seq").textContent());
+      const baseTtlMid = Number(await page.locator("#csdeep-ttl-middle-seq").textContent());
+      const baseTtlInner = Number(await page.locator("#csdeep-ttl-inner-seq").textContent());
+      const poisonTtl = Math.max(baseHost, baseTtlOuter, baseTtlMid, baseTtlInner) + 899;
+      const nextTtlInner = baseTtlInner + 614;
+
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          csDeepHostSeq: poisonTtl,
+          csDeepTtlOuterSeq: poisonTtl,
+          csDeepTtlMiddleSeq: poisonTtl,
+          csDeepTtlInnerSeq: nextTtlInner,
+        }
+      );
+      await page.waitForTimeout(1300);
+
+      // Reload #1 triggers background SWR for deep 1s InnerFast slot (0 #418)
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#csdeep-host-seq")).toHaveText(String(baseHost));
+      await expect(page.locator("#csdeep-ttl-outer-seq")).toHaveText(String(baseTtlOuter));
+      await expect(page.locator("#csdeep-ttl-middle-seq")).toHaveText(String(baseTtlMid));
+
+      // Reload #2 after SWR settle: InnerFast updated, Host + OuterTtl + MiddleTtl stayed frozen
+      await page.waitForTimeout(500);
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#csdeep-host-seq")).toHaveText(String(baseHost));
+      await expect(page.locator("#csdeep-ttl-outer-seq")).toHaveText(String(baseTtlOuter));
+      await expect(page.locator("#csdeep-ttl-middle-seq")).toHaveText(String(baseTtlMid));
+      await expect(page.locator("#csdeep-ttl-inner-seq")).toHaveText(String(nextTtlInner));
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("18. [Stage 2 / Check #52] Axis Y Shared <DinouCacheSlot> Across Multiple Routes & Layout+Page Reuse", async ({
+      page,
+    }) => {
+      test.skip(!isProd, "Shared cross-route <DinouCacheSlot> propagation requires production mode");
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      // Part A: Cross-route shared slot (route-a <-> route-b)
+      await page.goto("/t-3d-cube/cs-shared/route-a");
+      await waitCubeReady(page);
+      const baseHostA = Number(await page.locator("#csshared-a-host-seq").textContent());
+      const baseSlotA = Number(
+        await page.locator('#csshared-a-slot-wrap [data-slot-val="global"]').textContent()
+      );
+
+      await page.goto("/t-3d-cube/cs-shared/route-b");
+      await waitCubeReady(page);
+      const baseHostB = Number(await page.locator("#csshared-b-host-seq").textContent());
+      await expect(
+        page.locator('#csshared-b-slot-wrap [data-slot-val="global"]')
+      ).toHaveText(String(baseSlotA));
+
+      // 1. Live refreshSlot on route-a -> route-a updates live AND hard-nav to route-b MUST see fresh slot!
+      await page.goto("/t-3d-cube/cs-shared/route-a");
+      await waitCubeReady(page);
+      const poisonCross = Math.max(baseHostA, baseHostB, baseSlotA) + 899;
+      const nextSlot1 = baseSlotA + 621;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          csSharedHostASeq: poisonCross,
+          csSharedHostBSeq: poisonCross,
+          csSharedSlotSeq: nextSlot1,
+        }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.refreshSlot("cube-shared-global-slot", true)
+      );
+      await expect(
+        page.locator('#csshared-a-slot-wrap [data-slot-val="global"]')
+      ).toHaveText(String(nextSlot1), { timeout: 10000 });
+      await expect(page.locator("#csshared-a-host-seq")).toHaveText(String(baseHostA));
+
+      await page.waitForTimeout(350);
+      await page.goto("/t-3d-cube/cs-shared/route-b");
+      await waitCubeReady(page);
+      await expect(
+        page.locator('#csshared-b-slot-wrap [data-slot-val="global"]')
+      ).toHaveText(String(nextSlot1));
+      await expect(page.locator("#csshared-b-host-seq")).toHaveText(String(baseHostB));
+
+      // Soft <Link> back to route-a also reflects fresh slot with frozen route-a host
+      await page.click("#link-csshared-to-a");
+      await expect(page.locator("#cube-cs-shared-route-a")).toBeVisible({ timeout: 10000 });
+      await expect(
+        page.locator('#csshared-a-slot-wrap [data-slot-val="global"]')
+      ).toHaveText(String(nextSlot1));
+      await expect(page.locator("#csshared-a-host-seq")).toHaveText(String(baseHostA));
+
+      // 2. revalidateTag("cube-shared-global-tag") updates BOTH route-a & route-b while keeping both hosts frozen
+      const nextSlot2 = nextSlot1 + 1;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          csSharedHostASeq: poisonCross,
+          csSharedHostBSeq: poisonCross,
+          csSharedSlotSeq: nextSlot2,
+        }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.revalTag("cube-shared-global-tag")
+      );
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(
+        page.locator('#csshared-a-slot-wrap [data-slot-val="global"]')
+      ).toHaveText(String(nextSlot2));
+      await expect(page.locator("#csshared-a-host-seq")).toHaveText(String(baseHostA));
+
+      await page.goto("/t-3d-cube/cs-shared/route-b");
+      await waitCubeReady(page);
+      await expect(
+        page.locator('#csshared-b-slot-wrap [data-slot-val="global"]')
+      ).toHaveText(String(nextSlot2));
+      await expect(page.locator("#csshared-b-host-seq")).toHaveText(String(baseHostB));
+
+      // Part B: Shared slot rendered in BOTH Layout and Page simultaneously
+      await page.goto("/t-3d-cube/cs-shared/with-layout");
+      await waitCubeReady(page);
+      const baseL1 = Number(await page.locator("#csshared-l1-host-seq").textContent());
+      const baseLpPage = Number(await page.locator("#csshared-lp-page-host-seq").textContent());
+      const baseLpSlot = Number(
+        await page.locator('#csshared-lp-layout-wrap [data-slot-val="lp"]').textContent()
+      );
+      await expect(
+        page.locator('#csshared-lp-page-wrap [data-slot-val="lp"]')
+      ).toHaveText(String(baseLpSlot));
+
+      await page.click("#probe-inc-csshared-l1");
+      await expect(page.locator("#probe-count-csshared-l1")).toHaveText("1");
+      const l1Mount = await page.locator("#probe-mount-csshared-l1").textContent();
+
+      const poisonLp = Math.max(baseL1, baseLpPage, baseLpSlot) + 899;
+      const nextLpSlot = baseLpSlot + 623;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          csSharedL1HostSeq: poisonLp,
+          csSharedLpPageHostSeq: poisonLp,
+          csSharedLpSlotSeq: nextLpSlot,
+        }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.refreshSlot("cube-shared-lp-slot", true)
+      );
+      await expect(
+        page.locator('#csshared-lp-layout-wrap [data-slot-val="lp"]')
+      ).toHaveText(String(nextLpSlot), { timeout: 10000 });
+      await expect(
+        page.locator('#csshared-lp-page-wrap [data-slot-val="lp"]')
+      ).toHaveText(String(nextLpSlot), { timeout: 10000 });
+      await expect(page.locator("#probe-count-csshared-l1")).toHaveText("1");
+      expect(await page.locator("#probe-mount-csshared-l1").textContent()).toBe(l1Mount);
+
+      await page.waitForTimeout(350);
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#csshared-l1-host-seq")).toHaveText(String(baseL1));
+      await expect(page.locator("#csshared-lp-page-host-seq")).toHaveText(String(baseLpPage));
+      await expect(
+        page.locator('#csshared-lp-layout-wrap [data-slot-val="lp"]')
+      ).toHaveText(String(nextLpSlot));
+      await expect(
+        page.locator('#csshared-lp-page-wrap [data-slot-val="lp"]')
+      ).toHaveText(String(nextLpSlot));
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("19. [Stage 2 / Check #53] Axis Y <DinouCacheSlot> Error Resilience During refreshSlot & revalidateTag + Clean Recovery", async ({
+      page,
+    }) => {
+      test.skip(!isProd, "<DinouCacheSlot> error resilience fallback requires production mode");
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      await page.goto("/t-3d-cube/cs-error");
+      await waitCubeReady(page);
+
+      try {
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.mutate({ csFragileShouldThrow: false })
+        );
+
+        const baseHost = Number(await page.locator("#cserr-host-seq").textContent());
+        const baseFragile = Number(await page.locator("#cserr-fragile-seq").textContent());
+        const baseHealthy = Number(await page.locator("#cserr-healthy-seq").textContent());
+        const poison = Math.max(baseHost, baseFragile, baseHealthy) + 899;
+
+        await page.click("#probe-inc-cserr-host");
+        await expect(page.locator("#probe-count-cserr-host")).toHaveText("1");
+
+        // 1. Live refreshSlot while slot throws -> falls back to last known good cached slot, zero crash
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          {
+            csErrHostSeq: poison,
+            csHealthySeq: poison,
+            csFragileShouldThrow: true,
+            csFragileSeq: baseFragile + 631,
+          }
+        );
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.refreshSlot("cube-cs-fragile", true)
+        );
+        await page.waitForTimeout(450);
+
+        await expect(page.locator("#cserr-fragile-seq")).toHaveText(String(baseFragile));
+        await expect(page.locator("#cserr-healthy-seq")).toHaveText(String(baseHealthy));
+        await expect(page.locator("#cserr-host-seq")).toHaveText(String(baseHost));
+        await expect(page.locator("#probe-count-cserr-host")).toHaveText("1");
+
+        // Hard reload confirms cached slot.json & page index.html were NOT corrupted
+        const res1 = await page.reload();
+        expect(res1?.status()).toBe(200);
+        await waitCubeReady(page);
+        await expect(page.locator("#cserr-fragile-seq")).toHaveText(String(baseFragile));
+        await expect(page.locator("#cserr-healthy-seq")).toHaveText(String(baseHealthy));
+        await expect(page.locator("#cserr-host-seq")).toHaveText(String(baseHost));
+
+        // 2. revalidateTag while slot throws -> preserves last known good cache without crashing or corrupting sibling
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          {
+            csErrHostSeq: poison,
+            csHealthySeq: poison,
+            csFragileShouldThrow: true,
+            csFragileSeq: baseFragile + 632,
+          }
+        );
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.revalTag("cube-cs-tag-fragile")
+        );
+        const res2 = await page.reload();
+        expect(res2?.status()).toBe(200);
+        await waitCubeReady(page);
+        await expect(page.locator("#cserr-fragile-seq")).toHaveText(String(baseFragile));
+        await expect(page.locator("#cserr-healthy-seq")).toHaveText(String(baseHealthy));
+        await expect(page.locator("#cserr-host-seq")).toHaveText(String(baseHost));
+
+        // 3. Recovery via live refreshSlot once error clears -> updates cleanly & persists across F5
+        const recovered1 = baseFragile + 633;
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          {
+            csErrHostSeq: poison,
+            csHealthySeq: poison,
+            csFragileShouldThrow: false,
+            csFragileSeq: recovered1,
+          }
+        );
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.refreshSlot("cube-cs-fragile", true)
+        );
+        await expect(page.locator("#cserr-fragile-seq")).toHaveText(String(recovered1), {
+          timeout: 10000,
+        });
+        await page.waitForTimeout(350);
+        await page.reload();
+        await waitCubeReady(page);
+        await expect(page.locator("#cserr-fragile-seq")).toHaveText(String(recovered1));
+        await expect(page.locator("#cserr-healthy-seq")).toHaveText(String(baseHealthy));
+        await expect(page.locator("#cserr-host-seq")).toHaveText(String(baseHost));
+
+        // 4. Recovery via revalidateTag -> updates cleanly while host & healthy sibling remain frozen
+        const recovered2 = recovered1 + 1;
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          {
+            csErrHostSeq: poison,
+            csHealthySeq: poison,
+            csFragileShouldThrow: false,
+            csFragileSeq: recovered2,
+          }
+        );
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.revalTag("cube-cs-tag-fragile")
+        );
+        await page.reload();
+        await waitCubeReady(page);
+        await expect(page.locator("#cserr-fragile-seq")).toHaveText(String(recovered2));
+        await expect(page.locator("#cserr-healthy-seq")).toHaveText(String(baseHealthy));
+        await expect(page.locator("#cserr-host-seq")).toHaveText(String(baseHost));
+
+        expect(hydrationErrors).toEqual([]);
+        expect(routerWarnings).toEqual([]);
+        expect(pageErrors).toEqual([]);
+      } finally {
+        await page
+          .evaluate(() =>
+            (window as any).__CUBE_3D__?.mutate?.({ csFragileShouldThrow: false })
+          )
+          .catch(() => {});
+      }
+    });
+
+    test("20. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
       browserName,
     }) => {
       test.skip(

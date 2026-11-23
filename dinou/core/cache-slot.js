@@ -1351,16 +1351,6 @@ async function getSlotJSX(slotId, options = {}) {
             slotId,
             ...(Array.isArray(entry.tags) ? entry.tags : []),
           ]);
-          const metaKey = cleanRouteKey ? `${cleanRouteKey}/metadata.json` : "metadata.json";
-          const pageMeta = await readMetaFromStorageOrAssets(storage, metaKey);
-          if (
-            pageMeta &&
-            Array.isArray(pageMeta.slotTags) &&
-            pageMeta.slotTags.some((t) => slotTagsToMatch.has(t))
-          ) {
-            const { revalidatePage } = await import("./cache-revalidate.js");
-            await revalidatePage("/" + cleanRouteKey, { onlyRefreshSlots: true });
-          }
           const segments = cleanRouteKey.split("/").filter(Boolean);
           const candidateLayoutKeys = [""];
           let acc = "";
@@ -1380,11 +1370,25 @@ async function getSlotJSX(slotId, options = {}) {
               await revalidateLayout(lKey ? "/" + lKey : "/", { onlyRefreshSlots: true });
             }
           }
+          const metaKey = cleanRouteKey ? `${cleanRouteKey}/metadata.json` : "metadata.json";
+          const pageMeta = await readMetaFromStorageOrAssets(storage, metaKey);
+          if (
+            pageMeta &&
+            Array.isArray(pageMeta.slotTags) &&
+            pageMeta.slotTags.some((t) => slotTagsToMatch.has(t))
+          ) {
+            const { revalidatePage } = await import("./cache-revalidate.js");
+            await revalidatePage("/" + cleanRouteKey, { onlyRefreshSlots: true });
+          }
         } catch (e) {}
       }
 
       return await refreshNestedSlotsInTree(restored, targetId, options);
     } catch (e) {
+      try {
+        const failedSet = (globalThis[Symbol.for("dinou.slot.failed.renders")] ||= new Set());
+        failedSet.add(targetId);
+      } catch (err) {}
       console.error(`[getSlotJSX] Failed to regenerate slot "${targetId}":`, e);
     }
   }
@@ -1400,11 +1404,13 @@ async function getSlotJSX(slotId, options = {}) {
   return null;
 }
 
-async function hasExpiredSlots(slotTags) {
-  if (!Array.isArray(slotTags) || slotTags.length === 0) return false;
+async function inspectSlotsFreshness(slotTags, hostGeneratedAt = 0) {
+  const result = { hasExpired: false, hasNewer: false };
+  if (!Array.isArray(slotTags) || slotTags.length === 0) return result;
   const storage = getStorageAdapter();
-  if (!storage) return false;
+  if (!storage) return result;
   const now = Date.now();
+  const hostGen = Number(hostGeneratedAt || 0);
   const checkedIds = new Set();
   for (const rawTagOrId of slotTags) {
     if (!rawTagOrId) continue;
@@ -1415,6 +1421,10 @@ async function hasExpiredSlots(slotTags) {
     const cached = await getSlotFromStorage(storage, storageKey, [targetId]);
     if (!cached || !cached.content) continue;
     const meta = cached.metadata || {};
+    const slotGen = Number(meta.generatedAt || 0);
+    if (hostGen > 0 && slotGen > hostGen) {
+      result.hasNewer = true;
+    }
     const regEntry = slotRegistry.get(targetId);
     const revalidateSeconds =
       typeof regEntry?.revalidate === "number"
@@ -1425,12 +1435,17 @@ async function hasExpiredSlots(slotTags) {
     if (
       typeof revalidateSeconds === "number" &&
       revalidateSeconds >= 1 &&
-      now > (meta.generatedAt || 0) + revalidateSeconds * 1000
+      now > slotGen + revalidateSeconds * 1000
     ) {
-      return true;
+      result.hasExpired = true;
     }
   }
-  return false;
+  return result;
+}
+
+async function hasExpiredSlots(slotTags) {
+  const { hasExpired } = await inspectSlotsFreshness(slotTags, 0);
+  return hasExpired;
 }
 
 export {
@@ -1440,6 +1455,7 @@ export {
   deserializeJSX,
   refreshNestedSlotsInTree,
   hasExpiredSlots,
+  inspectSlotsFreshness,
 };
 export default {
   DinouCacheSlot,
@@ -1448,4 +1464,5 @@ export default {
   deserializeJSX,
   refreshNestedSlotsInTree,
   hasExpiredSlots,
+  inspectSlotsFreshness,
 };
