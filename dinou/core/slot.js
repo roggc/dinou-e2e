@@ -323,6 +323,15 @@ const mountedClientSlots =
         globalThis.__DINOU_MOUNTED_CLIENT_SLOTS__ || new Set())
     : new Set();
 
+const SlotRenderBatchContext =
+  typeof globalThis !== "undefined"
+    ? (globalThis.__DINOU_SLOT_BATCH_CONTEXT__ =
+        globalThis.__DINOU_SLOT_BATCH_CONTEXT__ ||
+        (typeof createContext === "function" ? createContext(0) : null))
+    : typeof createContext === "function"
+    ? createContext(0)
+    : null;
+
 function ensureKnownSlotEntry(id, tags, children) {
   let entry = knownClientSlots.get(id);
   if (!entry) {
@@ -333,6 +342,7 @@ function ensureKnownSlotEntry(id, tags, children) {
       routePath: typeof window !== "undefined" ? window.location.pathname : "/",
       pendingPromise: null,
       pendingReqId: 0,
+      pendingBatchId: 0,
       latestReqId: 0,
       subscribers: new Set(),
     };
@@ -352,13 +362,27 @@ function ensureKnownSlotEntry(id, tags, children) {
   return entry;
 }
 
-function getSlotOverrideForChildren(id, children) {
+function getSlotOverrideForChildren(id, children, ancestorBatchId = 0) {
   const cachedOverride = slotOverrideCache.get(id);
   if (!cachedOverride || cachedOverride.content === null) return null;
   if (cachedOverride.baseChildrenSet instanceof Set) {
-    return cachedOverride.baseChildrenSet.has(children) ? cachedOverride.content : null;
+    if (cachedOverride.baseChildrenSet.has(children)) {
+      return cachedOverride;
+    }
+    if (ancestorBatchId > 0 && cachedOverride.batchId === ancestorBatchId) {
+      cachedOverride.baseChildrenSet.add(children);
+      return cachedOverride;
+    }
+    return null;
   }
-  return cachedOverride.baseChildren === children ? cachedOverride.content : null;
+  if (cachedOverride.baseChildren === children) {
+    return cachedOverride;
+  }
+  if (ancestorBatchId > 0 && cachedOverride.batchId === ancestorBatchId) {
+    cachedOverride.baseChildrenSet = new Set([cachedOverride.baseChildren, children]);
+    return cachedOverride;
+  }
+  return null;
 }
 
 if (
@@ -370,6 +394,12 @@ if (
     const targetId = e?.detail?.id;
     const options = e?.detail?.options;
     if (typeof window.__DINOU_FETCH_SLOT__ !== "function") return;
+
+    const batchId =
+      typeof globalThis !== "undefined"
+        ? (globalThis.__DINOU_SLOT_BATCH_SEQ__ =
+            (globalThis.__DINOU_SLOT_BATCH_SEQ__ || 0) + 1)
+        : 1;
 
     for (const [slotId, entry] of knownClientSlots.entries()) {
       const matchesTag =
@@ -411,11 +441,12 @@ if (
             baseChildren: entry.baseChildren,
             baseChildrenSet,
             content: resolved,
+            batchId,
           });
           if (entry.subscribers instanceof Set && entry.subscribers.size > 0) {
             for (const sub of Array.from(entry.subscribers)) {
               try {
-                sub.apply(resolved);
+                sub.apply(resolved, batchId);
               } catch (err) {}
             }
           }
@@ -424,6 +455,7 @@ if (
         if (promise && typeof promise.then === "function") {
           entry.pendingPromise = promise;
           entry.pendingReqId = reqId;
+          entry.pendingBatchId = batchId;
           const settledPromise = promise.then(
             (resolved) => {
               if (entry.latestReqId !== reqId) {
@@ -460,11 +492,18 @@ export function DinouCacheSlotBoundary({ id, tags, children }) {
     return children;
   }
   const isBrowser = typeof window !== "undefined";
-  const initialContent = isBrowser ? getSlotOverrideForChildren(id, children) : null;
+  const ancestorBatchId =
+    SlotRenderBatchContext && typeof useContext === "function"
+      ? useContext(SlotRenderBatchContext)
+      : 0;
+  const initialOverride = isBrowser
+    ? getSlotOverrideForChildren(id, children, ancestorBatchId)
+    : null;
 
   const [override, setOverride] = useState({
     baseChildren: children,
-    content: initialContent,
+    content: initialOverride ? initialOverride.content : null,
+    batchId: initialOverride ? initialOverride.batchId || 0 : 0,
   });
   const childrenRef =
     typeof React.useRef === "function" ? React.useRef(children) : { current: children };
@@ -483,12 +522,13 @@ export function DinouCacheSlotBoundary({ id, tags, children }) {
   }
 
   useEffect(() => {
-    const applyResolved = (resolved) => {
+    const applyResolved = (resolved, resolvedBatchId = 0) => {
       const baseRef = childrenRef.current;
       const applyFn = () => {
         setOverride({
           baseChildren: baseRef,
           content: resolved,
+          batchId: resolvedBatchId,
         });
       };
       if (typeof startTransition === "function") {
@@ -509,6 +549,7 @@ export function DinouCacheSlotBoundary({ id, tags, children }) {
     if (entry.pendingPromise) {
       const pending = entry.pendingPromise;
       const pendingReqId = entry.pendingReqId;
+      const pendingBatchId = entry.pendingBatchId || 0;
       pending.then(
         (resolved) => {
           if (entry.latestReqId !== pendingReqId) {
@@ -521,18 +562,22 @@ export function DinouCacheSlotBoundary({ id, tags, children }) {
           if (curCache && curCache.baseChildrenSet instanceof Set) {
             curCache.baseChildrenSet.add(childrenRef.current);
           }
-          applyResolved(resolved);
+          applyResolved(resolved, pendingBatchId);
         },
         () => {}
       );
     }
 
-    const latestCachedContent = getSlotOverrideForChildren(id, childrenRef.current);
-    if (latestCachedContent !== null) {
+    const latestCached = getSlotOverrideForChildren(id, childrenRef.current, ancestorBatchId);
+    if (latestCached && latestCached.content !== null) {
       setOverride((prev) =>
-        prev.content === latestCachedContent && prev.baseChildren === childrenRef.current
+        prev.content === latestCached.content && prev.baseChildren === childrenRef.current
           ? prev
-          : { baseChildren: childrenRef.current, content: latestCachedContent }
+          : {
+              baseChildren: childrenRef.current,
+              content: latestCached.content,
+              batchId: latestCached.batchId || 0,
+            }
       );
     }
 
@@ -544,16 +589,27 @@ export function DinouCacheSlotBoundary({ id, tags, children }) {
     };
   }, [id, tags]);
 
+  const wrapWithBatch = (content, batchId) => {
+    if (SlotRenderBatchContext) {
+      return createElement(
+        SlotRenderBatchContext.Provider,
+        { value: batchId || ancestorBatchId || 0 },
+        content
+      );
+    }
+    return content;
+  };
+
   if (isBrowser) {
-    const latestCachedContent = getSlotOverrideForChildren(id, children);
-    if (latestCachedContent !== null) {
-      return latestCachedContent;
+    const latestCached = getSlotOverrideForChildren(id, children, ancestorBatchId);
+    if (latestCached && latestCached.content !== null) {
+      return wrapWithBatch(latestCached.content, latestCached.batchId || 0);
     }
   }
   if (override.content !== null && override.baseChildren === children) {
-    return override.content;
+    return wrapWithBatch(override.content, override.batchId || 0);
   }
-  return children;
+  return wrapWithBatch(children, 0);
 }
 
 export default DinouPageSlot;

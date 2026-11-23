@@ -2037,7 +2037,7 @@ const DEF = {
   xyL1: 100, xyL2: 100, xyL2Slot: 100, xyPage: 100,
   xzL1Shell: 100, xzL1Hole: 100, xzDynL2: 100, xzPageShell: 100, xzPageStatic: 100, xzPageHole: 100,
   xztL1Shell: 100, xztL1Hole: 100, xztL2Shell: 100, xztL2Hole: 100, xztPageShell: 100, xztPageHole: 100,
-  yzShell: 100, yzHoleHost: 100, yzOuter: 100, yzInner: 100,
+  yzShell: 100, yzHoleHost: 100, yzOuter: 100, yzInner: 100, yzInnerTtl: 100,
 };
 export function readS() {
   try { if (fs.existsSync(FILE)) return { ...DEF, ...JSON.parse(fs.readFileSync(FILE, "utf8")) }; } catch {}
@@ -2207,6 +2207,9 @@ async function HoleSlots() {
             <DinouCacheSlot id="s4-yz-inner" revalidate={3600}>
               {async () => <span id="yz-i">{readS().yzInner}</span>}
             </DinouCacheSlot>
+            <DinouCacheSlot id="s4-yz-inner-ttl" revalidate={1}>
+              {async () => <span id="yz-it">{readS().yzInnerTtl}</span>}
+            </DinouCacheSlot>
           </div>
         )}
       </DinouCacheSlot>
@@ -2340,15 +2343,26 @@ assert.equal(textById(xzt2, "xzt-l1-h"), "802");
 assert.equal(textById(xzt2, "xzt-l2-h"), "803");
 assert.equal(textById(xzt2, "xzt-p-h"), "804");
 
-// 4. Check #59 (Y+Z Nested <DinouCacheSlot> inside PPR dynamic hole)
+// 4. Check #59 (Y+Z Nested <DinouCacheSlot> inside PPR dynamic hole + 1s nested TTL across repeated cycles!)
 await get("/yz"); // warm hole slots
-writeS({ yzShell: 999, yzHoleHost: 901, yzOuter: 902, yzInner: 999 });
+writeS({ yzShell: 999, yzHoleHost: 901, yzOuter: 902, yzInner: 999, yzInnerTtl: 903 });
+await sleep(1150);
+// Refresh outer via /____rsc_slot____ after inner-ttl expired -> MUST NOT poison inStaticShell:true onto inner-ttl!
 await get("/____rsc_slot____/s4-yz-outer?fresh=1", { "x-dinou-current-path": "/yz" });
 const yz2 = await get("/yz");
 assert.equal(textById(yz2, "yz-s"), "100");
 assert.equal(textById(yz2, "yz-hh"), "901");
 assert.equal(textById(yz2, "yz-o"), "902");
 assert.equal(textById(yz2, "yz-i"), "100", "Nested inner slot inside PPR hole stays frozen on outer refresh!");
+
+// Now mutate inner-ttl again and wait past 1s TTL -> MUST update on second cycle (Firefox CI regression guard!)
+writeS({ yzShell: 999, yzOuter: 999, yzInner: 999, yzInnerTtl: 904 });
+await sleep(1150);
+const yz3 = await get("/yz");
+assert.equal(textById(yz3, "yz-s"), "100");
+assert.equal(textById(yz3, "yz-o"), "902");
+assert.equal(textById(yz3, "yz-i"), "100");
+assert.equal(textById(yz3, "yz-it"), "904", "1s nested TTL slot inside PPR dynamic hole must NEVER get stuck stale after /____rsc_slot____!");
 
 console.log("STAGE4_PAIRWISE_OK");
 `

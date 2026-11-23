@@ -963,11 +963,17 @@ async function DinouCacheSlot(props) {
   }
 
   const inPprSuspense = isPprBuildActive() && isInsideOuterSuspenseOutsideSlot();
+  const reqCtxForMeta = getContext();
+  const isSlotEndpointReq = String(
+    reqCtxForMeta?.req?.rawPath || reqCtxForMeta?.req?.path || ""
+  ).includes("____rsc_slot____");
   const isPprShellBuild =
-    isPprBuildActive() ||
-    Boolean(getContext()?.platformContext?.isSSG) ||
-    isRevalidationActive() ||
-    !getContext()?._isPprRuntimeResume;
+    !isSlotEndpointReq &&
+    !reqCtxForMeta?._isPprRuntimeResume &&
+    (isPprBuildActive() ||
+      Boolean(reqCtxForMeta?.platformContext?.isSSG) ||
+      isRevalidationActive() ||
+      Boolean(reqCtxForMeta?._isStaticHtmlRender));
 
   const renderPromise = (async () => {
     const resolved = await runInCachedSlot(
@@ -1146,9 +1152,36 @@ async function getSlotJSX(slotId, options = {}) {
       !options.fresh &&
       Boolean(options.skipHostRevalidate) &&
       Boolean(meta.inStaticShell) &&
+      !getContext()?._isPprRuntimeResume &&
       !isRevalidationActive() &&
       !isPprBuildActive() &&
       !getContext()?.platformContext?.isSSG;
+
+    if (
+      serveStaleWhileRevalidate &&
+      !backgroundRevalidations.has(storageKey) &&
+      !inflightSlotRenders.has(storageKey)
+    ) {
+      backgroundRevalidations.add(storageKey);
+      const reqContext = getContext();
+      const bgCurrentPath = options.currentPath || reqContext?.req?.path;
+      const bgPromise = (async () => {
+        try {
+          await getSlotJSX(targetId, { fresh: true, currentPath: bgCurrentPath });
+        } catch (e) {
+          console.error(
+            `[getSlotJSX] Background revalidation failed for nested slot "${targetId}":`,
+            e
+          );
+        } finally {
+          backgroundRevalidations.delete(storageKey);
+        }
+      })();
+      const ctx = reqContext?.platformContext?.ctx;
+      if (ctx && typeof ctx.waitUntil === "function") {
+        ctx.waitUntil(bgPromise);
+      }
+    }
 
     if ((!isExpired && !options.fresh) || serveStaleWhileRevalidate) {
       try {
