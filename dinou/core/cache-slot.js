@@ -968,12 +968,7 @@ async function DinouCacheSlot(props) {
     reqCtxForMeta?.req?.rawPath || reqCtxForMeta?.req?.path || ""
   ).includes("____rsc_slot____");
   const isPprShellBuild =
-    !isSlotEndpointReq &&
-    !reqCtxForMeta?._isPprRuntimeResume &&
-    (isPprBuildActive() ||
-      Boolean(reqCtxForMeta?.platformContext?.isSSG) ||
-      isRevalidationActive() ||
-      Boolean(reqCtxForMeta?._isStaticHtmlRender));
+    !isSlotEndpointReq && !reqCtxForMeta?._isPprRuntimeResume;
 
   const renderPromise = (async () => {
     const resolved = await runInCachedSlot(
