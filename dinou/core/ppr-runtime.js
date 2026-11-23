@@ -879,7 +879,7 @@ async function handlePprResume({
 
         if (context._hasRedirected && context._redirectLocation) {
           const safeTarget = safeJsonForInlineScript(context._redirectLocation);
-          const redirectScript = `\n<script>(function(){try{window.location.replace(${safeTarget});}catch(_){window.location.href=${safeTarget};}})();</script>\n`;
+          const redirectScript = `\n<script>(function(){try{window.__DINOU_STATIC_EXPORT_UNLOADING__=true;window.location.replace(${safeTarget});}catch(_){window.__DINOU_STATIC_EXPORT_UNLOADING__=true;window.location.href=${safeTarget};}})();</script>\n`;
           await writer.write(encoder.encode(redirectScript));
           return;
         }

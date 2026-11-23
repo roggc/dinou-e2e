@@ -1717,6 +1717,7 @@ async function handleRequest(request, platformContext = {}) {
   const bridge = new WebResponseBridge(platformContext);
   const rootContext = createRequestContext(simReq, bridge, platformContext);
 
+  return await requestStorage.run(rootContext, async () => {
   // 4. Plugin onRequest Hook (Universal Middlewares & Webhooks; skipped during build-time SSG)
   if (!platformContext?.isSSG && cfg.plugins && Array.isArray(cfg.plugins)) {
     for (const plugin of cfg.plugins) {
@@ -5097,6 +5098,7 @@ async function handleRequest(request, platformContext = {}) {
     bridge.status(500).send("Internal Server Error: No renderer available");
   }
   return bridge.toResponse();
+  });
 }
 
 export {
