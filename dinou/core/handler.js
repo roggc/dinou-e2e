@@ -19,7 +19,10 @@ const outputFolder = isDevelopment ? ".dinou/public" : ".dinou/dist3";
 
 import { normalizePathCase } from "./path-utils.js";
 import { resolveRelativeUrl } from "./url-resolver.js";
-import { getFilePathAndDynamicParams } from "./get-file-path-and-dynamic-params.js";
+import {
+  getFilePathAndDynamicParams,
+  getLayoutsForLayoutKey,
+} from "./get-file-path-and-dynamic-params.js";
 import getJSX from "./get-jsx.js";
 import { getErrorJSX } from "./get-error-jsx.js";
 import importModule from "./import-module.js";
@@ -505,7 +508,10 @@ async function resolvePprForRoute(
     reqSegments || [],
     queryObj || {},
     srcFolder,
-    { ignoreNoLayout: Boolean(options?.ignoreNoLayout) },
+    {
+      ignoreNoLayout: Boolean(options?.ignoreNoLayout),
+      exactLayoutKey: Boolean(options?.exactLayoutKey),
+    },
   );
 
   if (options?.segment === "layout") {
@@ -2014,30 +2020,36 @@ async function handleRequest(request, platformContext = {}) {
       pathname.includes("_old_static") ||
       pathname.includes("_static");
 
-    const cleanPath = (pathname.endsWith("/") ? pathname : pathname + "/")
+    const rawCleanPath = (pathname.endsWith("/") ? pathname : pathname + "/")
       .replace(/^\/____rsc_(?:page|layout|payload)_(?:old_static|old|static)____/, "")
       .replace(/^\/____rsc_(?:page|layout|payload)____/, "");
 
-    const reqSegments = cleanPath.split("/").filter(Boolean);
+    const reqSegments = rawCleanPath
+      .split("/")
+      .filter(Boolean)
+      .map((s) => {
+        if (!isLayoutReq) return s;
+        try {
+          return decodeURIComponent(s);
+        } catch (e) {
+          return s;
+        }
+      });
+    const cleanPath = isLayoutReq
+      ? reqSegments.length > 0
+        ? "/" + reqSegments.join("/") + "/"
+        : "/"
+      : rawCleanPath;
     const srcFolder = path.resolve(process.cwd(), "src");
-    const [pagePath, dynamicParams] = getFilePathAndDynamicParams(reqSegments, queryObj, srcFolder);
+    const [pagePath, dynamicParams] = isLayoutReq
+      ? [undefined, {}]
+      : getFilePathAndDynamicParams(reqSegments, queryObj, srcFolder);
 
     let layoutPath = null;
     let layoutParams = dynamicParams;
     let layouts = null;
     if (isLayoutReq) {
-      layouts = getFilePathAndDynamicParams(
-        reqSegments,
-        queryObj,
-        srcFolder,
-        "layout",
-        true,
-        false,
-        undefined,
-        0,
-        {},
-        true
-      );
+      layouts = getLayoutsForLayoutKey(reqSegments, queryObj, srcFolder);
       if (layouts && layouts.length > 0) {
         const leafLayout = layouts[layouts.length - 1];
         layoutPath = leafLayout[0];
@@ -2059,6 +2071,7 @@ async function handleRequest(request, platformContext = {}) {
       // Authoritative perimeter validation (root-to-child layouts, then page) BEFORE any cached RSC hit
       const perimeterLayoutChain = getActiveLayoutChain(reqSegments, queryObj, srcFolder, {
         ignoreNoLayout: isLayoutReq,
+        exactLayoutKey: isLayoutReq,
       });
       if (perimeterLayoutChain.length > 0) {
         for (let i = perimeterLayoutChain.length - 1; i >= 0; i--) {
@@ -2146,6 +2159,7 @@ async function handleRequest(request, platformContext = {}) {
       try {
         const activeChain = getActiveLayoutChain(reqSegments, queryObj, srcFolder, {
           ignoreNoLayout: isLayoutReq,
+          exactLayoutKey: isLayoutReq,
         });
         if (activeChain.length > 0) {
           for (const entry of activeChain) {
@@ -2339,6 +2353,7 @@ async function handleRequest(request, platformContext = {}) {
         ? await resolvePprForRoute(null, null, reqSegments, queryObj, {
             segment: "layout",
             ignoreNoLayout: true,
+            exactLayoutKey: true,
           })
         : pageConfig?.pagePpr !== undefined && pageConfig?.pagePpr !== null
         ? Boolean(pageConfig.pagePpr)
@@ -2619,10 +2634,12 @@ async function handleRequest(request, platformContext = {}) {
               const cleanRel = cleanPath.replace(/^\/+/, "").replace(/\/+$/, "");
               const activeChain = getActiveLayoutChain(reqSegments, queryObj, srcFolder, {
                 ignoreNoLayout: true,
+                exactLayoutKey: true,
               });
               if (activeChain.length > 0 && activeChain[0].cleanLayoutKey === cleanRel) {
                 await hydrateActiveChainPpr(activeChain, reqSegments, queryObj, srcFolder, {
                   ignoreNoLayout: true,
+                  exactLayoutKey: true,
                 });
                 const leafEntry = activeChain[0];
                 const leafLayoutCfg = await resolveLayoutFunctionsConfig(
@@ -2750,6 +2767,7 @@ async function handleRequest(request, platformContext = {}) {
                     (await resolvePprForRoute(null, null, reqSegments, queryObj, {
                       segment: "layout",
                       ignoreNoLayout: true,
+                      exactLayoutKey: true,
                     })),
                 )
               : Boolean(isRoutePpr);
@@ -2877,10 +2895,12 @@ async function handleRequest(request, platformContext = {}) {
               const storage = getStorageAdapter();
               const activeChain = getActiveLayoutChain(reqSegments, queryObj, srcFolder, {
                 ignoreNoLayout: true,
+                exactLayoutKey: true,
               });
               if (activeChain.length > 0) {
                 await hydrateActiveChainPpr(activeChain, reqSegments, queryObj, srcFolder, {
                   ignoreNoLayout: true,
+                  exactLayoutKey: true,
                 });
                 const overrides = new Map();
                 for (let i = activeChain.length - 1; i >= 0; i--) {

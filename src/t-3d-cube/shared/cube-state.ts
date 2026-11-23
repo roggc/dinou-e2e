@@ -269,6 +269,41 @@ export interface Cube3DState {
   pprNfPageShellSeq: number;
   pprNfHoleASeq: number;
   pprNfHoleBSeq: number;
+
+  // Phase 4 — Stage 1 — Check #67: Sibling Route Groups (alpha)/(beta) & Optional Catch-All [[...slug]] ISG
+  grpOuterShellSeq: number;
+  grpOuterSlotSeq: number;
+  grpOuterHoleSeq: number;
+  grpAlphaShellSeq: number;
+  grpAlphaSlotSeq: number;
+  grpAlphaHoleSeq: number;
+  grpAlphaPromoShellSeq: number;
+  grpAlphaPromoHoleSeq: number;
+  grpAlphaPromo2ShellSeq: number;
+  grpAlphaPromo2HoleSeq: number;
+  grpBetaShellSeq: number;
+  grpBetaSlotSeq: number;
+  grpBetaHoleSeq: number;
+  grpBetaSettingsShellSeq: number;
+  grpBetaSettingsHoleSeq: number;
+  caOuterShellSeq: number;
+  caOuterSlotSeq: number;
+  caOuterHoleSeq: number;
+  caRootLayoutShellSeq: number;
+  caRootLayoutSlotSeq: number;
+  caRootLayoutHoleSeq: number;
+  caRootPageShellSeq: number;
+  caRootPageHoleSeq: number;
+  caDocsLayoutShellSeq: number;
+  caDocsLayoutSlotSeq: number;
+  caDocsLayoutHoleSeq: number;
+  caDocsPageShellSeq: number;
+  caDocsPageHoleSeq: number;
+  caDocsV2LayoutShellSeq: number;
+  caDocsV2LayoutSlotSeq: number;
+  caDocsV2LayoutHoleSeq: number;
+  caDocsV2PageShellSeq: number;
+  caDocsV2PageHoleSeq: number;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -513,6 +548,40 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   pprNfPageShellSeq: 100,
   pprNfHoleASeq: 100,
   pprNfHoleBSeq: 100,
+
+  grpOuterShellSeq: 100,
+  grpOuterSlotSeq: 100,
+  grpOuterHoleSeq: 100,
+  grpAlphaShellSeq: 100,
+  grpAlphaSlotSeq: 100,
+  grpAlphaHoleSeq: 100,
+  grpAlphaPromoShellSeq: 100,
+  grpAlphaPromoHoleSeq: 100,
+  grpAlphaPromo2ShellSeq: 100,
+  grpAlphaPromo2HoleSeq: 100,
+  grpBetaShellSeq: 100,
+  grpBetaSlotSeq: 100,
+  grpBetaHoleSeq: 100,
+  grpBetaSettingsShellSeq: 100,
+  grpBetaSettingsHoleSeq: 100,
+  caOuterShellSeq: 100,
+  caOuterSlotSeq: 100,
+  caOuterHoleSeq: 100,
+  caRootLayoutShellSeq: 100,
+  caRootLayoutSlotSeq: 100,
+  caRootLayoutHoleSeq: 100,
+  caRootPageShellSeq: 100,
+  caRootPageHoleSeq: 100,
+  caDocsLayoutShellSeq: 100,
+  caDocsLayoutSlotSeq: 100,
+  caDocsLayoutHoleSeq: 100,
+  caDocsPageShellSeq: 100,
+  caDocsPageHoleSeq: 100,
+  caDocsV2LayoutShellSeq: 100,
+  caDocsV2LayoutSlotSeq: 100,
+  caDocsV2LayoutHoleSeq: 100,
+  caDocsV2PageShellSeq: 100,
+  caDocsV2PageHoleSeq: 100,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {

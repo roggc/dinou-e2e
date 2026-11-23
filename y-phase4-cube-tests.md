@@ -8,7 +8,7 @@ All 6 checks below are designed to be implemented and verified **incrementally (
 
 ## Master Checklist (Phase 4)
 
-- [ ] **Stage 1 — Check `#67`:** Sibling Route Groups `(groupA)` / `(groupB)` & Catch-All (`[...slug]` / `[[...slug]]`) Layouts Under 3D Triple Synergy
+- [x] **Stage 1 — Check `#67`:** Sibling Route Groups `(groupA)` / `(groupB)` & Catch-All (`[...slug]` / `[[...slug]]`) Layouts Under 3D Triple Synergy
 - [ ] **Stage 2 — Check `#68`:** Distributed `DenoKVStorage` Consistency (Cross-Isolate Tombstones, Tag Invalidations, Chunked >16KB Payloads & 3D Layout Composition)
 - [ ] **Stage 3 — Check `#69`:** Server Functions (`"use server"`, `<form action>`, `useActionState`, Bound Inline Closures) Hosted Inside `<DinouCacheSlot>` & PPR Shells/Holes
 - [ ] **Stage 4 — Check `#70`:** Custom Middleware & Plugin Context Propagation (`copyCustomContextProperties`) Across Every 3D Cube Execution Path
@@ -54,6 +54,12 @@ Phase 3 (`#62`) covered single-segment dynamic parameters (`[id]`), but real app
 - **High probability bug in `dinou/core/layout-functions.js:260-278`:** `getActiveLayoutChain` currently skips `(group)` directories when building `cleanLayoutKey = reqSegments.slice(0, urlSegCount).join("/")`. Two sibling `(alpha)/layout.tsx` and `(beta)/layout.tsx` under `t-3d-cube/group-collision` both compute `cleanLayoutKey = "t-3d-cube/group-collision"` and collide on `shell.layout.own.json`, `layout.rsc`, and `layout.metadata.json`!
 - Verify client `getLayoutKey` (`dinou/core/client.jsx` / `client-webpack.jsx`) and `discover-layouts.js` distinguish sibling route-group layouts during soft `<Link>` transitions between `/promo` and `/settings`.
 - Verify `[[...slug]]` root (0 segments) vs multi-segment `cleanLayoutKey` normalization in `handler.js` and `cache-revalidate.js`.
+
+> **Verified (Stage 1 Complete):**
+> - Fixtures: `src/t-3d-cube/group-collision/` (shared outer layout + sibling `(alpha)/{promo,promo2}` & `(beta)/settings`) and `src/t-3d-cube/catchall-isg/` (shared outer layout + `[[...slug]]/` for 0, 1, and 2 segments).
+> - Unit / Compiled Node AOT: Test `19.` in `tests/unit/cache-3d-cube.test.mjs` (**19/19 PASS**), `tests/type-safe-contextual.test.mjs` (**5/5 PASS**, 127 strict TS files), `scripts/verify-revalidation-fixes-ci.mjs`, and `scripts/verify-bailout-ci.mjs` (**PASS**).
+> - Browser E2E: Test `32.` in `e2e/example.spec.ts` + `Dinou groups`, `Dinou Static Crawler`, and `API Reference Batch 4` (**19 passed / 0 failed** across Chromium, Firefox, and WebKit with zero `#418`, router warnings, or `pageerror`).
+> - Core fixes documented in `y-changelog-cube-phase4.md`.
 
 ---
 

@@ -15,6 +15,7 @@ import { DinouCacheSlotBoundary as RawDinouCacheSlotBoundary } from "./slot.js";
 import { getContext, requestStorage } from "./request-context.js";
 import { createBailoutProxy, unwrapBailoutProxy } from "./bailout-proxy.js";
 import { getJSX } from "./get-jsx.js";
+import { getActiveLayoutChain } from "./layout-functions.js";
 import {
   isPprBuildActive,
   isInsideSuspense,
@@ -1402,13 +1403,23 @@ async function getSlotJSX(slotId, options = {}) {
             ...(Array.isArray(entry.tags) ? entry.tags : []),
           ]);
           const segments = cleanRouteKey.split("/").filter(Boolean);
-          const candidateLayoutKeys = [""];
+          const candidateLayoutKeySet = new Set([""]);
+          try {
+            const activeChain = getActiveLayoutChain(
+              segments,
+              {},
+              path.resolve(process.cwd(), "src")
+            );
+            for (const entry of activeChain) {
+              candidateLayoutKeySet.add(entry.cleanLayoutKey || "");
+            }
+          } catch (e) {}
           let acc = "";
           for (const seg of segments) {
             acc = acc ? `${acc}/${seg}` : seg;
-            candidateLayoutKeys.push(acc);
+            candidateLayoutKeySet.add(acc);
           }
-          for (const lKey of candidateLayoutKeys) {
+          for (const lKey of candidateLayoutKeySet) {
             const lMetaKey = lKey ? `${lKey}/layout.metadata.json` : "layout.metadata.json";
             const lMeta = await readMetaFromStorageOrAssets(storage, lMetaKey);
             const lTags = Array.from(

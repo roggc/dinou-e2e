@@ -3934,3 +3934,613 @@ console.log("PHASE3_STAGE5_PPR_NOT_FOUND_OK");
     removeDirSafe(tmpApp);
   }
 });
+
+test("19. Phase 4 Stage 1 (Check #67) compiled Node AOT integration: Sibling Route Groups (alpha)/(beta) & Optional Catch-All [[...slug]] ISG Under 3D Triple Synergy", async () => {
+  const tmpApp = createFixtureDir("tmp-3d-p4-s1-groups-ca-");
+  try {
+    fs.mkdirSync(path.join(tmpApp, "src/grp/(alpha)/promo"), { recursive: true });
+    fs.mkdirSync(path.join(tmpApp, "src/grp/(alpha)/promo2"), { recursive: true });
+    fs.mkdirSync(path.join(tmpApp, "src/grp/(beta)/settings"), { recursive: true });
+    fs.mkdirSync(path.join(tmpApp, "src/ca/[[...slug]]"), { recursive: true });
+
+    fs.writeFileSync(
+      path.join(tmpApp, "package.json"),
+      JSON.stringify(
+        {
+          name: "tmp-3d-p4-s1-groups-ca",
+          private: true,
+          type: "module",
+          dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+        },
+        null,
+        2
+      )
+    );
+    writeDinouShim(tmpApp);
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src/state.ts"),
+      `import fs from "node:fs";
+import path from "node:path";
+const FILE = path.resolve(process.cwd(), "p4s1-state.json");
+const DEF = {
+  outerS: 100, outerSl: 100, outerH: 100,
+  alphaS: 100, alphaSl: 100, alphaH: 100,
+  promoS: 100, promoH: 100,
+  promo2S: 100, promo2H: 100,
+  betaS: 100, betaSl: 100, betaH: 100,
+  settingsS: 100, settingsH: 100,
+  caOuterS: 100, caOuterSl: 100, caOuterH: 100,
+  caRootLS: 100, caRootLSl: 100, caRootLH: 100, caRootPS: 100, caRootPH: 100,
+  caDocsLS: 100, caDocsLSl: 100, caDocsLH: 100, caDocsPS: 100, caDocsPH: 100,
+  caV2LS: 100, caV2LSl: 100, caV2LH: 100, caV2PS: 100, caV2PH: 100,
+};
+export function readS() {
+  try { if (fs.existsSync(FILE)) return { ...DEF, ...JSON.parse(fs.readFileSync(FILE, "utf8")) }; } catch {}
+  return { ...DEF };
+}
+export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+`
+    );
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src/layout.tsx"),
+      `import type { ReactNode } from "react";
+export default function Root({ children }: { children: ReactNode }) {
+  return <html><head><title>P4S1</title></head><body>{children}</body></html>;
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/page.tsx"),
+      `export default function Home() { return <main>home</main>; }\n`
+    );
+
+    // Outer group-collision layout
+    fs.writeFileSync(
+      path.join(tmpApp, "src/grp/layout_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\nexport const getCacheTags = () => ["grp-outer-tag"];\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/grp/layout.tsx"),
+      `import { Suspense, type ReactNode } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep } from "../state";
+
+async function OuterHole() {
+  const q = String(getContext()?.req?.query?.q || "base");
+  await sleep(5);
+  return <span id="o-h">{\`\${q}-\${readS().outerH}\`}</span>;
+}
+
+export default function GrpOuter({ children }: { children: ReactNode }) {
+  return (
+    <section id="grp-outer">
+      <span id="o-s">{readS().outerS}</span>
+      <DinouCacheSlot id="p4s1-outer-slot" revalidate={3600} tags={["p4s1-outer-slot-tag"]}>
+        {async () => <span id="o-sl">{readS().outerSl}</span>}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>o-fb</span>}><OuterHole /></Suspense>
+      {children}
+    </section>
+  );
+}
+`
+    );
+
+    // Sibling (alpha)
+    fs.writeFileSync(
+      path.join(tmpApp, "src/grp/(alpha)/layout_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\nexport const getCacheTags = () => ["grp-alpha-tag"];\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/grp/(alpha)/layout.tsx"),
+      `import { Suspense, type ReactNode } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep } from "../../state";
+
+async function AlphaHole() {
+  const q = String(getContext()?.req?.query?.q || "base");
+  await sleep(5);
+  return <span id="a-h">{\`\${q}-\${readS().alphaH}\`}</span>;
+}
+
+export default function AlphaLayout({ children }: { children: ReactNode }) {
+  return (
+    <div id="grp-alpha" data-group="alpha">
+      <span id="a-s">{readS().alphaS}</span>
+      <DinouCacheSlot id="p4s1-alpha-slot" revalidate={3600} tags={["p4s1-alpha-slot-tag"]}>
+        {async () => <span id="a-sl">{readS().alphaSl}</span>}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>a-fb</span>}><AlphaHole /></Suspense>
+      <main>{children}</main>
+    </div>
+  );
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/grp/(alpha)/promo/page_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/grp/(alpha)/promo/page.tsx"),
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { readS, sleep } from "../../../state";
+async function PHole() {
+  const q = String(getContext()?.req?.query?.q || "base");
+  await sleep(5);
+  return <span id="p-h">{\`\${q}-\${readS().promoH}\`}</span>;
+}
+export default function PromoPage() {
+  return <article id="promo"><span id="p-s">{readS().promoS}</span><Suspense fallback={<span>fb</span>}><PHole /></Suspense></article>;
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/grp/(alpha)/promo2/page_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/grp/(alpha)/promo2/page.tsx"),
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { readS, sleep } from "../../../state";
+async function P2Hole() {
+  const q = String(getContext()?.req?.query?.q || "base");
+  await sleep(5);
+  return <span id="p2-h">{\`\${q}-\${readS().promo2H}\`}</span>;
+}
+export default function Promo2Page() {
+  return <article id="promo2"><span id="p2-s">{readS().promo2S}</span><Suspense fallback={<span>fb</span>}><P2Hole /></Suspense></article>;
+}
+`
+    );
+
+    // Sibling (beta)
+    fs.writeFileSync(
+      path.join(tmpApp, "src/grp/(beta)/layout_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\nexport const getCacheTags = () => ["grp-beta-tag"];\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/grp/(beta)/layout.tsx"),
+      `import { Suspense, type ReactNode } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep } from "../../state";
+
+async function BetaHole() {
+  const q = String(getContext()?.req?.query?.q || "base");
+  await sleep(5);
+  return <span id="b-h">{\`\${q}-\${readS().betaH}\`}</span>;
+}
+
+export default function BetaLayout({ children }: { children: ReactNode }) {
+  return (
+    <div id="grp-beta" data-group="beta">
+      <span id="b-s">{readS().betaS}</span>
+      <DinouCacheSlot id="p4s1-beta-slot" revalidate={3600} tags={["p4s1-beta-slot-tag"]}>
+        {async () => <span id="b-sl">{readS().betaSl}</span>}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>b-fb</span>}><BetaHole /></Suspense>
+      <main>{children}</main>
+    </div>
+  );
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/grp/(beta)/settings/page_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/grp/(beta)/settings/page.tsx"),
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { readS, sleep } from "../../../state";
+async function SHole() {
+  const q = String(getContext()?.req?.query?.q || "base");
+  await sleep(5);
+  return <span id="s-h">{\`\${q}-\${readS().settingsH}\`}</span>;
+}
+export default function SettingsPage() {
+  return <article id="settings"><span id="s-s">{readS().settingsS}</span><Suspense fallback={<span>fb</span>}><SHole /></Suspense></article>;
+}
+`
+    );
+
+    // Optional Catch-All ISG (outer layout + [[...slug]] layout + page)
+    fs.writeFileSync(
+      path.join(tmpApp, "src/ca/layout_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\nexport const getCacheTags = () => ["ca-outer-tag"];\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/ca/layout.tsx"),
+      `import { Suspense, type ReactNode } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep } from "../state";
+
+async function CaOuterHole() {
+  const q = String(getContext()?.req?.query?.q || "base");
+  await sleep(5);
+  return <span id="cao-h">{\`\${q}-\${readS().caOuterH}\`}</span>;
+}
+
+export default function CaOuter({ children }: { children: ReactNode }) {
+  return (
+    <section id="ca-outer">
+      <span id="cao-s">{readS().caOuterS}</span>
+      <DinouCacheSlot id="p4s1-ca-outer-slot" revalidate={3600}>
+        {async () => <span id="cao-sl">{readS().caOuterSl}</span>}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>cao-fb</span>}><CaOuterHole /></Suspense>
+      {children}
+    </section>
+  );
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/ca/[[...slug]]/layout_functions.ts"),
+      `export const ppr = true;
+export const revalidate = 3600;
+export const allowISG = true;
+export const getStaticPaths = () => [];
+export const getCacheTags = (p: { slug?: string[] }) => [
+  "ca-l2-" + (Array.isArray(p?.slug) && p.slug.length ? p.slug.join("-") : "root"),
+];
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/ca/[[...slug]]/layout.tsx"),
+      `import { Suspense, type ReactNode } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep } from "../../state";
+
+function pick(k: string) {
+  const s = readS();
+  if (k === "docs") return { ls: s.caDocsLS, lsl: s.caDocsLSl, lh: s.caDocsLH };
+  if (k === "docs-v2") return { ls: s.caV2LS, lsl: s.caV2LSl, lh: s.caV2LH };
+  return { ls: s.caRootLS, lsl: s.caRootLSl, lh: s.caRootLH };
+}
+
+async function CaL2Hole({ k }: { k: string }) {
+  const q = String(getContext()?.req?.query?.q || "base");
+  await sleep(5);
+  return <span id="cal-h">{\`\${k}:\${q}-\${pick(k).lh}\`}</span>;
+}
+
+export default function CaSlugLayout({ children, params }: { children: ReactNode; params: { slug?: string[] } }) {
+  const k = Array.isArray(params?.slug) && params.slug.length ? params.slug.join("-") : "root";
+  const v = pick(k);
+  return (
+    <div id="ca-l2" data-k={k}>
+      <span id="cal-k">{k}</span>
+      <span id="cal-s">{v.ls}</span>
+      <DinouCacheSlot id={\`p4s1-ca-l2-slot-\${k}\`} revalidate={3600} tags={[\`p4s1-ca-l2-slot-\${k}-tag\`]}>
+        {async () => <span id="cal-sl">{pick(k).lsl}</span>}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>cal-fb</span>}><CaL2Hole k={k} /></Suspense>
+      <main>{children}</main>
+    </div>
+  );
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/ca/[[...slug]]/page_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\nexport const allowISG = true;\nexport const getStaticPaths = () => [];\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/ca/[[...slug]]/page.tsx"),
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { readS, sleep } from "../../state";
+
+function pick(k: string) {
+  const s = readS();
+  if (k === "docs") return { ps: s.caDocsPS, ph: s.caDocsPH };
+  if (k === "docs-v2") return { ps: s.caV2PS, ph: s.caV2PH };
+  return { ps: s.caRootPS, ph: s.caRootPH };
+}
+
+async function CaPHole({ k }: { k: string }) {
+  const q = String(getContext()?.req?.query?.q || "base");
+  await sleep(5);
+  return <span id="cap-h">{\`\${k}:\${q}-\${pick(k).ph}\`}</span>;
+}
+
+export default function CaSlugPage({ params }: { params: { slug?: string[] } }) {
+  const k = Array.isArray(params?.slug) && params.slug.length ? params.slug.join("-") : "root";
+  return (
+    <article id="ca-p">
+      <span id="cap-k">{k}</span>
+      <span id="cap-s">{pick(k).ps}</span>
+      <Suspense fallback={<span>cap-fb</span>}><CaPHole k={k} /></Suspense>
+    </article>
+  );
+}
+`
+    );
+
+    const buildRes = spawnSync(process.execPath, [CLI_PATH, "build:node:esbuild"], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 120_000,
+    });
+    assert.equal(
+      buildRes.status,
+      0,
+      `Phase 4 Stage 1 build failed:\n${buildRes.stdout}\n${buildRes.stderr}`
+    );
+
+    const verifyScript = path.join(tmpApp, "verify-p4-stage1.mjs");
+    fs.writeFileSync(
+      verifyScript,
+      `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const { FileSystemStorage, setStorageAdapter } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/storage-adapter.js")).href
+      )});
+const { revalidateLayout, revalidateTag } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/cache-revalidate.js")).href
+      )});
+const { discoverLayoutsFromFileRelPaths } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/discover-layouts.js")).href
+      )});
+
+setStorageAdapter(new FileSystemStorage(path.resolve(".dinou/dist2")));
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+globalThis.__DINOU_RENDER_HTML_STREAM__ = ssrMod.renderHtml;
+const opts = { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml };
+
+const writeS = (patch) => {
+  const f = path.resolve("p4s1-state.json");
+  const cur = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : {};
+  fs.writeFileSync(f, JSON.stringify({ ...cur, ...patch }), "utf8");
+};
+const fetchRaw = async (u, headers = {}) => {
+  const r = await rscMod.handleRequest(new Request("http://localhost" + u, { headers }), opts);
+  return { status: r.status, text: await r.text() };
+};
+const textById = (html, id) => {
+  const m = html.match(new RegExp('id="' + id + '"[^>]*>([\\\\s\\\\S]*?)<\\\\/'));
+  assert.ok(m, "Missing #" + id + " in HTML");
+  return m[1].replace(/<!--\\s*\\/?\\s*-->/g, "");
+};
+
+// 0. Assert discoverLayoutsFromFileRelPaths distinguishes sibling route groups & optional catch-all
+const discovered = discoverLayoutsFromFileRelPaths([
+  "src/layout.tsx",
+  "src/grp/layout.tsx",
+  "src/grp/(alpha)/layout.tsx",
+  "src/grp/(alpha)/promo/page.tsx",
+  "src/grp/(alpha)/promo2/page.tsx",
+  "src/grp/(beta)/layout.tsx",
+  "src/grp/(beta)/settings/page.tsx",
+  "src/ca/layout.tsx",
+  "src/ca/[[...slug]]/layout.tsx",
+  "src/ca/[[...slug]]/page.tsx",
+]);
+const promoRule = discovered.find((r) => r.startsWith("=grp/promo:"));
+const promo2Rule = discovered.find((r) => r.startsWith("=grp/promo2:"));
+const settingsRule = discovered.find((r) => r.startsWith("=grp/settings:"));
+const caRule = discovered.find((r) => r.startsWith("=ca/[[...slug]]:"));
+assert.ok(promoRule && promoRule.includes("(alpha)"), "Expected promo rule to preserve (alpha): " + promoRule);
+assert.ok(promo2Rule && promo2Rule.includes("(alpha)"), "Expected promo2 rule to preserve (alpha): " + promo2Rule);
+assert.ok(settingsRule && settingsRule.includes("(beta)"), "Expected settings rule to preserve (beta): " + settingsRule);
+assert.notEqual(
+  promoRule.split(":")[1],
+  settingsRule.split(":")[1],
+  "Sibling route groups (alpha) and (beta) MUST have distinct client layout specs!"
+);
+assert.equal(
+  promoRule.split(":")[1],
+  promo2Rule.split(":")[1],
+  "Pages inside the same route group (alpha) MUST share the same client layout spec!"
+);
+assert.ok(caRule && caRule.includes("[[...slug]]"), "Expected optional catch-all rule to preserve [[...slug]]: " + caRule);
+
+// 1. Assert SSG materialized isolated artifacts for outer, (alpha), and (beta) — ZERO collision!
+assert.ok(fs.existsSync(path.resolve(".dinou/dist2/grp/shell.layout.own.json")), "Outer grp/shell.layout.own.json must exist");
+assert.ok(fs.existsSync(path.resolve(".dinou/dist2/grp/(alpha)/shell.layout.own.json")), "(alpha)/shell.layout.own.json must exist");
+assert.ok(fs.existsSync(path.resolve(".dinou/dist2/grp/(beta)/shell.layout.own.json")), "(beta)/shell.layout.own.json must exist");
+
+// Public URL containing literal (alpha) MUST still return 404!
+const badGroupUrl = await fetchRaw("/grp/(alpha)/promo");
+assert.equal(badGroupUrl.status, 404, "Public URL with literal (alpha) must stay 404");
+
+// 2. Poison ALL static shells & slots for outer/(alpha)/(beta); bump ONLY dynamic holes!
+writeS({
+  outerS: 999, outerSl: 999, outerH: 201,
+  alphaS: 999, alphaSl: 999, alphaH: 202,
+  promoS: 999, promoH: 203,
+  promo2S: 999, promo2H: 204,
+  betaS: 999, betaSl: 999, betaH: 205,
+  settingsS: 999, settingsH: 206,
+});
+
+const promoHtml = await fetchRaw("/grp/promo?q=liveA");
+assert.equal(promoHtml.status, 200);
+assert.ok(promoHtml.text.includes('id="grp-alpha"'), "Promo must render (alpha) layout");
+assert.ok(!promoHtml.text.includes('id="grp-beta"'), "Promo must NEVER render (beta) layout");
+assert.equal(textById(promoHtml.text, "o-s"), "100");
+assert.equal(textById(promoHtml.text, "o-sl"), "100");
+assert.equal(textById(promoHtml.text, "o-h"), "liveA-201");
+assert.equal(textById(promoHtml.text, "a-s"), "100");
+assert.equal(textById(promoHtml.text, "a-sl"), "100");
+assert.equal(textById(promoHtml.text, "a-h"), "liveA-202");
+assert.equal(textById(promoHtml.text, "p-s"), "100");
+assert.equal(textById(promoHtml.text, "p-h"), "liveA-203");
+
+const settingsHtml = await fetchRaw("/grp/settings?q=liveB");
+assert.equal(settingsHtml.status, 200);
+assert.ok(settingsHtml.text.includes('id="grp-beta"'), "Settings must render (beta) layout");
+assert.ok(!settingsHtml.text.includes('id="grp-alpha"'), "Settings must NEVER render (alpha) layout");
+assert.equal(textById(settingsHtml.text, "o-s"), "100");
+assert.equal(textById(settingsHtml.text, "o-sl"), "100");
+assert.equal(textById(settingsHtml.text, "o-h"), "liveB-201");
+assert.equal(textById(settingsHtml.text, "b-s"), "100");
+assert.equal(textById(settingsHtml.text, "b-sl"), "100");
+assert.equal(textById(settingsHtml.text, "b-h"), "liveB-205");
+assert.equal(textById(settingsHtml.text, "s-s"), "100");
+assert.equal(textById(settingsHtml.text, "s-h"), "liveB-206");
+
+// Soft-nav /____rsc_layout____ endpoints for (alpha) vs (beta) return distinct layouts & splice live holes!
+const alphaRsc = await fetchRaw("/____rsc_layout____/grp/(alpha)?q=rscA");
+assert.equal(alphaRsc.status, 200);
+assert.ok(alphaRsc.text.includes("grp-alpha") && !alphaRsc.text.includes("grp-beta"), "(alpha) layout RSC must contain ONLY alpha");
+assert.ok(alphaRsc.text.includes("rscA-202"), "(alpha) layout RSC must splice live alpha hole");
+assert.ok(!alphaRsc.text.includes("999"), "(alpha) layout RSC must NOT re-execute poisoned shells");
+
+const betaRsc = await fetchRaw("/____rsc_layout____/grp/(beta)?q=rscB");
+assert.equal(betaRsc.status, 200);
+assert.ok(betaRsc.text.includes("grp-beta") && !betaRsc.text.includes("grp-alpha"), "(beta) layout RSC must contain ONLY beta");
+assert.ok(betaRsc.text.includes("rscB-205"), "(beta) layout RSC must splice live beta hole");
+assert.ok(!betaRsc.text.includes("999"), "(beta) layout RSC must NOT re-execute poisoned shells");
+
+// 3. Surgical refreshSlot on (alpha)'s slot persists into (alpha)/shell.layout.own.json without touching (beta) or outer!
+writeS({ alphaSl: 301 });
+const slotRes = await fetchRaw("/____rsc_slot____/p4s1-alpha-slot?fresh=1", {
+  "x-dinou-current-path": "/grp/promo",
+});
+assert.equal(slotRes.status, 200);
+assert.ok(slotRes.text.includes("301"));
+
+const promoAfterSlot = await fetchRaw("/grp/promo?q=afterSlot");
+assert.equal(textById(promoAfterSlot.text, "a-sl"), "301", "(alpha) slot refresh MUST persist to SSR!");
+assert.equal(textById(promoAfterSlot.text, "a-s"), "100", "(alpha) shell stays frozen on slot refresh");
+assert.equal(textById(promoAfterSlot.text, "o-s"), "100", "outer shell stays frozen");
+const settingsAfterSlot = await fetchRaw("/grp/settings?q=afterSlot");
+assert.equal(textById(settingsAfterSlot.text, "b-s"), "100", "(beta) shell stays 100% untouched");
+assert.equal(textById(settingsAfterSlot.text, "b-sl"), "100", "(beta) slot stays 100% untouched");
+
+// 4. Surgical revalidateLayout("/grp/(alpha)") updates ONLY (alpha) shell, leaving outer & (beta) frozen!
+writeS({ alphaS: 401 });
+const revalAlphaOk = await revalidateLayout("/grp/(alpha)");
+assert.equal(revalAlphaOk, true);
+const promoAfterReval = await fetchRaw("/grp/promo?q=afterReval");
+assert.equal(textById(promoAfterReval.text, "a-s"), "401", "(alpha) shell updated by revalidateLayout");
+assert.equal(textById(promoAfterReval.text, "o-s"), "100", "outer shell STILL frozen (not 999!)");
+const settingsAfterReval = await fetchRaw("/grp/settings?q=afterReval");
+assert.equal(textById(settingsAfterReval.text, "b-s"), "100", "(beta) shell STILL frozen (not 999!)");
+
+// 5. Optional Catch-All [[...slug]] for 0 (/ca), 1 (/ca/docs), and 2 (/ca/docs/v2) segments!
+//    0-seg /ca is pre-rendered with isolated outer (ca/) + inner (ca/[[...slug]]/) layouts; 1-seg & 2-seg are cold ISG!
+assert.ok(fs.existsSync(path.resolve(".dinou/dist2/ca/shell.layout.own.json")), "Outer ca/shell.layout.own.json must exist after SSG");
+assert.ok(fs.existsSync(path.resolve(".dinou/dist2/ca/[[...slug]]/shell.layout.own.json")), "0-seg [[...slug]] must materialize isolated key without colliding with outer ca/!");
+assert.equal(fs.existsSync(path.resolve(".dinou/dist2/ca/docs/shell.layout.own.json")), false, "ISG 1-seg layout must be cold before first visit");
+assert.equal(fs.existsSync(path.resolve(".dinou/dist2/ca/docs/v2/shell.layout.own.json")), false, "ISG 2-seg layout must be cold before first visit");
+
+// Also verify cold ISG re-materialization for 0-seg [[...slug]] when evicted from storage!
+for (const k of [
+  "ca/index.html",
+  "ca/shell.html",
+  "ca/metadata.json",
+  "ca/shell.page.json",
+  "ca/page.rsc",
+  "ca/[[...slug]]/shell.layout.own.json",
+  "ca/[[...slug]]/shell.layout.json",
+  "ca/[[...slug]]/layout.rsc",
+  "ca/[[...slug]]/layout.metadata.json",
+]) {
+  fs.rmSync(path.resolve(".dinou/dist2", k), { force: true });
+}
+assert.equal(fs.existsSync(path.resolve(".dinou/dist2/ca/[[...slug]]/shell.layout.own.json")), false);
+
+const caRoot1 = await fetchRaw("/ca?q=cold0");
+assert.equal(caRoot1.status, 200);
+assert.equal(textById(caRoot1.text, "cao-s"), "100");
+assert.equal(textById(caRoot1.text, "cal-k"), "root");
+assert.equal(textById(caRoot1.text, "cal-s"), "100");
+assert.equal(textById(caRoot1.text, "cap-s"), "100");
+assert.ok(fs.existsSync(path.resolve(".dinou/dist2/ca/shell.layout.own.json")), "Outer ca/shell.layout.own.json preserved");
+assert.ok(fs.existsSync(path.resolve(".dinou/dist2/ca/[[...slug]]/shell.layout.own.json")), "0-seg [[...slug]] re-materialized isolated key on cold ISG!");
+
+const caDocs1 = await fetchRaw("/ca/docs?q=cold1");
+assert.equal(caDocs1.status, 200);
+assert.equal(textById(caDocs1.text, "cal-k"), "docs");
+assert.equal(textById(caDocs1.text, "cal-s"), "100");
+assert.ok(fs.existsSync(path.resolve(".dinou/dist2/ca/docs/shell.layout.own.json")), "1-seg /ca/docs materialized isolated key!");
+
+const caV21 = await fetchRaw("/ca/docs/v2?q=cold2");
+assert.equal(caV21.status, 200);
+assert.equal(textById(caV21.text, "cal-k"), "docs-v2");
+assert.equal(textById(caV21.text, "cal-s"), "100");
+assert.ok(fs.existsSync(path.resolve(".dinou/dist2/ca/docs/v2/shell.layout.own.json")), "2-seg /ca/docs/v2 materialized isolated key!");
+
+// Poison ALL catch-all shells & slots; bump ONLY dynamic holes!
+writeS({
+  caOuterS: 888, caOuterSl: 888, caOuterH: 501,
+  caRootLS: 888, caRootLSl: 888, caRootLH: 502, caRootPS: 888, caRootPH: 503,
+  caDocsLS: 888, caDocsLSl: 888, caDocsLH: 504, caDocsPS: 888, caDocsPH: 505,
+  caV2LS: 888, caV2LSl: 888, caV2LH: 506, caV2PS: 888, caV2PH: 507,
+});
+
+const caRoot2 = await fetchRaw("/ca?q=warm0");
+assert.equal(textById(caRoot2.text, "cao-s"), "100", "Outer ca shell stays frozen");
+assert.equal(textById(caRoot2.text, "cal-s"), "100", "0-seg [[...slug]] layout shell stays frozen");
+assert.equal(textById(caRoot2.text, "cap-s"), "100", "0-seg page shell stays frozen");
+assert.equal(textById(caRoot2.text, "cao-h"), "warm0-501");
+assert.equal(textById(caRoot2.text, "cal-h"), "root:warm0-502");
+assert.equal(textById(caRoot2.text, "cap-h"), "root:warm0-503");
+
+// Encoded & raw /____rsc_layout____/ca/[[...slug]] must BOTH work cleanly!
+const caRootRscEncoded = await fetchRaw("/____rsc_layout____/ca/%5B%5B...slug%5D%5D?q=enc0");
+assert.equal(caRootRscEncoded.status, 200);
+assert.ok(caRootRscEncoded.text.includes("root:enc0-502"), "Percent-encoded [[...slug]] layout RSC must resolve & splice live hole");
+assert.ok(!caRootRscEncoded.text.includes("888"), "Percent-encoded [[...slug]] layout RSC must NOT re-execute poisoned shells");
+
+// Surgical slot refresh + revalidateTag on 0-seg [[...slug]] MUST NOT touch outer, /docs, or /docs/v2!
+writeS({ caRootLSl: 601 });
+const caSlotRes = await fetchRaw("/____rsc_slot____/p4s1-ca-l2-slot-root?fresh=1", {
+  "x-dinou-current-path": "/ca",
+});
+assert.equal(caSlotRes.status, 200);
+const caRoot3 = await fetchRaw("/ca?q=slot0");
+assert.equal(textById(caRoot3.text, "cal-sl"), "601", "0-seg slot refresh persisted to SSR!");
+assert.equal(textById(caRoot3.text, "cal-s"), "100", "0-seg layout shell stayed frozen");
+
+writeS({ caDocsLS: 701 });
+await revalidateTag("ca-l2-docs");
+const caDocs2 = await fetchRaw("/ca/docs?q=tag1");
+assert.equal(textById(caDocs2.text, "cal-s"), "701", "revalidateTag('ca-l2-docs') refreshed ONLY /ca/docs layout shell!");
+assert.equal(textById(caDocs2.text, "cao-s"), "100", "Outer ca shell stayed frozen");
+const caRoot4 = await fetchRaw("/ca?q=check0");
+assert.equal(textById(caRoot4.text, "cal-s"), "100", "0-seg layout shell stayed frozen");
+const caV22 = await fetchRaw("/ca/docs/v2?q=check2");
+assert.equal(textById(caV22.text, "cal-s"), "100", "2-seg layout shell stayed frozen");
+assert.equal(textById(caV22.text, "cal-h"), "docs-v2:check2-506");
+
+console.log("PHASE4_STAGE1_GROUPS_CATCHALL_OK");
+`
+    );
+
+    const runRes = spawnSync(process.execPath, [verifyScript], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+      timeout: 60_000,
+    });
+    assert.equal(
+      runRes.status,
+      0,
+      `Phase 4 Stage 1 compiled integration failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+    );
+    assert.ok(runRes.stdout.includes("PHASE4_STAGE1_GROUPS_CATCHALL_OK"));
+  } finally {
+    removeDirSafe(tmpApp);
+  }
+});

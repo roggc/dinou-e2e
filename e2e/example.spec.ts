@@ -20382,7 +20382,272 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(pageErrors).toEqual([]);
     });
 
-    test("32. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
+    test("32. [Phase 4 / Stage 1 / Check #67] Sibling Route Groups (alpha)/(beta) & Optional Catch-All [[...slug]] ISG Under 3D Triple Synergy", async ({
+      page,
+    }) => {
+      test.skip(
+        !isProd,
+        "Sibling route-group layout isolation & optional catch-all ISG under 3D PPR requires production mode"
+      );
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      // --- PART A: Sibling Route Groups (alpha) vs (beta) under shared outer layout ---
+      // 0. Public URL containing literal (alpha) MUST still return 404!
+      const badGroupRes = await page.goto("/t-3d-cube/group-collision/(alpha)/promo");
+      expect(badGroupRes?.status()).toBe(404);
+
+      // 1. Load /t-3d-cube/group-collision/promo ((alpha)) and capture dynamic baselines
+      await page.goto("/t-3d-cube/group-collision/promo?q=initA");
+      await waitCubeReady(page);
+      await expect(page.locator("#grp-alpha-layout")).toBeVisible();
+      await expect(page.locator("#grp-beta-layout")).toHaveCount(0);
+
+      const baseOuterShell = Number(await page.locator("#grp-outer-shell-seq").textContent());
+      const baseOuterSlot = Number(await page.locator("#grp-outer-slot-seq").textContent());
+      const baseAlphaShell = Number(await page.locator("#grp-alpha-shell-seq").textContent());
+      const baseAlphaSlot = Number(await page.locator("#grp-alpha-slot-seq").textContent());
+      const basePromoShell = Number(await page.locator("#grp-promo-shell-seq").textContent());
+
+      // Increment outer + (alpha) client probes before navigating within (alpha)
+      await page.click("#probe-inc-grp-outer");
+      await page.click("#probe-inc-grp-alpha");
+      await expect(page.locator("#probe-count-grp-outer")).toHaveText("1");
+      await expect(page.locator("#probe-count-grp-alpha")).toHaveText("1");
+      const alphaMountId = await page.locator("#probe-mount-grp-alpha").textContent();
+
+      // Same-group soft <Link> navigation (/promo -> /promo2) MUST preserve (alpha) layout & client state!
+      await page.click("#link-grp-to-promo2");
+      await expect(page.locator("#grp-promo2-page")).toBeVisible({ timeout: 15000 });
+      await expect(page.locator("#probe-mount-grp-alpha")).toHaveText(String(alphaMountId));
+      await expect(page.locator("#probe-count-grp-alpha")).toHaveText("1");
+
+      // Cross-group soft <Link> navigation (/promo2 -> /settings) MUST swap (alpha) -> (beta) cleanly!
+      await page.click("#link-grp-to-settings");
+      await expect(page.locator("#grp-beta-layout")).toBeVisible({ timeout: 15000 });
+      await expect(page.locator("#grp-settings-page")).toBeVisible({ timeout: 15000 });
+      await expect(page.locator("#grp-alpha-layout")).toHaveCount(0);
+
+      const baseBetaShell = Number(await page.locator("#grp-beta-shell-seq").textContent());
+      const baseBetaSlot = Number(await page.locator("#grp-beta-slot-seq").textContent());
+      const baseSettingsShell = Number(await page.locator("#grp-settings-shell-seq").textContent());
+
+      // Poison ALL group shells & slots; bump ONLY dynamic holes!
+      const grpPoison =
+        Math.max(
+          baseOuterShell,
+          baseOuterSlot,
+          baseAlphaShell,
+          baseAlphaSlot,
+          basePromoShell,
+          baseBetaShell,
+          baseBetaSlot,
+          baseSettingsShell
+        ) + 899;
+      const nextOuterHole = baseOuterShell + 671;
+      const nextAlphaHole = baseAlphaShell + 672;
+      const nextPromoHole = basePromoShell + 673;
+      const nextBetaHole = baseBetaShell + 674;
+      const nextSettingsHole = baseSettingsShell + 675;
+
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          grpOuterShellSeq: grpPoison,
+          grpOuterSlotSeq: grpPoison,
+          grpOuterHoleSeq: nextOuterHole,
+          grpAlphaShellSeq: grpPoison,
+          grpAlphaSlotSeq: grpPoison,
+          grpAlphaHoleSeq: nextAlphaHole,
+          grpAlphaPromoShellSeq: grpPoison,
+          grpAlphaPromoHoleSeq: nextPromoHole,
+          grpAlphaPromo2ShellSeq: grpPoison,
+          grpBetaShellSeq: grpPoison,
+          grpBetaSlotSeq: grpPoison,
+          grpBetaHoleSeq: nextBetaHole,
+          grpBetaSettingsShellSeq: grpPoison,
+          grpBetaSettingsHoleSeq: nextSettingsHole,
+        }
+      );
+
+      // Direct SSR visit to /promo & /settings proves ZERO shell collision and live PPR holes
+      await page.goto("/t-3d-cube/group-collision/promo?q=liveA");
+      await waitCubeReady(page);
+      await expect(page.locator("#grp-outer-shell-seq")).toHaveText(String(baseOuterShell));
+      await expect(page.locator("#grp-outer-slot-seq")).toHaveText(String(baseOuterSlot));
+      await expect(page.locator("#grp-outer-hole-seq")).toHaveText(`liveA-${nextOuterHole}`);
+      await expect(page.locator("#grp-alpha-shell-seq")).toHaveText(String(baseAlphaShell));
+      await expect(page.locator("#grp-alpha-slot-seq")).toHaveText(String(baseAlphaSlot));
+      await expect(page.locator("#grp-alpha-hole-seq")).toHaveText(`liveA-${nextAlphaHole}`);
+      await expect(page.locator("#grp-promo-shell-seq")).toHaveText(String(basePromoShell));
+      await expect(page.locator("#grp-promo-hole-seq")).toHaveText(`liveA-${nextPromoHole}`);
+
+      // Surgical refreshSlot on (alpha)'s slot + revalidateLayout("/t-3d-cube/group-collision/(alpha)") leaves (beta) & outer frozen!
+      const freshAlphaSlot = grpPoison + 11;
+      const freshAlphaShell = grpPoison + 12;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        { grpAlphaSlotSeq: freshAlphaSlot }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.refreshSlot("cube-grp-alpha-slot", true)
+      );
+      await expect(page.locator("#grp-alpha-slot-seq")).toHaveText(String(freshAlphaSlot), {
+        timeout: 10000,
+      });
+
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        { grpAlphaShellSeq: freshAlphaShell }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.revalLayout("/t-3d-cube/group-collision/(alpha)")
+      );
+
+      await page.goto("/t-3d-cube/group-collision/promo?q=afterA");
+      await waitCubeReady(page);
+      await expect(page.locator("#grp-alpha-shell-seq")).toHaveText(String(freshAlphaShell));
+      await expect(page.locator("#grp-alpha-slot-seq")).toHaveText(String(freshAlphaSlot));
+      await expect(page.locator("#grp-outer-shell-seq")).toHaveText(String(baseOuterShell));
+
+      // Verify (beta) remained 100% frozen (never overwritten by (alpha)!)
+      await page.goto("/t-3d-cube/group-collision/settings?q=afterB");
+      await waitCubeReady(page);
+      await expect(page.locator("#grp-beta-layout")).toBeVisible();
+      await expect(page.locator("#grp-alpha-layout")).toHaveCount(0);
+      await expect(page.locator("#grp-outer-shell-seq")).toHaveText(String(baseOuterShell));
+      await expect(page.locator("#grp-beta-shell-seq")).toHaveText(String(baseBetaShell));
+      await expect(page.locator("#grp-beta-slot-seq")).toHaveText(String(baseBetaSlot));
+      await expect(page.locator("#grp-beta-hole-seq")).toHaveText(`afterB-${nextBetaHole}`);
+      await expect(page.locator("#grp-settings-shell-seq")).toHaveText(String(baseSettingsShell));
+      await expect(page.locator("#grp-settings-hole-seq")).toHaveText(`afterB-${nextSettingsHole}`);
+
+      // --- PART B: Optional Catch-All [[...slug]] On-Demand ISG (0, 1, 2 segments) ---
+      await page.goto("/t-3d-cube/catchall-isg?q=init0");
+      await waitCubeReady(page);
+      await expect(page.locator("#ca-l2-slug-key")).toHaveText("root");
+      await expect(page.locator("#ca-page-slug-key")).toHaveText("root");
+      const baseCaOuterShell = Number(await page.locator("#ca-outer-shell-seq").textContent());
+      const baseCaRootL2Shell = Number(await page.locator("#ca-l2-shell-seq").textContent());
+      const baseCaRootL2Slot = Number(await page.locator("#ca-l2-slot-seq").textContent());
+      const baseCaRootPageShell = Number(await page.locator("#ca-page-shell-seq").textContent());
+
+      await page.goto("/t-3d-cube/catchall-isg/docs?q=init1");
+      await waitCubeReady(page);
+      await expect(page.locator("#ca-l2-slug-key")).toHaveText("docs");
+      const baseCaDocsL2Shell = Number(await page.locator("#ca-l2-shell-seq").textContent());
+      const baseCaDocsPageShell = Number(await page.locator("#ca-page-shell-seq").textContent());
+
+      await page.goto("/t-3d-cube/catchall-isg/docs/v2?q=init2");
+      await waitCubeReady(page);
+      await expect(page.locator("#ca-l2-slug-key")).toHaveText("docs-v2");
+      const baseCaV2L2Shell = Number(await page.locator("#ca-l2-shell-seq").textContent());
+      const baseCaV2PageShell = Number(await page.locator("#ca-page-shell-seq").textContent());
+
+      // Poison ALL catch-all shells & slots; bump ONLY dynamic holes!
+      const caPoison =
+        Math.max(
+          baseCaOuterShell,
+          baseCaRootL2Shell,
+          baseCaRootL2Slot,
+          baseCaRootPageShell,
+          baseCaDocsL2Shell,
+          baseCaDocsPageShell,
+          baseCaV2L2Shell,
+          baseCaV2PageShell
+        ) + 899;
+      const nextCaOuterHole = baseCaOuterShell + 681;
+      const nextCaRootL2Hole = baseCaRootL2Shell + 682;
+      const nextCaRootPageHole = baseCaRootPageShell + 683;
+      const nextCaDocsL2Hole = baseCaDocsL2Shell + 684;
+      const nextCaV2L2Hole = baseCaV2L2Shell + 685;
+
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          caOuterShellSeq: caPoison,
+          caOuterSlotSeq: caPoison,
+          caOuterHoleSeq: nextCaOuterHole,
+          caRootLayoutShellSeq: caPoison,
+          caRootLayoutSlotSeq: caPoison,
+          caRootLayoutHoleSeq: nextCaRootL2Hole,
+          caRootPageShellSeq: caPoison,
+          caRootPageHoleSeq: nextCaRootPageHole,
+          caDocsLayoutShellSeq: caPoison,
+          caDocsLayoutSlotSeq: caPoison,
+          caDocsLayoutHoleSeq: nextCaDocsL2Hole,
+          caDocsPageShellSeq: caPoison,
+          caDocsV2LayoutShellSeq: caPoison,
+          caDocsV2LayoutSlotSeq: caPoison,
+          caDocsV2LayoutHoleSeq: nextCaV2L2Hole,
+          caDocsV2PageShellSeq: caPoison,
+        }
+      );
+
+      // Reload 0-seg /t-3d-cube/catchall-isg -> outer + 0-seg [[...slug]] stay frozen & live holes stream!
+      await page.goto("/t-3d-cube/catchall-isg?q=warm0");
+      await waitCubeReady(page);
+      await expect(page.locator("#ca-outer-shell-seq")).toHaveText(String(baseCaOuterShell));
+      await expect(page.locator("#ca-l2-slug-key")).toHaveText("root");
+      await expect(page.locator("#ca-l2-shell-seq")).toHaveText(String(baseCaRootL2Shell));
+      await expect(page.locator("#ca-page-shell-seq")).toHaveText(String(baseCaRootPageShell));
+      await expect(page.locator("#ca-outer-hole-seq")).toHaveText(`warm0-${nextCaOuterHole}`);
+      await expect(page.locator("#ca-l2-hole-seq")).toHaveText(`root:warm0-${nextCaRootL2Hole}`);
+      await expect(page.locator("#ca-page-hole-seq")).toHaveText(`root:warm0-${nextCaRootPageHole}`);
+
+      // Live refreshSlot on 0-seg [[...slug]] slot + soft <Link> nav across 0 -> 1 -> 2 -> 0 segments!
+      const freshCaRootSlot = caPoison + 21;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        { caRootLayoutSlotSeq: freshCaRootSlot }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.refreshSlot("cube-ca-l2-slot-root", true)
+      );
+      await expect(page.locator("#ca-l2-slot-seq")).toHaveText(String(freshCaRootSlot), {
+        timeout: 10000,
+      });
+
+      await page.click("#link-ca-docs");
+      await expect(page.locator("#ca-l2-slug-key")).toHaveText("docs", { timeout: 15000 });
+      await expect(page.locator("#ca-l2-shell-seq")).toHaveText(String(baseCaDocsL2Shell));
+      await expect(page.locator("#ca-page-shell-seq")).toHaveText(String(baseCaDocsPageShell));
+
+      await page.click("#link-ca-docs-v2");
+      await expect(page.locator("#ca-l2-slug-key")).toHaveText("docs-v2", { timeout: 15000 });
+      await expect(page.locator("#ca-l2-shell-seq")).toHaveText(String(baseCaV2L2Shell));
+      await expect(page.locator("#ca-page-shell-seq")).toHaveText(String(baseCaV2PageShell));
+
+      await page.click("#link-ca-root");
+      await expect(page.locator("#ca-l2-slug-key")).toHaveText("root", { timeout: 15000 });
+      await expect(page.locator("#ca-l2-shell-seq")).toHaveText(String(baseCaRootL2Shell));
+      await expect(page.locator("#ca-l2-slot-seq")).toHaveText(String(freshCaRootSlot));
+
+      // Surgical revalidateLayout on /t-3d-cube/catchall-isg/docs updates ONLY 1-seg layout, keeping 0-seg & 2-seg frozen!
+      const freshDocsL2Shell = caPoison + 22;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        { caDocsLayoutShellSeq: freshDocsL2Shell }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.revalLayout("/t-3d-cube/catchall-isg/docs")
+      );
+      await page.goto("/t-3d-cube/catchall-isg/docs?q=reval1");
+      await waitCubeReady(page);
+      await expect(page.locator("#ca-l2-shell-seq")).toHaveText(String(freshDocsL2Shell));
+      await expect(page.locator("#ca-outer-shell-seq")).toHaveText(String(baseCaOuterShell));
+
+      await page.goto("/t-3d-cube/catchall-isg?q=afterReval0");
+      await waitCubeReady(page);
+      await expect(page.locator("#ca-l2-shell-seq")).toHaveText(String(baseCaRootL2Shell));
+      await expect(page.locator("#ca-l2-slot-seq")).toHaveText(String(freshCaRootSlot));
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("33. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
       browserName,
     }) => {
       test.skip(
