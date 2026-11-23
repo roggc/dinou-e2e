@@ -1362,6 +1362,7 @@ function createRequestContext(simReq, resBridge, platformContext = {}, dynamicSt
         }
         const resolvedUrl = resolveRelativeUrl(url, simReq.path);
         const finalUrl = isAllowedRedirectTarget(resolvedUrl) ? resolvedUrl : "/";
+        if (context) context._redirectLocation = finalUrl;
         const safeUrl = JSON.stringify(finalUrl);
         resBridge.write(`<script>window.location.href = ${safeUrl};</script>`);
         resBridge.end();
@@ -1380,6 +1381,10 @@ function createRequestContext(simReq, resBridge, platformContext = {}, dynamicSt
       }
       const resolvedUrl = resolveRelativeUrl(url, simReq.path);
       const finalUrl = isAllowedRedirectTarget(resolvedUrl) ? resolvedUrl : "/";
+      if (context) context._redirectLocation = finalUrl;
+      if (context?._isPprRuntimeResume) {
+        return;
+      }
       if (isRscSimReq) {
         resBridge.setHeader("x-rsc-redirect", finalUrl);
         resBridge.status(200).end();
@@ -3476,7 +3481,15 @@ async function handleRequest(request, platformContext = {}) {
         try {
           const shellPageKey = cleanPath ? `${cleanPath}/shell.page.json` : "shell.page.json";
           const shellPageOldKey = cleanPath ? `${cleanPath}/shell.page._old.json` : "shell.page._old.json";
-          const htmlGenAt = Number(cachedItem.metadata?.generatedAt || 0);
+          const htmlBuildIdMatch =
+            typeof cachedItem.content === "string"
+              ? cachedItem.content.match(/window\.__DINOU_BUILD_ID__\s*=\s*"(\d+)"/)
+              : null;
+          const htmlGenAt = Number(
+            (htmlBuildIdMatch && htmlBuildIdMatch[1]) ||
+              cachedItem.metadata?.generatedAt ||
+              0
+          );
           let useOldPageShell = false;
           if (htmlGenAt > 0) {
             const latestPageMeta = await readMetaFromStorage(

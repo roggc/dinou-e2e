@@ -147,6 +147,15 @@ export interface Cube3DState {
   csFragileSeq: number;
   csHealthySeq: number;
   csFragileShouldThrow: boolean;
+
+  // Stage 3 — Check #54: Concurrent 12-way Stampede During 1s PPR Shell TTL
+  pprStampedeShellSeq: number;
+  pprStampedeHoleSeq: number;
+
+  // Stage 3 — Check #55: Error Isolation & redirect() Inside PPR Dynamic Hole
+  pprEdgeShellSeq: number;
+  pprEdgeHoleASeq: number;
+  pprEdgeHoleBSeq: number;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -281,6 +290,13 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   csFragileSeq: 100,
   csHealthySeq: 100,
   csFragileShouldThrow: false,
+
+  pprStampedeShellSeq: 100,
+  pprStampedeHoleSeq: 100,
+
+  pprEdgeShellSeq: 100,
+  pprEdgeHoleASeq: 100,
+  pprEdgeHoleBSeq: 100,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {
@@ -362,3 +378,20 @@ export function resetCubeState(): Cube3DState {
 
 export const cubeSleep = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+const STAMPEDE_EXEC_KEY = Symbol.for("dinou.e2e.3d.cube.stampede.shell.execs");
+
+export function incrementStampedeShellExecs(): number {
+  const next = Number((globalThis as any)[STAMPEDE_EXEC_KEY] || 0) + 1;
+  (globalThis as any)[STAMPEDE_EXEC_KEY] = next;
+  return next;
+}
+
+export function getStampedeShellExecs(): number {
+  return Number((globalThis as any)[STAMPEDE_EXEC_KEY] || 0);
+}
+
+export function resetStampedeShellExecs(): number {
+  (globalThis as any)[STAMPEDE_EXEC_KEY] = 0;
+  return 0;
+}

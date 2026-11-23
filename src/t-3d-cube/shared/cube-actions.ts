@@ -10,6 +10,8 @@ import {
   readCubeState,
   writeCubeState,
   resetCubeState,
+  getStampedeShellExecs,
+  resetStampedeShellExecs,
   type Cube3DState,
 } from "./cube-state";
 
@@ -43,4 +45,12 @@ export async function cubeRevalidatePath(targetPath: string) {
 
 export async function cubePingAction(label: string) {
   return { ok: true, reply: `pong:${label}`, at: Date.now() };
+}
+
+export async function cubeGetStampedeExecs() {
+  return getStampedeShellExecs();
+}
+
+export async function cubeResetStampedeExecs() {
+  return resetStampedeShellExecs();
 }

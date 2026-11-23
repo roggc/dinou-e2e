@@ -10,6 +10,8 @@ import {
   cubeRevalidateLayout,
   cubeRevalidatePath,
   cubePingAction,
+  cubeGetStampedeExecs,
+  cubeResetStampedeExecs,
 } from "./cube-actions";
 import type { Cube3DState } from "./cube-state";
 
@@ -91,6 +93,8 @@ export function CubeControlBridge() {
       refreshSlot: (idOrTag: string, fresh = true) =>
         refreshSlot(idOrTag, { fresh }),
       push: (href: string) => router.push(href),
+      getStampedeExecs: () => cubeGetStampedeExecs(),
+      resetStampedeExecs: () => cubeResetStampedeExecs(),
     };
   }, [router]);
 

@@ -18677,7 +18677,188 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       }
     });
 
-    test("20. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
+    test("20. [Stage 3 / Check #54] Axis Z High-Concurrency 12-Way Stampede During 1s PPR Shell TTL Expiration (Causal Snapshot & Dedup)", async ({
+      page,
+      request,
+    }) => {
+      test.skip(!isProd, "1s PPR shell TTL stampede requires production mode");
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      // Warm page and settle any prior TTL regeneration
+      await page.goto("/t-3d-cube/ppr-stampede");
+      await waitCubeReady(page);
+      await page.waitForTimeout(450);
+      await page.reload();
+      await waitCubeReady(page);
+
+      const baseShell = Number(
+        await page.locator("#ppr-stampede-shell-seq").textContent()
+      );
+      const baseHole = Number(
+        await page.locator("#ppr-stampede-hole-seq").textContent()
+      );
+      const nextShell = baseShell + 741;
+      const nextHole = baseHole + 742;
+
+      await page.evaluate(() => (window as any).__CUBE_3D__.resetStampedeExecs());
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          pprStampedeShellSeq: nextShell,
+          pprStampedeHoleSeq: nextHole,
+        }
+      );
+
+      // Wait past the 1s PPR shell TTL
+      await page.waitForTimeout(1300);
+
+      // Fire 12 simultaneous HTTP requests + real browser reload right on TTL expiration
+      const [httpBodies] = await Promise.all([
+        Promise.all(
+          Array.from({ length: 12 }, async () => {
+            const res = await request.get("/t-3d-cube/ppr-stampede");
+            expect(res.status()).toBe(200);
+            return await res.text();
+          })
+        ),
+        (async () => {
+          await page.reload();
+          await waitCubeReady(page);
+        })(),
+      ]);
+
+      // Verify causal snapshot consistency on EVERY SINGLE ONE of the 12 concurrent HTML streams!
+      const baseShellStr = String(baseShell);
+      const nextShellStr = String(nextShell);
+      const nextHoleStr = String(nextHole);
+
+      for (let i = 0; i < httpBodies.length; i++) {
+        const html = httpBodies[i];
+        const ssrMatch = html.match(/id="ppr-stampede-shell-seq"[^>]*>(\d+)</);
+        expect(ssrMatch, `Response #${i} missing SSR shell seq`).toBeTruthy();
+        const ssrVal = ssrMatch![1];
+        expect(
+          [baseShellStr, nextShellStr],
+          `Response #${i} unexpected SSR shell val ${ssrVal}`
+        ).toContain(ssrVal);
+
+        // Streamed dynamic hole must always carry live nextHole
+        expect(
+          html.includes(`id="ppr-stampede-hole-seq">${nextHoleStr}<`),
+          `Response #${i} missing live hole ${nextHoleStr}`
+        ).toBe(true);
+
+        // Extract inline page RSC script payloads (__DINOU_RSC_P__.push(...))
+        const rscPushes = [...html.matchAll(/__DINOU_RSC_P__\|\|\[\]\)\.push\((.+?)\);/g)].map(
+          (m) => m[1]
+        );
+        expect(
+          rscPushes.length,
+          `Response #${i} missing inline __DINOU_RSC_P__ payload`
+        ).toBeGreaterThan(0);
+        const joinedRsc = rscPushes.join("\n");
+
+        // Causal invariant: SSR DOM shell value MUST match inline Flight payload (never mixed!)
+        if (ssrVal === baseShellStr) {
+          expect(
+            joinedRsc.includes(baseShellStr) && !joinedRsc.includes(nextShellStr),
+            `Response #${i} causal mismatch: SSR=${baseShellStr} paired with raced Flight=${nextShellStr}`
+          ).toBe(true);
+        } else {
+          expect(
+            joinedRsc.includes(nextShellStr) && !joinedRsc.includes(baseShellStr),
+            `Response #${i} causal mismatch: SSR=${nextShellStr} paired with stale Flight=${baseShellStr}`
+          ).toBe(true);
+        }
+      }
+
+      // Wait for background SWR regeneration to settle, then verify deduplication (<= 1 shell regen!)
+      await page.waitForTimeout(600);
+      const shellExecs = await page.evaluate(() =>
+        (window as any).__CUBE_3D__.getStampedeExecs()
+      );
+      expect(shellExecs).toBe(1);
+
+      // Post-SWR reload serves fresh nextShell + live nextHole with 0 hydration errors
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#ppr-stampede-shell-seq")).toHaveText(nextShellStr);
+      await expect(page.locator("#ppr-stampede-hole-seq")).toHaveText(nextHoleStr);
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("21. [Stage 3 / Check #55] Axis Z Error Isolation & redirect() Inside a PPR Dynamic Hole Alongside Healthy Sibling Holes", async ({
+      page,
+    }) => {
+      test.skip(!isProd, "PPR dynamic hole error & redirect isolation requires production mode");
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      // Baseline healthy load
+      await page.goto("/t-3d-cube/ppr-hole-edge?ok=init");
+      await waitCubeReady(page);
+      const baseShell = Number(await page.locator("#ppr-edge-shell-seq").textContent());
+      const baseHoleA = Number(await page.locator("#ppr-edge-hole-a-seq").textContent());
+      await expect(page.locator("#ppr-edge-hole-a-val")).toHaveText("init");
+      await expect(page.locator("#ppr-edge-hole-b-val")).toContainText("healthy-b-");
+
+      const poison = Math.max(baseShell, baseHoleA) + 899;
+      const nextHoleA = baseHoleA + 751;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          pprEdgeShellSeq: poison,
+          pprEdgeHoleASeq: nextHoleA,
+        }
+      );
+
+      // 1. Hole B throws: static shell stays frozen, Hole A still streams fresh, Hole B error isolated cleanly
+      const failRes = await page.goto(
+        "/t-3d-cube/ppr-hole-edge?ok=healthy&failHole=1"
+      );
+      expect(failRes?.status()).toBe(200);
+      await waitCubeReady(page);
+      await expect(page.locator("#ppr-edge-shell-seq")).toHaveText(String(baseShell));
+      await expect(page.locator("#ppr-edge-hole-a-val")).toHaveText("healthy");
+      await expect(page.locator("#ppr-edge-hole-a-seq")).toHaveText(String(nextHoleA));
+      await expect(page.locator("#ppr-edge-section-b")).toContainText("[PPR Error:");
+
+      // Static shell client widget must STILL hydrate and work with 0 #418 and 0 pageerror!
+      await page.click("#probe-inc-ppr-edge-shell");
+      await expect(page.locator("#probe-count-ppr-edge-shell")).toHaveText("1");
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+
+      // 2. Clean recovery on next request: static shell on disk was NOT corrupted
+      const recRes = await page.goto("/t-3d-cube/ppr-hole-edge?ok=recovered");
+      expect(recRes?.status()).toBe(200);
+      await waitCubeReady(page);
+      await expect(page.locator("#ppr-edge-shell-seq")).toHaveText(String(baseShell));
+      await expect(page.locator("#ppr-edge-hole-a-val")).toHaveText("recovered");
+      await expect(page.locator("#ppr-edge-hole-a-seq")).toHaveText(String(nextHoleA));
+      await expect(page.locator("#ppr-edge-hole-b-val")).toContainText("healthy-b-");
+
+      // 3. Declarative return redirect("/t-3d-cube/ppr") inside PPR dynamic hole
+      await page.goto("/t-3d-cube/ppr-hole-edge?redirHole=1");
+      await expect(page).toHaveURL(/\/t-3d-cube\/ppr(?:\?.*)?$/, { timeout: 10000 });
+      await expect(page.locator("#ppr-rig-shell-seq")).toBeVisible({ timeout: 10000 });
+
+      // 4. Imperative getContext().res.redirect("/t-3d-cube/ppr") inside PPR dynamic hole
+      await page.goto("/t-3d-cube/ppr-hole-edge?imperativeRedir=1");
+      await expect(page).toHaveURL(/\/t-3d-cube\/ppr(?:\?.*)?$/, { timeout: 10000 });
+      await expect(page.locator("#ppr-rig-shell-seq")).toBeVisible({ timeout: 10000 });
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("22. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
       browserName,
     }) => {
       test.skip(

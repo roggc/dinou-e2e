@@ -1731,3 +1731,266 @@ console.log("STAGE2_AXIS_Y_OK");
     removeDirSafe(tmpApp);
   }
 });
+
+test("12. Stage 3 Axis Z compiled Node AOT integration: 12-way PPR 1s shell TTL stampede causal snapshot, hole error isolation & hole redirect()", async () => {
+  const tmpApp = createFixtureDir("tmp-3d-stage3-");
+  try {
+    for (const relDir of [
+      "src/stampede",
+      "src/edge-hole",
+      "src/target",
+    ]) {
+      fs.mkdirSync(path.join(tmpApp, relDir), { recursive: true });
+    }
+
+    fs.writeFileSync(
+      path.join(tmpApp, "package.json"),
+      JSON.stringify({ name: "cube-3d-stage3-fixture", private: true, type: "module" }, null, 2)
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "tsconfig.json"),
+      JSON.stringify(
+        {
+          compilerOptions: {
+            target: "ES2022",
+            module: "ESNext",
+            moduleResolution: "bundler",
+            jsx: "react-jsx",
+          },
+        },
+        null,
+        2
+      )
+    );
+    writeDinouShim(tmpApp);
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src", "state.ts"),
+      `import fs from "node:fs";
+import path from "node:path";
+const FILE = path.resolve(process.cwd(), "s3-state.json");
+const DEF = { stampShell: 100, stampHole: 100, edgeShell: 100, edgeHoleA: 100 };
+export function readS() {
+  try { if (fs.existsSync(FILE)) return { ...DEF, ...JSON.parse(fs.readFileSync(FILE, "utf8")) }; } catch {}
+  return { ...DEF };
+}
+export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+export function incStampExec() {
+  const k = Symbol.for("s3.stamp.exec");
+  (globalThis as any)[k] = Number((globalThis as any)[k] || 0) + 1;
+}
+`
+    );
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src", "layout.tsx"),
+      `import type { ReactNode } from "react";
+export default function Root({ children }: { children: ReactNode }) {
+  return <html><head><title>S3</title></head><body>{children}</body></html>;
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src", "page.tsx"),
+      `export default function Home() { return <main>home</main>; }\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/target/page.tsx"),
+      `export default function Target() { return <main id="redir-target">landed</main>; }\n`
+    );
+
+    // 1. 1s PPR shell TTL stampede route
+    fs.writeFileSync(
+      path.join(tmpApp, "src/stampede/page_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 1;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/stampede/page.tsx"),
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { readS, sleep, incStampExec } from "../state";
+
+async function Hole() {
+  await sleep(25);
+  return <span id="st-hole">{readS().stampHole}</span>;
+}
+
+export default async function StampedePage() {
+  const ctx = getContext() as any;
+  const isBuild = Boolean(ctx?._isStaticHtmlRender || ctx?.platformContext?.isSSG) && !ctx?._isPprRuntimeResume;
+  if (isBuild) {
+    incStampExec();
+    await sleep(40);
+  }
+  return (
+    <main>
+      <span id="st-shell">{readS().stampShell}</span>
+      <Suspense fallback={<span>fb</span>}>
+        <Hole />
+      </Suspense>
+    </main>
+  );
+}
+`
+    );
+
+    // 2. PPR hole error + redirect route
+    fs.writeFileSync(
+      path.join(tmpApp, "src/edge-hole/page_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/edge-hole/page.tsx"),
+      `import { Suspense } from "react";
+import { getContext, redirect } from "dinou";
+import { readS, sleep } from "../state";
+
+async function HoleA() {
+  const ok = String(getContext()?.req?.query?.ok || "def");
+  await sleep(15);
+  return <span id="eh-a">{\`\${ok}-\${readS().edgeHoleA}\`}</span>;
+}
+
+async function HoleB() {
+  const ctx = getContext();
+  const q = ctx?.req?.query || {};
+  await sleep(15);
+  if (q.fail === "1") throw new Error("boom-ppr-hole");
+  if (q.redir === "1") return redirect("/target");
+  if (q.impRedir === "1") {
+    ctx?.res?.redirect?.("/target");
+    return null;
+  }
+  return <span id="eh-b">ok-b</span>;
+}
+
+export default function EdgeHolePage() {
+  return (
+    <main>
+      <span id="eh-shell">{readS().edgeShell}</span>
+      <Suspense fallback={<span>fa</span>}><HoleA /></Suspense>
+      <Suspense fallback={<span>fb</span>}><HoleB /></Suspense>
+    </main>
+  );
+}
+`
+    );
+
+    const buildRes = spawnSync(process.execPath, [CLI_PATH, "build:node:esbuild"], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 120_000,
+    });
+    assert.equal(
+      buildRes.status,
+      0,
+      `Stage 3 fixture build failed:\n${buildRes.stdout}\n${buildRes.stderr}`
+    );
+
+    const verifyScript = path.join(tmpApp, "verify-stage3.mjs");
+    fs.writeFileSync(
+      verifyScript,
+      `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const { FileSystemStorage, setStorageAdapter } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/storage-adapter.js")).href
+      )});
+setStorageAdapter(new FileSystemStorage(path.resolve(".dinou/dist2")));
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+globalThis.__DINOU_RENDER_HTML_STREAM__ = ssrMod.renderHtml;
+const opts = { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml };
+
+const writeS = (patch) => {
+  const f = path.resolve("s3-state.json");
+  const cur = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : {};
+  fs.writeFileSync(f, JSON.stringify({ ...cur, ...patch }), "utf8");
+};
+const get = async (u) => {
+  const r = await rscMod.handleRequest(new Request("http://localhost" + u), opts);
+  assert.equal(r.status, 200, "Expected 200 for " + u);
+  return await r.text();
+};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// 1. 12-way concurrent stampede during 1s PPR shell TTL expiry
+globalThis[Symbol.for("s3.stamp.exec")] = 0;
+writeS({ stampShell: 741, stampHole: 742 });
+await sleep(1250);
+
+const bodies = await Promise.all(
+  Array.from({ length: 12 }, () => get("/stampede"))
+);
+for (let i = 0; i < bodies.length; i++) {
+  const html = bodies[i];
+  const m = html.match(/id="st-shell"[^>]*>(\\d+)</);
+  assert.ok(m, "Missing st-shell in resp " + i);
+  const ssrVal = m[1];
+  assert.ok(ssrVal === "100" || ssrVal === "741", "Unexpected SSR val " + ssrVal);
+  assert.ok(html.includes('id="st-hole">742<'), "Missing live hole 742 in resp " + i);
+  const pushes = [...html.matchAll(/__DINOU_RSC_P__\\|\\|\\[\\]\\)\\.push\\((.+?)\\);/g)].map((x) => x[1]).join("\\n");
+  assert.ok(pushes.length > 0, "Missing inline __DINOU_RSC_P__ in resp " + i);
+  if (ssrVal === "100") {
+    assert.ok(pushes.includes("100") && !pushes.includes("741"), "Causal mismatch on stale resp " + i);
+  } else {
+    assert.ok(pushes.includes("741") && !pushes.includes("100"), "Causal mismatch on fresh resp " + i);
+  }
+}
+
+await sleep(400);
+assert.equal(globalThis[Symbol.for("s3.stamp.exec")], 1, "Stampede dedup must run shell regen exactly once!");
+const postHtml = await get("/stampede");
+assert.ok(postHtml.includes('id="st-shell">741<'), "Post-SWR shell must be 741");
+
+// 2. Hole B error isolation + inline RSC preservation + recovery
+writeS({ edgeShell: 999, edgeHoleA: 801 });
+const errHtml = await get("/edge-hole?ok=healthy&fail=1");
+assert.ok(errHtml.includes('id="eh-shell">100<'), "Static shell stays frozen 100");
+assert.ok(errHtml.includes('id="eh-a">healthy-801<'), "Healthy sibling Hole A still streams");
+assert.ok(errHtml.includes("[PPR Error:"), "Hole B error isolated into error markup");
+assert.ok(errHtml.includes("__DINOU_RSC_P__"), "Inline RSC must STILL be emitted when one hole errors so healthy shell/siblings hydrate with 0 #418!");
+
+const recHtml = await get("/edge-hole?ok=recovered");
+assert.ok(recHtml.includes('id="eh-shell">100<'), "Shell intact after error");
+assert.ok(recHtml.includes('id="eh-a">recovered-801<'));
+assert.ok(recHtml.includes('id="eh-b">ok-b<'));
+
+// 3. Declarative redirect() and imperative ctx.res.redirect() inside PPR dynamic hole
+const redirHtml = await get("/edge-hole?redir=1");
+assert.ok(
+  redirHtml.includes("/target") && (redirHtml.includes("ClientRedirect") || redirHtml.includes("window.location")),
+  "Declarative return redirect() in PPR hole must emit redirect payload"
+);
+
+const impRedirHtml = await get("/edge-hole?impRedir=1");
+assert.ok(
+  impRedirHtml.includes("window.location") && impRedirHtml.includes("/target"),
+  "Imperative ctx.res.redirect() inside PPR hole MUST emit client redirect script after shellPrelude flushed!"
+);
+
+console.log("STAGE3_AXIS_Z_OK");
+`
+    );
+
+    const runRes = spawnSync(process.execPath, [verifyScript], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+      timeout: 60_000,
+    });
+    assert.equal(
+      runRes.status,
+      0,
+      `Stage 3 compiled integration failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+    );
+    assert.ok(runRes.stdout.includes("STAGE3_AXIS_Z_OK"));
+  } finally {
+    removeDirSafe(tmpApp);
+  }
+});
