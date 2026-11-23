@@ -590,6 +590,10 @@ export async function getProps() {
 `
       );
       fs.writeFileSync(
+        path.join(tmpApp, "src", "guarded", "layout_functions.ts"),
+        `export const revalidate = 0;\n`
+      );
+      fs.writeFileSync(
         path.join(tmpApp, "src", "guarded", "layout.tsx"),
         `import type { ReactNode } from "react";
 export default function GuardedLayout({ children, sidebar }: { children: ReactNode; sidebar?: ReactNode }) {
