@@ -1437,9 +1437,11 @@ export const ppr = false;
       `Cold Redis pod after revalidateTag must serve v3 and never resurrect disk v1, got: ${html6}`
     );
 
-    // 6.8 Dynamic-param ISG route (/workspaces/[ws]/isr-ttl) with unmaterialized dynamic [ws]/layout.rsc:
-    //     revalidateTag on page <DinouCacheSlot> MUST materialize [ws]/layout.rsc and splice shell.page.json
-    //     WITHOUT falling back to full getJSX() and re-executing WorkspaceIsrTtlPage!
+    // 6.8 Dynamic-param ISG route (/workspaces/[ws]/isr-ttl):
+    //     Initial cold ISG HTML visit materializes dynamic [ws]/layout.rsc & shell.layout.own.json (10.0.4 #62).
+    //     Even if [ws]/layout.rsc is later missing/evicted, revalidateTag on page <DinouCacheSlot> MUST
+    //     re-materialize [ws]/layout.rsc and splice shell.page.json WITHOUT falling back to full getJSX()
+    //     or re-executing WorkspaceIsrTtlPage!
     const resWsInitial = await rscMod.handleRequest(
       new Request("http://localhost/workspaces/dyn-alpha/isr-ttl"),
       { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml }
@@ -1451,8 +1453,12 @@ export const ppr = false;
       globalThis.__TEST_REVAL_REDIS_MAP__.has(
         "cluster:workspaces/dyn-alpha/layout.rsc"
       ),
-      false,
-      "Dynamic [ws]/layout.rsc is not yet materialized after initial ISG HTML visit"
+      true,
+      "Dynamic [ws]/layout.rsc is materialized on initial cold ISG HTML visit (10.0.4 #62)"
+    );
+    // Simulate evicted/unmaterialized [ws]/layout.rsc to verify revalidateTag recovery path as well
+    globalThis.__TEST_REVAL_REDIS_MAP__.delete(
+      "cluster:workspaces/dyn-alpha/layout.rsc"
     );
 
     const wsMetaBefore = JSON.parse(
