@@ -3826,8 +3826,12 @@ async function handleRequest(request, platformContext = {}) {
     const hasPluginMutation =
       preRenderPluginCookiesCount > 0 ||
       (bridge._explicitStatusSet && bridge.statusCode !== 200);
+    const isCfWorkers =
+      typeof navigator !== "undefined" &&
+      navigator.userAgent === "Cloudflare-Workers";
     const canUseInFlight =
       !isDevelopment &&
+      !isCfWorkers &&
       !hasCookies &&
       !hasPluginMutation &&
       !isDynamicConfig &&

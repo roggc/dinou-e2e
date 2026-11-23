@@ -22,7 +22,7 @@ import {
   getRegisteredHoles,
   getPprHoleCounter,
 } from "./ppr-context.js";
-import { getContext } from "./request-context.js";
+import { getContext, requestStorage } from "./request-context.js";
 import { createDinouPageSlotElement } from "./get-jsx.js";
 import {
   serializeJSX,
@@ -146,13 +146,18 @@ async function readStorageArtifact(storage, key, platformContext = null, reqUrl 
   }
 
   try {
-    const reqContext = getContext();
+    const isCfWorkers =
+      typeof navigator !== "undefined" &&
+      navigator.userAgent === "Cloudflare-Workers";
+    const reqContext = isCfWorkers ? requestStorage?.getStore?.() : getContext();
     const assets =
       platformContext?.env?.ASSETS ||
       reqContext?.env?.ASSETS ||
       reqContext?.platformContext?.env?.ASSETS ||
       reqContext?.req?.env?.ASSETS ||
-      (typeof globalThis !== "undefined" ? globalThis.__DINOU_ENV__?.ASSETS : null);
+      (!isCfWorkers && typeof globalThis !== "undefined"
+        ? globalThis.__DINOU_ENV__?.ASSETS
+        : null);
     if (assets && typeof assets.fetch === "function") {
       const cleanKey = String(key).replace(/^\/+/, "");
       const res = await fetchCloudflareDist2Asset(assets, cleanKey, reqUrl || undefined);

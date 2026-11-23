@@ -259,16 +259,29 @@ class CloudflareKVStorage extends StorageAdapter {
     this.kv = kvNamespace;
   }
 
+  _getKv() {
+    try {
+      const store =
+        typeof globalThis !== "undefined"
+          ? globalThis[Symbol.for("dinou.request.context.storage")]?.getStore?.()
+          : null;
+      const reqKv = store?.env?.DINOU_CACHE || store?.platformContext?.env?.DINOU_CACHE;
+      if (reqKv) return reqKv;
+    } catch (e) {}
+    return this.kv;
+  }
+
   _cleanKey(key) {
     return String(key).replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
   }
 
   async get(key) {
-    if (!this.kv) return null;
+    const kv = this._getKv();
+    if (!kv) return null;
     const cleanKey = this._cleanKey(key);
-    let res = await this.kv.getWithMetadata(cleanKey, "text");
+    let res = await kv.getWithMetadata(cleanKey, "text");
     if ((!res || res.value === null) && !cleanKey.includes(".")) {
-      res = await this.kv.getWithMetadata(cleanKey ? `${cleanKey}/index.html` : "index.html", "text");
+      res = await kv.getWithMetadata(cleanKey ? `${cleanKey}/index.html` : "index.html", "text");
     }
     if (!res || res.value === null) return null;
     return {
@@ -279,25 +292,27 @@ class CloudflareKVStorage extends StorageAdapter {
 
   async set(key, content, metadata = null) {
     this._unmarkDeleted(key);
-    if (!this.kv) return;
+    const kv = this._getKv();
+    if (!kv) return;
     const cleanKey = this._cleanKey(key);
     const options = metadata ? { metadata } : undefined;
-    await this.kv.put(cleanKey, content, options);
+    await kv.put(cleanKey, content, options);
     if (cleanKey.endsWith("/index.html")) {
       const folderKey = cleanKey.slice(0, -11);
-      await this.kv.put(folderKey, content, options);
+      await kv.put(folderKey, content, options);
     } else if (cleanKey === "index.html") {
-      await this.kv.put("", content, options);
+      await kv.put("", content, options);
     }
   }
 
   async has(key) {
-    if (!this.kv) return false;
+    const kv = this._getKv();
+    if (!kv) return false;
     const cleanKey = this._cleanKey(key);
-    const val = await this.kv.get(cleanKey);
+    const val = await kv.get(cleanKey);
     if (val !== null) return true;
     if (!cleanKey.includes(".")) {
-      const fallbackVal = await this.kv.get(
+      const fallbackVal = await kv.get(
         cleanKey ? `${cleanKey}/index.html` : "index.html"
       );
       return fallbackVal !== null;
@@ -307,25 +322,27 @@ class CloudflareKVStorage extends StorageAdapter {
 
   async delete(key) {
     this._markDeleted(key);
-    if (!this.kv) return;
+    const kv = this._getKv();
+    if (!kv) return;
     const cleanKey = this._cleanKey(key);
-    await this.kv.delete(cleanKey);
+    await kv.delete(cleanKey);
     if (cleanKey.endsWith("/index.html")) {
-      await this.kv.delete(cleanKey.slice(0, -11));
+      await kv.delete(cleanKey.slice(0, -11));
     } else if (cleanKey === "index.html") {
-      await this.kv.delete("");
+      await kv.delete("");
     } else if (!cleanKey.includes(".")) {
-      await this.kv.delete(cleanKey ? `${cleanKey}/index.html` : "index.html");
+      await kv.delete(cleanKey ? `${cleanKey}/index.html` : "index.html");
     }
     if (cleanKey.endsWith("/slot.json")) {
-      await this.kv.delete(cleanKey.slice(0, -10) + "/slot.metadata.json");
+      await kv.delete(cleanKey.slice(0, -10) + "/slot.metadata.json");
     } else if (cleanKey.endsWith("/slot.metadata.json")) {
-      await this.kv.delete(cleanKey.slice(0, -19) + "/slot.json");
+      await kv.delete(cleanKey.slice(0, -19) + "/slot.json");
     }
   }
 
   async keys(prefix = "") {
-    if (!this.kv || typeof this.kv.list !== "function") return [];
+    const kv = this._getKv();
+    if (!kv || typeof kv.list !== "function") return [];
     try {
       const effectivePrefix = prefix === "dinou_cache" ? "" : prefix;
       const results = [];
@@ -334,7 +351,7 @@ class CloudflareKVStorage extends StorageAdapter {
         const options = {};
         if (effectivePrefix) options.prefix = effectivePrefix;
         if (cursor) options.cursor = cursor;
-        const res = await this.kv.list(
+        const res = await kv.list(
           Object.keys(options).length > 0 ? options : undefined
         );
         if (res && Array.isArray(res.keys)) {

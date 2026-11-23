@@ -116,6 +116,13 @@ function doesSlotEntryMatchRoute(entry, targetRouteKey) {
   return false;
 }
 
+function isCloudflareWorkersRuntime() {
+  return (
+    typeof navigator !== "undefined" &&
+    navigator.userAgent === "Cloudflare-Workers"
+  );
+}
+
 function createDiscoveryContext(currentPath) {
   const outerCtx = getContext();
   const rawQuery = unwrapBailoutProxy(outerCtx?.req?.query);
@@ -445,12 +452,15 @@ async function getSlotFromStorage(storage, storageKey, knownTags = []) {
   const slotIdFromKey = cleanKeyForSlotId.match(/^slots\/([^/]+)\//)?.[1];
 
   try {
-    const reqContext = getContext();
+    const isCfWorkers = isCloudflareWorkersRuntime();
+    const reqContext = isCfWorkers ? requestStorage?.getStore?.() : getContext();
     const assets =
       reqContext?.env?.ASSETS ||
       reqContext?.platformContext?.env?.ASSETS ||
       reqContext?.req?.env?.ASSETS ||
-      (typeof globalThis !== "undefined" ? globalThis.__DINOU_ENV__?.ASSETS : null);
+      (!isCfWorkers && typeof globalThis !== "undefined"
+        ? globalThis.__DINOU_ENV__?.ASSETS
+        : null);
     if (assets && typeof assets.fetch === "function") {
       const cleanKey = cleanKeyForSlotId;
       const metaKey = cleanKey.endsWith("/slot.json")
@@ -525,12 +535,15 @@ async function readMetaFromStorageOrAssets(storage, key) {
       : typeof storage.isDeleted === "function" && storage.isDeleted(key);
   if (isDeleted) return null;
   try {
-    const reqContext = getContext();
+    const isCfWorkers = isCloudflareWorkersRuntime();
+    const reqContext = isCfWorkers ? requestStorage?.getStore?.() : getContext();
     const assets =
       reqContext?.env?.ASSETS ||
       reqContext?.platformContext?.env?.ASSETS ||
       reqContext?.req?.env?.ASSETS ||
-      (typeof globalThis !== "undefined" ? globalThis.__DINOU_ENV__?.ASSETS : null);
+      (!isCfWorkers && typeof globalThis !== "undefined"
+        ? globalThis.__DINOU_ENV__?.ASSETS
+        : null);
     if (assets && typeof assets.fetch === "function") {
       const cleanKey = String(key).replace(/^\/+/, "");
       const res = await fetchCloudflareDist2Asset(assets, cleanKey);
@@ -1222,7 +1235,8 @@ async function getSlotJSX(slotId, options = {}) {
 
   // 3. If still not in slotRegistry (e.g., cold server start), pre-evaluate the route once
   if (!slotRegistry.has(targetId) && options.currentPath) {
-    if (preEvaluatingRoutes.has(options.currentPath)) {
+    const usePreEvalDedup = !isCloudflareWorkersRuntime();
+    if (usePreEvalDedup && preEvaluatingRoutes.has(options.currentPath)) {
       try {
         await preEvaluatingRoutes.get(options.currentPath);
       } catch (e) {}
@@ -1276,10 +1290,14 @@ async function getSlotJSX(slotId, options = {}) {
             e
           );
         } finally {
-          preEvaluatingRoutes.delete(options.currentPath);
+          if (usePreEvalDedup) {
+            preEvaluatingRoutes.delete(options.currentPath);
+          }
         }
       })();
-      preEvaluatingRoutes.set(options.currentPath, preEvalPromise);
+      if (usePreEvalDedup) {
+        preEvaluatingRoutes.set(options.currentPath, preEvalPromise);
+      }
       await preEvalPromise;
       targetId = await resolveCanonicalSlotId(slotId, storage);
     }

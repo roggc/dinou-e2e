@@ -76,9 +76,19 @@ function nextMonotonicGenTime(prevGenTime = 0) {
   return next;
 }
 
+function isCloudflareWorkersRuntime() {
+  return (
+    typeof navigator !== "undefined" &&
+    navigator.userAgent === "Cloudflare-Workers"
+  );
+}
+
 function enqueueRevalidation(fn) {
   if (revalQueueStorage.getStore()) {
     return fn();
+  }
+  if (isCloudflareWorkersRuntime()) {
+    return revalQueueStorage.run(true, fn);
   }
   const run = () => revalQueueStorage.run(true, fn);
   const nextPromise = revalState.queue.then(run, run);
@@ -100,12 +110,15 @@ async function readEdgeStorageOrAsset(storage, key) {
     return null;
   }
   try {
-    const reqContext = getContext();
+    const isCfWorkers = isCloudflareWorkersRuntime();
+    const reqContext = isCfWorkers ? requestStorage?.getStore?.() : getContext();
     const assets =
       reqContext?.env?.ASSETS ||
       reqContext?.platformContext?.env?.ASSETS ||
       reqContext?.req?.env?.ASSETS ||
-      (typeof globalThis !== "undefined" ? globalThis.__DINOU_ENV__?.ASSETS : null);
+      (!isCfWorkers && typeof globalThis !== "undefined"
+        ? globalThis.__DINOU_ENV__?.ASSETS
+        : null);
     if (assets && typeof assets.fetch === "function") {
       const cleanKey = String(key).replace(/^\/+/, "");
       const res = await fetchCloudflareDist2Asset(assets, cleanKey);
@@ -981,8 +994,9 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
   const onlyIfExpired = Boolean(internalOptions?.onlyIfExpired);
   const recomposeOnly = Boolean(internalOptions?.recomposeOnly);
   const inFlightKey = `${targetPath}:${recomposeOnly ? "recompose" : onlyRefreshSlots ? "slots" : "full"}:${onlyIfExpired ? "ttl" : "force"}`;
+  const useInflightDedup = !isCloudflareWorkersRuntime();
 
-  if (inflightLayoutRevalidations.has(inFlightKey)) {
+  if (useInflightDedup && inflightLayoutRevalidations.has(inFlightKey)) {
     return inflightLayoutRevalidations.get(inFlightKey);
   }
 
@@ -1462,11 +1476,15 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
       return true;
   });
 
-  inflightLayoutRevalidations.set(inFlightKey, revalPromise);
+  if (useInflightDedup) {
+    inflightLayoutRevalidations.set(inFlightKey, revalPromise);
+  }
   try {
     return await revalPromise;
   } finally {
-    inflightLayoutRevalidations.delete(inFlightKey);
+    if (useInflightDedup) {
+      inflightLayoutRevalidations.delete(inFlightKey);
+    }
   }
 }
 
