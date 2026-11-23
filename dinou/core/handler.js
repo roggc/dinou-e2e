@@ -3260,7 +3260,35 @@ async function handleRequest(request, platformContext = {}) {
       queryObj.ssr_crash !== "true" &&
       !platformContext?.isSSG
     ) {
+      const newlyPopulatedLayoutKeys = [];
       try {
+        if (hasDynamicUrlParams && activeLayoutsForRoute.length > 0) {
+          for (let i = activeLayoutsForRoute.length - 1; i >= 0; i--) {
+            const entry = activeLayoutsForRoute[i];
+            if (entry.isDynamicConfig) continue;
+            const ownKey = entry.cleanLayoutKey
+              ? `${entry.cleanLayoutKey}/shell.layout.own.json`
+              : "shell.layout.own.json";
+            const lMetaKey = entry.cleanLayoutKey
+              ? `${entry.cleanLayoutKey}/layout.metadata.json`
+              : "layout.metadata.json";
+            const lRscKey = entry.cleanLayoutKey
+              ? `${entry.cleanLayoutKey}/layout.rsc`
+              : "layout.rsc";
+            const [existingOwn, existingMeta] = await Promise.all([
+              readStorageArtifact(storage, ownKey, platformContext, request.url),
+              readMetaFromStorage(storage, lMetaKey, lRscKey, platformContext, request.url),
+            ]);
+            if (existingMeta?.dynamic) continue;
+            if (!existingOwn || !existingMeta) {
+              const { revalidateLayout } = await import("./cache-revalidate.js");
+              const didPopulate = await revalidateLayout(entry.layoutRoutePath);
+              if (didPopulate && entry.cleanLayoutKey) {
+                newlyPopulatedLayoutKeys.push(entry.cleanLayoutKey);
+              }
+            }
+          }
+        }
         const ssgUrl = new URL(reqPath, request.url);
         const ssgReq = new Request(ssgUrl.href, { method: "GET" });
         const ssgRes = await handleRequest(ssgReq, {
@@ -3268,6 +3296,18 @@ async function handleRequest(request, platformContext = {}) {
           isSSG: true,
         });
         await ssgRes.text();
+        if (ssgRes.status !== 200 && newlyPopulatedLayoutKeys.length > 0) {
+          for (const lKey of newlyPopulatedLayoutKeys) {
+            for (const suffix of [
+              "shell.layout.own.json",
+              "shell.layout.json",
+              "layout.rsc",
+              "layout.metadata.json",
+            ]) {
+              await Promise.resolve(storage.delete(`${lKey}/${suffix}`)).catch(() => {});
+            }
+          }
+        }
         cachedItem = await storage.get(htmlKey);
         if (!cachedItem) {
           const shellHtmlKey = cleanPath ? `${cleanPath}/shell.html` : "shell.html";
@@ -4845,6 +4885,35 @@ async function handleRequest(request, platformContext = {}) {
                     const shellRscKey = cleanPath ? `${cleanPath}/shell.rsc` : "shell.rsc";
                     await storage.set(shellHtmlKey, fullHtml, genMeta);
                     await storage.set(shellRscKey, pageRscText || rscPayload);
+                  } else if (
+                    !platformContext?.isSSG &&
+                    hasDynamicUrlParams &&
+                    activeLayoutsForRoute.length > 0
+                  ) {
+                    try {
+                      for (let i = activeLayoutsForRoute.length - 1; i >= 0; i--) {
+                        const entry = activeLayoutsForRoute[i];
+                        if (entry.isDynamicConfig) continue;
+                        const ownKey = entry.cleanLayoutKey
+                          ? `${entry.cleanLayoutKey}/shell.layout.own.json`
+                          : "shell.layout.own.json";
+                        const lMetaKey = entry.cleanLayoutKey
+                          ? `${entry.cleanLayoutKey}/layout.metadata.json`
+                          : "layout.metadata.json";
+                        const lRscKey = entry.cleanLayoutKey
+                          ? `${entry.cleanLayoutKey}/layout.rsc`
+                          : "layout.rsc";
+                        const [existingOwn, existingMeta] = await Promise.all([
+                          readStorageArtifact(storage, ownKey, platformContext, request.url),
+                          readMetaFromStorage(storage, lMetaKey, lRscKey, platformContext, request.url),
+                        ]);
+                        if (existingMeta?.dynamic) continue;
+                        if (!existingOwn || !existingMeta) {
+                          const { revalidateLayout } = await import("./cache-revalidate.js");
+                          await revalidateLayout(entry.layoutRoutePath);
+                        }
+                      }
+                    } catch (e) {}
                   }
                   if (!platformContext?.isSSG && !genMeta.ppr && !isError && context._hasResolvedSegments && pageRscText) {
                     let layoutRscText = precomputedLayoutRscText || "";

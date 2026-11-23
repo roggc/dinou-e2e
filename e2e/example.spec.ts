@@ -19559,7 +19559,268 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(pageErrors).toEqual([]);
     });
 
-    test("28. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
+    test("28. [Phase 3 / Stage 1 / Check #62] Dynamic [id] On-Demand ISG Under 3D Triple Synergy (L1 PPR+Slot -> [id] L2 PPR+Slot -> Page PPR+Slot)", async ({
+      page,
+      context,
+      browserName,
+    }) => {
+      test.skip(
+        !isProd,
+        "On-demand ISG + 3D Triple Synergy parameterized caching requires production mode"
+      );
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      const alphaId = `alpha-${browserName}`;
+      const betaId = `beta-${browserName}`;
+      const alphaPath = `/t-3d-cube/isg-param/${alphaId}`;
+      const betaPath = `/t-3d-cube/isg-param/${betaId}`;
+
+      await context.addCookies([
+        { name: "isg_user", value: "vega", url: "http://localhost:3000" },
+      ]);
+
+      // 1. Cold on-demand ISG creation for /alpha-<browser> and /beta-<browser> (with live query params!)
+      await page.goto(`${alphaPath}?v=v1&p=p1`);
+      await waitCubeReady(page);
+      await expect(page.locator("#isg-l2-id")).toHaveText(alphaId);
+      await expect(page.locator("#isg-page-id")).toHaveText(alphaId);
+      await expect(page.locator("#isg-l1-hole-user")).toHaveText("vega");
+      await expect(page.locator("#isg-l2-hole-val")).toHaveText("v1");
+      await expect(page.locator("#isg-page-hole-val")).toHaveText("p1");
+
+      const baseL1Shell = Number(await page.locator("#isg-l1-shell-seq").textContent());
+      const baseL1Slot = Number(await page.locator("#isg-l1-slot-seq").textContent());
+      const baseL1Hole = Number(await page.locator("#isg-l1-hole-seq").textContent());
+      const baseAlphaL2Shell = Number(await page.locator("#isg-l2-shell-seq").textContent());
+      const baseAlphaL2Slot = Number(await page.locator("#isg-l2-slot-seq").textContent());
+      const baseAlphaL2Hole = Number(await page.locator("#isg-l2-hole-seq").textContent());
+      const baseAlphaPageShell = Number(await page.locator("#isg-page-shell-seq").textContent());
+      const baseAlphaPageSlot = Number(await page.locator("#isg-page-slot-seq").textContent());
+      const baseAlphaPageHole = Number(await page.locator("#isg-page-hole-seq").textContent());
+
+      await page.goto(`${betaPath}?v=v2&p=p2`);
+      await waitCubeReady(page);
+      await expect(page.locator("#isg-l2-id")).toHaveText(betaId);
+      await expect(page.locator("#isg-page-id")).toHaveText(betaId);
+      await expect(page.locator("#isg-l2-hole-val")).toHaveText("v2");
+      await expect(page.locator("#isg-page-hole-val")).toHaveText("p2");
+      await expect(page.locator("#isg-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#isg-l1-slot-seq")).toHaveText(String(baseL1Slot));
+
+      const baseBetaL2Shell = Number(await page.locator("#isg-l2-shell-seq").textContent());
+      const baseBetaL2Slot = Number(await page.locator("#isg-l2-slot-seq").textContent());
+      const baseBetaL2Hole = Number(await page.locator("#isg-l2-hole-seq").textContent());
+      const baseBetaPageShell = Number(await page.locator("#isg-page-shell-seq").textContent());
+      const baseBetaPageSlot = Number(await page.locator("#isg-page-slot-seq").textContent());
+      const baseBetaPageHole = Number(await page.locator("#isg-page-hole-seq").textContent());
+
+      // 2. Poison ALL shells & slots for L1, alpha, and beta; bump ONLY dynamic holes -> shells & slots stay frozen!
+      const poison1 =
+        Math.max(
+          baseL1Shell,
+          baseL1Slot,
+          baseL1Hole,
+          baseAlphaL2Shell,
+          baseAlphaL2Slot,
+          baseAlphaL2Hole,
+          baseAlphaPageShell,
+          baseAlphaPageSlot,
+          baseAlphaPageHole,
+          baseBetaL2Shell,
+          baseBetaL2Slot,
+          baseBetaL2Hole,
+          baseBetaPageShell,
+          baseBetaPageSlot,
+          baseBetaPageHole
+        ) + 899;
+
+      const nextL1Hole = baseL1Hole + 621;
+      const nextAlphaL2Hole = baseAlphaL2Hole + 622;
+      const nextAlphaPageHole = baseAlphaPageHole + 623;
+      const nextBetaL2Hole = baseBetaL2Hole + 624;
+      const nextBetaPageHole = baseBetaPageHole + 625;
+
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          isgL1ShellSeq: poison1,
+          isgL1SlotSeq: poison1,
+          isgL1HoleSeq: nextL1Hole,
+          isgAlphaL2ShellSeq: poison1,
+          isgAlphaL2SlotSeq: poison1,
+          isgAlphaL2HoleSeq: nextAlphaL2Hole,
+          isgAlphaPageShellSeq: poison1,
+          isgAlphaPageSlotSeq: poison1,
+          isgAlphaPageHoleSeq: nextAlphaPageHole,
+          isgBetaL2ShellSeq: poison1,
+          isgBetaL2SlotSeq: poison1,
+          isgBetaL2HoleSeq: nextBetaL2Hole,
+          isgBetaPageShellSeq: poison1,
+          isgBetaPageSlotSeq: poison1,
+          isgBetaPageHoleSeq: nextBetaPageHole,
+        }
+      );
+      await context.addCookies([
+        { name: "isg_user", value: "rigel", url: "http://localhost:3000" },
+      ]);
+
+      await page.goto(`${alphaPath}?v=v3&p=p3`);
+      await waitCubeReady(page);
+      await expect(page.locator("#isg-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#isg-l1-slot-seq")).toHaveText(String(baseL1Slot));
+      await expect(page.locator("#isg-l1-hole-user")).toHaveText("rigel");
+      await expect(page.locator("#isg-l1-hole-seq")).toHaveText(String(nextL1Hole));
+      await expect(page.locator("#isg-l2-id")).toHaveText(alphaId);
+      await expect(page.locator("#isg-l2-shell-seq")).toHaveText(String(baseAlphaL2Shell));
+      await expect(page.locator("#isg-l2-slot-seq")).toHaveText(String(baseAlphaL2Slot));
+      await expect(page.locator("#isg-l2-hole-val")).toHaveText("v3");
+      await expect(page.locator("#isg-l2-hole-seq")).toHaveText(String(nextAlphaL2Hole));
+      await expect(page.locator("#isg-page-id")).toHaveText(alphaId);
+      await expect(page.locator("#isg-page-shell-seq")).toHaveText(String(baseAlphaPageShell));
+      await expect(page.locator("#isg-page-slot-seq")).toHaveText(String(baseAlphaPageSlot));
+      await expect(page.locator("#isg-page-hole-val")).toHaveText("p3");
+      await expect(page.locator("#isg-page-hole-seq")).toHaveText(String(nextAlphaPageHole));
+
+      await page.goto(`${betaPath}?v=v4&p=p4`);
+      await waitCubeReady(page);
+      await expect(page.locator("#isg-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#isg-l1-slot-seq")).toHaveText(String(baseL1Slot));
+      await expect(page.locator("#isg-l1-hole-user")).toHaveText("rigel");
+      await expect(page.locator("#isg-l1-hole-seq")).toHaveText(String(nextL1Hole));
+      await expect(page.locator("#isg-l2-id")).toHaveText(betaId);
+      await expect(page.locator("#isg-l2-shell-seq")).toHaveText(String(baseBetaL2Shell));
+      await expect(page.locator("#isg-l2-slot-seq")).toHaveText(String(baseBetaL2Slot));
+      await expect(page.locator("#isg-l2-hole-val")).toHaveText("v4");
+      await expect(page.locator("#isg-l2-hole-seq")).toHaveText(String(nextBetaL2Hole));
+      await expect(page.locator("#isg-page-id")).toHaveText(betaId);
+      await expect(page.locator("#isg-page-shell-seq")).toHaveText(String(baseBetaPageShell));
+      await expect(page.locator("#isg-page-slot-seq")).toHaveText(String(baseBetaPageSlot));
+      await expect(page.locator("#isg-page-hole-val")).toHaveText("p4");
+      await expect(page.locator("#isg-page-hole-seq")).toHaveText(String(nextBetaPageHole));
+
+      // 3. Live refreshSlot on alpha's page & L2 slots -> persists on alpha, preserves client state, leaves beta untouched!
+      await page.goto(`${alphaPath}?v=v3&p=p3`);
+      await waitCubeReady(page);
+      await page.click("#probe-inc-isg-l1");
+      await page.click(`#probe-inc-isg-l2-${alphaId}`);
+      await page.click(`#probe-inc-isg-page-${alphaId}`);
+      await expect(page.locator("#probe-count-isg-l1")).toHaveText("1");
+      await expect(page.locator(`#probe-count-isg-l2-${alphaId}`)).toHaveText("1");
+      await expect(page.locator(`#probe-count-isg-page-${alphaId}`)).toHaveText("1");
+      const l1MountId = await page.locator("#probe-mount-isg-l1").textContent();
+
+      const nextAlphaL2Slot = baseAlphaL2Slot + 631;
+      const nextAlphaPageSlot = baseAlphaPageSlot + 632;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          isgL1ShellSeq: poison1,
+          isgL1SlotSeq: poison1,
+          isgAlphaL2ShellSeq: poison1,
+          isgAlphaL2SlotSeq: nextAlphaL2Slot,
+          isgAlphaPageShellSeq: poison1,
+          isgAlphaPageSlotSeq: nextAlphaPageSlot,
+          isgBetaL2ShellSeq: poison1,
+          isgBetaL2SlotSeq: poison1,
+          isgBetaPageShellSeq: poison1,
+          isgBetaPageSlotSeq: poison1,
+        }
+      );
+
+      await page.evaluate(
+        (id) => (window as any).__CUBE_3D__.refreshSlot(id, true),
+        `cube-isg-l2-slot-${alphaId}`
+      );
+      await page.evaluate(
+        (id) => (window as any).__CUBE_3D__.refreshSlot(id, true),
+        `cube-isg-page-slot-${alphaId}`
+      );
+
+      await expect(page.locator("#isg-l2-slot-seq")).toHaveText(String(nextAlphaL2Slot), { timeout: 10000 });
+      await expect(page.locator("#isg-page-slot-seq")).toHaveText(String(nextAlphaPageSlot), { timeout: 10000 });
+      await expect(page.locator("#probe-count-isg-l1")).toHaveText("1");
+      await expect(page.locator(`#probe-count-isg-l2-${alphaId}`)).toHaveText("1");
+      await expect(page.locator(`#probe-count-isg-page-${alphaId}`)).toHaveText("1");
+
+      // 4. Soft <Link> navigation alpha -> beta -> alpha preserves L1 client probe mountId & count!
+      await page.click("#link-isg-sibling");
+      await expect(page.locator("#isg-page-id")).toHaveText(betaId, { timeout: 15000 });
+      await expect(page.locator("#isg-l2-id")).toHaveText(betaId, { timeout: 15000 });
+      await expect(page.locator("#probe-mount-isg-l1")).toHaveText(String(l1MountId));
+      await expect(page.locator("#probe-count-isg-l1")).toHaveText("1");
+      await expect(page.locator("#isg-l2-slot-seq")).toHaveText(String(baseBetaL2Slot));
+      await expect(page.locator("#isg-page-slot-seq")).toHaveText(String(baseBetaPageSlot));
+      await expect(page.locator("#isg-l2-hole-val")).toHaveText(`nav-${betaId}`);
+      await expect(page.locator("#isg-page-hole-val")).toHaveText(`navp-${betaId}`);
+
+      await page.click("#link-isg-sibling");
+      await expect(page.locator("#isg-page-id")).toHaveText(alphaId, { timeout: 15000 });
+      await expect(page.locator("#isg-l2-id")).toHaveText(alphaId, { timeout: 15000 });
+      await expect(page.locator("#probe-mount-isg-l1")).toHaveText(String(l1MountId));
+      await expect(page.locator("#probe-count-isg-l1")).toHaveText("1");
+      await expect(page.locator("#isg-l2-slot-seq")).toHaveText(String(nextAlphaL2Slot));
+      await expect(page.locator("#isg-page-slot-seq")).toHaveText(String(nextAlphaPageSlot));
+
+      // F5 reload on alpha confirms both refreshed slots persisted while shells stayed frozen!
+      await page.waitForTimeout(300);
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#isg-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#isg-l2-shell-seq")).toHaveText(String(baseAlphaL2Shell));
+      await expect(page.locator("#isg-l2-slot-seq")).toHaveText(String(nextAlphaL2Slot));
+      await expect(page.locator("#isg-page-shell-seq")).toHaveText(String(baseAlphaPageShell));
+      await expect(page.locator("#isg-page-slot-seq")).toHaveText(String(nextAlphaPageSlot));
+
+      // 5. Surgical revalidateLayout(alpha) updates ONLY alpha's L2 shell while preserving L1, alpha Page shell/slots, and all of beta!
+      const nextAlphaL2Shell = baseAlphaL2Shell + 641;
+      const poison2 = Math.max(poison1, nextAlphaL2Shell, nextAlphaPageSlot) + 899;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          isgL1ShellSeq: poison2,
+          isgL1SlotSeq: poison2,
+          isgAlphaL2ShellSeq: nextAlphaL2Shell,
+          isgAlphaL2SlotSeq: poison2,
+          isgAlphaPageShellSeq: poison2,
+          isgAlphaPageSlotSeq: poison2,
+          isgBetaL2ShellSeq: poison2,
+          isgBetaL2SlotSeq: poison2,
+          isgBetaPageShellSeq: poison2,
+          isgBetaPageSlotSeq: poison2,
+        }
+      );
+      await page.evaluate(
+        (p) => (window as any).__CUBE_3D__.revalLayout(p),
+        alphaPath
+      );
+
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#isg-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#isg-l1-slot-seq")).toHaveText(String(baseL1Slot));
+      await expect(page.locator("#isg-l2-shell-seq")).toHaveText(String(nextAlphaL2Shell));
+      await expect(page.locator("#isg-l2-slot-seq")).toHaveText(String(nextAlphaL2Slot));
+      await expect(page.locator("#isg-page-shell-seq")).toHaveText(String(baseAlphaPageShell));
+      await expect(page.locator("#isg-page-slot-seq")).toHaveText(String(nextAlphaPageSlot));
+
+      // Beta remains completely untouched!
+      await page.goto(`${betaPath}?v=v5&p=p5`);
+      await waitCubeReady(page);
+      await expect(page.locator("#isg-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#isg-l2-shell-seq")).toHaveText(String(baseBetaL2Shell));
+      await expect(page.locator("#isg-l2-slot-seq")).toHaveText(String(baseBetaL2Slot));
+      await expect(page.locator("#isg-page-shell-seq")).toHaveText(String(baseBetaPageShell));
+      await expect(page.locator("#isg-page-slot-seq")).toHaveText(String(baseBetaPageSlot));
+      await expect(page.locator("#isg-l2-hole-val")).toHaveText("v5");
+      await expect(page.locator("#isg-page-hole-val")).toHaveText("p5");
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("29. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
       browserName,
     }) => {
       test.skip(

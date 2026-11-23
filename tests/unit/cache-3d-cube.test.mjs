@@ -2791,3 +2791,320 @@ console.log("STAGE5_TRIPLE_SYNERGY_OK");
     removeDirSafe(tmpApp);
   }
 });
+
+test("15. Phase 3 Stage 1 (Check #62) compiled Node AOT integration: Dynamic [id] on-demand ISG under 3D Triple Synergy", async () => {
+  const tmpApp = createFixtureDir("tmp-3d-p3-s1-");
+  try {
+    fs.mkdirSync(path.join(tmpApp, "src/isg/[id]"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpApp, "package.json"),
+      JSON.stringify(
+        {
+          name: "tmp-3d-p3-s1",
+          type: "module",
+          private: true,
+          dependencies: { react: "^19.3.0", "react-dom": "^19.3.0" },
+        },
+        null,
+        2
+      )
+    );
+    writeDinouShim(tmpApp);
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src/state.ts"),
+      `import fs from "node:fs";
+import path from "node:path";
+const FILE = path.resolve(process.cwd(), "p3s1-state.json");
+const DEF = {
+  l1S: 100, l1Sl: 100, l1H: 100,
+  aL2S: 100, aL2Sl: 100, aL2H: 100, aPS: 100, aPSl: 100, aPH: 100,
+  bL2S: 100, bL2Sl: 100, bL2H: 100, bPS: 100, bPSl: 100, bPH: 100,
+};
+export function readS() {
+  try { if (fs.existsSync(FILE)) return { ...DEF, ...JSON.parse(fs.readFileSync(FILE, "utf8")) }; } catch {}
+  return { ...DEF };
+}
+export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+`
+    );
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src/layout.tsx"),
+      `import type { ReactNode } from "react";
+export default function Root({ children }: { children: ReactNode }) {
+  return <html><head><title>P3S1</title></head><body>{children}</body></html>;
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/page.tsx"),
+      `export default function Home() { return <main>home</main>; }\n`
+    );
+
+    // L1: PPR + Slot + Hole
+    fs.writeFileSync(
+      path.join(tmpApp, "src/isg/layout_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\nexport function getCacheTags() { return ["p3-l1"]; }\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/isg/layout.tsx"),
+      `import { Suspense, type ReactNode } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep } from "../state";
+
+async function L1H() {
+  const u = String(getContext()?.req?.cookies?.u || "anon");
+  await sleep(10);
+  return <span id="l1-h">{\`\${u}-\${readS().l1H}\`}</span>;
+}
+
+export default function L1({ children }: { children: ReactNode }) {
+  return (
+    <section>
+      <span id="l1-s">{readS().l1S}</span>
+      <DinouCacheSlot id="p3-l1-slot" tag="p3-l1-slot-tag" revalidate={3600}>
+        {async () => <span id="l1-sl">{readS().l1Sl}</span>}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>f1</span>}><L1H /></Suspense>
+      {children}
+    </section>
+  );
+}
+`
+    );
+
+    // L2 ([id]): PPR + Slot + Hole
+    fs.writeFileSync(
+      path.join(tmpApp, "src/isg/[id]/layout_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\nexport function getCacheTags({ id }: { id: string }) { return [\`p3-l2-\${id}\`]; }\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/isg/[id]/layout.tsx"),
+      `import { Suspense, type ReactNode } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep } from "../../state";
+
+async function L2H({ id }: { id: string }) {
+  const v = String(getContext()?.req?.query?.v || "base");
+  await sleep(10);
+  const st = readS();
+  const seq = id === "beta" ? st.bL2H : st.aL2H;
+  return <span id="l2-h">{\`\${id}-\${v}-\${seq}\`}</span>;
+}
+
+export default function L2({ children, params }: { children: ReactNode; params: { id: string } }) {
+  const id = String(params?.id || "unknown");
+  const st = readS();
+  const shellSeq = id === "beta" ? st.bL2S : st.aL2S;
+  return (
+    <section>
+      <span id="l2-id">{id}</span>
+      <span id="l2-s">{shellSeq}</span>
+      <DinouCacheSlot id={\`p3-l2-slot-\${id}\`} tag={\`p3-l2-slot-tag-\${id}\`} revalidate={3600}>
+        {async () => <span id="l2-sl">{id === "beta" ? readS().bL2Sl : readS().aL2Sl}</span>}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>f2</span>}><L2H id={id} /></Suspense>
+      {children}
+    </section>
+  );
+}
+`
+    );
+
+    // Page ([id]): PPR + Slot + Hole + allowISG = true + getStaticPaths = []
+    fs.writeFileSync(
+      path.join(tmpApp, "src/isg/[id]/page_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\nexport const allowISG = true;\nexport function getStaticPaths() { return []; }\nexport function getCacheTags({ id }: { id: string }) { return [\`p3-page-\${id}\`]; }\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/isg/[id]/page.tsx"),
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep } from "../../state";
+
+async function PH({ id }: { id: string }) {
+  const p = String(getContext()?.req?.query?.p || "base");
+  await sleep(10);
+  const st = readS();
+  const seq = id === "beta" ? st.bPH : st.aPH;
+  return <span id="p-h">{\`\${id}-\${p}-\${seq}\`}</span>;
+}
+
+export default function Page({ params }: { params: { id: string } }) {
+  const id = String(params?.id || "unknown");
+  const st = readS();
+  const shellSeq = id === "beta" ? st.bPS : st.aPS;
+  return (
+    <main>
+      <span id="p-id">{id}</span>
+      <span id="p-s">{shellSeq}</span>
+      <DinouCacheSlot id={\`p3-p-slot-\${id}\`} tag={\`p3-p-slot-tag-\${id}\`} revalidate={3600}>
+        {async () => <span id="p-sl">{id === "beta" ? readS().bPSl : readS().aPSl}</span>}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>fp</span>}><PH id={id} /></Suspense>
+    </main>
+  );
+}
+`
+    );
+
+    const buildRes = spawnSync(process.execPath, [CLI_PATH, "build:node:esbuild"], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 120_000,
+    });
+    assert.equal(
+      buildRes.status,
+      0,
+      `Phase 3 Stage 1 fixture build failed:\n${buildRes.stdout}\n${buildRes.stderr}`
+    );
+
+    // Confirm neither /isg/alpha nor /isg/beta was pre-rendered at SSG time
+    assert.equal(fs.existsSync(path.join(tmpApp, ".dinou/dist2/isg/alpha/index.html")), false);
+    assert.equal(fs.existsSync(path.join(tmpApp, ".dinou/dist2/isg/beta/index.html")), false);
+
+    const verifyScript = path.join(tmpApp, "verify-p3s1.mjs");
+    fs.writeFileSync(
+      verifyScript,
+      `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const { FileSystemStorage, setStorageAdapter } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/storage-adapter.js")).href
+      )});
+setStorageAdapter(new FileSystemStorage(path.resolve(".dinou/dist2")));
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+const { revalidateLayout } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/cache-revalidate.js")).href
+      )});
+globalThis.__DINOU_RENDER_HTML_STREAM__ = ssrMod.renderHtml;
+const opts = { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml };
+
+const writeS = (patch) => {
+  const f = path.resolve("p3s1-state.json");
+  const cur = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : {};
+  fs.writeFileSync(f, JSON.stringify({ ...cur, ...patch }), "utf8");
+};
+const get = async (u, headers = {}) => {
+  const r = await rscMod.handleRequest(new Request("http://localhost" + u, { headers }), opts);
+  assert.equal(r.status, 200, "Expected 200 for " + u);
+  return await r.text();
+};
+const textById = (html, id) => {
+  const m = html.match(new RegExp(\`id="\${id}"[^>]*>([^<]+)<\`));
+  return m ? m[1] : null;
+};
+
+// 1. Cold on-demand ISG creation for /isg/alpha?v=1&p=p1 and /isg/beta?v=2&p=p2
+const a1 = await get("/isg/alpha?v=1&p=p1", { cookie: "u=vega" });
+assert.equal(textById(a1, "l1-s"), "100");
+assert.equal(textById(a1, "l1-sl"), "100");
+assert.equal(textById(a1, "l1-h"), "vega-100");
+assert.equal(textById(a1, "l2-id"), "alpha");
+assert.equal(textById(a1, "l2-s"), "100");
+assert.equal(textById(a1, "l2-sl"), "100");
+assert.equal(textById(a1, "l2-h"), "alpha-1-100");
+assert.equal(textById(a1, "p-id"), "alpha");
+assert.equal(textById(a1, "p-s"), "100");
+assert.equal(textById(a1, "p-sl"), "100");
+assert.equal(textById(a1, "p-h"), "alpha-p1-100");
+
+const b1 = await get("/isg/beta?v=2&p=p2", { cookie: "u=vega" });
+assert.equal(textById(b1, "l2-id"), "beta");
+assert.equal(textById(b1, "l2-s"), "100");
+assert.equal(textById(b1, "l2-h"), "beta-2-100");
+assert.equal(textById(b1, "p-id"), "beta");
+assert.equal(textById(b1, "p-s"), "100");
+assert.equal(textById(b1, "p-h"), "beta-p2-100");
+
+// Verify on-demand ISG persisted per-instance layout & page shell artifacts
+assert.ok(fs.existsSync(path.resolve(".dinou/dist2/isg/alpha/shell.page.json")), "alpha shell.page.json must persist on cold ISG");
+assert.ok(fs.existsSync(path.resolve(".dinou/dist2/isg/alpha/shell.layout.own.json")), "alpha shell.layout.own.json must persist on cold ISG");
+assert.ok(fs.existsSync(path.resolve(".dinou/dist2/isg/beta/shell.page.json")), "beta shell.page.json must persist on cold ISG");
+assert.ok(fs.existsSync(path.resolve(".dinou/dist2/isg/beta/shell.layout.own.json")), "beta shell.layout.own.json must persist on cold ISG");
+
+// 2. Poison ALL shells & slots; bump ONLY holes -> shells & slots stay frozen across both alpha & beta!
+writeS({
+  l1S: 999, l1Sl: 999, l1H: 201,
+  aL2S: 999, aL2Sl: 999, aL2H: 202, aPS: 999, aPSl: 999, aPH: 203,
+  bL2S: 999, bL2Sl: 999, bL2H: 204, bPS: 999, bPSl: 999, bPH: 205,
+});
+const a2 = await get("/isg/alpha?v=3&p=p3", { cookie: "u=rigel" });
+assert.equal(textById(a2, "l1-s"), "100");
+assert.equal(textById(a2, "l1-sl"), "100");
+assert.equal(textById(a2, "l1-h"), "rigel-201");
+assert.equal(textById(a2, "l2-s"), "100");
+assert.equal(textById(a2, "l2-sl"), "100");
+assert.equal(textById(a2, "l2-h"), "alpha-3-202");
+assert.equal(textById(a2, "p-s"), "100");
+assert.equal(textById(a2, "p-sl"), "100");
+assert.equal(textById(a2, "p-h"), "alpha-p3-203");
+
+const b2 = await get("/isg/beta?v=4&p=p4", { cookie: "u=rigel" });
+assert.equal(textById(b2, "l1-s"), "100");
+assert.equal(textById(b2, "l2-s"), "100");
+assert.equal(textById(b2, "l2-sl"), "100");
+assert.equal(textById(b2, "l2-h"), "beta-4-204");
+assert.equal(textById(b2, "p-s"), "100");
+assert.equal(textById(b2, "p-sl"), "100");
+assert.equal(textById(b2, "p-h"), "beta-p4-205");
+
+// 3. Live /____rsc_slot____ refresh on alpha L2 & Page slots -> persists on alpha, leaves beta untouched!
+writeS({ aL2Sl: 301, aPSl: 302 });
+await get("/____rsc_slot____/p3-l2-slot-alpha?fresh=1", { "x-dinou-current-path": "/isg/alpha" });
+await get("/____rsc_slot____/p3-p-slot-alpha?fresh=1", { "x-dinou-current-path": "/isg/alpha" });
+const a3 = await get("/isg/alpha?v=3&p=p3", { cookie: "u=rigel" });
+assert.equal(textById(a3, "l2-s"), "100");
+assert.equal(textById(a3, "l2-sl"), "301");
+assert.equal(textById(a3, "p-s"), "100");
+assert.equal(textById(a3, "p-sl"), "302");
+const b3 = await get("/isg/beta?v=4&p=p4", { cookie: "u=rigel" });
+assert.equal(textById(b3, "l2-sl"), "100");
+assert.equal(textById(b3, "p-sl"), "100");
+
+// 4. Surgical revalidateLayout("/isg/alpha") updates ONLY alpha L2 shell while preserving L1, alpha Page, and beta!
+writeS({ l1S: 888, l1Sl: 888, aL2S: 401, aL2Sl: 888, aPS: 888, aPSl: 888, bL2S: 888, bL2Sl: 888, bPS: 888, bPSl: 888 });
+await revalidateLayout("/isg/alpha");
+const a4 = await get("/isg/alpha?v=3&p=p3", { cookie: "u=rigel" });
+assert.equal(textById(a4, "l1-s"), "100");
+assert.equal(textById(a4, "l1-sl"), "100");
+assert.equal(textById(a4, "l2-s"), "401");
+assert.equal(textById(a4, "l2-sl"), "301");
+assert.equal(textById(a4, "p-s"), "100");
+assert.equal(textById(a4, "p-sl"), "302");
+const b4 = await get("/isg/beta?v=5&p=p5", { cookie: "u=rigel" });
+assert.equal(textById(b4, "l2-s"), "100");
+assert.equal(textById(b4, "l2-sl"), "100");
+assert.equal(textById(b4, "p-s"), "100");
+assert.equal(textById(b4, "p-sl"), "100");
+
+console.log("PHASE3_STAGE1_ISG_PARAM_OK");
+`
+    );
+
+    const runRes = spawnSync(process.execPath, [verifyScript], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+      timeout: 60_000,
+    });
+    assert.equal(
+      runRes.status,
+      0,
+      `Phase 3 Stage 1 compiled integration failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+    );
+    assert.ok(runRes.stdout.includes("PHASE3_STAGE1_ISG_PARAM_OK"));
+  } finally {
+    removeDirSafe(tmpApp);
+  }
+});

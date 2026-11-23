@@ -8,7 +8,7 @@ All 5 checks below are designed to be implemented and verified **incrementally (
 
 ## Master Checklist (Phase 3)
 
-- [ ] **Stage 1 — Check `#62`:** Dynamic Route Params (`[id]` / `[...slug]`) + On-Demand ISG (`allowISG = true`) under 3D Triple Synergy
+- [x] **Stage 1 — Check `#62`:** Dynamic Route Params (`[id]` / `[...slug]`) + On-Demand ISG (`allowISG = true`) under 3D Triple Synergy *(PASS across Chromium/Firefox/WebKit + Test 15 Node AOT; fixed missing per-instance `shell.layout.own.json` / `layout.metadata.json` / `layout.rsc` population on cold on-demand ISG in `handler.js` + implicit dynamic bailout guard in `cache-revalidate.js`)*
 - [ ] **Stage 2 — Check `#63`:** Distributed Storage Verification (`CloudflareKVStorage` Per-Request Bindings & Multi-Instance `RedisStorage`)
 - [ ] **Stage 3 — Check `#64`:** Parallel Routes (`@sidebar` / `@modal`) Inside Asymmetric Chains (`S → D → S`) with PPR & `<DinouCacheSlot>`
 - [ ] **Stage 4 — Check `#65`:** Client Lifecycle Stress (`refreshSlot` → `reset_layout` / `no_layout` → Browser `Back` / `Forward`)

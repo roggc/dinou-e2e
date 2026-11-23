@@ -209,6 +209,23 @@ export interface Cube3DState {
   tstPageShellSeq: number;
   tstPageHoleSeq: number;
   tstSiblingPageSeq: number;
+
+  // Phase 3 — Stage 1 — Check #62: Dynamic [id] On-Demand ISG Under 3D Triple Synergy
+  isgL1ShellSeq: number;
+  isgL1SlotSeq: number;
+  isgL1HoleSeq: number;
+  isgAlphaL2ShellSeq: number;
+  isgAlphaL2SlotSeq: number;
+  isgAlphaL2HoleSeq: number;
+  isgAlphaPageShellSeq: number;
+  isgAlphaPageSlotSeq: number;
+  isgAlphaPageHoleSeq: number;
+  isgBetaL2ShellSeq: number;
+  isgBetaL2SlotSeq: number;
+  isgBetaL2HoleSeq: number;
+  isgBetaPageShellSeq: number;
+  isgBetaPageSlotSeq: number;
+  isgBetaPageHoleSeq: number;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -397,6 +414,22 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   tstPageShellSeq: 100,
   tstPageHoleSeq: 100,
   tstSiblingPageSeq: 100,
+
+  isgL1ShellSeq: 100,
+  isgL1SlotSeq: 100,
+  isgL1HoleSeq: 100,
+  isgAlphaL2ShellSeq: 100,
+  isgAlphaL2SlotSeq: 100,
+  isgAlphaL2HoleSeq: 100,
+  isgAlphaPageShellSeq: 100,
+  isgAlphaPageSlotSeq: 100,
+  isgAlphaPageHoleSeq: 100,
+  isgBetaL2ShellSeq: 100,
+  isgBetaL2SlotSeq: 100,
+  isgBetaL2HoleSeq: 100,
+  isgBetaPageShellSeq: 100,
+  isgBetaPageSlotSeq: 100,
+  isgBetaPageHoleSeq: 100,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {
