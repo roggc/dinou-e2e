@@ -1168,6 +1168,7 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
           }
 
           // 2. Slot-only refresh path (refresh <DinouCacheSlot> without re-executing layout host)
+          let ownOnlyUnderDynamicAncestor = false;
           if (!resolvedLayoutJsx && onlyRefreshSlots) {
             try {
               let hasNewerAncestorOwnLayout = false;
@@ -1213,9 +1214,27 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
                   if (composed.slotTags.length > 0) {
                     currentMeta.slotTags = composed.slotTags;
                   }
+                } else if (currentMeta.hasDynamicAncestor) {
+                  // Static layout underneath a dynamic ancestor (e.g., L1 -> Dyn L2 -> Static/PPR L3):
+                  // refresh slots inside L3/shell.layout.own.json ONLY without re-executing L3 host!
+                  const existingOwnLayout = await readEdgeStorageOrAsset(storage, shellLayoutOwnKey);
+                  if (existingOwnLayout && existingOwnLayout.content) {
+                    const deserializedOwn = deserializeJSX(existingOwnLayout.content);
+                    const refreshedOwn = await runInLayoutSegment(() =>
+                      refreshNestedSlotsInTree(deserializedOwn, "__layout_shell__", {
+                        currentPath: reqPathWithSlash,
+                      })
+                    );
+                    if (refreshedOwn) {
+                      pendingShellLayoutOwnJson = serializeJSX(refreshedOwn);
+                      didSpliceOnlyLayoutSlots = true;
+                      didRenderFreshLayout = true;
+                      ownOnlyUnderDynamicAncestor = true;
+                    }
+                  }
                 }
               }
-              if (!resolvedLayoutJsx && !hasNewerAncestorOwnLayout) {
+              if (!resolvedLayoutJsx && !ownOnlyUnderDynamicAncestor && !hasNewerAncestorOwnLayout) {
                 const existingShellLayout = await readEdgeStorageOrAsset(storage, shellLayoutKey);
                 if (existingShellLayout && existingShellLayout.content) {
                   const deserialized = deserializeJSX(existingShellLayout.content);
@@ -1236,8 +1255,7 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
           }
 
           // 3. Per-level isolated layout revalidation: render ONLY this layout level and splice into cached ancestors!
-          let ownOnlyUnderDynamicAncestor = false;
-          if (!resolvedLayoutJsx && hasExactOwnLayout) {
+          if (!resolvedLayoutJsx && !ownOnlyUnderDynamicAncestor && hasExactOwnLayout) {
             try {
               const leafEntry = activeChain[0];
               const single = await renderSingleLayoutLevel(leafEntry, {
@@ -1281,6 +1299,9 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
                   // Persist ONLY this level's own fragment & metadata — never freeze the dynamic ancestor!
                   currentMeta.hasDynamicAncestor = true;
                   delete currentMeta.dynamic;
+                  if (Array.isArray(single.ownSlotTags) && single.ownSlotTags.length > 0) {
+                    currentMeta.slotTags = single.ownSlotTags;
+                  }
                   didRenderFreshLayout = true;
                   ownOnlyUnderDynamicAncestor = true;
                 } else {

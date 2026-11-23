@@ -2370,3 +2370,355 @@ console.log("STAGE4_PAIRWISE_OK");
     removeDirSafe(tmpApp);
   }
 });
+
+test("14. Stage 5 Triple Synergy (X+Y+Z) compiled Node AOT integration: L1 PPR+Slot -> L2 Dyn+Slot -> L3 PPR+Slot -> Page PPR+Hole+Slot & shared multi-layer tag ordering", async () => {
+  const tmpApp = createFixtureDir("tmp-3d-stage5-");
+  try {
+    for (const relDir of [
+      "src/ta/dyn-l2/l3",
+      "src/st/sibling",
+    ]) {
+      fs.mkdirSync(path.join(tmpApp, relDir), { recursive: true });
+    }
+
+    fs.writeFileSync(
+      path.join(tmpApp, "package.json"),
+      JSON.stringify({ name: "cube-3d-stage5-fixture", private: true, type: "module" }, null, 2)
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "tsconfig.json"),
+      JSON.stringify(
+        {
+          compilerOptions: {
+            target: "ES2022",
+            module: "ESNext",
+            moduleResolution: "bundler",
+            jsx: "react-jsx",
+          },
+        },
+        null,
+        2
+      )
+    );
+    writeDinouShim(tmpApp);
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src", "state.ts"),
+      `import fs from "node:fs";
+import path from "node:path";
+const FILE = path.resolve(process.cwd(), "s5-state.json");
+const DEF = {
+  taL1S: 100, taL1Slot: 100, taL1H: 100,
+  taL2H: 100, taL2Slot: 100,
+  taL3S: 100, taL3Slot: 100, taL3H: 100,
+  taPS: 100, taPSlot: 100, taPH: 100, taHSlot: 100,
+  stL1: 100, stSlot: 100, stUnrel: 100, stPage: 100, stHole: 100, stSib: 100,
+};
+export function readS() {
+  try { if (fs.existsSync(FILE)) return { ...DEF, ...JSON.parse(fs.readFileSync(FILE, "utf8")) }; } catch {}
+  return { ...DEF };
+}
+export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+`
+    );
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src", "layout.tsx"),
+      `import type { ReactNode } from "react";
+export default function Root({ children }: { children: ReactNode }) {
+  return <html><head><title>S5</title></head><body>{children}</body></html>;
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src", "page.tsx"),
+      `export default function Home() { return <main>home</main>; }\n`
+    );
+
+    // 1. Check #60: L1 PPR+Slot -> L2 Dyn+Slot -> L3 PPR+Slot -> Page PPR+Hole+Slot
+    fs.writeFileSync(path.join(tmpApp, "src/ta/layout_functions.ts"), `export const ppr = true;\nexport const revalidate = 3600;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/ta/layout.tsx"),
+      `import { Suspense, type ReactNode } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep } from "../state";
+async function L1H() {
+  const u = String(getContext()?.req?.cookies?.u || "anon");
+  await sleep(10);
+  return <span id="ta-l1-h">{\`\${u}-\${readS().taL1H}\`}</span>;
+}
+export default function TaL1({ children }: { children: ReactNode }) {
+  return (
+    <section>
+      <span id="ta-l1-s">{readS().taL1S}</span>
+      <DinouCacheSlot id="s5-l1-slot" revalidate={3600}>{async () => <span id="ta-l1-sl">{readS().taL1Slot}</span>}</DinouCacheSlot>
+      <Suspense fallback={<span>f1</span>}><L1H /></Suspense>
+      {children}
+    </section>
+  );
+}
+`
+    );
+    fs.writeFileSync(path.join(tmpApp, "src/ta/dyn-l2/layout_functions.ts"), `export const revalidate = 0;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/ta/dyn-l2/layout.tsx"),
+      `import type { ReactNode } from "react";
+import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../../state";
+export default function TaL2({ children }: { children: ReactNode }) {
+  return (
+    <div>
+      <span id="ta-l2-h">{readS().taL2H}</span>
+      <DinouCacheSlot id="s5-l2-slot" revalidate={3600}>{async () => <span id="ta-l2-sl">{readS().taL2Slot}</span>}</DinouCacheSlot>
+      {children}
+    </div>
+  );
+}
+`
+    );
+    fs.writeFileSync(path.join(tmpApp, "src/ta/dyn-l2/l3/layout_functions.ts"), `export const ppr = true;\nexport const revalidate = 3600;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/ta/dyn-l2/l3/layout.tsx"),
+      `import { Suspense, type ReactNode } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep } from "../../../state";
+async function L3H() {
+  const q = String(getContext()?.req?.query?.q3 || "std");
+  await sleep(10);
+  return <span id="ta-l3-h">{\`\${q}-\${readS().taL3H}\`}</span>;
+}
+export default function TaL3({ children }: { children: ReactNode }) {
+  return (
+    <div>
+      <span id="ta-l3-s">{readS().taL3S}</span>
+      <DinouCacheSlot id="s5-l3-slot" revalidate={3600}>{async () => <span id="ta-l3-sl">{readS().taL3Slot}</span>}</DinouCacheSlot>
+      <Suspense fallback={<span>f3</span>}><L3H /></Suspense>
+      {children}
+    </div>
+  );
+}
+`
+    );
+    fs.writeFileSync(path.join(tmpApp, "src/ta/dyn-l2/l3/page_functions.ts"), `export const ppr = true;\nexport const revalidate = 3600;\n`);
+    fs.writeFileSync(
+      path.join(tmpApp, "src/ta/dyn-l2/l3/page.tsx"),
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep } from "../../../state";
+async function PH() {
+  const pm = String(getContext()?.req?.query?.pm || "base");
+  await sleep(10);
+  return (
+    <div>
+      <span id="ta-p-h">{\`\${pm}-\${readS().taPH}\`}</span>
+      <DinouCacheSlot id="s5-h-slot" revalidate={3600}>{async () => <span id="ta-h-sl">{readS().taHSlot}</span>}</DinouCacheSlot>
+    </div>
+  );
+}
+export default function TaPage() {
+  return (
+    <main>
+      <span id="ta-p-s">{readS().taPS}</span>
+      <DinouCacheSlot id="s5-p-slot" revalidate={3600}>{async () => <span id="ta-p-sl">{readS().taPSlot}</span>}</DinouCacheSlot>
+      <Suspense fallback={<span>fp</span>}><PH /></Suspense>
+    </main>
+  );
+}
+`
+    );
+
+    // 2. Check #61: Shared multi-layer tag across Layout + Page + Slot
+    fs.writeFileSync(
+      path.join(tmpApp, "src/st/layout_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\nexport function getCacheTags() { return ["s5-all", "s5-l1"]; }\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/st/layout.tsx"),
+      `import type { ReactNode } from "react";
+import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../state";
+export default function StL1({ children }: { children: ReactNode }) {
+  return (
+    <section>
+      <span id="st-l1">{readS().stL1}</span>
+      <DinouCacheSlot id="s5-st-slot" tags={["s5-all", "s5-slot-only"]} revalidate={3600}>{async () => <span id="st-sl">{readS().stSlot}</span>}</DinouCacheSlot>
+      <DinouCacheSlot id="s5-st-unrel" tags={["s5-unrel"]} revalidate={3600}>{async () => <span id="st-un">{readS().stUnrel}</span>}</DinouCacheSlot>
+      {children}
+    </section>
+  );
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/st/page_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\nexport function getCacheTags() { return ["s5-all", "s5-page"]; }\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/st/page.tsx"),
+      `import { Suspense } from "react";
+import { readS, sleep } from "../state";
+async function StH() { await sleep(10); return <span id="st-h">{readS().stHole}</span>; }
+export default function StPage() {
+  return <main><span id="st-p">{readS().stPage}</span><Suspense fallback={<span>f</span>}><StH /></Suspense></main>;
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/st/sibling/page_functions.ts"),
+      `export const ppr = false;\nexport const revalidate = 3600;\nexport function getCacheTags() { return ["s5-sib"]; }\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/st/sibling/page.tsx"),
+      `import { readS } from "../../state";
+export default function StSib() { return <main><span id="st-sib">{readS().stSib}</span></main>; }
+`
+    );
+
+    const buildRes = spawnSync(process.execPath, [CLI_PATH, "build:node:esbuild"], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 120_000,
+    });
+    assert.equal(
+      buildRes.status,
+      0,
+      `Stage 5 fixture build failed:\n${buildRes.stdout}\n${buildRes.stderr}`
+    );
+
+    const verifyScript = path.join(tmpApp, "verify-stage5.mjs");
+    fs.writeFileSync(
+      verifyScript,
+      `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const { FileSystemStorage, setStorageAdapter } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/storage-adapter.js")).href
+      )});
+const { revalidateLayout, revalidateTag } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/cache-revalidate.js")).href
+      )});
+setStorageAdapter(new FileSystemStorage(path.resolve(".dinou/dist2")));
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+globalThis.__DINOU_RENDER_HTML_STREAM__ = ssrMod.renderHtml;
+const opts = { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml };
+
+const textById = (html, id) => {
+  const m = html.match(new RegExp('id="' + id + '"[^>]*>([^<]*)<'));
+  return m ? m[1] : null;
+};
+const writeS = (patch) => {
+  const f = path.resolve("s5-state.json");
+  const cur = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : {};
+  fs.writeFileSync(f, JSON.stringify({ ...cur, ...patch }), "utf8");
+};
+const get = async (u, headers = {}) => {
+  const r = await rscMod.handleRequest(new Request("http://localhost" + u, { headers }), opts);
+  assert.equal(r.status, 200, "Expected 200 for " + u);
+  return await r.text();
+};
+
+// 1. Check #60: Ultimate Asymmetric Triple Synergy
+await get("/ta/dyn-l2/l3?q3=init&pm=init", { cookie: "u=init" }); // warm hole slot
+writeS({
+  taL1S: 999, taL1Slot: 999, taL1H: 501,
+  taL2H: 502, taL2Slot: 999,
+  taL3S: 999, taL3Slot: 999, taL3H: 503,
+  taPS: 999, taPSlot: 999, taPH: 504, taHSlot: 999,
+});
+const ta1 = await get("/ta/dyn-l2/l3?q3=apex&pm=quasar", { cookie: "u=altair" });
+assert.equal(textById(ta1, "ta-l1-s"), "100");
+assert.equal(textById(ta1, "ta-l1-sl"), "100");
+assert.equal(textById(ta1, "ta-l1-h"), "altair-501");
+assert.equal(textById(ta1, "ta-l2-h"), "502");
+assert.equal(textById(ta1, "ta-l2-sl"), "100");
+assert.equal(textById(ta1, "ta-l3-s"), "100");
+assert.equal(textById(ta1, "ta-l3-sl"), "100");
+assert.equal(textById(ta1, "ta-l3-h"), "apex-503");
+assert.equal(textById(ta1, "ta-p-s"), "100");
+assert.equal(textById(ta1, "ta-p-sl"), "100");
+assert.equal(textById(ta1, "ta-p-h"), "quasar-504");
+assert.equal(textById(ta1, "ta-h-sl"), "100");
+
+// Refresh ALL 5 slots (including L3 slot under dynamic L2!) while keeping ALL 3 static shells poisoned 999!
+writeS({
+  taL1S: 999, taL1Slot: 601,
+  taL2H: 602, taL2Slot: 603,
+  taL3S: 999, taL3Slot: 604,
+  taPS: 999, taPSlot: 605, taHSlot: 606,
+});
+for (const sid of ["s5-l1-slot", "s5-l2-slot", "s5-l3-slot", "s5-p-slot", "s5-h-slot"]) {
+  await get("/____rsc_slot____/" + sid + "?fresh=1", { "x-dinou-current-path": "/ta/dyn-l2/l3" });
+}
+const ta2 = await get("/ta/dyn-l2/l3?q3=apex&pm=quasar", { cookie: "u=altair" });
+assert.equal(textById(ta2, "ta-l1-s"), "100", "L1 shell stayed frozen during 5-slot refresh");
+assert.equal(textById(ta2, "ta-l1-sl"), "601");
+assert.equal(textById(ta2, "ta-l2-h"), "602");
+assert.equal(textById(ta2, "ta-l2-sl"), "603");
+assert.equal(textById(ta2, "ta-l3-s"), "100", "L3 shell under dynamic L2 MUST stay frozen when refreshing L3 slot!");
+assert.equal(textById(ta2, "ta-l3-sl"), "604");
+assert.equal(textById(ta2, "ta-p-s"), "100");
+assert.equal(textById(ta2, "ta-p-sl"), "605");
+assert.equal(textById(ta2, "ta-h-sl"), "606");
+
+// Surgical revalidateLayout(L3) updates ONLY L3 shell while preserving L1/Page shells & all 5 slots
+writeS({
+  taL1S: 999, taL1Slot: 999, taL2H: 702, taL2Slot: 999,
+  taL3S: 703, taL3Slot: 999, taPS: 999, taPSlot: 999, taHSlot: 999,
+});
+await revalidateLayout("/ta/dyn-l2/l3");
+const ta3 = await get("/ta/dyn-l2/l3?q3=apex&pm=quasar", { cookie: "u=altair" });
+assert.equal(textById(ta3, "ta-l1-s"), "100");
+assert.equal(textById(ta3, "ta-l1-sl"), "601");
+assert.equal(textById(ta3, "ta-l2-h"), "702");
+assert.equal(textById(ta3, "ta-l2-sl"), "603");
+assert.equal(textById(ta3, "ta-l3-s"), "703");
+assert.equal(textById(ta3, "ta-l3-sl"), "604");
+assert.equal(textById(ta3, "ta-p-s"), "100");
+assert.equal(textById(ta3, "ta-p-sl"), "605");
+assert.equal(textById(ta3, "ta-h-sl"), "606");
+
+// 2. Check #61: Shared multi-layer tag across Layout + Page + Slot
+writeS({ stL1: 801, stSlot: 802, stUnrel: 999, stPage: 803, stHole: 804, stSib: 999 });
+await revalidateTag("s5-all");
+const st1 = await get("/st");
+assert.equal(textById(st1, "st-l1"), "801");
+assert.equal(textById(st1, "st-sl"), "802", "Shared slot MUST update BEFORE layout/page in revalidateTag!");
+assert.equal(textById(st1, "st-un"), "100", "Unrelated slot stays frozen");
+assert.equal(textById(st1, "st-p"), "803");
+assert.equal(textById(st1, "st-h"), "804");
+
+const sib1 = await get("/st/sibling");
+assert.equal(textById(sib1, "st-l1"), "801");
+assert.equal(textById(sib1, "st-sl"), "802");
+assert.equal(textById(sib1, "st-un"), "100");
+assert.equal(textById(sib1, "st-sib"), "100", "Unrelated sibling page stays frozen");
+
+console.log("STAGE5_TRIPLE_SYNERGY_OK");
+`
+    );
+
+    const runRes = spawnSync(process.execPath, [verifyScript], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+      timeout: 60_000,
+    });
+    assert.equal(
+      runRes.status,
+      0,
+      `Stage 5 compiled integration failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+    );
+    assert.ok(runRes.stdout.includes("STAGE5_TRIPLE_SYNERGY_OK"));
+  } finally {
+    removeDirSafe(tmpApp);
+  }
+});

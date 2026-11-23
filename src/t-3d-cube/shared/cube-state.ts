@@ -187,6 +187,28 @@ export interface Cube3DState {
   pairYzHoleOuterSeq: number;
   pairYzHoleInnerSeq: number;
   pairYzHoleInnerTtlSeq: number;
+
+  // Stage 5 — Check #60: Ultimate Asymmetric Triple Synergy (L1 PPR+Slot -> L2 Dyn+Slot -> L3 PPR+Slot -> Page PPR+Hole+Slot)
+  taL1ShellSeq: number;
+  taL1SlotSeq: number;
+  taL1HoleSeq: number;
+  taDynL2HostSeq: number;
+  taDynL2SlotSeq: number;
+  taL3ShellSeq: number;
+  taL3SlotSeq: number;
+  taL3HoleSeq: number;
+  taPageShellSeq: number;
+  taPageShellSlotSeq: number;
+  taPageHoleHostSeq: number;
+  taHoleSlotSeq: number;
+
+  // Stage 5 — Check #61: Shared Multi-Layer Cache Tag (Layout + Page + Slot)
+  tstL1ShellSeq: number;
+  tstSharedSlotSeq: number;
+  tstUnrelatedSlotSeq: number;
+  tstPageShellSeq: number;
+  tstPageHoleSeq: number;
+  tstSiblingPageSeq: number;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -355,6 +377,26 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   pairYzHoleOuterSeq: 100,
   pairYzHoleInnerSeq: 100,
   pairYzHoleInnerTtlSeq: 100,
+
+  taL1ShellSeq: 100,
+  taL1SlotSeq: 100,
+  taL1HoleSeq: 100,
+  taDynL2HostSeq: 100,
+  taDynL2SlotSeq: 100,
+  taL3ShellSeq: 100,
+  taL3SlotSeq: 100,
+  taL3HoleSeq: 100,
+  taPageShellSeq: 100,
+  taPageShellSlotSeq: 100,
+  taPageHoleHostSeq: 100,
+  taHoleSlotSeq: 100,
+
+  tstL1ShellSeq: 100,
+  tstSharedSlotSeq: 100,
+  tstUnrelatedSlotSeq: 100,
+  tstPageShellSeq: 100,
+  tstPageHoleSeq: 100,
+  tstSiblingPageSeq: 100,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {

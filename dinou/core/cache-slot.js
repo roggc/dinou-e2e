@@ -1361,11 +1361,13 @@ async function getSlotJSX(slotId, options = {}) {
           for (const lKey of candidateLayoutKeys) {
             const lMetaKey = lKey ? `${lKey}/layout.metadata.json` : "layout.metadata.json";
             const lMeta = await readMetaFromStorageOrAssets(storage, lMetaKey);
-            if (
-              lMeta &&
-              Array.isArray(lMeta.slotTags) &&
-              lMeta.slotTags.some((t) => slotTagsToMatch.has(t))
-            ) {
+            const lTags = Array.from(
+              new Set([
+                ...(Array.isArray(lMeta?.slotTags) ? lMeta.slotTags : []),
+                ...(Array.isArray(lMeta?.ownSlotTags) ? lMeta.ownSlotTags : []),
+              ])
+            );
+            if (lTags.some((t) => slotTagsToMatch.has(t))) {
               const { revalidateLayout } = await import("./cache-revalidate.js");
               await revalidateLayout(lKey ? "/" + lKey : "/", { onlyRefreshSlots: true });
             }

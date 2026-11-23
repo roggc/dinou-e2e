@@ -41,8 +41,8 @@ Phase 2 is organized into **5 incremental stages**, to be implemented and verifi
 - [x] **Stage 2 — Axis Y (VS / `<DinouCacheSlot>`):** Checks `#51`, `#52`, `#53` (3/3 Playwright PASS + 3 core bugs fixed in `cache-slot.js`, `handler.js`, `cache-revalidate.js`, `slot.js`)
 - [x] **Stage 3 — Axis Z (PPR):** Checks `#54`, `#55` (2/2 Playwright PASS + 3 core bugs fixed in `handler.js`, `ppr-runtime.js`)
 - [x] **Stage 4 — Pairwise (`X+Y`, `X+Z`, `Y+Z`):** Checks `#56`, `#57`, `#58`, `#59` (4/4 Playwright PASS + 1 core architectural bug fixed in `layout-composition.js`, `handler.js`)
-- [ ] **Stage 5 — Triple Synergy (`X+Y+Z`):** Checks `#60`, `#61`
-- [ ] **Final Full Regression Sweep:** Full Chromium suite (`npm run start:node:esbuild`) + all standalone `test:*` suites green
+- [x] **Stage 5 — Triple Synergy (`X+Y+Z`):** Checks `#60`, `#61` (2/2 Playwright PASS + 2 core bugs fixed in `handler.js`, `cache-revalidate.js`, `cache-slot.js`, `generate-static.js`)
+- [x] **Final Full Regression Sweep:** Full Chromium suite (`npm run start:node:esbuild` — **320/320 runnable tests PASS**, 13 dev-only skipped, 0 regressions) + all 14/14 `cache-3d-cube.test.mjs` & standalone suites green
 
 ---
 
@@ -264,4 +264,4 @@ We will execute one stage per iteration:
 2. **Stage 2 (Axis Y — Checks `#51–#53`)** — ✅ Done (3/3 Playwright PASS + 3 core bugs fixed)
 3. **Stage 3 (Axis Z — Checks `#54–#55`)** — ✅ Done (2/2 Playwright PASS + 3 core bugs fixed)
 4. **Stage 4 (Pairwise `X+Y`, `X+Z`, `Y+Z` — Checks `#56–#59`)** — ✅ Done (4/4 Playwright PASS + 1 core bug fixed)
-5. **Stage 5 (Triple Synergy `X+Y+Z` — Checks `#60–#61`) + Final Full Chromium Regression Sweep** ← *Next up once confirmed*
+5. **Stage 5 (Triple Synergy `X+Y+Z` — Checks `#60–#61`) + Final Full Chromium Regression Sweep** — ✅ **ALL 5 STAGES + FINAL FULL SWEEP COMPLETE (100% GREEN!)**

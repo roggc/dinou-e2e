@@ -2727,6 +2727,12 @@ async function handleRequest(request, platformContext = {}) {
                     // Keep shell.layout.own.json and mark metadata with hasDynamicAncestor
                     // instead of falsely marking THIS layout dynamic:true!
                     bridge.setHeader("X-Dinou-Has-Dynamic-Ancestor", "true");
+                    if (Array.isArray(single.ownSlotTags) && single.ownSlotTags.length > 0) {
+                      bridge.setHeader(
+                        "X-Dinou-Slot-Tags",
+                        JSON.stringify(single.ownSlotTags)
+                      );
+                    }
                     jsx = single.ownTree;
                     handledPerLevelSsgLayout = true;
                   }

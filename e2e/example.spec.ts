@@ -19289,7 +19289,277 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(pageErrors).toEqual([]);
     });
 
-    test("26. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
+    test("26. [Stage 5 / Check #60] Triple Synergy Ultimate Asymmetric: L1 PPR+Slot -> L2 Dynamic+Slot -> L3 PPR+Slot -> Page PPR+Hole+Slot", async ({
+      page,
+      context,
+    }) => {
+      test.skip(!isProd, "Ultimate asymmetric 3D Triple Synergy requires production mode");
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      await context.addCookies([
+        { name: "ta_user", value: "polaris", url: "http://localhost:3000" },
+      ]);
+      await page.goto("/t-3d-cube/triple-asym/dyn-l2/l3?l3=zen&pm=nova");
+      await waitCubeReady(page);
+
+      const baseL1Shell = Number(await page.locator("#ta-l1-shell-seq").textContent());
+      const baseL1Slot = Number(await page.locator("#ta-l1-slot-seq").textContent());
+      const baseL1Hole = Number(await page.locator("#ta-l1-hole-seq").textContent());
+      const baseL2Host = Number(await page.locator("#ta-l2-host-seq").textContent());
+      const baseL2Slot = Number(await page.locator("#ta-l2-slot-seq").textContent());
+      const baseL3Shell = Number(await page.locator("#ta-l3-shell-seq").textContent());
+      const baseL3Slot = Number(await page.locator("#ta-l3-slot-seq").textContent());
+      const baseL3Hole = Number(await page.locator("#ta-l3-hole-seq").textContent());
+      const basePageShell = Number(await page.locator("#ta-page-shell-seq").textContent());
+      const basePageShellSlot = Number(await page.locator("#ta-page-shell-slot-seq").textContent());
+      const basePageHoleHost = Number(await page.locator("#ta-page-hole-host-seq").textContent());
+      const baseHoleSlot = Number(await page.locator("#ta-hole-slot-seq").textContent());
+
+      const poison1 =
+        Math.max(
+          baseL1Shell,
+          baseL1Slot,
+          baseL1Hole,
+          baseL2Host,
+          baseL2Slot,
+          baseL3Shell,
+          baseL3Slot,
+          baseL3Hole,
+          basePageShell,
+          basePageShellSlot,
+          basePageHoleHost,
+          baseHoleSlot
+        ) + 899;
+
+      // 1. Poison ALL 3 static shells & ALL 5 slots; bump dynamic L2 & all 3 PPR holes -> shells & slots stay frozen, L2 & holes stream live!
+      const nextL2_1 = baseL2Host + 911;
+      const nextL1Hole = baseL1Hole + 912;
+      const nextL3Hole = baseL3Hole + 913;
+      const nextPageHole = basePageHoleHost + 914;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          taL1ShellSeq: poison1,
+          taL1SlotSeq: poison1,
+          taL1HoleSeq: nextL1Hole,
+          taDynL2HostSeq: nextL2_1,
+          taDynL2SlotSeq: poison1,
+          taL3ShellSeq: poison1,
+          taL3SlotSeq: poison1,
+          taL3HoleSeq: nextL3Hole,
+          taPageShellSeq: poison1,
+          taPageShellSlotSeq: poison1,
+          taPageHoleHostSeq: nextPageHole,
+          taHoleSlotSeq: poison1,
+        }
+      );
+      await context.addCookies([
+        { name: "ta_user", value: "altair", url: "http://localhost:3000" },
+      ]);
+      await page.goto("/t-3d-cube/triple-asym/dyn-l2/l3?l3=apex&pm=quasar");
+      await waitCubeReady(page);
+
+      await expect(page.locator("#ta-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#ta-l1-slot-seq")).toHaveText(String(baseL1Slot));
+      await expect(page.locator("#ta-l1-hole-user")).toHaveText("altair");
+      await expect(page.locator("#ta-l1-hole-seq")).toHaveText(String(nextL1Hole));
+      await expect(page.locator("#ta-l2-host-seq")).toHaveText(String(nextL2_1));
+      await expect(page.locator("#ta-l2-slot-seq")).toHaveText(String(baseL2Slot));
+      await expect(page.locator("#ta-l3-shell-seq")).toHaveText(String(baseL3Shell));
+      await expect(page.locator("#ta-l3-slot-seq")).toHaveText(String(baseL3Slot));
+      await expect(page.locator("#ta-l3-hole-val")).toHaveText("apex");
+      await expect(page.locator("#ta-l3-hole-seq")).toHaveText(String(nextL3Hole));
+      await expect(page.locator("#ta-page-shell-seq")).toHaveText(String(basePageShell));
+      await expect(page.locator("#ta-page-shell-slot-seq")).toHaveText(String(basePageShellSlot));
+      await expect(page.locator("#ta-page-hole-val")).toHaveText("quasar");
+      await expect(page.locator("#ta-page-hole-host-seq")).toHaveText(String(nextPageHole));
+      await expect(page.locator("#ta-hole-slot-seq")).toHaveText(String(baseHoleSlot));
+
+      // 2. Live refreshSlot on ALL 5 slots across all 4 layers (including inside dynamic L2 and inside L3 under dynamic L2!)
+      await page.click("#probe-inc-ta-l1");
+      await page.click("#probe-inc-ta-l2");
+      await page.click("#probe-inc-ta-l3");
+      await page.click("#probe-inc-ta-page");
+      await expect(page.locator("#probe-count-ta-l1")).toHaveText("1");
+      await expect(page.locator("#probe-count-ta-l2")).toHaveText("1");
+      await expect(page.locator("#probe-count-ta-l3")).toHaveText("1");
+      await expect(page.locator("#probe-count-ta-page")).toHaveText("1");
+
+      const nextL1Slot = baseL1Slot + 921;
+      const nextL2Slot = baseL2Slot + 922;
+      const nextL3Slot = baseL3Slot + 923;
+      const nextPageShellSlot = basePageShellSlot + 924;
+      const nextHoleSlot = baseHoleSlot + 925;
+      const nextL2_2 = nextL2_1 + 1;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          taL1ShellSeq: poison1,
+          taL1SlotSeq: nextL1Slot,
+          taDynL2HostSeq: nextL2_2,
+          taDynL2SlotSeq: nextL2Slot,
+          taL3ShellSeq: poison1,
+          taL3SlotSeq: nextL3Slot,
+          taPageShellSeq: poison1,
+          taPageShellSlotSeq: nextPageShellSlot,
+          taHoleSlotSeq: nextHoleSlot,
+        }
+      );
+
+      for (const slotId of [
+        "cube-ta-l1-slot",
+        "cube-ta-l2-slot",
+        "cube-ta-l3-slot",
+        "cube-ta-page-shell-slot",
+        "cube-ta-hole-slot",
+      ]) {
+        await page.evaluate(
+          (id) => (window as any).__CUBE_3D__.refreshSlot(id, true),
+          slotId
+        );
+      }
+
+      await expect(page.locator("#ta-l1-slot-seq")).toHaveText(String(nextL1Slot), { timeout: 10000 });
+      await expect(page.locator("#ta-l2-slot-seq")).toHaveText(String(nextL2Slot), { timeout: 10000 });
+      await expect(page.locator("#ta-l3-slot-seq")).toHaveText(String(nextL3Slot), { timeout: 10000 });
+      await expect(page.locator("#ta-page-shell-slot-seq")).toHaveText(String(nextPageShellSlot), { timeout: 10000 });
+      await expect(page.locator("#ta-hole-slot-seq")).toHaveText(String(nextHoleSlot), { timeout: 10000 });
+
+      // All 4 client probe counters survived live slot refreshes!
+      await expect(page.locator("#probe-count-ta-l1")).toHaveText("1");
+      await expect(page.locator("#probe-count-ta-l2")).toHaveText("1");
+      await expect(page.locator("#probe-count-ta-l3")).toHaveText("1");
+      await expect(page.locator("#probe-count-ta-page")).toHaveText("1");
+
+      // F5 reload confirms ALL 5 refreshed slots persist while ALL 3 shells stayed frozen & L2 ran live!
+      await page.waitForTimeout(400);
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#ta-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#ta-l1-slot-seq")).toHaveText(String(nextL1Slot));
+      await expect(page.locator("#ta-l2-host-seq")).toHaveText(String(nextL2_2));
+      await expect(page.locator("#ta-l2-slot-seq")).toHaveText(String(nextL2Slot));
+      await expect(page.locator("#ta-l3-shell-seq")).toHaveText(String(baseL3Shell));
+      await expect(page.locator("#ta-l3-slot-seq")).toHaveText(String(nextL3Slot));
+      await expect(page.locator("#ta-page-shell-seq")).toHaveText(String(basePageShell));
+      await expect(page.locator("#ta-page-shell-slot-seq")).toHaveText(String(nextPageShellSlot));
+      await expect(page.locator("#ta-hole-slot-seq")).toHaveText(String(nextHoleSlot));
+
+      // 3. Surgical revalidateLayout(L3) updates ONLY L3 shell while preserving L1/Page shells & all 5 refreshed slots (L2 still live!)
+      const nextL3Shell = baseL3Shell + 931;
+      const nextL2_3 = nextL2_2 + 1;
+      const poison2 = Math.max(poison1, nextL3Shell, nextHoleSlot) + 899;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          taL1ShellSeq: poison2,
+          taL1SlotSeq: poison2,
+          taDynL2HostSeq: nextL2_3,
+          taDynL2SlotSeq: poison2,
+          taL3ShellSeq: nextL3Shell,
+          taL3SlotSeq: poison2,
+          taPageShellSeq: poison2,
+          taPageShellSlotSeq: poison2,
+          taHoleSlotSeq: poison2,
+        }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.revalLayout("/t-3d-cube/triple-asym/dyn-l2/l3")
+      );
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#ta-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#ta-l1-slot-seq")).toHaveText(String(nextL1Slot));
+      await expect(page.locator("#ta-l2-host-seq")).toHaveText(String(nextL2_3));
+      await expect(page.locator("#ta-l2-slot-seq")).toHaveText(String(nextL2Slot));
+      await expect(page.locator("#ta-l3-shell-seq")).toHaveText(String(nextL3Shell));
+      await expect(page.locator("#ta-l3-slot-seq")).toHaveText(String(nextL3Slot));
+      await expect(page.locator("#ta-page-shell-seq")).toHaveText(String(basePageShell));
+      await expect(page.locator("#ta-page-shell-slot-seq")).toHaveText(String(nextPageShellSlot));
+      await expect(page.locator("#ta-hole-slot-seq")).toHaveText(String(nextHoleSlot));
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("27. [Stage 5 / Check #61] Triple Synergy Shared Multi-Layer Cache Tag Across Layout + Page + <DinouCacheSlot> (Deterministic Order slot -> layout -> page)", async ({
+      page,
+    }) => {
+      test.skip(!isProd, "Shared multi-layer revalidateTag ordering requires production mode");
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      await page.goto("/t-3d-cube/triple-shared-tag");
+      await waitCubeReady(page);
+      const baseL1Shell = Number(await page.locator("#tst-l1-shell-seq").textContent());
+      const baseSharedSlot = Number(await page.locator("#tst-shared-slot-seq").textContent());
+      const baseUnrelatedSlot = Number(await page.locator("#tst-unrelated-slot-seq").textContent());
+      const basePageShell = Number(await page.locator("#tst-page-shell-seq").textContent());
+      const basePageHole = Number(await page.locator("#tst-page-hole-seq").textContent());
+
+      await page.goto("/t-3d-cube/triple-shared-tag/sibling");
+      await waitCubeReady(page);
+      const baseSiblingPage = Number(await page.locator("#tst-sibling-page-seq").textContent());
+
+      await page.goto("/t-3d-cube/triple-shared-tag");
+      await waitCubeReady(page);
+
+      const poison =
+        Math.max(
+          baseL1Shell,
+          baseSharedSlot,
+          baseUnrelatedSlot,
+          basePageShell,
+          basePageHole,
+          baseSiblingPage
+        ) + 899;
+
+      const nextL1Shell = baseL1Shell + 941;
+      const nextSharedSlot = baseSharedSlot + 942;
+      const nextPageShell = basePageShell + 943;
+      const nextPageHole = basePageHole + 944;
+
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          tstL1ShellSeq: nextL1Shell,
+          tstSharedSlotSeq: nextSharedSlot,
+          tstUnrelatedSlotSeq: poison,
+          tstPageShellSeq: nextPageShell,
+          tstPageHoleSeq: nextPageHole,
+          tstSiblingPageSeq: poison,
+        }
+      );
+
+      // Single revalidateTag("cube-shared-all") invalidates slot -> layout -> page deterministically!
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.revalTag("cube-shared-all")
+      );
+
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#tst-l1-shell-seq")).toHaveText(String(nextL1Shell));
+      await expect(page.locator("#tst-shared-slot-seq")).toHaveText(String(nextSharedSlot));
+      await expect(page.locator("#tst-unrelated-slot-seq")).toHaveText(String(baseUnrelatedSlot));
+      await expect(page.locator("#tst-page-shell-seq")).toHaveText(String(nextPageShell));
+      await expect(page.locator("#tst-page-hole-seq")).toHaveText(String(nextPageHole));
+
+      // Unrelated static sibling page stayed frozen while inheriting fresh L1 shell & shared slot!
+      await page.goto("/t-3d-cube/triple-shared-tag/sibling");
+      await waitCubeReady(page);
+      await expect(page.locator("#tst-l1-shell-seq")).toHaveText(String(nextL1Shell));
+      await expect(page.locator("#tst-shared-slot-seq")).toHaveText(String(nextSharedSlot));
+      await expect(page.locator("#tst-unrelated-slot-seq")).toHaveText(String(baseUnrelatedSlot));
+      await expect(page.locator("#tst-sibling-page-seq")).toHaveText(String(baseSiblingPage));
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("28. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
       browserName,
     }) => {
       test.skip(
