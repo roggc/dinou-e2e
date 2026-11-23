@@ -3587,3 +3587,111 @@ console.log("PHASE3_STAGE3_PARALLEL_ASYM_OK");
     removeDirSafe(tmpApp);
   }
 });
+
+test("17. Phase 3 Stage 4 (Check #65) unit guard: slot.js prevents unmounted & mid-transition pushState slots from leaking into refreshSlot('*')", async () => {
+  const slotPathUrl = pathToFileURL(path.join(DINOU_ROOT, "core/slot.js")).href;
+  const probeScript = `
+    import assert from "node:assert/strict";
+    const listeners = new Map();
+    const fetched = [];
+    globalThis.window = {
+      location: { pathname: "/route-a" },
+      addEventListener(name, fn) {
+        const list = listeners.get(name) || [];
+        list.push(fn);
+        listeners.set(name, list);
+      },
+      dispatchEvent(ev) {
+        const list = listeners.get(ev.type) || [];
+        for (const fn of list) fn(ev);
+      },
+      __DINOU_FETCH_SLOT__(id, opts) {
+        fetched.push({ id, currentPath: opts?.currentPath || window.location.pathname });
+        return Promise.resolve({ ok: id });
+      },
+    };
+    const slotMod = await import(${JSON.stringify(slotPathUrl)});
+    const known = globalThis.__DINOU_KNOWN_CLIENT_SLOTS__;
+    assert.ok(known instanceof Map, "Expected __DINOU_KNOWN_CLIENT_SLOTS__ Map");
+
+    // Simulate mounted slot on /route-a, then pushState to /no-layout mid-transition, then unmount!
+    known.set("slot-a", {
+      id: "slot-a",
+      tags: ["tag-a"],
+      baseChildren: { v: 1 },
+      routePath: "/route-a",
+      unmounted: false,
+      subscribers: new Set([{ apply() {}, getBase: () => ({ v: 1 }) }]),
+    });
+    // Simulate pushState changing pathname BEFORE unmount, plus unmount on commit
+    window.location.pathname = "/no-layout";
+    const entryA = known.get("slot-a");
+    entryA.subscribers.clear();
+    entryA.unmounted = true;
+
+    // Even a conditionally unmounted slot on the SAME pathname (/no-layout) must be skipped by wildcard "*"!
+    known.set("slot-same-path-unmounted", {
+      id: "slot-same-path-unmounted",
+      tags: [],
+      baseChildren: { v: 1 },
+      routePath: "/no-layout",
+      unmounted: true,
+      subscribers: new Set(),
+    });
+    // Mounted slot on /no-layout
+    known.set("slot-nl", {
+      id: "slot-nl",
+      tags: ["tag-nl"],
+      baseChildren: { v: 1 },
+      routePath: "/no-layout",
+      unmounted: false,
+      subscribers: new Set([{ apply() {}, getBase: () => ({ v: 1 }) }]),
+    });
+
+    const promises = [];
+    window.dispatchEvent({
+      type: "dinou:refresh-slot",
+      detail: { id: "*", options: { fresh: true }, promises },
+    });
+    await Promise.all(promises);
+    assert.deepEqual(
+      fetched.map((x) => x.id),
+      ["slot-nl"],
+      "Wildcard refreshSlot('*') must ONLY fetch mounted slots, never unmounted or previous-route slots"
+    );
+
+    // Explicit refreshSlot("slot-a") must still send original routePath "/route-a"
+    fetched.length = 0;
+    const explicitPromises = [];
+    window.dispatchEvent({
+      type: "dinou:refresh-slot",
+      detail: { id: "slot-a", options: { fresh: true }, promises: explicitPromises },
+    });
+    await Promise.all(explicitPromises);
+    assert.deepEqual(fetched, [{ id: "slot-a", currentPath: "/route-a" }]);
+
+    // Verify source code never overwrites entry.routePath during render in ensureKnownSlotEntry
+    const fs = await import("node:fs");
+    const src = fs.readFileSync(${JSON.stringify(path.join(DINOU_ROOT, "core/slot.js"))}, "utf8");
+    const ensureBlock = src.slice(src.indexOf("function ensureKnownSlotEntry"), src.indexOf("function getSlotOverrideForChildren"));
+    assert.ok(
+      !ensureBlock.includes("entry.routePath = window.location.pathname"),
+      "ensureKnownSlotEntry must not overwrite entry.routePath mid-render (during pushState transition)"
+    );
+    assert.ok(src.includes("entry.unmounted = true;"), "useEffect cleanup must mark entry.unmounted = true");
+    assert.ok(src.includes("entry.unmounted = false;"), "useEffect mount must reset entry.unmounted = false");
+    console.log("PHASE3_STAGE4_SLOT_LIFECYCLE_OK");
+  `;
+  const runRes = spawnSync(process.execPath, ["--input-type=module", "-e", probeScript], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    env: { ...process.env, NODE_OPTIONS: "" },
+    timeout: 15_000,
+  });
+  assert.equal(
+    runRes.status,
+    0,
+    `Phase 3 Stage 4 slot lifecycle unit test failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+  );
+  assert.ok(runRes.stdout.includes("PHASE3_STAGE4_SLOT_LIFECYCLE_OK"));
+});

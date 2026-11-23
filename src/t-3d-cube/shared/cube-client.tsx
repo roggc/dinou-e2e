@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter, refreshSlot } from "dinou";
+import { useState, useEffect, type ReactNode } from "react";
+import { useRouter, useNavigationLoading, refreshSlot } from "dinou";
 import {
   cubeResetState,
   cubeMutateState,
@@ -77,6 +77,21 @@ export function CubeSlotWidget({
   );
 }
 
+export function CubePendingShell({
+  id,
+  children,
+}: {
+  id: string;
+  children: ReactNode;
+}) {
+  const isPending = useNavigationLoading();
+  return (
+    <div id={`pending-shell-${id}`} data-pending={isPending ? "true" : "false"}>
+      {children}
+    </div>
+  );
+}
+
 export function CubeControlBridge() {
   const router = useRouter();
 
@@ -92,7 +107,7 @@ export function CubeControlBridge() {
       refreshLayout: () => router.refresh({ layout: true }),
       refreshSlot: (idOrTag: string, fresh = true) =>
         refreshSlot(idOrTag, { fresh }),
-      push: (href: string) => router.push(href),
+      push: (href: string) => router.push(href as any),
       getStampedeExecs: () => cubeGetStampedeExecs(),
       resetStampedeExecs: () => cubeResetStampedeExecs(),
     };

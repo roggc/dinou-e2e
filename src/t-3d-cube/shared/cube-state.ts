@@ -246,6 +246,21 @@ export interface Cube3DState {
   paAltPanelHoleSeq: number;
   paAltPageShellSeq: number;
   paAltPageHoleSeq: number;
+
+  // Phase 3 — Stage 4 — Check #65: Client Lifecycle Stress (refreshSlot -> no_layout / reset_layout -> Back / Forward)
+  lcL1ShellSeq: number;
+  lcL1SlotSeq: number;
+  lcL1HoleSeq: number;
+  lcPageShellSeq: number;
+  lcPageSlotSeq: number;
+  lcPageHoleSeq: number;
+  lcNoLayoutShellSeq: number;
+  lcNoLayoutSlotSeq: number;
+  lcNoLayoutHoleSeq: number;
+  lcResetLayoutShellSeq: number;
+  lcResetLayoutSlotSeq: number;
+  lcResetPageShellSeq: number;
+  lcResetPageSlotSeq: number;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -469,6 +484,20 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   paAltPanelHoleSeq: 100,
   paAltPageShellSeq: 100,
   paAltPageHoleSeq: 100,
+
+  lcL1ShellSeq: 100,
+  lcL1SlotSeq: 100,
+  lcL1HoleSeq: 100,
+  lcPageShellSeq: 100,
+  lcPageSlotSeq: 100,
+  lcPageHoleSeq: 100,
+  lcNoLayoutShellSeq: 100,
+  lcNoLayoutSlotSeq: 100,
+  lcNoLayoutHoleSeq: 100,
+  lcResetLayoutShellSeq: 100,
+  lcResetLayoutSlotSeq: 100,
+  lcResetPageShellSeq: 100,
+  lcResetPageSlotSeq: 100,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {

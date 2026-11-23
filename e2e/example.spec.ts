@@ -20063,7 +20063,224 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(pageErrors).toEqual([]);
     });
 
-    test("30. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
+    test("30. [Phase 3 / Stage 4 / Check #65] Client Lifecycle Stress (refreshSlot -> no_layout / reset_layout -> Browser Back / Forward)", async ({
+      page,
+    }) => {
+      test.skip(
+        !isProd,
+        "Client slot & history lifecycle stress across no_layout / reset_layout requires production mode"
+      );
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      const slotFetches: string[] = [];
+      page.on("request", (req) => {
+        const u = req.url();
+        const m = u.match(/\/____rsc_slot____\/([^/?#]+)/);
+        if (m) slotFetches.push(m[1]);
+      });
+
+      // 1. Load /t-3d-cube/lifecycle-stress, increment probes, refresh both layout & page slots V1 -> V2
+      await page.goto("/t-3d-cube/lifecycle-stress");
+      await waitCubeReady(page);
+
+      const baseL1Shell = Number(await page.locator("#lc-l1-shell-seq").textContent());
+      const baseL1Slot = Number(await page.locator("#lc-l1-slot-seq").textContent());
+      const basePageShell = Number(await page.locator("#lc-page-shell-seq").textContent());
+      const basePageSlot = Number(await page.locator("#lc-page-slot-seq").textContent());
+
+      await page.click("#probe-inc-lc-l1");
+      await page.click("#probe-inc-lc-page");
+      await expect(page.locator("#probe-count-lc-l1")).toHaveText("1");
+      await expect(page.locator("#probe-count-lc-page")).toHaveText("1");
+
+      const v2L1Slot = baseL1Slot + 651;
+      const v2PageSlot = basePageSlot + 652;
+      const poison1 = Math.max(baseL1Shell, basePageShell, v2L1Slot, v2PageSlot) + 899;
+
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          lcL1ShellSeq: poison1,
+          lcL1SlotSeq: v2L1Slot,
+          lcPageShellSeq: poison1,
+          lcPageSlotSeq: v2PageSlot,
+        }
+      );
+
+      slotFetches.length = 0;
+      await page.evaluate(() => (window as any).__CUBE_3D__.refreshSlot("cube-lc-l1-slot", true));
+      await page.evaluate(() => (window as any).__CUBE_3D__.refreshSlot("cube-lc-page-slot", true));
+      await expect(page.locator("#lc-l1-slot-seq")).toHaveText(String(v2L1Slot), { timeout: 10000 });
+      await expect(page.locator("#lc-page-slot-seq")).toHaveText(String(v2PageSlot), { timeout: 10000 });
+      await expect(page.locator("#probe-count-lc-l1")).toHaveText("1");
+      await expect(page.locator("#probe-count-lc-page")).toHaveText("1");
+      expect(slotFetches.filter((id) => id === "cube-lc-l1-slot").length).toBe(1);
+      expect(slotFetches.filter((id) => id === "cube-lc-page-slot").length).toBe(1);
+
+      // 2. Soft-navigate to no_layout route -> outer layout & slots unmount cleanly with zero leaked subscribers!
+      await page.click("#link-lc-no-layout");
+      await expect(page.locator("#lc-nl-page")).toBeVisible({ timeout: 15000 });
+      await expect(page.locator("#lc-l1-layout")).toHaveCount(0);
+      await waitCubeReady(page);
+
+      const baseNlSlot = Number(await page.locator("#lc-nl-slot-seq").textContent());
+      const nlRegistryState = await page.evaluate(() => {
+        const mounted = Array.from((globalThis as any).__DINOU_MOUNTED_CLIENT_SLOTS__ || []);
+        const known = (globalThis as any).__DINOU_KNOWN_CLIENT_SLOTS__;
+        const subCount = (id: string) => known?.get(id)?.subscribers?.size ?? -1;
+        return {
+          mounted,
+          l1Subs: subCount("cube-lc-l1-slot"),
+          pageSubs: subCount("cube-lc-page-slot"),
+          nlSubs: subCount("cube-lc-nl-slot"),
+        };
+      });
+      expect(nlRegistryState.mounted).not.toContain("cube-lc-l1-slot");
+      expect(nlRegistryState.mounted).not.toContain("cube-lc-page-slot");
+      expect(nlRegistryState.mounted).toContain("cube-lc-nl-slot");
+      expect(nlRegistryState.l1Subs).toBe(0);
+      expect(nlRegistryState.pageSubs).toBe(0);
+      expect(nlRegistryState.nlSubs).toBe(1);
+
+      // Wildcard refreshSlot("*") on no_layout MUST ONLY fetch cube-lc-nl-slot (NOT unmounted previous route slots!)
+      const v2NlSlot = baseNlSlot + 653;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          lcNoLayoutShellSeq: poison1,
+          lcNoLayoutSlotSeq: v2NlSlot,
+          lcL1SlotSeq: poison1,
+          lcPageSlotSeq: poison1,
+        }
+      );
+      slotFetches.length = 0;
+      await page.evaluate(() => (window as any).__CUBE_3D__.refreshSlot("*", true));
+      await expect(page.locator("#lc-nl-slot-seq")).toHaveText(String(v2NlSlot), { timeout: 10000 });
+      expect(slotFetches).toEqual(["cube-lc-nl-slot"]);
+
+      // 3. Browser Back -> /t-3d-cube/lifecycle-stress: MUST show fresh V2 (never reverting to stale V1!) & zero dup fetches on V2 -> V3!
+      await page.goBack();
+      await expect(page.locator("#lc-l1-layout")).toBeVisible({ timeout: 15000 });
+      await expect(page.locator("#lc-page")).toBeVisible({ timeout: 15000 });
+      await waitCubeReady(page);
+      await expect(page.locator("#lc-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#lc-page-shell-seq")).toHaveText(String(basePageShell));
+      await expect(page.locator("#lc-l1-slot-seq")).toHaveText(String(v2L1Slot));
+      await expect(page.locator("#lc-page-slot-seq")).toHaveText(String(v2PageSlot));
+
+      const backSubsState = await page.evaluate(() => {
+        const known = (globalThis as any).__DINOU_KNOWN_CLIENT_SLOTS__;
+        return {
+          l1Subs: known?.get("cube-lc-l1-slot")?.subscribers?.size ?? -1,
+          pageSubs: known?.get("cube-lc-page-slot")?.subscribers?.size ?? -1,
+          nlSubs: known?.get("cube-lc-nl-slot")?.subscribers?.size ?? -1,
+        };
+      });
+      expect(backSubsState.l1Subs).toBe(1);
+      expect(backSubsState.pageSubs).toBe(1);
+      expect(backSubsState.nlSubs).toBe(0);
+
+      // Subsequent refreshSlot V2 -> V3 triggers EXACTLY 1 request per slot (zero duplicate subscribers!)
+      const v3L1Slot = v2L1Slot + 654;
+      const v3PageSlot = v2PageSlot + 655;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          lcL1SlotSeq: v3L1Slot,
+          lcPageSlotSeq: v3PageSlot,
+        }
+      );
+      slotFetches.length = 0;
+      await page.evaluate(() => (window as any).__CUBE_3D__.refreshSlot("cube-lc-l1-slot", true));
+      await page.evaluate(() => (window as any).__CUBE_3D__.refreshSlot("cube-lc-page-slot", true));
+      await expect(page.locator("#lc-l1-slot-seq")).toHaveText(String(v3L1Slot), { timeout: 10000 });
+      await expect(page.locator("#lc-page-slot-seq")).toHaveText(String(v3PageSlot), { timeout: 10000 });
+      expect(slotFetches.filter((id) => id === "cube-lc-l1-slot").length).toBe(1);
+      expect(slotFetches.filter((id) => id === "cube-lc-page-slot").length).toBe(1);
+
+      // 4. Repeat cycle through reset_layout + Back + Forward!
+      await page.click("#link-lc-reset-layout");
+      await expect(page.locator("#lc-rl-layout")).toBeVisible({ timeout: 15000 });
+      await expect(page.locator("#lc-rl-page")).toBeVisible({ timeout: 15000 });
+      await expect(page.locator("#lc-l1-layout")).toHaveCount(0);
+      await waitCubeReady(page);
+
+      const baseRlL1Slot = Number(await page.locator("#lc-rl-l1-slot-seq").textContent());
+      const baseRlPageSlot = Number(await page.locator("#lc-rl-page-slot-seq").textContent());
+      const rlSubsState = await page.evaluate(() => {
+        const mounted = Array.from((globalThis as any).__DINOU_MOUNTED_CLIENT_SLOTS__ || []);
+        const known = (globalThis as any).__DINOU_KNOWN_CLIENT_SLOTS__;
+        return {
+          mounted,
+          l1Subs: known?.get("cube-lc-l1-slot")?.subscribers?.size ?? -1,
+          pageSubs: known?.get("cube-lc-page-slot")?.subscribers?.size ?? -1,
+          nlSubs: known?.get("cube-lc-nl-slot")?.subscribers?.size ?? -1,
+          rlL1Subs: known?.get("cube-lc-rl-l1-slot")?.subscribers?.size ?? -1,
+          rlPageSubs: known?.get("cube-lc-rl-page-slot")?.subscribers?.size ?? -1,
+        };
+      });
+      expect(rlSubsState.mounted).not.toContain("cube-lc-l1-slot");
+      expect(rlSubsState.mounted).not.toContain("cube-lc-page-slot");
+      expect(rlSubsState.mounted).not.toContain("cube-lc-nl-slot");
+      expect(rlSubsState.l1Subs).toBe(0);
+      expect(rlSubsState.pageSubs).toBe(0);
+      expect(rlSubsState.nlSubs).toBe(0);
+      expect(rlSubsState.rlL1Subs).toBe(1);
+      expect(rlSubsState.rlPageSubs).toBe(1);
+
+      const v2RlL1Slot = baseRlL1Slot + 656;
+      const v2RlPageSlot = baseRlPageSlot + 657;
+      const poison2 = Math.max(poison1, v3PageSlot, v2RlPageSlot) + 899;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          lcResetLayoutShellSeq: poison2,
+          lcResetPageShellSeq: poison2,
+          lcResetLayoutSlotSeq: v2RlL1Slot,
+          lcResetPageSlotSeq: v2RlPageSlot,
+          lcL1SlotSeq: poison2,
+          lcPageSlotSeq: poison2,
+          lcNoLayoutSlotSeq: poison2,
+        }
+      );
+
+      // Wildcard refreshSlot("*") on reset_layout MUST ONLY fetch the 2 mounted reset_layout slots!
+      slotFetches.length = 0;
+      await page.evaluate(() => (window as any).__CUBE_3D__.refreshSlot("*", true));
+      await expect(page.locator("#lc-rl-l1-slot-seq")).toHaveText(String(v2RlL1Slot), { timeout: 10000 });
+      await expect(page.locator("#lc-rl-page-slot-seq")).toHaveText(String(v2RlPageSlot), { timeout: 10000 });
+      expect([...slotFetches].sort()).toEqual(["cube-lc-rl-l1-slot", "cube-lc-rl-page-slot"]);
+
+      // Browser Back -> /t-3d-cube/lifecycle-stress (keeps V3!)
+      await page.goBack();
+      await expect(page.locator("#lc-l1-layout")).toBeVisible({ timeout: 15000 });
+      await expect(page.locator("#lc-l1-slot-seq")).toHaveText(String(v3L1Slot));
+      await expect(page.locator("#lc-page-slot-seq")).toHaveText(String(v3PageSlot));
+
+      // Browser Forward -> /t-3d-cube/lifecycle-stress/reset-layout (keeps V2, never reverts to V1!)
+      await page.goForward();
+      await expect(page.locator("#lc-rl-layout")).toBeVisible({ timeout: 15000 });
+      await expect(page.locator("#lc-rl-l1-slot-seq")).toHaveText(String(v2RlL1Slot));
+      await expect(page.locator("#lc-rl-page-slot-seq")).toHaveText(String(v2RlPageSlot));
+
+      // Final refreshSlot on reset_layout V2 -> V3 triggers EXACTLY 1 request!
+      const v3RlL1Slot = v2RlL1Slot + 658;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        { lcResetLayoutSlotSeq: v3RlL1Slot }
+      );
+      slotFetches.length = 0;
+      await page.evaluate(() => (window as any).__CUBE_3D__.refreshSlot("cube-lc-rl-l1-slot", true));
+      await expect(page.locator("#lc-rl-l1-slot-seq")).toHaveText(String(v3RlL1Slot), { timeout: 10000 });
+      expect(slotFetches).toEqual(["cube-lc-rl-l1-slot"]);
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("31. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
       browserName,
     }) => {
       test.skip(
