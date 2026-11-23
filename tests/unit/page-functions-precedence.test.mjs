@@ -584,9 +584,20 @@ export default function LfYesIsgLayout({ children, params }: { children: ReactNo
           assert.ok(globalThis.__SPY_PF_DEF_ISG__ >= 1);
 
           // 3.6. lf-dyn: layout named revalidate=0 overrides default async () => 3600
+          //      Dynamic layout executes fresh on every request (data-lf-hits: 1 -> 2),
+          //      while static child page stays cached via asymmetric HS composition (LfDynChild:1).
           const lfDyn1 = await (await rscMod.handleRequest(new Request("http://localhost:3000/lf-dyn/child"), opts)).text();
           const lfDyn2 = await (await rscMod.handleRequest(new Request("http://localhost:3000/lf-dyn/child"), opts)).text();
-          assert.ok(lfDyn1.includes("LfDynChild:1") && lfDyn2.includes("LfDynChild:2"));
+          assert.ok(
+            lfDyn1.includes('data-lf-hits="1"') && lfDyn2.includes('data-lf-hits="2"'),
+            `[${bundler}] dynamic layout must execute on every request (1 -> 2), got:\n1: ${lfDyn1}\n2: ${lfDyn2}`
+          );
+          const lfChild1 = lfDyn1.match(/LfDynChild:(\d+)/)?.[1];
+          const lfChild2 = lfDyn2.match(/LfDynChild:(\d+)/)?.[1];
+          assert.ok(
+            lfChild1 && lfChild2 && lfChild1 === lfChild2,
+            `[${bundler}] static child page under dynamic layout must remain cached (got ${lfChild1} -> ${lfChild2}):\n1: ${lfDyn1}\n2: ${lfDyn2}`
+          );
           assert.equal(globalThis.__SPY_LF_DYN_DEF__, 0);
 
           // 3.7. lf-no-isg: layout named allowISG=false overrides default async () => true

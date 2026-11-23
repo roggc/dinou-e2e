@@ -258,7 +258,11 @@ async function renderSingleLayoutLevel(entry, options = {}) {
         } else {
           elementToRender = slotValue;
         }
-        elementToRender = markLayoutRootElement(elementToRender, layoutEffectivePpr);
+        elementToRender = markLayoutRootElement(
+          elementToRender,
+          layoutEffectivePpr,
+          sanitizeLayoutScope(entry.cleanLayoutKey)
+        );
         const resolvedSlot = await runInLayoutSegment(
           () => asyncRenderJSXToClientJSX(elementToRender),
           layoutSegmentStore
@@ -325,7 +329,8 @@ async function renderSingleLayoutLevel(entry, options = {}) {
     const props = { params: dParams, ...updatedSlots, ...(layoutProps ?? {}) };
     const layoutElement = markLayoutRootElement(
       React.createElement(Layout, props, placeholder),
-      layoutEffectivePpr
+      layoutEffectivePpr,
+      sanitizeLayoutScope(entry.cleanLayoutKey)
     );
 
     if (usePprContext) {

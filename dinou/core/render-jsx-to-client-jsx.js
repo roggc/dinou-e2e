@@ -19,6 +19,7 @@ import {
   getPageRootPpr,
   isLayoutRootElement,
   getLayoutRootPpr,
+  getLayoutRootScope,
   runWithSegmentPpr,
   isLayoutChildrenPlaceholder,
   runInPageSegment,
@@ -628,6 +629,12 @@ async function asyncRenderJSXToClientJSX(
   }
   if (isLayoutRootElement(jsx)) {
     const layoutPpr = getLayoutRootPpr(jsx);
+    const layoutScope = getLayoutRootScope(jsx);
+    const prevStore = getActiveLayoutSegmentStore();
+    const layoutStore =
+      layoutScope && (!prevStore || prevStore.scopePrefix !== layoutScope)
+        ? { active: true, idCount: 0, holeCount: 0, scopePrefix: layoutScope }
+        : null;
     return await runWithSegmentPpr(layoutPpr, () =>
       runInLayoutSegment(async () => {
         return await asyncRenderJSXToClientJSXInner(
@@ -635,7 +642,7 @@ async function asyncRenderJSXToClientJSX(
           key,
           insideClientProps
         );
-      })
+      }, layoutStore)
     );
   }
   return await asyncRenderJSXToClientJSXInner(jsx, key, insideClientProps);

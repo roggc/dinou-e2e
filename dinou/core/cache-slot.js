@@ -590,16 +590,18 @@ async function refreshNestedSlotsInTree(node, currentSlotId, options = {}) {
           currentPath = getContext()?.req?.path;
         } catch (e) {}
       }
-      const freshInner = await getSlotJSX(nestedSlotId, {
+      const nestedOptions = {
         ...options,
+        fresh: false,
         currentPath,
         skipHostRevalidate: true,
-      });
+      };
+      const freshInner = await getSlotJSX(nestedSlotId, nestedOptions);
       if (freshInner !== null) {
         const refreshedInner = await refreshNestedSlotsInTree(
           freshInner,
           nestedSlotId,
-          options
+          nestedOptions
         );
         const newProps = { ...node.props };
         if (node.key != null) newProps.key = node.key;

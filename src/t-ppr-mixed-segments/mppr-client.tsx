@@ -361,8 +361,8 @@ export function MpprSuiteRunner() {
       });
 
       try {
-        // Revalidating L2(true) updates L2; on GET /l2-optin/l3-optout, L3 cascades (isAncestorNewer) and shell.html lazily recomposes with frozen FTFT page shell (100, NOT 999)!
-        // Note: L1 is an ancestor of L2, so when L2 revalidates it runs L1+L2; keep L1 at 100 so we isolate L1 vs Page!
+        // Revalidating L2(true) updates ONLY L2; L3 is recomposed from its cached own fragment (100 in prod, live 102 in dev)
+        // and shell.html lazily recomposes with frozen FTFT page shell (100, NOT 999)!
         await mpprMutateState({ l1Seq: 100, l1SuspenseSeq: 100 });
         await mpprRunRevalidateTag("mppr-l2-true-tag");
 
@@ -371,12 +371,18 @@ export function MpprSuiteRunner() {
           credentials: "same-origin",
         });
         const { shell, stream } = splitPprWire(await wireRes.text());
+        const expectedL3Seq = isProdMode ? "100" : "102";
         if (
           extractIdText(shell, "mppr-l2-shell-seq") !== "102" ||
           extractIdText(shell, "mppr-l2-nodynamic-seq") !== "102" ||
-          extractIdText(shell, "mppr-l3-static-suspense-seq") !== "102"
+          extractIdText(shell, "mppr-l3-static-suspense-seq") !== expectedL3Seq
         ) {
-          throw new Error("Expected L2 & L3 shells to update to 102 in recomposed shell.html");
+          throw new Error(
+            `Expected L2 shell=102 & L3 shell=${expectedL3Seq} in recomposed shell.html (got L2=${extractIdText(
+              shell,
+              "mppr-l2-shell-seq"
+            )}, L3=${extractIdText(shell, "mppr-l3-static-suspense-seq")})`
+          );
         }
         if (extractIdText(shell, "mppr-ftft-page-shell-seq") !== "100") {
           throw new Error(
@@ -506,7 +512,8 @@ export function MpprSuiteRunner() {
         await mpprRunRevalidateTag("mppr-l3-slot-tag");
         router.refresh({ layout: true });
         await waitFor(() => readText("mppr-l3-slot-seq") === "105", "L3 slot = 105");
-        if (readText("mppr-l3-seq") !== "102") {
+        const expectedL3Seq = isProdMode ? "100" : "102";
+        if (readText("mppr-l3-seq") !== expectedL3Seq) {
           throw new Error(`revalidateTag("mppr-l3-slot-tag") unexpectedly re-executed L3! Got ${readText("mppr-l3-seq")}`);
         }
         if (readText("mppr-l3-slot-client-count") !== "1") {

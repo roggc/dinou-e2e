@@ -1354,8 +1354,9 @@ export const ppr = false;
       htmlSettingsAfterParentOnlySlot
     );
 
-    // 6.5c Full parent layout revalidation (revalidateLayout("/dashboard")) MUST still propagate
-    //      ancestor layout re-execution to child layouts while keeping child pages cached!
+    // 6.5c Full parent layout revalidation (revalidateLayout("/dashboard")) updates DashLayout
+    //      and recomposes child layouts from their cached own fragments WITHOUT re-executing child layouts
+    //      or child pages! Explicitly revalidating /dashboard/settings then advances SettingsLayout to v3.
     await revalidateLayout("/dashboard");
     const resSettingsAfterFullParent = await rscMod.handleRequest(
       new Request("http://localhost/dashboard/settings"),
@@ -1369,12 +1370,33 @@ export const ppr = false;
       htmlSettingsAfterFullParent
     );
     assert.ok(
-      htmlSettingsAfterFullParent.includes("SettingsLayout-v3"),
-      htmlSettingsAfterFullParent
+      htmlSettingsAfterFullParent.includes("SettingsLayout-v2"),
+      `Child SettingsLayout must stay v2 (recomposeOnly, not re-executed to v3) when parent /dashboard revalidates, got: ${htmlSettingsAfterFullParent}`
     );
     assert.ok(
       htmlSettingsAfterFullParent.includes("SettingsPage-v1"),
       htmlSettingsAfterFullParent
+    );
+
+    await revalidateLayout("/dashboard/settings");
+    const resSettingsAfterOwnReval = await rscMod.handleRequest(
+      new Request("http://localhost/dashboard/settings"),
+      { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml }
+    );
+    const htmlSettingsAfterOwnReval = stripComments(
+      await resSettingsAfterOwnReval.text()
+    );
+    assert.ok(
+      htmlSettingsAfterOwnReval.includes("DashLayout-v2"),
+      `Parent DashLayout must stay v2 when /dashboard/settings revalidates, got: ${htmlSettingsAfterOwnReval}`
+    );
+    assert.ok(
+      htmlSettingsAfterOwnReval.includes("SettingsLayout-v3"),
+      htmlSettingsAfterOwnReval
+    );
+    assert.ok(
+      htmlSettingsAfterOwnReval.includes("SettingsPage-v1"),
+      htmlSettingsAfterOwnReval
     );
 
     // 6.6 revalidateTag("settings-page-tag") -> advances SettingsPage to v2 while DashOverviewPage stays v1
