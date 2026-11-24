@@ -56,10 +56,10 @@ export default function StaggeredPprPage() {
         )}
       </DinouCacheSlot>
       <nav style={{ display: "flex", gap: 8, margin: "6px 0" }}>
-        <Link id="link-stag-away" href="/t-3d-cube/staggered-ppr/hub">
+        <Link id="link-stag-away" href="/t-3d-cube/staggered-ppr/hub" prefetch={false}>
           Abort to Hub
         </Link>
-        <Link id="link-stag-away-ppr" href="/t-3d-cube/ppr">
+        <Link id="link-stag-away-ppr" href="/t-3d-cube/ppr" prefetch={false}>
           Abort to PPR
         </Link>
       </nav>
