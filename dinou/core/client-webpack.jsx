@@ -885,12 +885,21 @@ function Router() {
   const back = () => window.history.back();
   const forward = () => window.history.forward();
   const refresh = useCallback((options = {}) => {
-    const currentPath = window.location.pathname + window.location.search;
+    if (typeof window !== "undefined" && window.__DINOU_ACTIVE_LAYOUT__) {
+      window.__DINOU_ACTIVE_LAYOUT__ = null;
+    }
+    const currentPathname = window.location.pathname;
+    const currentPath = currentPathname + window.location.search;
     pageCache.delete(currentPath);
+    for (const k of pageCache.keys()) {
+      if (k === currentPathname || k.startsWith(currentPathname + "?")) {
+        pageCache.delete(k);
+      }
+    }
 
     const shouldRefreshLayout = Boolean(options && options.layout);
     if (shouldRefreshLayout) {
-      const currentLayoutKey = getLayoutKey(window.location.pathname);
+      const currentLayoutKey = getLayoutKey(currentPathname);
       if (currentLayoutKey) {
         for (const k of layoutCache.keys()) {
           if (k === currentLayoutKey || k.startsWith(currentLayoutKey + "?")) {
@@ -917,9 +926,15 @@ function Router() {
       // 🛡️ PREFETCH PROTECTION: If it's a local hash, do nothing
       if (isHashChangeOnly(url)) return;
       const cleanUrl = String(url || "/").split("#")[0] || "/";
+      const prefetchSearchPart = cleanUrl.includes("?")
+        ? "?" + cleanUrl.split("?")[1]
+        : "";
       const lKey = getLayoutKey(cleanUrl);
-      if (lKey && !layoutCache.has(lKey)) {
-        getLayoutPayload(lKey);
+      const prefetchLayoutCacheKey = isStaticExportMode()
+        ? lKey
+        : `${lKey}${prefetchSearchPart}`;
+      if (lKey && !layoutCache.has(prefetchLayoutCacheKey)) {
+        getLayoutPayload(lKey, prefetchSearchPart);
       }
       getPagePayload(cleanUrl, true);
     };

@@ -20779,7 +20779,242 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(pageErrors).toEqual([]);
     });
 
-    test("34. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
+    test("34. [Phase 4 / Stage 5 / Check #71] Same-Pathname Query Transitions (?tab=a <-> ?tab=b -> Back/Forward) + router.refresh() / router.refresh({ layout: true }) Under Asymmetric 3D PPR", async ({
+      page,
+    }) => {
+      test.skip(
+        !isProd,
+        "Query-keyed PPR layoutCache/pageCache & router.refresh({ layout: true }) under 3D PPR requires production mode"
+      );
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      // --- PART A: Pure 3D PPR (/t-3d-cube/query-ppr) ---
+      await page.goto("/t-3d-cube/query-ppr?tab=overview&sort=asc");
+      await waitCubeReady(page);
+      await expect(page.locator("#qp-pure-page")).toBeVisible();
+      await expect(page.locator("#qp-sp-tab-pure")).toHaveText("overview");
+      await expect(page.locator("#qp-sp-sort-pure")).toHaveText("asc");
+
+      const baseL1Shell = Number(await page.locator("#qp-l1-shell-seq").textContent());
+      const baseL1Slot = Number(await page.locator("#qp-l1-slot-seq").textContent());
+      const basePageShell = Number(await page.locator("#qp-page-shell-seq").textContent());
+      const basePageSlot = Number(await page.locator("#qp-page-slot-seq").textContent());
+      const initL1HoleText = String(await page.locator("#qp-l1-hole-seq").textContent());
+      const initPageHoleText = String(await page.locator("#qp-page-hole-seq").textContent());
+
+      // Increment BOTH L1 and Page client probes to verify client state survival across same-pathname query transitions
+      await page.click("#probe-inc-qp-l1");
+      await page.click("#probe-inc-qp-page");
+      await expect(page.locator("#probe-count-qp-l1")).toHaveText("1");
+      await expect(page.locator("#probe-count-qp-page")).toHaveText("1");
+      const l1MountId = await page.locator("#probe-mount-qp-l1").textContent();
+      const pageMountId = await page.locator("#probe-mount-qp-page").textContent();
+
+      // Poison ALL shells & slots; bump dynamic holes to wave 1
+      const qpPoison = Math.max(baseL1Shell, baseL1Slot, basePageShell, basePageSlot) + 899;
+      const wave1L1Hole = baseL1Shell + 711;
+      const wave1PageHole = basePageShell + 712;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          qpL1ShellSeq: qpPoison,
+          qpL1SlotSeq: qpPoison,
+          qpPageShellSeq: qpPoison,
+          qpPageSlotSeq: qpPoison,
+          qpL1HoleSeq: wave1L1Hole,
+          qpPageHoleSeq: wave1PageHole,
+        }
+      );
+
+      // Track /____rsc_layout____ requests when hovering & clicking #link-qp-metrics:
+      // window.__DINOU_PREFETCH__ MUST include ?tab=metrics&sort=desc and NEVER fire a queryless prefetch!
+      const layoutRequests: string[] = [];
+      const onReq = (req: any) => {
+        const u = req.url();
+        if (u.includes("/____rsc_layout____/t-3d-cube/query-ppr")) {
+          layoutRequests.push(u);
+        }
+      };
+      page.on("request", onReq);
+
+      await page.hover("#link-qp-metrics");
+      await page.click("#link-qp-metrics");
+      await expect(page).toHaveURL(/\/t-3d-cube\/query-ppr\?tab=metrics&sort=desc/, { timeout: 15000 });
+      await expect(page.locator("#qp-l1-hole-seq")).toHaveText(`metrics-${wave1L1Hole}`, { timeout: 15000 });
+      await expect(page.locator("#qp-page-hole-seq")).toHaveText(`metrics:desc-${wave1PageHole}`, { timeout: 15000 });
+      await expect(page.locator("#qp-sp-tab-pure")).toHaveText("metrics");
+      await expect(page.locator("#qp-sp-sort-pure")).toHaveText("desc");
+
+      page.off("request", onReq);
+      expect(
+        layoutRequests.some((u) => !u.includes("tab=metrics")),
+        `Unexpected queryless layout prefetch/fetch: ${JSON.stringify(layoutRequests)}`
+      ).toBe(false);
+
+      // L1 + Page client probes survive & shells/slots stay FROZEN!
+      await expect(page.locator("#probe-mount-qp-l1")).toHaveText(String(l1MountId));
+      await expect(page.locator("#probe-count-qp-l1")).toHaveText("1");
+      await expect(page.locator("#probe-mount-qp-page")).toHaveText(String(pageMountId));
+      await expect(page.locator("#probe-count-qp-page")).toHaveText("1");
+      await expect(page.locator("#qp-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#qp-l1-slot-seq")).toHaveText(String(baseL1Slot));
+      await expect(page.locator("#qp-page-shell-seq")).toHaveText(String(basePageShell));
+      await expect(page.locator("#qp-page-slot-seq")).toHaveText(String(basePageSlot));
+
+      // Navigate to queryless /t-3d-cube/query-ppr -> useSearchParams() becomes empty ("none")!
+      await page.click("#link-qp-clean");
+      await expect(page).toHaveURL(/\/t-3d-cube\/query-ppr$/, { timeout: 15000 });
+      await expect(page.locator("#qp-l1-hole-seq")).toHaveText(`default-${wave1L1Hole}`, { timeout: 15000 });
+      await expect(page.locator("#qp-page-hole-seq")).toHaveText(`default:none-${wave1PageHole}`, { timeout: 15000 });
+      await expect(page.locator("#qp-sp-tab-pure")).toHaveText("none");
+      await expect(page.locator("#qp-sp-sort-pure")).toHaveText("none");
+      await expect(page.locator("#probe-mount-qp-l1")).toHaveText(String(l1MountId));
+      await expect(page.locator("#probe-count-qp-l1")).toHaveText("1");
+
+      // Browser Back -> metrics -> Browser Back -> overview!
+      await page.goBack();
+      await expect(page).toHaveURL(/\/t-3d-cube\/query-ppr\?tab=metrics&sort=desc/, { timeout: 15000 });
+      await expect(page.locator("#qp-sp-tab-pure")).toHaveText("metrics");
+      await expect(page.locator("#qp-l1-hole-seq")).toHaveText(`metrics-${wave1L1Hole}`);
+      await expect(page.locator("#qp-page-hole-seq")).toHaveText(`metrics:desc-${wave1PageHole}`);
+
+      await page.goBack();
+      await expect(page).toHaveURL(/\/t-3d-cube\/query-ppr\?tab=overview&sort=asc/, { timeout: 15000 });
+      await expect(page.locator("#qp-sp-tab-pure")).toHaveText("overview");
+      await expect(page.locator("#qp-sp-sort-pure")).toHaveText("asc");
+      await expect(page.locator("#qp-l1-hole-seq")).toHaveText(initL1HoleText);
+      await expect(page.locator("#qp-page-hole-seq")).toHaveText(initPageHoleText);
+
+      // Mutate BOTH L1 & Page hole counters to wave 2 (shells/slots remain poisoned!)
+      const wave2L1Hole = baseL1Shell + 721;
+      const wave2PageHole = basePageShell + 722;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        { qpL1HoleSeq: wave2L1Hole, qpPageHoleSeq: wave2PageHole }
+      );
+
+      // 1) router.refresh() -> updates ONLY Page hole while L1 hole keeps previous cached value!
+      await page.click("#btn-qp-refresh-page-pure");
+      await expect(page.locator("#qp-page-hole-seq")).toHaveText(`overview:asc-${wave2PageHole}`, { timeout: 15000 });
+      await expect(page.locator("#qp-page-hole-seq")).toHaveAttribute("data-has-v", "false");
+      await expect(page.locator("#qp-l1-hole-seq")).toHaveText(initL1HoleText);
+      await expect(page.locator("#qp-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#qp-page-shell-seq")).toHaveText(String(basePageShell));
+      await expect(page.locator("#probe-mount-qp-l1")).toHaveText(String(l1MountId));
+
+      // 2) router.refresh({ layout: true }) -> updates L1 hole TOO while L1/Page shells & slots stay FROZEN!
+      await page.click("#btn-qp-refresh-layout-pure");
+      await expect(page.locator("#qp-l1-hole-seq")).toHaveText(`overview-${wave2L1Hole}`, { timeout: 15000 });
+      await expect(page.locator("#qp-l1-hole-seq")).toHaveAttribute("data-has-v", "false");
+      await expect(page.locator("#qp-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#qp-l1-slot-seq")).toHaveText(String(baseL1Slot));
+      await expect(page.locator("#qp-page-shell-seq")).toHaveText(String(basePageShell));
+      await expect(page.locator("#qp-page-slot-seq")).toHaveText(String(basePageSlot));
+      await expect(page.locator("#probe-mount-qp-l1")).toHaveText(String(l1MountId));
+      await expect(page.locator("#probe-count-qp-l1")).toHaveText("1");
+
+      // 3) Browser Forward -> ?tab=metrics&sort=desc MUST fetch fresh wave 2 for BOTH L1 AND Page (no stale pageCache desync!)
+      await page.goForward();
+      await expect(page).toHaveURL(/\/t-3d-cube\/query-ppr\?tab=metrics&sort=desc/, { timeout: 15000 });
+      await expect(page.locator("#qp-l1-hole-seq")).toHaveText(`metrics-${wave2L1Hole}`, { timeout: 15000 });
+      await expect(page.locator("#qp-page-hole-seq")).toHaveText(`metrics:desc-${wave2PageHole}`, { timeout: 15000 });
+      await expect(page.locator("#qp-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#qp-page-shell-seq")).toHaveText(String(basePageShell));
+      await expect(page.locator("#probe-mount-qp-l1")).toHaveText(String(l1MountId));
+
+      // --- PART B: Asymmetric 3D PPR (/t-3d-cube/query-ppr/asym: L1 Static PPR -> L2 Dynamic -> Page Static PPR) ---
+      await page.goto("/t-3d-cube/query-ppr/asym?tab=overview&sort=asc");
+      await waitCubeReady(page);
+      await expect(page.locator("#qp-asym-l2-layout")).toBeVisible();
+      await expect(page.locator("#qp-asym-page")).toBeVisible();
+
+      const baseAsymL2Slot = Number(await page.locator("#qp-asym-l2-slot-seq").textContent());
+      const baseAsymPageShell = Number(await page.locator("#qp-asym-page-shell-seq").textContent());
+      const baseAsymPageSlot = Number(await page.locator("#qp-asym-page-slot-seq").textContent());
+      const initAsymL2Host = String(await page.locator("#qp-asym-l2-host-seq").textContent());
+
+      await page.click("#probe-inc-qp-l1");
+      await page.click("#probe-inc-qp-asym-l2");
+      await page.click("#probe-inc-qp-asym-page");
+      const asymL1Mount = await page.locator("#probe-mount-qp-l1").textContent();
+      const asymL2Mount = await page.locator("#probe-mount-qp-asym-l2").textContent();
+
+      const asymPoison = Math.max(baseL1Shell, baseAsymL2Slot, baseAsymPageShell, baseAsymPageSlot) + 899;
+      const asymWave1L1 = baseL1Shell + 731;
+      const asymWave1L2 = baseAsymPageShell + 732;
+      const asymWave1Page = baseAsymPageShell + 733;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          qpL1ShellSeq: asymPoison,
+          qpL1SlotSeq: asymPoison,
+          qpAsymL2SlotSeq: asymPoison,
+          qpAsymPageShellSeq: asymPoison,
+          qpAsymPageSlotSeq: asymPoison,
+          qpL1HoleSeq: asymWave1L1,
+          qpAsymL2HostSeq: asymWave1L2,
+          qpAsymPageHoleSeq: asymWave1Page,
+        }
+      );
+
+      // Soft <Link> to /asym?tab=metrics&sort=desc -> L1/L2 probes survive, L1/L2/Page live segments update, static shells & slots stay frozen!
+      await page.click("#link-qp-asym-metrics");
+      await expect(page).toHaveURL(/\/t-3d-cube\/query-ppr\/asym\?tab=metrics&sort=desc/, { timeout: 15000 });
+      await expect(page.locator("#qp-l1-hole-seq")).toHaveText(`metrics-${asymWave1L1}`, { timeout: 15000 });
+      await expect(page.locator("#qp-asym-l2-host-seq")).toHaveText(`metrics:desc-${asymWave1L2}`, { timeout: 15000 });
+      await expect(page.locator("#qp-asym-page-hole-seq")).toHaveText(`metrics:desc-${asymWave1Page}`, { timeout: 15000 });
+      await expect(page.locator("#qp-sp-tab-asym")).toHaveText("metrics");
+      await expect(page.locator("#qp-sp-sort-asym")).toHaveText("desc");
+      await expect(page.locator("#probe-mount-qp-l1")).toHaveText(String(asymL1Mount));
+      await expect(page.locator("#probe-mount-qp-asym-l2")).toHaveText(String(asymL2Mount));
+      await expect(page.locator("#qp-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#qp-asym-l2-slot-seq")).toHaveText(String(baseAsymL2Slot));
+      await expect(page.locator("#qp-asym-page-shell-seq")).toHaveText(String(baseAsymPageShell));
+      await expect(page.locator("#qp-asym-page-slot-seq")).toHaveText(String(baseAsymPageSlot));
+
+      // Browser Back -> overview, bump wave 2, router.refresh() vs router.refresh({ layout: true })!
+      await page.goBack();
+      await expect(page).toHaveURL(/\/t-3d-cube\/query-ppr\/asym\?tab=overview&sort=asc/, { timeout: 15000 });
+      await expect(page.locator("#qp-asym-l2-host-seq")).toHaveText(initAsymL2Host);
+
+      const asymWave2L1 = baseL1Shell + 741;
+      const asymWave2L2 = baseAsymPageShell + 742;
+      const asymWave2Page = baseAsymPageShell + 743;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          qpL1HoleSeq: asymWave2L1,
+          qpAsymL2HostSeq: asymWave2L2,
+          qpAsymPageHoleSeq: asymWave2Page,
+        }
+      );
+
+      await page.click("#btn-qp-refresh-page-asym");
+      await expect(page.locator("#qp-asym-page-hole-seq")).toHaveText(`overview:asc-${asymWave2Page}`, { timeout: 15000 });
+      await expect(page.locator("#qp-asym-l2-host-seq")).toHaveText(initAsymL2Host);
+
+      await page.click("#btn-qp-refresh-layout-asym");
+      await expect(page.locator("#qp-l1-hole-seq")).toHaveText(`overview-${asymWave2L1}`, { timeout: 15000 });
+      await expect(page.locator("#qp-asym-l2-host-seq")).toHaveText(`overview:asc-${asymWave2L2}`, { timeout: 15000 });
+      await expect(page.locator("#qp-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#qp-asym-l2-slot-seq")).toHaveText(String(baseAsymL2Slot));
+      await expect(page.locator("#qp-asym-page-shell-seq")).toHaveText(String(baseAsymPageShell));
+      await expect(page.locator("#qp-asym-page-slot-seq")).toHaveText(String(baseAsymPageSlot));
+
+      // Forward -> ?tab=metrics&sort=desc gets wave 2 fresh on L1, L2 AND Page!
+      await page.goForward();
+      await expect(page).toHaveURL(/\/t-3d-cube\/query-ppr\/asym\?tab=metrics&sort=desc/, { timeout: 15000 });
+      await expect(page.locator("#qp-l1-hole-seq")).toHaveText(`metrics-${asymWave2L1}`, { timeout: 15000 });
+      await expect(page.locator("#qp-asym-l2-host-seq")).toHaveText(`metrics:desc-${asymWave2L2}`, { timeout: 15000 });
+      await expect(page.locator("#qp-asym-page-hole-seq")).toHaveText(`metrics:desc-${asymWave2Page}`, { timeout: 15000 });
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("35. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
       browserName,
     }) => {
       test.skip(

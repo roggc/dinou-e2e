@@ -5368,3 +5368,378 @@ console.log("PHASE4_STAGE4_CONTEXT_PROPAGATION_OK");
     removeDirSafe(tmpApp);
   }
 });
+
+test("22. Phase 4 Stage 5 (Check #71) unit & compiled Node AOT integration: Same-Pathname Query Transitions + router.refresh() / router.refresh({ layout: true }) Under Asymmetric 3D PPR", async () => {
+  // Part A: Client router cache-key & useSearchParams() transition safety unit guards
+  const clientSrc = fs.readFileSync(path.join(DINOU_ROOT, "core/client.jsx"), "utf8");
+  const clientWebpackSrc = fs.readFileSync(
+    path.join(DINOU_ROOT, "core/client-webpack.jsx"),
+    "utf8"
+  );
+
+  for (const [label, src] of [
+    ["client.jsx", clientSrc],
+    ["client-webpack.jsx", clientWebpackSrc],
+  ]) {
+    // 1. __DINOU_PREFETCH__ must pass query searchPart into layoutCache check & getLayoutPayload
+    const prefetchBlock = src.slice(
+      src.indexOf("window.__DINOU_PREFETCH__ = (url) =>"),
+      src.indexOf("window.__DINOU_ROUTER_NAVIGATE__ = navigate;")
+    );
+    assert.ok(
+      prefetchBlock.includes("getLayoutPayload(lKey,") &&
+        prefetchBlock.includes('cleanUrl.includes("?")'),
+      `${label}: window.__DINOU_PREFETCH__ must preserve query searchPart when prefetching layout payloads`
+    );
+
+    // 2. router.refresh() must evict all same-pathname query entries in pageCache (preventing stale Back/Forward desync with layoutCache)
+    const refreshBlock = src.slice(
+      src.indexOf("const refresh = useCallback"),
+      src.indexOf("// 🔌 EFFECT 1:")
+    );
+    assert.ok(
+      refreshBlock.includes("for (const k of pageCache.keys())") &&
+        refreshBlock.includes('k.startsWith(currentPathname + "?")'),
+      `${label}: router.refresh() must evict sibling same-pathname query keys from pageCache`
+    );
+  }
+
+  // 3. useSearchParams() during a pending startTransition from queryless -> ?query MUST obey RouterContext.url
+  const navCheckScript = `
+    import assert from "node:assert/strict";
+    import React from "react";
+    import { renderToString } from "react-dom/server";
+    globalThis.window = {
+      location: { pathname: "/t-3d-cube/query-ppr", search: "?tab=metrics&sort=desc" },
+    };
+    const { RouterContext, useSearchParams } = await import(${JSON.stringify(
+      pathToFileURL(path.join(DINOU_ROOT, "core/navigation.js")).href
+    )});
+    function Reader() {
+      const sp = useSearchParams();
+      return React.createElement("span", null, (sp.get("tab") ?? "none") + "|" + (sp.get("sort") ?? "none"));
+    }
+    const htmlQueryless = renderToString(
+      React.createElement(
+        RouterContext.Provider,
+        { value: { url: "/t-3d-cube/query-ppr", navigate() {}, isPending: true } },
+        React.createElement(Reader)
+      )
+    );
+    assert.ok(
+      htmlQueryless.includes("none|none"),
+      "useSearchParams() must return empty params when RouterContext.url is queryless even if window.location.search already pushed ?tab=metrics! Got: " + htmlQueryless
+    );
+    const htmlWithQuery = renderToString(
+      React.createElement(
+        RouterContext.Provider,
+        { value: { url: "/t-3d-cube/query-ppr?tab=overview&sort=asc", navigate() {}, isPending: false } },
+        React.createElement(Reader)
+      )
+    );
+    assert.ok(
+      htmlWithQuery.includes("overview|asc"),
+      "useSearchParams() must read query from RouterContext.url! Got: " + htmlWithQuery
+    );
+    console.log("NAV_SEARCH_PARAMS_OK");
+  `;
+  const navRes = spawnSync(
+    process.execPath,
+    ["--input-type=module", "-e", navCheckScript],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 30_000,
+    }
+  );
+  assert.equal(
+    navRes.status,
+    0,
+    `useSearchParams() transition unit check failed:\nSTDOUT:\n${navRes.stdout}\nSTDERR:\n${navRes.stderr}`
+  );
+  assert.ok(navRes.stdout.includes("NAV_SEARCH_PARAMS_OK"));
+
+  // Part B: Full compiled Node AOT integration test of Pure + Asymmetric 3D PPR query transitions & ____v____ refresh
+  const tmpApp = createFixtureDir("tmp-3d-p4-s5-query-ppr-");
+  try {
+    fs.mkdirSync(path.join(tmpApp, "src/qp/asym"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpApp, "package.json"),
+      JSON.stringify(
+        {
+          name: "tmp-3d-p4-s5-query-ppr",
+          private: true,
+          type: "module",
+          dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+        },
+        null,
+        2
+      )
+    );
+    writeDinouShim(tmpApp);
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src/state.ts"),
+      `import fs from "node:fs";
+import path from "node:path";
+const FILE = path.resolve(process.cwd(), "p4s5-state.json");
+const DEF = {
+  l1S: 100, l1Sl: 100, l1H: 100,
+  pS: 100, pSl: 100, pH: 100,
+  l2H: 100, l2Sl: 100,
+  apS: 100, apSl: 100, apH: 100,
+};
+export function readS() {
+  try { if (fs.existsSync(FILE)) return { ...DEF, ...JSON.parse(fs.readFileSync(FILE, "utf8")) }; } catch {}
+  return { ...DEF };
+}
+export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+`
+    );
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src/layout.tsx"),
+      `import type { ReactNode } from "react";
+export default function Root({ children }: { children: ReactNode }) {
+  return <html><head><title>P4S5</title></head><body>{children}</body></html>;
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/page.tsx"),
+      `export default function Home() { return <main>home</main>; }\n`
+    );
+
+    // L1: Static PPR + Slot + Query-dependent PPR hole
+    fs.writeFileSync(
+      path.join(tmpApp, "src/qp/layout_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/qp/layout.tsx"),
+      `import { Suspense, type ReactNode } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep } from "../state";
+
+async function L1Hole() {
+  const q = getContext()?.req?.query || {};
+  const tab = String(q.tab || "default");
+  const hasV = Object.prototype.hasOwnProperty.call(q, "____v____");
+  await sleep(8);
+  return <span id="l1-h">{\`\${tab}-\${readS().l1H}-\${hasV ? "LEAK" : "CLEAN"}\`}</span>;
+}
+
+export default function QpL1({ children }: { children: ReactNode }) {
+  return (
+    <section>
+      <span id="l1-s">{readS().l1S}</span>
+      <DinouCacheSlot id="p4s5-l1-slot" revalidate={3600}>
+        {async () => <span id="l1-sl">{readS().l1Sl}</span>}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>fb1</span>}><L1Hole /></Suspense>
+      {children}
+    </section>
+  );
+}
+`
+    );
+
+    // Pure PPR Page
+    fs.writeFileSync(
+      path.join(tmpApp, "src/qp/page_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/qp/page.tsx"),
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep } from "../state";
+
+async function PageHole() {
+  const q = getContext()?.req?.query || {};
+  const tab = String(q.tab || "default");
+  const sort = String(q.sort || "none");
+  const hasV = Object.prototype.hasOwnProperty.call(q, "____v____");
+  await sleep(8);
+  return <span id="p-h">{\`\${tab}:\${sort}-\${readS().pH}-\${hasV ? "LEAK" : "CLEAN"}\`}</span>;
+}
+
+export default function QpPage() {
+  return (
+    <article>
+      <span id="p-s">{readS().pS}</span>
+      <DinouCacheSlot id="p4s5-p-slot" revalidate={3600}>
+        {async () => <span id="p-sl">{readS().pSl}</span>}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>fbp</span>}><PageHole /></Suspense>
+    </article>
+  );
+}
+`
+    );
+
+    // Asymmetric Dynamic L2 + Static PPR Page
+    fs.writeFileSync(
+      path.join(tmpApp, "src/qp/asym/layout_functions.ts"),
+      `export const revalidate = 0;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/qp/asym/layout.tsx"),
+      `import type { ReactNode } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../../state";
+
+export default function QpAsymL2({ children }: { children: ReactNode }) {
+  const q = getContext()?.req?.query || {};
+  const tab = String(q.tab || "default");
+  const sort = String(q.sort || "none");
+  return (
+    <div>
+      <span id="l2-h">{\`\${tab}:\${sort}-\${readS().l2H}\`}</span>
+      <DinouCacheSlot id="p4s5-l2-slot" revalidate={3600}>
+        {async () => <span id="l2-sl">{readS().l2Sl}</span>}
+      </DinouCacheSlot>
+      {children}
+    </div>
+  );
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/qp/asym/page_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/qp/asym/page.tsx"),
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep } from "../../state";
+
+async function AsymPageHole() {
+  const q = getContext()?.req?.query || {};
+  const tab = String(q.tab || "default");
+  const sort = String(q.sort || "none");
+  const hasV = Object.prototype.hasOwnProperty.call(q, "____v____");
+  await sleep(8);
+  return <span id="ap-h">{\`\${tab}:\${sort}-\${readS().apH}-\${hasV ? "LEAK" : "CLEAN"}\`}</span>;
+}
+
+export default function QpAsymPage() {
+  return (
+    <article>
+      <span id="ap-s">{readS().apS}</span>
+      <DinouCacheSlot id="p4s5-ap-slot" revalidate={3600}>
+        {async () => <span id="ap-sl">{readS().apSl}</span>}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>fbap</span>}><AsymPageHole /></Suspense>
+    </article>
+  );
+}
+`
+    );
+
+    const buildRes = spawnSync(process.execPath, [CLI_PATH, "build:node:esbuild"], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 120_000,
+    });
+    assert.equal(
+      buildRes.status,
+      0,
+      `Phase 4 Stage 5 build failed:\n${buildRes.stdout}\n${buildRes.stderr}`
+    );
+
+    const verifyScript = path.join(tmpApp, "verify-p4-stage5.mjs");
+    fs.writeFileSync(
+      verifyScript,
+      `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const { FileSystemStorage, setStorageAdapter } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/storage-adapter.js")).href
+      )});
+setStorageAdapter(new FileSystemStorage(path.resolve(".dinou/dist2")));
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+globalThis.__DINOU_RENDER_HTML_STREAM__ = ssrMod.renderHtml;
+const opts = { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml };
+
+const writeS = (patch) => {
+  const f = path.resolve("p4s5-state.json");
+  const cur = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : {};
+  fs.writeFileSync(f, JSON.stringify({ ...cur, ...patch }), "utf8");
+};
+const get = async (u) => {
+  const r = await rscMod.handleRequest(new Request("http://localhost" + u), opts);
+  assert.equal(r.status, 200, "Expected 200 for " + u + " got " + r.status);
+  return await r.text();
+};
+
+// Warm asym cold slots
+await get("/qp/asym?tab=init&sort=init");
+
+// Poison ALL static shells & cached slots; mutate dynamic holes & L2 host!
+writeS({
+  l1S: 999, l1Sl: 999, l1H: 201,
+  pS: 999, pSl: 999, pH: 202,
+  l2H: 203, l2Sl: 999,
+  apS: 999, apSl: 999, apH: 204,
+});
+
+// 1. Pure PPR RSC layout & page transitions (?tab=overview&sort=asc -> ?tab=metrics&sort=desc -> clean)
+const layOver = await get("/____rsc_layout____/qp?tab=overview&sort=asc&____v____=1");
+assert.ok(layOver.includes("overview-201-CLEAN"), "L1 PPR RSC must splice ?tab=overview without leaking ____v____");
+assert.ok(!layOver.includes("999"), "L1 PPR RSC must keep L1 shell & slot frozen (no 999)");
+
+const layMet = await get("/____rsc_layout____/qp?tab=metrics&sort=desc&____v____=2");
+assert.ok(layMet.includes("metrics-201-CLEAN"), "L1 PPR RSC must splice ?tab=metrics");
+assert.ok(!layMet.includes("999"));
+
+const pageMet = await get("/____rsc_page____/qp?tab=metrics&sort=desc&____v____=2");
+assert.ok(pageMet.includes("metrics:desc-202-CLEAN"), "Page PPR RSC must splice ?tab=metrics&sort=desc");
+assert.ok(!pageMet.includes("999"), "Page PPR RSC must keep Page shell & slot frozen (no 999)");
+
+const pageClean = await get("/____rsc_page____/qp?____v____=3");
+assert.ok(pageClean.includes("default:none-202-CLEAN"), "Clean Page PPR RSC must render default:none");
+assert.ok(!pageClean.includes("999"));
+
+// 2. Asymmetric 3D PPR (L1 Static PPR -> L2 Dynamic -> Page Static PPR) RSC layout & page transitions
+const asymLayMet = await get("/____rsc_layout____/qp/asym?tab=metrics&sort=desc&____v____=4");
+assert.ok(asymLayMet.includes("metrics-201-CLEAN"), "Asym L1 PPR hole must update via /____rsc_layout____");
+assert.ok(asymLayMet.includes("metrics:desc-203"), "Asym L2 dynamic host must update via /____rsc_layout____");
+assert.ok(!asymLayMet.includes("999"), "Asym layout RSC must keep L1 shell/slot & L2 slot frozen (no 999)");
+
+const asymPageMet = await get("/____rsc_page____/qp/asym?tab=metrics&sort=desc&____v____=4");
+assert.ok(asymPageMet.includes("metrics:desc-204-CLEAN"), "Asym Page PPR hole must update via /____rsc_page____");
+assert.ok(!asymPageMet.includes("999"), "Asym page RSC must keep Page shell & slot frozen (no 999)");
+
+console.log("PHASE4_STAGE5_QUERY_PPR_OK");
+`
+    );
+
+    const runRes = spawnSync(process.execPath, [verifyScript], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+      timeout: 60_000,
+    });
+    assert.equal(
+      runRes.status,
+      0,
+      `Phase 4 Stage 5 compiled integration failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+    );
+    assert.ok(runRes.stdout.includes("PHASE4_STAGE5_QUERY_PPR_OK"));
+  } finally {
+    removeDirSafe(tmpApp);
+  }
+});

@@ -313,6 +313,19 @@ export interface Cube3DState {
   sfHoleSeq: number;
   sfActionNote: string;
   sfRedirectNote: string;
+
+  // Phase 4 — Stage 5 — Check #71: Same-Pathname Query Transitions + router.refresh() / router.refresh({ layout: true })
+  qpL1ShellSeq: number;
+  qpL1SlotSeq: number;
+  qpL1HoleSeq: number;
+  qpPageShellSeq: number;
+  qpPageSlotSeq: number;
+  qpPageHoleSeq: number;
+  qpAsymL2HostSeq: number;
+  qpAsymL2SlotSeq: number;
+  qpAsymPageShellSeq: number;
+  qpAsymPageSlotSeq: number;
+  qpAsymPageHoleSeq: number;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -599,6 +612,18 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   sfHoleSeq: 100,
   sfActionNote: "init",
   sfRedirectNote: "none",
+
+  qpL1ShellSeq: 100,
+  qpL1SlotSeq: 100,
+  qpL1HoleSeq: 100,
+  qpPageShellSeq: 100,
+  qpPageSlotSeq: 100,
+  qpPageHoleSeq: 100,
+  qpAsymL2HostSeq: 100,
+  qpAsymL2SlotSeq: 100,
+  qpAsymPageShellSeq: 100,
+  qpAsymPageSlotSeq: 100,
+  qpAsymPageHoleSeq: 100,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {

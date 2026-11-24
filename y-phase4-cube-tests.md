@@ -12,7 +12,7 @@ All 6 checks below are designed to be implemented and verified **incrementally (
 - [x] **Stage 2 — Check `#68`:** Distributed `DenoKVStorage` Consistency (Cross-Isolate Tombstones, Tag Invalidations, Chunked >16KB Payloads & 3D Layout Composition)
 - [x] **Stage 3 — Check `#69`:** Server Functions (`"use server"`, `<form action>`, `useActionState`, Bound Inline Closures) Hosted Inside `<DinouCacheSlot>` & PPR Shells/Holes
 - [x] **Stage 4 — Check `#70`:** Custom Middleware & Plugin Context Propagation (`copyCustomContextProperties`) Across Every 3D Cube Execution Path
-- [ ] **Stage 5 — Check `#71`:** Same-Pathname Query Transitions (`?tab=a` ↔ `?tab=b` → `Back`) + `router.refresh()` / `router.refresh({ layout: true })` Under Asymmetric 3D PPR
+- [x] **Stage 5 — Check `#71`:** Same-Pathname Query Transitions (`?tab=a` ↔ `?tab=b` → `Back`) + `router.refresh()` / `router.refresh({ layout: true })` Under Asymmetric 3D PPR
 - [ ] **Stage 6 — Check `#72`:** Staggered Slow/Fast PPR Streaming Holes + Mid-Flight Navigation Abort & Concurrent `refreshSlot` Resilience
 
 ---
@@ -163,6 +163,12 @@ In `dinou/core/client.jsx:458`, `layoutCache` keys entries by `${layoutKey}${sea
 
 ### Potential Dinou Core Risk Areas
 - Verify `router.refresh({ layout: true })` (`dinou/core/client.jsx:855-880` and `client-webpack.jsx`) evicts `${layoutKey}${searchPart}` accurately and does not leave stale query-keyed `layoutCache` entries behind when switching back via `popstate`.
+
+> **Verified (Stage 5 Complete):**
+> - Fixtures: `src/t-3d-cube/query-ppr/` (Pure 3D PPR `layout.tsx` + `page.tsx` + `qp-client.tsx` AND Asymmetric 3D PPR `asym/layout.tsx` (`revalidate = 0`) + `asym/page.tsx` (`ppr = true`)) and `src/t-3d-cube/shared/cube-state.ts`.
+> - Unit / Compiled Node AOT: Test `22.` added to `tests/unit/cache-3d-cube.test.mjs` (**22/22 PASS**), `tests/ppr-use-search-params.test.js` (**4/4 PASS**), and `tests/type-safe-contextual.test.mjs` (**5/5 PASS**, 127 strict contextual files).
+> - Browser E2E: Test `34.` in `e2e/example.spec.ts` + existing `router.refresh()` and `useSearchParams()` SPA query tests (**9 passed / 0 failed** across Chromium, Firefox, and WebKit — zero queryless prefetch leaks, full client probe preservation across `?tab=overview&sort=asc` ↔ `?tab=metrics&sort=desc` ↔ clean → `Back` → `router.refresh()` → `router.refresh({ layout: true })` → `Forward` on both Pure and Asymmetric 3D PPR routes, with zero `#418`, router warnings, or `pageerror`).
+> - Core fixes documented in `y-changelog-cube-phase4.md`.
 
 ---
 
