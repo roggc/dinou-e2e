@@ -159,8 +159,12 @@ try {
       path.join(DINOU_ROOT, "core", "handler.js"),
       "utf8"
     );
+    const reqCtxSrc = fs.readFileSync(
+      path.join(DINOU_ROOT, "core", "request-context.js"),
+      "utf8"
+    );
     assert.match(
-      handlerSrc,
+      reqCtxSrc,
       /"path",\s*"rawPath",\s*"isRscRequest",/,
       "copyCustomContextProperties() must exclude rawPath and isRscRequest"
     );
@@ -168,11 +172,6 @@ try {
       handlerSrc,
       /rawPath:\s*simReq\.rawPath \|\| simReq\.path,\s*isRscRequest:\s*false,/,
       "createServerFunctionContext() must populate rawPath and isRscRequest: false"
-    );
-
-    const reqCtxSrc = fs.readFileSync(
-      path.join(DINOU_ROOT, "core", "request-context.js"),
-      "utf8"
     );
     assert.ok(
       (reqCtxSrc.match(/rawPath:\s*"\/"/g) || []).length >= 2,

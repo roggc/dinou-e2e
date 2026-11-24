@@ -137,7 +137,11 @@ try {
       path.join(DINOU_ROOT, "core/handler.js"),
       "utf8"
     );
-    assert.match(handlerSrc, /"_hasRedirected"/);
+    const reqCtxSrc = fs.readFileSync(
+      path.join(DINOU_ROOT, "core/request-context.js"),
+      "utf8"
+    );
+    assert.match(reqCtxSrc, /"_hasRedirected"/);
     assert.match(handlerSrc, /_hasRedirected:\s*false/);
     assert.match(handlerSrc, /if \(context\) context\._hasRedirected = true;/);
     assert.match(
