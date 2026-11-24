@@ -21542,7 +21542,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const baseL1Slot = Number(await page.locator("#err-l1-slot-seq").textContent());
       const baseHealthyShell = Number(await page.locator("#err-healthy-shell-seq").textContent());
 
-      // Warm /throw-hole and /throw-l2/sub once cleanly so their baselines are known
+      // Warm /throw-hole and /throw-l2/sub once cleanly so their baselines are known,
+      // then start a fresh SPA session on /healthy so client pageCache/layoutCache begin empty!
       await page.click("#link-err-throw-hole");
       await expect(page.locator("#err-throw-hole-ok")).toBeVisible({ timeout: 10000 });
       const baseThrowHoleShell = Number(await page.locator("#err-throw-hole-shell-seq").textContent());
@@ -21551,7 +21552,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("#err-sub-page")).toBeVisible({ timeout: 10000 });
       const baseSubShell = Number(await page.locator("#err-sub-shell-seq").textContent());
 
-      await page.click("#link-err-healthy");
+      await page.goto("/t-3d-cube/error-cube/healthy");
+      await waitCubeReady(page);
       await expect(page.locator("#err-healthy-page")).toBeVisible({ timeout: 10000 });
 
       const poison =

@@ -1192,7 +1192,7 @@ function Router() {
       return window.__DINOU_ACTIVE_LAYOUT__;
     }
     return getLayoutKey(cleanRoutePath);
-  }, [cleanRoutePath, route]);
+  }, [cleanRoutePath, route, layoutVersion]);
 
   const pagePromise = useMemo(() => {
     if (initialPageErrorRef.current && route === getCurrentRoute()) {
