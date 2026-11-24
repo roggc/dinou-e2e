@@ -3061,6 +3061,8 @@ async function handleRequest(request, platformContext = {}) {
                   exactLayoutKey: true,
                 });
                 const overrides = new Map();
+                let failedRscLayoutIdx = -1;
+                let failedRscLayoutErr = null;
                 for (let i = activeChain.length - 1; i >= 0; i--) {
                   const entry = activeChain[i];
                   const lCfg = await resolveLayoutFunctionsConfig(entry.layoutPath, entry.dParams);
@@ -3078,15 +3080,21 @@ async function handleRequest(request, platformContext = {}) {
                     request.url
                   );
                   if (lCfg.isDynamic || lMeta?.dynamic) {
-                    const single = await renderSingleLayoutLevel(entry, {
-                      reqSegments,
-                      queryObj,
-                      isDevelopment,
-                      usePprContext: false,
-                    });
-                    if (context._hasRedirected) break;
-                    if (single && single.ownTree) {
-                      overrides.set(entry.cleanLayoutKey || "", single);
+                    try {
+                      const single = await renderSingleLayoutLevel(entry, {
+                        reqSegments,
+                        queryObj,
+                        isDevelopment,
+                        usePprContext: false,
+                      });
+                      if (context._hasRedirected) break;
+                      if (single && single.ownTree) {
+                        overrides.set(entry.cleanLayoutKey || "", single);
+                      }
+                    } catch (layoutErr) {
+                      failedRscLayoutIdx = i;
+                      failedRscLayoutErr = layoutErr;
+                      break;
                     }
                   } else if (lMeta) {
                     const ownGen = Number(
@@ -3188,7 +3196,44 @@ async function handleRequest(request, platformContext = {}) {
                     }
                   }
                 }
-                if (!context._hasRedirected && overrides.size > 0) {
+                if (!context._hasRedirected && failedRscLayoutIdx >= 0 && failedRscLayoutErr) {
+                  const healthyAncestors = activeChain.slice(failedRscLayoutIdx + 1);
+                  if (healthyAncestors.length > 0) {
+                    const serializedLayoutErr = {
+                      message: isDevelopment
+                        ? (failedRscLayoutErr?.message ||
+                            "An error occurred in the Server Components render")
+                        : "An error occurred in the Server Components render",
+                      name: failedRscLayoutErr?.name || "Error",
+                      stack: isDevelopment ? failedRscLayoutErr?.stack : undefined,
+                    };
+                    const errPageJsx = await getErrorJSX(
+                      reqPath,
+                      queryObj,
+                      serializedLayoutErr,
+                      isDevelopment,
+                      { segment: "page" }
+                    );
+                    const composedHealthy = await composeLayoutChainFromOwnFragments(
+                      healthyAncestors,
+                      storage,
+                      {
+                        overrides,
+                        platformContext,
+                        reqUrl: request.url,
+                        currentPath: reqPath,
+                      }
+                    );
+                    if (composedHealthy && composedHealthy.composedWithPlaceholder) {
+                      jsx = replaceLayoutChildrenPlaceholder(
+                        composedHealthy.composedWithPlaceholder,
+                        errPageJsx
+                      );
+                      bridge.status(500);
+                      bridge.setHeader("x-dinou-has-error", "true");
+                    }
+                  }
+                } else if (!context._hasRedirected && overrides.size > 0) {
                   const composed = await composeLayoutChainFromOwnFragments(
                     activeChain,
                     storage,
@@ -4186,6 +4231,7 @@ async function handleRequest(request, platformContext = {}) {
         }
         const isSsrCrash = queryObj.ssr_crash === "true";
         let isError = isSsrCrash;
+        let failedLayoutIdx = -1;
         let caughtError = isSsrCrash
           ? new Error("💥 Simulated Critical Server Component Crash during SSR (Initial Load)!")
           : null;
@@ -4561,15 +4607,23 @@ async function handleRequest(request, platformContext = {}) {
                       );
                       if (isEntryDynamic) {
                         anyDynamicInChain = true;
-                        const single = await renderSingleLayoutLevel(entry, {
-                          reqSegments,
-                          queryObj,
-                          isDevelopment,
-                          usePprContext: false,
-                        });
-                        if (context._hasRedirected) break;
-                        if (single && single.ownTree) {
-                          overrides.set(entry.cleanLayoutKey || "", single);
+                        try {
+                          const single = await renderSingleLayoutLevel(entry, {
+                            reqSegments,
+                            queryObj,
+                            isDevelopment,
+                            usePprContext: false,
+                          });
+                          if (context._hasRedirected) break;
+                          if (single && single.ownTree) {
+                            overrides.set(entry.cleanLayoutKey || "", single);
+                          }
+                        } catch (layoutErr) {
+                          failedLayoutIdx = i;
+                          isError = true;
+                          caughtError = layoutErr;
+                          composedAsymmetric = true;
+                          break;
                         }
                       } else if (lMeta) {
                         let effectiveLMeta = lMeta;
@@ -4670,7 +4724,7 @@ async function handleRequest(request, platformContext = {}) {
                       }
                     }
 
-                    if (!context._hasRedirected && (!anyDynamicInChain || overrides.size > 0)) {
+                    if (!isError && !context._hasRedirected && (!anyDynamicInChain || overrides.size > 0)) {
                       const composed = await composeLayoutChainFromOwnFragments(
                         effectiveLayoutsForRender,
                         storage,
@@ -4700,7 +4754,7 @@ async function handleRequest(request, platformContext = {}) {
                 } catch (asymErr) {
                   composedAsymmetric = false;
                 }
-                if (!composedAsymmetric && !context._hasRedirected) {
+                if (!isError && !composedAsymmetric && !context._hasRedirected) {
                   jsx = await getJSX(
                     reqPath,
                     queryObj,
@@ -4750,7 +4804,135 @@ async function handleRequest(request, platformContext = {}) {
           };
           try {
             await requestStorage.run(context, async () => {
-              jsx = await getErrorJSX(reqPath, queryObj, serializedError, isDevelopment, errorMeta);
+              let composedErrorFromCache = false;
+              const healthyLayoutsForError =
+                failedLayoutIdx >= 0
+                  ? effectiveLayoutsForRender.slice(failedLayoutIdx + 1)
+                  : effectiveLayoutsForRender;
+              if (!isDevelopment && healthyLayoutsForError.length > 0) {
+                try {
+                  let hasNoLayoutErr = Boolean(
+                    getFilePathAndDynamicParams(
+                      reqSegments,
+                      queryObj,
+                      srcFolder,
+                      "no_layout",
+                      false
+                    )[0]
+                  );
+                  if (!hasNoLayoutErr) {
+                    const [errFilePath] = getFilePathAndDynamicParams(
+                      reqSegments,
+                      queryObj,
+                      srcFolder,
+                      "error",
+                      true,
+                      false
+                    );
+                    if (
+                      errFilePath &&
+                      existsSync(path.join(path.dirname(errFilePath), "no_layout_error"))
+                    ) {
+                      hasNoLayoutErr = true;
+                    }
+                  }
+                  if (!hasNoLayoutErr) {
+                    await hydrateActiveChainPpr(
+                      healthyLayoutsForError,
+                      reqSegments,
+                      queryObj,
+                      srcFolder
+                    );
+                    const errOverrides = new Map();
+                    let healthyChainFailed = false;
+                    for (let i = healthyLayoutsForError.length - 1; i >= 0; i--) {
+                      const entry = healthyLayoutsForError[i];
+                      const lMetaKey = entry.cleanLayoutKey
+                        ? `${entry.cleanLayoutKey}/layout.metadata.json`
+                        : "layout.metadata.json";
+                      const lRscKey = entry.cleanLayoutKey
+                        ? `${entry.cleanLayoutKey}/layout.rsc`
+                        : "layout.rsc";
+                      const lMeta = await readMetaFromStorage(
+                        storage,
+                        lMetaKey,
+                        lRscKey,
+                        platformContext,
+                        request.url
+                      );
+                      if (entry.isDynamicConfig || lMeta?.dynamic || !lMeta) {
+                        try {
+                          const single = await renderSingleLayoutLevel(entry, {
+                            reqSegments,
+                            queryObj,
+                            isDevelopment,
+                            usePprContext: false,
+                          });
+                          if (single && single.ownTree) {
+                            errOverrides.set(entry.cleanLayoutKey || "", single);
+                          } else {
+                            healthyChainFailed = true;
+                            break;
+                          }
+                        } catch (_) {
+                          healthyChainFailed = true;
+                          break;
+                        }
+                      } else if (
+                        lMeta?.ownPpr &&
+                        Array.isArray(lMeta.ownHoles) &&
+                        lMeta.ownHoles.length > 0
+                      ) {
+                        const splicedOwn = await spliceSingleLayoutOwnHoles(entry, storage, {
+                          platformContext,
+                          reqUrl: request.url,
+                          currentPath: reqPath,
+                          reqSegments,
+                          queryObj,
+                          isDevelopment,
+                        });
+                        if (splicedOwn && splicedOwn.ownTree) {
+                          errOverrides.set(entry.cleanLayoutKey || "", splicedOwn);
+                        }
+                      }
+                    }
+                    if (!healthyChainFailed) {
+                      const composedErr = await composeLayoutChainFromOwnFragments(
+                        healthyLayoutsForError,
+                        storage,
+                        {
+                          overrides: errOverrides,
+                          platformContext,
+                          reqUrl: request.url,
+                          currentPath: reqPath,
+                        }
+                      );
+                      if (composedErr && composedErr.composedWithPlaceholder) {
+                        const pageErrJsx = await getErrorJSX(
+                          reqPath,
+                          queryObj,
+                          serializedError,
+                          isDevelopment,
+                          { segment: "page" }
+                        );
+                        jsx = replaceLayoutChildrenPlaceholder(
+                          composedErr.composedWithPlaceholder,
+                          pageErrJsx
+                        );
+                        errorMeta.hasLayout = true;
+                        errorMeta.appliedLayoutKey =
+                          healthyLayoutsForError[0]?.layoutRoutePath || null;
+                        composedErrorFromCache = true;
+                      }
+                    }
+                  }
+                } catch (_) {
+                  composedErrorFromCache = false;
+                }
+              }
+              if (!composedErrorFromCache) {
+                jsx = await getErrorJSX(reqPath, queryObj, serializedError, isDevelopment, errorMeta);
+              }
             });
           } catch (e) {
             console.error("[Edge ISG] Failed to render error JSX:", e);

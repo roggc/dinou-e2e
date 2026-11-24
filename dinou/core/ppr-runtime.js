@@ -9,7 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import React from "react";
 import { renderRSCStream } from "./rsc-renderer.js";
 import { getClientManifest } from "./manifest-provider.js";
-import { requestStorage, setCurrentContext } from "./request-context.js";
+import { requestStorage, setCurrentContext, getContext } from "./request-context.js";
 import getJSX from "./get-jsx.js";
 import { getStorageAdapter, readDist2Fallback } from "./storage-adapter.js";
 import { deserializeJSX } from "./cache-slot.js";
@@ -176,6 +176,7 @@ function createPprHoleErrorElement(holeErr, isDevelopment = false) {
   return React.createElement(
     "div",
     {
+      "data-dinou-ppr-error": "true",
       style: {
         color: "#e11d48",
         padding: "8px 12px",
@@ -198,6 +199,9 @@ async function PprDynamicHoleBoundary({ holeId, children }) {
     );
   } catch (holeErr) {
     console.error(`[Dinou PPR] Error resolving dynamic hole ${holeId}:`, holeErr);
+    try {
+      getContext()?.res?.setHeader?.("x-dinou-has-error", "true");
+    } catch (_) {}
     const isDev =
       process.env.DINOU_DEV === "true" || process.env.NODE_ENV !== "production";
     return createPprHoleErrorElement(holeErr, isDev);

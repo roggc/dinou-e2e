@@ -397,6 +397,38 @@ const executeRscRedirect = (redirectUrl) => {
   }
 };
 
+const erroredPageCacheKeys = new Set();
+const erroredLayoutCacheKeys = new Set();
+
+const clearErroredCaches = () => {
+  if (
+    typeof document !== "undefined" &&
+    document.querySelector('[data-dinou-ppr-error="true"]')
+  ) {
+    const curRoute = getCurrentRoute();
+    pageCache.delete(curRoute);
+    const curLayoutKey = getLayoutKey(window.location.pathname);
+    if (curLayoutKey) {
+      const curSearch = window.location.search || "";
+      layoutCache.delete(curLayoutKey);
+      layoutCache.delete(`${curLayoutKey}${curSearch}`);
+    }
+  }
+  for (const k of erroredPageCacheKeys) {
+    pageCache.delete(k);
+  }
+  erroredPageCacheKeys.clear();
+  for (const k of Array.from(pageCache.keys())) {
+    if (String(k).startsWith("error::")) {
+      pageCache.delete(k);
+    }
+  }
+  for (const k of erroredLayoutCacheKeys) {
+    layoutCache.delete(k);
+  }
+  erroredLayoutCacheKeys.clear();
+};
+
 const getPagePayload = (route, isPrefetch = false, version = 0) => {
   const url = route.split("::")[0].split("#")[0] || "/";
   if (pageCache.has(url)) {
@@ -478,6 +510,9 @@ const getPagePayload = (route, isPrefetch = false, version = 0) => {
         }
         if (staticExport) {
           return bufferStaticExportResponse(res);
+        }
+        if (res.status >= 500 || res.headers.get("x-dinou-has-error") === "true") {
+          erroredPageCacheKeys.add(url);
         }
         return res;
       }, (err) => {
@@ -577,6 +612,9 @@ const getLayoutPayload = (layoutKey, searchPart = "", version = 0) => {
             console.warn(
               `[Dinou Router] Layout ${layoutKey} fetch returned status ${res.status}`
             );
+          }
+          if (res.status >= 500 || res.headers.get("x-dinou-has-error") === "true") {
+            erroredLayoutCacheKeys.add(cacheKey);
           }
           return res;
         },
@@ -717,6 +755,7 @@ if (typeof globalThis !== "undefined") {
   globalThis.__DINOU_GET_ERROR_RSC_PAYLOAD__ = getErrorRSCPayload;
   globalThis.__DINOU_FETCH_SLOT__ = fetchSlotRSC;
   globalThis.__DINOU_REFRESH_SLOT__ = refreshSlot;
+  globalThis.__DINOU_CLEAR_ERROR_CACHES__ = clearErroredCaches;
 }
 
 class ErrorBoundary extends Component {
@@ -899,6 +938,7 @@ function Router() {
 
     const routeWithoutHash = finalPath.split("#")[0] || "/";
 
+    clearErroredCaches();
     if (options.fresh) {
       pageCache.delete(routeWithoutHash);
     }
@@ -929,6 +969,8 @@ function Router() {
   const back = () => window.history.back();
   const forward = () => window.history.forward();
   const refresh = useCallback((options = {}) => {
+    initialPageErrorRef.current = null;
+    clearErroredCaches();
     if (typeof window !== "undefined" && window.__DINOU_ACTIVE_LAYOUT__) {
       window.__DINOU_ACTIVE_LAYOUT__ = null;
     }
@@ -1041,6 +1083,7 @@ function Router() {
 
     const onPopState = () => {
       initialPageErrorRef.current = null;
+      clearErroredCaches();
       if (typeof window !== "undefined" && window.__DINOU_ACTIVE_LAYOUT__) {
         window.__DINOU_ACTIVE_LAYOUT__ = null;
       }

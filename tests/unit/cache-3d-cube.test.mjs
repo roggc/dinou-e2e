@@ -7860,3 +7860,324 @@ console.log("PHASE5_STAGE4_USEID_CUBE_OK");
     removeDirSafe(tmpApp);
   }
 });
+
+test("28. [Phase 5 / Stage 5 / Check #77] error.tsx & Client ErrorBoundary Fault Isolation, reset() & Recovery Inside Asymmetric 3D PPR + <DinouCacheSlot>", async () => {
+  const tmpApp = createFixtureDir("dinou-p5-stage5-err-");
+  try {
+    writeDinouShim(tmpApp);
+    fs.writeFileSync(path.join(tmpApp, "package.json"), JSON.stringify({ name: "p5-s5-err", type: "module" }));
+
+    const write = (relPath, content) => {
+      const full = path.join(tmpApp, relPath);
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, content);
+    };
+
+    write(
+      "src/_state.ts",
+      `const KEY = Symbol.for("dinou.p5.s5.err.state");
+export function getState() {
+  if (!(globalThis as any)[KEY]) {
+    (globalThis as any)[KEY] = {
+      l1Shell: 100, l1Slot: 100, l1Hole: 100,
+      healthyShell: 100, healthyHole: 100,
+      throwPageSeq: 100, throwHoleShell: 100, throwHoleSeq: 100,
+      throwL2Seq: 100, subShell: 100, subHole: 100,
+      throwPage: false, throwHole: false, throwL2: false, throwSlot: false,
+    };
+  }
+  return (globalThis as any)[KEY];
+}
+`
+    );
+
+    write(
+      "src/layout.tsx",
+      `import type { ReactNode } from "react";
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return <html><head><title>err-cube</title></head><body>{children}</body></html>;
+}
+`
+    );
+    write("src/page.tsx", `export default function Home() { return <main>home</main>; }\n`);
+
+    write("src/err/layout_functions.ts", `export const ppr = true; export function revalidate() { return 3600; }\n`);
+    write(
+      "src/err/layout.tsx",
+      `import { Suspense, type ReactNode } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { getState } from "../_state";
+
+async function ErrL1Hole() {
+  void getContext()?.req?.headers?.["x-err-h"];
+  await Promise.resolve();
+  return <span id="el1-hole">{\`l1h-\${getState().l1Hole}\`}</span>;
+}
+
+export default function ErrL1Layout({ children }: { children: ReactNode }) {
+  const s = getState();
+  return (
+    <section id="el1">
+      <span id="el1-shell">{s.l1Shell}</span>
+      <DinouCacheSlot id="p5-err-l1-slot" revalidate={3600} tags={["p5-err-l1-slot-tag"]}>
+        {async () => {
+          const st = getState();
+          if (st.throwSlot) throw new Error("Transient L1 Slot Boom");
+          return <span id="el1-slot">{st.l1Slot}</span>;
+        }}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>fb-el1</span>}><ErrL1Hole /></Suspense>
+      {children}
+    </section>
+  );
+}
+`
+    );
+
+    write(
+      "src/err/error.tsx",
+      `"use client";
+export default function ErrBoundary({ error, reset }: { error?: { message?: string }; reset?: () => void }) {
+  return (
+    <div id="err-custom-boundary" data-has-reset={typeof reset === "function" ? "true" : "false"}>
+      <p id="err-custom-msg">{error?.message || "Captured"}</p>
+    </div>
+  );
+}
+`
+    );
+
+    write("src/err/healthy/page_functions.ts", `export const ppr = true; export function revalidate() { return 3600; }\n`);
+    write(
+      "src/err/healthy/page.tsx",
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { getState } from "../../_state";
+async function HealthyH() { void getContext()?.req?.headers?.["x-h"]; await Promise.resolve(); return <span id="eh-hole">{\`hh-\${getState().healthyHole}\`}</span>; }
+export default function HealthyPage() {
+  return <article id="eh-page"><span id="eh-shell">{getState().healthyShell}</span><Suspense fallback={<span>fb</span>}><HealthyH /></Suspense></article>;
+}
+`
+    );
+
+    write("src/err/throw-page/page_functions.ts", `export function revalidate() { return 0; }\n`);
+    write(
+      "src/err/throw-page/page.tsx",
+      `import { getState } from "../../_state";
+export default function ThrowPage() {
+  const s = getState();
+  if (s.throwPage) throw new Error("Transient Page Boom");
+  return <article id="tp-ok"><span id="tp-seq">{s.throwPageSeq}</span></article>;
+}
+`
+    );
+
+    write("src/err/throw-hole/page_functions.ts", `export const ppr = true; export function revalidate() { return 3600; }\n`);
+    write(
+      "src/err/throw-hole/page.tsx",
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { getState } from "../../_state";
+async function FragileHole() {
+  void getContext()?.req?.headers?.["x-fh"];
+  await Promise.resolve();
+  const s = getState();
+  if (s.throwHole) throw new Error("Transient Hole Boom");
+  return <span id="th-hole-ok">{\`th-\${s.throwHoleSeq}\`}</span>;
+}
+export default function ThrowHolePage() {
+  return (
+    <article id="th-page">
+      <span id="th-shell">{getState().throwHoleShell}</span>
+      <Suspense fallback={<span>fb-th</span>}><FragileHole /></Suspense>
+    </article>
+  );
+}
+`
+    );
+
+    write("src/err/throw-l2/layout_functions.ts", `export function revalidate() { return 0; }\n`);
+    write(
+      "src/err/throw-l2/layout.tsx",
+      `import type { ReactNode } from "react";
+import { getState } from "../../_state";
+export default function ThrowL2Layout({ children }: { children: ReactNode }) {
+  const s = getState();
+  if (s.throwL2) throw new Error("Transient L2 Boom");
+  return <div id="tl2-ok"><span id="tl2-seq">{s.throwL2Seq}</span>{children}</div>;
+}
+`
+    );
+
+    write("src/err/throw-l2/sub/page_functions.ts", `export const ppr = true; export function revalidate() { return 3600; }\n`);
+    write(
+      "src/err/throw-l2/sub/page.tsx",
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { getState } from "../../../_state";
+async function SubH() { void getContext()?.req?.headers?.["x-sh"]; await Promise.resolve(); return <span id="sub-hole">{\`sh-\${getState().subHole}\`}</span>; }
+export default function SubPage() {
+  return <article id="sub-page"><span id="sub-shell">{getState().subShell}</span><Suspense fallback={<span>fb-s</span>}><SubH /></Suspense></article>;
+}
+`
+    );
+
+    const buildRes = spawnSync(
+      process.execPath,
+      [path.join(DINOU_ROOT, "cli.js"), "build:node:esbuild"],
+      { cwd: tmpApp, encoding: "utf8", env: { ...process.env, NODE_OPTIONS: "" }, timeout: 120_000 }
+    );
+    assert.equal(buildRes.status, 0, `Build failed:\n${buildRes.stdout}\n${buildRes.stderr}`);
+
+    const verifyScript = path.join(tmpApp, "verify-p5-stage5.mjs");
+    fs.writeFileSync(
+      verifyScript,
+      `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+
+const KEY = Symbol.for("dinou.p5.s5.err.state");
+const getState = () => {
+  if (!globalThis[KEY]) {
+    globalThis[KEY] = {
+      l1Shell: 100, l1Slot: 100, l1Hole: 100,
+      healthyShell: 100, healthyHole: 100,
+      throwPageSeq: 100, throwHoleShell: 100, throwHoleSeq: 100,
+      throwL2Seq: 100, subShell: 100, subHole: 100,
+      throwPage: false, throwHole: false, throwL2: false, throwSlot: false,
+    };
+  }
+  return globalThis[KEY];
+};
+
+async function req(urlPath, opts = {}) {
+  const res = await rscMod.handleRequest(new Request("http://localhost:3000" + urlPath, opts), {
+    runtime: "node-bundle",
+    renderHtmlStream: ssrMod.renderHtml,
+  });
+  return { status: res.status, headers: res.headers, text: await res.text() };
+}
+
+const dist2 = path.resolve(".dinou/dist2");
+const origThrowHoleShell = fs.readFileSync(path.join(dist2, "err/throw-hole/shell.page.json"), "utf8");
+const origSubShell = fs.readFileSync(path.join(dist2, "err/throw-l2/sub/shell.page.json"), "utf8");
+const origL1Slot = fs.readFileSync(path.join(dist2, "slots/p5-err-l1-slot/slot.json"), "utf8");
+
+// Poison ALL static shells & L1 slot; bump live values & activate all transient faults
+Object.assign(getState(), {
+  l1Shell: 999, l1Slot: 999, healthyShell: 999, throwHoleShell: 999, subShell: 999,
+  l1Hole: 201, healthyHole: 202, throwPageSeq: 203, throwHoleSeq: 204, throwL2Seq: 205, subHole: 206,
+  throwPage: true, throwHole: true, throwL2: true, throwSlot: true,
+});
+
+// 1. Throwing Page (/err/throw-page): Direct SSR & RSC 500 render error.tsx with reset wrapper inside FROZEN L1 (zero 999!), zero cache persisted!
+const tpSsr = await req("/err/throw-page");
+assert.equal(tpSsr.status, 500);
+assert.ok(tpSsr.text.includes('id="err-custom-boundary"'), "Direct SSR must render custom error.tsx");
+assert.ok(tpSsr.text.includes('data-has-reset="true"'), "error.tsx must receive reset() via DinouErrorResetWrapper");
+assert.ok(tpSsr.text.includes('id="el1-shell">100<'), "L1 static shell must stay frozen (not poisoned 999!) on Direct SSR page error");
+assert.ok(tpSsr.text.includes('id="el1-slot">100<'), "L1 cached slot must stay frozen on Direct SSR page error");
+assert.ok(tpSsr.text.includes("l1h-201"), "L1 PPR hole must stay live on Direct SSR page error");
+assert.ok(!tpSsr.text.includes("999"), "Poisoned shells must NEVER leak on page error");
+assert.equal(fs.existsSync(path.join(dist2, "err/throw-page/index.html")), false, "500 page error must NEVER be cached");
+
+const tpRsc = await req("/____rsc_page____/err/throw-page");
+assert.equal(tpRsc.status, 500);
+assert.ok(tpRsc.text.includes("DinouErrorResetWrapper"), "RSC 500 page error must wrap error.tsx in DinouErrorResetWrapper");
+
+// Clear throwPage -> immediately recovers 200 OK
+getState().throwPage = false;
+const tpRecovered = await req("/err/throw-page");
+assert.equal(tpRecovered.status, 200);
+assert.ok(tpRecovered.text.includes('id="tp-seq">203<') && tpRecovered.text.includes('id="el1-shell">100<'));
+assert.ok(!tpRecovered.text.includes("999"));
+
+// 2. Throwing PPR dynamic hole (/err/throw-hole): shell.page.json stays untouched, RSC marks x-dinou-has-error, clearing fault restores healthy hole!
+const thSsrErr = await req("/err/throw-hole");
+assert.equal(thSsrErr.status, 200);
+assert.ok(thSsrErr.text.includes('id="th-shell">100<'), "PPR page static shell must stay frozen when hole throws");
+assert.ok(thSsrErr.text.includes("[PPR Error:"), "PPR hole error must be isolated inside hole boundary");
+assert.ok(!thSsrErr.text.includes("999"));
+assert.equal(
+  fs.readFileSync(path.join(dist2, "err/throw-hole/shell.page.json"), "utf8"),
+  origThrowHoleShell,
+  "shell.page.json must NEVER be overwritten when PPR hole throws"
+);
+
+const thRscErr = await req("/____rsc_page____/err/throw-hole");
+assert.ok(thRscErr.text.includes("data-dinou-ppr-error"), "RSC PPR hole error must emit data-dinou-ppr-error marker so client pageCache evicts it on leave/refresh");
+assert.ok(thRscErr.text.includes("[PPR Error:"));
+
+getState().throwHole = false;
+const thSsrOk = await req("/err/throw-hole");
+assert.equal(thSsrOk.status, 200);
+assert.ok(thSsrOk.text.includes("th-204") && thSsrOk.text.includes('id="th-shell">100<') && !thSsrOk.text.includes("999"));
+
+// 3. Throwing Dynamic L2 (/err/throw-l2/sub): Direct SSR & /____rsc_layout____ emit 500 + error.tsx inside FROZEN L1; sub shell untouched!
+const tl2SsrErr = await req("/err/throw-l2/sub");
+assert.equal(tl2SsrErr.status, 500);
+assert.ok(tl2SsrErr.text.includes('id="err-custom-boundary"'));
+assert.ok(tl2SsrErr.text.includes('data-has-reset="true"'));
+assert.ok(tl2SsrErr.text.includes('id="el1-shell">100<'), "L1 static shell must stay frozen when Dynamic L2 throws on Direct SSR");
+assert.ok(tl2SsrErr.text.includes('id="el1-slot">100<'));
+assert.ok(tl2SsrErr.text.includes("l1h-201"));
+assert.ok(!tl2SsrErr.text.includes("999"), "Poisoned L1 must NEVER execute when Dynamic L2 throws");
+assert.equal(
+  fs.readFileSync(path.join(dist2, "err/throw-l2/sub/shell.page.json"), "utf8"),
+  origSubShell,
+  "sub shell.page.json must stay untouched when Dynamic L2 throws"
+);
+
+const tl2LayoutRscErr = await req("/____rsc_layout____/err/throw-l2");
+assert.equal(tl2LayoutRscErr.status, 500);
+assert.equal(tl2LayoutRscErr.headers.get("x-dinou-has-error"), "true");
+assert.ok(tl2LayoutRscErr.text.includes("DinouErrorResetWrapper"));
+assert.ok(!tl2LayoutRscErr.text.includes('"el1-shell","children":999'), "L1 shell must NOT re-execute poisoned 999 on /____rsc_layout____ error");
+
+getState().throwL2 = false;
+const tl2SsrOk = await req("/err/throw-l2/sub");
+assert.equal(tl2SsrOk.status, 200);
+assert.ok(tl2SsrOk.text.includes('id="tl2-seq">205<') && tl2SsrOk.text.includes('id="sub-shell">100<') && tl2SsrOk.text.includes("sh-206") && !tl2SsrOk.text.includes("999"));
+
+// 4. Throwing inside <DinouCacheSlot> during live /____rsc_slot____?fresh=true preserves last-known-good slot.json & recovers on next fresh call!
+const slotErrRes = await req("/____rsc_slot____/p5-err-l1-slot?fresh=true&currentPath=/err/healthy");
+assert.equal(slotErrRes.status, 200);
+assert.ok(slotErrRes.text.includes("100") && !slotErrRes.text.includes("999"), "Failing refreshSlot must fall back to last-known-good slot.json");
+assert.equal(
+  fs.readFileSync(path.join(dist2, "slots/p5-err-l1-slot/slot.json"), "utf8"),
+  origL1Slot,
+  "Failing slot render must NEVER corrupt persisted slot.json"
+);
+
+getState().throwSlot = false;
+getState().l1Slot = 301;
+const slotOkRes = await req("/____rsc_slot____/p5-err-l1-slot?fresh=true&currentPath=/err/healthy");
+assert.equal(slotOkRes.status, 200);
+assert.ok(slotOkRes.text.includes("301"), "Once slot fault clears, refreshSlot must NOT be poisoned by inflight/recent cache");
+
+console.log("PHASE5_STAGE5_ERROR_CUBE_OK");
+`
+    );
+
+    const runRes = spawnSync(process.execPath, [verifyScript], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+      timeout: 60_000,
+    });
+    assert.equal(
+      runRes.status,
+      0,
+      `Phase 5 Stage 5 error-cube integration failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+    );
+    assert.ok(runRes.stdout.includes("PHASE5_STAGE5_ERROR_CUBE_OK"));
+  } finally {
+    removeDirSafe(tmpApp);
+  }
+});

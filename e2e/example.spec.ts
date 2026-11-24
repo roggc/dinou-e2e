@@ -21515,7 +21515,187 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(pageErrors).toEqual([]);
     });
 
-    test("38. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
+    test("38. [Phase 5 / Stage 5 / Check #77] error.tsx & Client ErrorBoundary Fault Isolation, reset() & Soft-Navigation Recovery Inside Asymmetric 3D PPR + <DinouCacheSlot>", async ({
+      page,
+    }) => {
+      test.skip(
+        !isProd,
+        "error.tsx 3D PPR fault isolation & cache preservation require production mode"
+      );
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      // 1. Baseline load on /t-3d-cube/error-cube/healthy (ensure all fault flags start false)
+      await page.goto("/t-3d-cube/error-cube/healthy");
+      await waitCubeReady(page);
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          errThrowPage: false,
+          errThrowHole: false,
+          errThrowL2: false,
+          errThrowL1Slot: false,
+        }
+      );
+
+      const baseL1Shell = Number(await page.locator("#err-l1-shell-seq").textContent());
+      const baseL1Slot = Number(await page.locator("#err-l1-slot-seq").textContent());
+      const baseHealthyShell = Number(await page.locator("#err-healthy-shell-seq").textContent());
+
+      // Warm /throw-hole and /throw-l2/sub once cleanly so their baselines are known
+      await page.click("#link-err-throw-hole");
+      await expect(page.locator("#err-throw-hole-ok")).toBeVisible({ timeout: 10000 });
+      const baseThrowHoleShell = Number(await page.locator("#err-throw-hole-shell-seq").textContent());
+
+      await page.click("#link-err-throw-l2");
+      await expect(page.locator("#err-sub-page")).toBeVisible({ timeout: 10000 });
+      const baseSubShell = Number(await page.locator("#err-sub-shell-seq").textContent());
+
+      await page.click("#link-err-healthy");
+      await expect(page.locator("#err-healthy-page")).toBeVisible({ timeout: 10000 });
+
+      const poison =
+        Math.max(baseL1Shell, baseL1Slot, baseHealthyShell, baseThrowHoleShell, baseSubShell) + 899;
+      const nextL1Hole = baseL1Shell + 771;
+      const nextThrowPage = baseL1Shell + 772;
+      const nextThrowHole = baseL1Shell + 773;
+      const nextThrowL2 = baseL1Shell + 774;
+      const nextSubHole = baseL1Shell + 775;
+      const nextL1Slot = baseL1Slot + 776;
+
+      try {
+        // Poison static shells, bump live sequences, and flip ALL transient faults ON
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          {
+            errL1ShellSeq: poison,
+            errHealthyShellSeq: poison,
+            errThrowHoleShellSeq: poison,
+            errSubShellSeq: poison,
+            errL1SlotSeq: nextL1Slot,
+            errL1HoleSeq: nextL1Hole,
+            errThrowPageSeq: nextThrowPage,
+            errThrowHoleSeq: nextThrowHole,
+            errThrowL2Seq: nextThrowL2,
+            errSubHoleSeq: nextSubHole,
+            errThrowPage: true,
+            errThrowHole: true,
+            errThrowL2: true,
+            errThrowL1Slot: true,
+          }
+        );
+
+        // Increment L1 probe so we verify L1 never unmounts during soft-nav fault isolation & reset()!
+        await page.click("#probe-inc-err-l1");
+        await expect(page.locator("#probe-count-err-l1")).toHaveText("1");
+        const l1MountId = await page.locator("#probe-mount-err-l1").textContent();
+
+        // 2. Soft <Link> to /throw-page while errThrowPage=true -> error.tsx catches it, L1 stays frozen & mounted!
+        await page.click("#link-err-throw-page");
+        await expect(page.locator("#cube-err-boundary")).toBeVisible({ timeout: 10000 });
+        await expect(page.locator("#cube-err-boundary")).toHaveAttribute("data-has-reset", "true");
+        await expect(page.locator("#err-l1-shell-seq")).toHaveText(String(baseL1Shell));
+        await expect(page.locator("#err-l1-slot-seq")).toHaveText(String(baseL1Slot));
+        await expect(page.locator("#probe-mount-err-l1")).toHaveText(String(l1MountId));
+        await expect(page.locator("#probe-count-err-l1")).toHaveText("1");
+
+        // Navigate back to /healthy while errThrowPage is STILL true -> boundary clears cleanly!
+        await page.click("#link-err-recover-healthy");
+        await expect(page.locator("#err-healthy-page")).toBeVisible({ timeout: 10000 });
+        await expect(page.locator("#cube-err-boundary")).toHaveCount(0);
+        await expect(page.locator("#probe-mount-err-l1")).toHaveText(String(l1MountId));
+        await expect(page.locator("#probe-count-err-l1")).toHaveText("1");
+
+        // Go back to /throw-page (still crashing), clear errThrowPage=false, click #btn-err-reset -> recovers in-place!
+        await page.click("#link-err-throw-page");
+        await expect(page.locator("#cube-err-boundary")).toBeVisible({ timeout: 10000 });
+        await page.evaluate(() => (window as any).__CUBE_3D__.mutate({ errThrowPage: false }));
+        await page.click("#btn-err-reset");
+        await expect(page.locator("#err-throw-page-ok")).toBeVisible({ timeout: 10000 });
+        await expect(page.locator("#err-throw-page-seq")).toHaveText(String(nextThrowPage));
+        await expect(page.locator("#err-l1-shell-seq")).toHaveText(String(baseL1Shell));
+        await expect(page.locator("#probe-mount-err-l1")).toHaveText(String(l1MountId));
+        await expect(page.locator("#probe-count-err-l1")).toHaveText("1");
+
+        // 3. Soft <Link> to /throw-hole while errThrowHole=true -> shell stays frozen, hole isolated;
+        //    clear fault -> soft-nav away & back recovers without stale pageCache poisoning!
+        await page.click("#link-err-throw-hole");
+        await expect(page.locator("#err-throw-hole-page")).toBeVisible({ timeout: 10000 });
+        await expect(page.locator("#err-throw-hole-shell-seq")).toHaveText(String(baseThrowHoleShell));
+        await expect(page.locator("#err-throw-hole-slot")).toContainText("[PPR Error:");
+        await expect(page.locator("#probe-mount-err-l1")).toHaveText(String(l1MountId));
+
+        await page.evaluate(() => (window as any).__CUBE_3D__.mutate({ errThrowHole: false }));
+        await page.click("#link-err-healthy");
+        await expect(page.locator("#err-healthy-page")).toBeVisible({ timeout: 10000 });
+        await page.click("#link-err-throw-hole");
+        await expect(page.locator("#err-throw-hole-ok")).toBeVisible({ timeout: 10000 });
+        await expect(page.locator("#err-throw-hole-seq")).toHaveText(String(nextThrowHole));
+        await expect(page.locator("#err-throw-hole-shell-seq")).toHaveText(String(baseThrowHoleShell));
+        await expect(page.locator("#probe-mount-err-l1")).toHaveText(String(l1MountId));
+
+        // 4. Soft <Link> to /throw-l2/sub while errThrowL2=true -> error.tsx rendered inside frozen L1;
+        //    clear errThrowL2=false + click #btn-err-reset -> restores Dynamic L2 + frozen sub PPR shell!
+        await page.click("#link-err-throw-l2");
+        await expect(page.locator("#cube-err-boundary")).toBeVisible({ timeout: 10000 });
+        await expect(page.locator("#err-l1-shell-seq")).toHaveText(String(baseL1Shell));
+        await expect(page.locator("#err-l1-slot-seq")).toHaveText(String(baseL1Slot));
+        await expect(page.locator("#probe-mount-err-l1")).toHaveText(String(l1MountId));
+        await expect(page.locator("#probe-count-err-l1")).toHaveText("1");
+
+        await page.evaluate(() => (window as any).__CUBE_3D__.mutate({ errThrowL2: false }));
+        await page.click("#btn-err-reset");
+        await expect(page.locator("#err-throw-l2-ok")).toBeVisible({ timeout: 10000 });
+        await expect(page.locator("#err-throw-l2-seq")).toHaveText(String(nextThrowL2));
+        await expect(page.locator("#err-sub-shell-seq")).toHaveText(String(baseSubShell));
+        await expect(page.locator("#err-sub-hole-seq")).toHaveText(String(nextSubHole));
+        await expect(page.locator("#err-l1-shell-seq")).toHaveText(String(baseL1Shell));
+        await expect(page.locator("#probe-mount-err-l1")).toHaveText(String(l1MountId));
+        await expect(page.locator("#probe-count-err-l1")).toHaveText("1");
+
+        // 5. Throwing <DinouCacheSlot> during live refreshSlot preserves last-known-good slot;
+        //    clearing errThrowL1Slot=false + refreshSlot updates live!
+        await page.evaluate(() => (window as any).__CUBE_3D__.refreshSlot("cube-err-l1-slot", true));
+        await expect(page.locator("#err-l1-slot-seq")).toHaveText(String(baseL1Slot));
+        await page.evaluate(() => (window as any).__CUBE_3D__.mutate({ errThrowL1Slot: false }));
+        await page.evaluate(() => (window as any).__CUBE_3D__.refreshSlot("cube-err-l1-slot", true));
+        await expect(page.locator("#err-l1-slot-seq")).toHaveText(String(nextL1Slot), { timeout: 10000 });
+
+        // 6. Direct SSR of crashing Dynamic L2 (/throw-l2/sub) renders error.tsx inside frozen L1,
+        //    hydrates cleanly with zero #418, and recovers via #btn-err-reset without full reload!
+        await page.evaluate(() => (window as any).__CUBE_3D__.mutate({ errThrowL2: true }));
+        const ssrErrResp = await page.goto("/t-3d-cube/error-cube/throw-l2/sub");
+        expect(ssrErrResp?.status()).toBe(500);
+        await expect(page.locator("#cube-err-boundary")).toBeVisible({ timeout: 10000 });
+        await waitCubeReady(page);
+        await expect(page.locator("#err-l1-shell-seq")).toHaveText(String(baseL1Shell));
+        await expect(page.locator("#err-l1-slot-seq")).toHaveText(String(nextL1Slot));
+
+        await page.evaluate(() => (window as any).__CUBE_3D__.mutate({ errThrowL2: false }));
+        await page.click("#btn-err-reset");
+        await expect(page.locator("#err-throw-l2-ok")).toBeVisible({ timeout: 10000 });
+        await expect(page.locator("#err-sub-shell-seq")).toHaveText(String(baseSubShell));
+        await expect(page.locator("#err-l1-shell-seq")).toHaveText(String(baseL1Shell));
+
+        expect(hydrationErrors).toEqual([]);
+        expect(routerWarnings).toEqual([]);
+        expect(pageErrors).toEqual([]);
+      } finally {
+        // Always restore fault flags so subsequent browser runs remain 100% idempotent
+        await page
+          .evaluate(() =>
+            (window as any).__CUBE_3D__?.mutate?.({
+              errThrowPage: false,
+              errThrowHole: false,
+              errThrowL2: false,
+              errThrowL1Slot: false,
+            })
+          )
+          .catch(() => {});
+      }
+    });
+
+    test("39. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
       browserName,
     }) => {
       test.skip(

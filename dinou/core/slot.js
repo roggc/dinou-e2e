@@ -242,7 +242,16 @@ class SlotErrorBoundary extends Component {
       if (typeof window !== "undefined" && window.__DINOU_STATIC_EXPORT_UNLOADING__) {
         return null;
       }
-      const reset = () => this.setState({ hasError: false, error: null });
+      const reset = () => {
+        if (typeof window !== "undefined" && typeof window.__DINOU_CLEAR_ERROR_CACHES__ === "function") {
+          window.__DINOU_CLEAR_ERROR_CACHES__();
+        }
+        this.setState({ hasError: false, error: null }, () => {
+          if (typeof window !== "undefined" && typeof window.__DINOU_ROUTER_REFRESH__ === "function") {
+            window.__DINOU_ROUTER_REFRESH__({ layout: true });
+          }
+        });
+      };
       return createElement(
         InnerErrorBoundary,
         null,
@@ -255,6 +264,30 @@ class SlotErrorBoundary extends Component {
     }
     return this.props.children;
   }
+}
+
+export function DinouErrorResetWrapper({ children, reset: parentReset }) {
+  const defaultReset = () => {
+    if (typeof window !== "undefined") {
+      if (typeof window.__DINOU_CLEAR_ERROR_CACHES__ === "function") {
+        window.__DINOU_CLEAR_ERROR_CACHES__();
+      }
+      if (typeof window.__DINOU_ROUTER_REFRESH__ === "function") {
+        window.__DINOU_ROUTER_REFRESH__({ layout: true });
+        return;
+      }
+      window.location.reload();
+    }
+  };
+  const effectiveReset = typeof parentReset === "function" ? parentReset : defaultReset;
+  if (
+    React.isValidElement(children) &&
+    typeof children.type !== "string" &&
+    children.props?.reset === undefined
+  ) {
+    return React.cloneElement(children, { reset: effectiveReset });
+  }
+  return children;
 }
 
 function PageConsumer({ pagePromise, pageElement }) {

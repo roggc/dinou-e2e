@@ -363,6 +363,23 @@ export interface Cube3DState {
   uidResumeSlotSeq: number;
   uidResumeHoleASeq: number;
   uidResumeHoleBSeq: number;
+
+  // Phase 5 — Stage 5 — Check #77: error.tsx & ErrorBoundary Fault Isolation, reset() & Recovery
+  errL1ShellSeq: number;
+  errL1SlotSeq: number;
+  errL1HoleSeq: number;
+  errHealthyShellSeq: number;
+  errHealthyHoleSeq: number;
+  errThrowPageSeq: number;
+  errThrowHoleShellSeq: number;
+  errThrowHoleSeq: number;
+  errThrowL2Seq: number;
+  errSubShellSeq: number;
+  errSubHoleSeq: number;
+  errThrowPage: boolean;
+  errThrowHole: boolean;
+  errThrowL2: boolean;
+  errThrowL1Slot: boolean;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -695,6 +712,22 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   uidResumeSlotSeq: 100,
   uidResumeHoleASeq: 100,
   uidResumeHoleBSeq: 100,
+
+  errL1ShellSeq: 100,
+  errL1SlotSeq: 100,
+  errL1HoleSeq: 100,
+  errHealthyShellSeq: 100,
+  errHealthyHoleSeq: 100,
+  errThrowPageSeq: 100,
+  errThrowHoleShellSeq: 100,
+  errThrowHoleSeq: 100,
+  errThrowL2Seq: 100,
+  errSubShellSeq: 100,
+  errSubHoleSeq: 100,
+  errThrowPage: false,
+  errThrowHole: false,
+  errThrowL2: false,
+  errThrowL1Slot: false,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {
