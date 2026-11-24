@@ -9,7 +9,7 @@ All 6 checks below are designed to be implemented and verified **incrementally (
 ## Master Checklist (Phase 4)
 
 - [x] **Stage 1 — Check `#67`:** Sibling Route Groups `(groupA)` / `(groupB)` & Catch-All (`[...slug]` / `[[...slug]]`) Layouts Under 3D Triple Synergy
-- [ ] **Stage 2 — Check `#68`:** Distributed `DenoKVStorage` Consistency (Cross-Isolate Tombstones, Tag Invalidations, Chunked >16KB Payloads & 3D Layout Composition)
+- [x] **Stage 2 — Check `#68`:** Distributed `DenoKVStorage` Consistency (Cross-Isolate Tombstones, Tag Invalidations, Chunked >16KB Payloads & 3D Layout Composition)
 - [ ] **Stage 3 — Check `#69`:** Server Functions (`"use server"`, `<form action>`, `useActionState`, Bound Inline Closures) Hosted Inside `<DinouCacheSlot>` & PPR Shells/Holes
 - [ ] **Stage 4 — Check `#70`:** Custom Middleware & Plugin Context Propagation (`copyCustomContextProperties`) Across Every 3D Cube Execution Path
 - [ ] **Stage 5 — Check `#71`:** Same-Pathname Query Transitions (`?tab=a` ↔ `?tab=b` → `Back`) + `router.refresh()` / `router.refresh({ layout: true })` Under Asymmetric 3D PPR
@@ -82,6 +82,11 @@ Phase 3 Stage 2 (`#63`) hardened `CloudflareKVStorage` and multi-pod `RedisStora
 ### Potential Dinou Core Risk Areas
 - `DenoKVStorage` (`dinou/core/storage-adapter.js:882-1030`) currently inherits isolate-RAM-only `isDeleted` / `getTagInvalidatedAt` from `StorageAdapter` and does not implement `isKeyDeleted`, `markTagInvalidated`, `markTagInvalidatedAsync`, or `getTagInvalidatedAtAsync`.
 - Verify `DenoKVStorage.delete()` removes chunk keys (`["dinou_cache_chunk", targetKey, i]`) as well as companion keys (`index.html` / folder / `slot.metadata.json`).
+
+> **Verified (Stage 2 Complete):**
+> - Tests `5.`, `6.`, and `7.` added to `tests/unit/cache-3d-distributed-storage.test.mjs` (automatically executed by `npm run test:unit` across CI).
+> - Verified: `tests/unit/cache-3d-distributed-storage.test.mjs` (**7/7 PASS**), `tests/unit/cache-3d-cube.test.mjs` (**19/19 PASS**), and `scripts/verify-revalidation-fixes-ci.mjs` (**PASS**).
+> - Core fixes documented in `y-changelog-cube-phase4.md`.
 
 ---
 

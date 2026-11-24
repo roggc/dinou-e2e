@@ -23,6 +23,7 @@ const importDinou = (relPath) =>
 const {
   CloudflareKVStorage,
   RedisStorage,
+  DenoKVStorage,
   setStorageAdapter,
   getStorageAdapter,
   readDist2Fallback,
@@ -713,6 +714,602 @@ console.log("PHASE3_STAGE2_DISTRIBUTED_OK");
       `Stage 2 AOT multi-pod Redis failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
     );
     assert.ok(runRes.stdout.includes("PHASE3_STAGE2_DISTRIBUTED_OK"));
+  } finally {
+    removeDirSafe(tmpApp);
+  }
+});
+
+/**
+ * Shared in-memory Deno KV mock supporting `get`, `set`, `delete`, `atomic()`, and `list({ prefix })`.
+ * Enforces real Deno KV's 64 KiB per-value limit so >16 KiB payloads genuinely exercise chunking.
+ */
+function createMockDenoKv(backingMap) {
+  const encodeKey = (keyTuple) => JSON.stringify(keyTuple);
+  const assertValueSize = (val) => {
+    const bytes = Buffer.byteLength(JSON.stringify(val ?? null), "utf8");
+    if (bytes > 65536) {
+      throw new TypeError(`Deno KV value exceeds 65536 bytes limit (got ${bytes})`);
+    }
+  };
+  let version = 0;
+
+  return {
+    async get(keyTuple) {
+      const k = encodeKey(keyTuple);
+      if (!backingMap.has(k)) {
+        return { key: keyTuple, value: null, versionstamp: null };
+      }
+      const entry = backingMap.get(k);
+      return {
+        key: keyTuple,
+        value: structuredClone(entry.value),
+        versionstamp: entry.versionstamp,
+      };
+    },
+    async set(keyTuple, value) {
+      assertValueSize(value);
+      version += 1;
+      backingMap.set(encodeKey(keyTuple), {
+        key: [...keyTuple],
+        value: structuredClone(value),
+        versionstamp: String(version).padStart(10, "0"),
+      });
+      return { ok: true, versionstamp: String(version).padStart(10, "0") };
+    },
+    async delete(keyTuple) {
+      backingMap.delete(encodeKey(keyTuple));
+    },
+    atomic() {
+      const ops = [];
+      const tx = {
+        set(keyTuple, value) {
+          ops.push({ type: "set", keyTuple: [...keyTuple], value });
+          return tx;
+        },
+        delete(keyTuple) {
+          ops.push({ type: "delete", keyTuple: [...keyTuple] });
+          return tx;
+        },
+        async commit() {
+          for (const op of ops) {
+            if (op.type === "set") assertValueSize(op.value);
+          }
+          version += 1;
+          const vs = String(version).padStart(10, "0");
+          for (const op of ops) {
+            const k = encodeKey(op.keyTuple);
+            if (op.type === "set") {
+              backingMap.set(k, {
+                key: op.keyTuple,
+                value: structuredClone(op.value),
+                versionstamp: vs,
+              });
+            } else {
+              backingMap.delete(k);
+            }
+          }
+          return { ok: true, versionstamp: vs };
+        },
+      };
+      return tx;
+    },
+    list(selector = {}) {
+      const prefix = Array.isArray(selector?.prefix) ? selector.prefix : [];
+      const matched = [];
+      for (const entry of backingMap.values()) {
+        if (
+          entry.key.length >= prefix.length &&
+          prefix.every((seg, idx) => entry.key[idx] === seg)
+        ) {
+          matched.push({
+            key: [...entry.key],
+            value: structuredClone(entry.value),
+            versionstamp: entry.versionstamp,
+          });
+        }
+      }
+      return {
+        async *[Symbol.asyncIterator]() {
+          for (const item of matched) {
+            yield item;
+          }
+        },
+      };
+    },
+  };
+}
+
+test("5. [Phase 4 / Stage 2 / Check #68] DenoKVStorage cross-isolate tombstones & tag invalidations prevent .dinou/dist2 stale resurrection (Isolate A -> Isolate B)", async () => {
+  const tmpApp = createFixtureDir("tmp-3d-p4-s2-denokv-");
+  const prevCwd = process.cwd();
+  const prevAdapter = getStorageAdapter();
+  try {
+    const dist2 = path.join(tmpApp, ".dinou", "dist2");
+    fs.mkdirSync(path.join(dist2, "l1/l2"), { recursive: true });
+    fs.mkdirSync(path.join(dist2, "slots/deno-dist-slot"), { recursive: true });
+
+    const staleTime = 1000;
+    const staleSlotJson = serializeJSX(React.createElement("span", { id: "dk-sl" }, "DISK-100"));
+    const staleSlotMeta = {
+      slotId: "deno-dist-slot",
+      tags: ["deno-dist-tag"],
+      revalidate: 3600,
+      generatedAt: staleTime,
+    };
+    fs.writeFileSync(path.join(dist2, "slots/deno-dist-slot/slot.json"), staleSlotJson);
+    fs.writeFileSync(
+      path.join(dist2, "slots/deno-dist-slot/slot.metadata.json"),
+      JSON.stringify(staleSlotMeta)
+    );
+    fs.writeFileSync(
+      path.join(dist2, "l1/l2/index.html"),
+      "<html><body>DENO-DISK-PAGE-100</body></html>"
+    );
+    fs.writeFileSync(
+      path.join(dist2, "l1/l2/metadata.json"),
+      JSON.stringify({
+        generatedAt: staleTime,
+        pageGeneratedAt: staleTime,
+        tags: ["deno-l2-tag"],
+        slotTags: ["deno-dist-tag"],
+      })
+    );
+
+    const sharedDenoMap = new Map();
+    const isoA = new DenoKVStorage(createMockDenoKv(sharedDenoMap));
+    const isoB = new DenoKVStorage(createMockDenoKv(sharedDenoMap));
+
+    process.chdir(tmpApp);
+
+    // 1. Isolate A populates, invalidates tag, and deletes slot + root page
+    setStorageAdapter(isoA);
+    await isoA.set("slots/deno-dist-slot/slot.json", staleSlotJson, staleSlotMeta);
+    await isoA.set("index.html", "<html>HOME-100</html>", { generatedAt: staleTime });
+    await isoA.markTagInvalidatedAsync("deno-dist-tag");
+    await isoA.delete("slots/deno-dist-slot/slot.json");
+    await isoA.delete("/");
+
+    // 2. Cold Isolate B (empty RAM) MUST observe remote tombstones & tag invalidations and refuse .dinou/dist2 resurrection!
+    setStorageAdapter(isoB);
+    assert.equal(
+      await isoB.isKeyDeleted("slots/deno-dist-slot/slot.json"),
+      true,
+      "Cold Isolate B must observe cross-isolate DenoKV tombstone for deleted slot"
+    );
+    assert.equal(
+      await isoB.isKeyDeleted("slots/deno-dist-slot/slot.metadata.json"),
+      true,
+      "Cold Isolate B must observe companion slot.metadata.json tombstone"
+    );
+    assert.equal(
+      await isoB.isKeyDeleted("index.html"),
+      true,
+      "Cold Isolate B must observe root index.html tombstone after delete('/')"
+    );
+    const invAt = await isoB.getTagInvalidatedAtAsync("deno-dist-tag");
+    assert.ok(
+      invAt >= staleTime,
+      `Cold Isolate B must observe cross-isolate DenoKV tag invalidation timestamp (got ${invAt})`
+    );
+    assert.equal(
+      await readDist2Fallback(isoB, "slots/deno-dist-slot/slot.json", ["deno-dist-tag"]),
+      null,
+      "Cold Isolate B must NOT resurrect deleted slot from .dinou/dist2"
+    );
+    assert.equal(
+      await readDist2Fallback(isoB, "l1/l2/index.html"),
+      null,
+      "Cold Isolate B must NOT resurrect stale HTML referencing invalidated slotTag from .dinou/dist2"
+    );
+    assert.equal(
+      await getSlotJSX("deno-dist-slot"),
+      null,
+      "getSlotJSX on Isolate B must NOT resurrect deleted slot from .dinou/dist2"
+    );
+
+    // Internal tombstone / tag_inv keys must never leak into keys()
+    const visibleKeys = await isoB.keys();
+    assert.equal(
+      visibleKeys.some(
+        (k) => k.includes("__tombstone__:") || k.includes("__tag_inv__:")
+      ),
+      false,
+      `Internal tombstone/tag_inv keys must never leak from DenoKVStorage.keys(): ${JSON.stringify(visibleKeys)}`
+    );
+
+    // 3. Isolate A writes fresh slot & fresh root -> clears tombstones -> Isolate B detects hasNewer: true!
+    setStorageAdapter(isoA);
+    const freshTime = Date.now() + 5000;
+    const freshSlotJson = serializeJSX(React.createElement("span", { id: "dk-sl" }, "DENO-200"));
+    await isoA.set("slots/deno-dist-slot/slot.json", freshSlotJson, {
+      ...staleSlotMeta,
+      generatedAt: freshTime,
+    });
+    await isoA.set("index.html", "<html>HOME-200</html>", { generatedAt: freshTime });
+
+    setStorageAdapter(isoB);
+    assert.equal(
+      await isoB.isKeyDeleted("slots/deno-dist-slot/slot.json"),
+      false,
+      "Writing fresh slot in Isolate A must clear DenoKV tombstone for Isolate B"
+    );
+    assert.equal(
+      await isoB.isKeyDeleted("slots/deno-dist-slot/slot.metadata.json"),
+      false,
+      "Writing fresh slot in Isolate A must clear companion slot.metadata.json tombstone"
+    );
+    assert.equal(await isoB.isKeyDeleted("/"), false);
+    assert.equal((await isoB.get("/"))?.content, "<html>HOME-200</html>");
+
+    const freshCheck = await inspectSlotsFreshness(["deno-dist-slot"], staleTime);
+    assert.equal(freshCheck.hasNewer, true, "Isolate B must detect fresher slot written by Isolate A");
+    const gotSlot = await isoB.get("slots/deno-dist-slot/slot.json");
+    assert.ok(gotSlot?.content?.includes("DENO-200"));
+  } finally {
+    process.chdir(prevCwd);
+    setStorageAdapter(prevAdapter);
+    removeDirSafe(tmpApp);
+  }
+});
+
+test("6. [Phase 4 / Stage 2 / Check #68] DenoKVStorage chunked >16KB payload lifecycle, orphaned chunk cleanup, missing-chunk guard & atomic delete", async () => {
+  const sharedDenoMap = new Map();
+  const isoA = new DenoKVStorage(createMockDenoKv(sharedDenoMap));
+  const isoB = new DenoKVStorage(createMockDenoKv(sharedDenoMap));
+
+  const countChunkKeysFor = (targetKey) => {
+    let count = 0;
+    for (const entry of sharedDenoMap.values()) {
+      if (entry.key[0] === "dinou_cache_chunk" && entry.key[1] === targetKey) {
+        count += 1;
+      }
+    }
+    return count;
+  };
+
+  // 1. Write >40KB payload (3 chunks of 16KB) for shell.layout.own.json and index.html via Isolate A
+  const bigShellPayload = JSON.stringify({
+    marker: "CHUNKED-SHELL-V1",
+    pad: "A".repeat(40_000),
+  });
+  const bigHtmlPayload = `<!DOCTYPE html><html><body>${"H".repeat(38_000)}</body></html>`;
+  await isoA.set("big/shell.layout.own.json", bigShellPayload, { generatedAt: 1001 });
+  await isoA.set("big/index.html", bigHtmlPayload, { generatedAt: 1002, tags: ["big-tag"] });
+
+  assert.equal(countChunkKeysFor("big/shell.layout.own.json"), 3, "Expected 3 chunks for ~40KB shell");
+  assert.equal(countChunkKeysFor("big/index.html"), 3, "Expected 3 chunks for ~38KB index.html");
+  assert.equal(countChunkKeysFor("big"), 3, "Expected 3 chunks for folder companion key");
+
+  // Isolate B reads full >40KB payloads losslessly
+  const gotShell = await isoB.get("big/shell.layout.own.json");
+  assert.equal(gotShell?.content, bigShellPayload);
+  assert.equal(gotShell?.metadata?.generatedAt, 1001);
+  const gotHtml = await isoB.get("big");
+  assert.equal(gotHtml?.content, bigHtmlPayload);
+  assert.equal(gotHtml?.metadata?.generatedAt, 1002);
+
+  // 2. Overwrite 3-chunk payload with smaller <16KB payload -> ALL orphaned chunks MUST be cleaned up!
+  const smallShellPayload = JSON.stringify({ marker: "SMALL-SHELL-V2" });
+  await isoA.set("big/shell.layout.own.json", smallShellPayload, { generatedAt: 2001 });
+  assert.equal(
+    countChunkKeysFor("big/shell.layout.own.json"),
+    0,
+    "Overwriting chunked key with small (<16KB) payload MUST delete all orphaned chunk keys!"
+  );
+  const gotSmallShell = await isoB.get("big/shell.layout.own.json");
+  assert.equal(gotSmallShell?.content, smallShellPayload);
+  assert.equal(gotSmallShell?.metadata?.generatedAt, 2001);
+
+  // 3. Overwrite 3-chunk index.html with 2-chunk (~22KB) payload -> chunk #2 MUST be removed!
+  const mediumHtmlPayload = `<!DOCTYPE html><html><body>${"M".repeat(22_000)}</body></html>`;
+  await isoA.set("big/index.html", mediumHtmlPayload, { generatedAt: 2002 });
+  assert.equal(
+    countChunkKeysFor("big/index.html"),
+    2,
+    "Shrinking 3-chunk key to 2-chunk key MUST delete excess orphaned chunk #2"
+  );
+  assert.equal(
+    countChunkKeysFor("big"),
+    2,
+    "Shrinking folder companion key MUST also delete excess orphaned chunk #2"
+  );
+  assert.equal((await isoB.get("big/index.html"))?.content, mediumHtmlPayload);
+
+  // 4. Corrupt missing-chunk guard: if a chunk disappears, get() must return null (never truncated content!)
+  sharedDenoMap.delete(JSON.stringify(["dinou_cache_chunk", "big/index.html", 1]));
+  assert.equal(
+    await isoB.get("big/index.html"),
+    null,
+    "get() must return null when any chunk of a chunked payload is missing"
+  );
+
+  // 5. Delete cleans up header, remaining chunks, folder companion chunks, and writes cross-isolate tombstones!
+  await isoA.delete("big/index.html");
+  assert.equal(countChunkKeysFor("big/index.html"), 0, "delete() must remove all index.html chunks");
+  assert.equal(countChunkKeysFor("big"), 0, "delete() must remove all folder companion chunks");
+  assert.equal(await isoB.get("big/index.html"), null);
+  assert.equal(await isoB.get("big"), null);
+  assert.equal(await isoB.isKeyDeleted("big/index.html"), true);
+  assert.equal(await isoB.isKeyDeleted("big"), true);
+});
+
+test("7. [Phase 4 / Stage 2 / Check #68] End-to-end compiled Node AOT 3D Cube over multi-isolate DenoKVStorage with >16KB chunked L1 layout (Isolate A revalidates, cold Isolate B serves fresh without .dinou/dist2 resurrection)", async () => {
+  const tmpApp = createFixtureDir("tmp-3d-p4-s2-denokv-aot-");
+  try {
+    fs.mkdirSync(path.join(tmpApp, "src/cube/l2"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpApp, "package.json"),
+      JSON.stringify(
+        {
+          name: "tmp-3d-p4-s2-denokv-aot",
+          type: "module",
+          private: true,
+          dependencies: { react: "^19.3.0", "react-dom": "^19.3.0" },
+        },
+        null,
+        2
+      )
+    );
+    writeDinouShim(tmpApp);
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src/state.ts"),
+      `import fs from "node:fs";
+import path from "node:path";
+const FILE = path.resolve(process.cwd(), "p4s2-state.json");
+const DEF = { l1: 100, slot: 100, l2: 100, page: 100, hole: 100 };
+export function readS() {
+  try { if (fs.existsSync(FILE)) return { ...DEF, ...JSON.parse(fs.readFileSync(FILE, "utf8")) }; } catch {}
+  return { ...DEF };
+}
+export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/layout.tsx"),
+      `import type { ReactNode } from "react";
+export default function Root({ children }: { children: ReactNode }) {
+  return <html><head><title>P4S2</title></head><body>{children}</body></html>;
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/page.tsx"),
+      `export default function Home() { return <main>home</main>; }\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/cube/layout_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\nexport function getCacheTags() { return ["p4s2-l1"]; }\n`
+    );
+    // Include >20KB static content in L1 so shell.layout.own.json & index.html genuinely exercise Deno KV chunking!
+    fs.writeFileSync(
+      path.join(tmpApp, "src/cube/layout.tsx"),
+      `import type { ReactNode } from "react";
+import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../state";
+const BIG_PAD = "Z".repeat(22000);
+export default function L1({ children }: { children: ReactNode }) {
+  return (
+    <section data-pad-len={BIG_PAD.length}>
+      <span id="c-l1">{readS().l1}</span>
+      <span id="c-pad" style={{ display: "none" }}>{BIG_PAD}</span>
+      <DinouCacheSlot id="p4s2-slot" tag="p4s2-slot-tag" revalidate={3600}>
+        {async () => <span id="c-sl">{readS().slot}</span>}
+      </DinouCacheSlot>
+      {children}
+    </section>
+  );
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/cube/l2/layout_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/cube/l2/layout.tsx"),
+      `import type { ReactNode } from "react";
+import { readS } from "../../state";
+export default function L2({ children }: { children: ReactNode }) {
+  return <div><span id="c-l2">{readS().l2}</span>{children}</div>;
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/cube/l2/page_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/cube/l2/page.tsx"),
+      `import { Suspense } from "react";
+import { readS, sleep } from "../../state";
+async function Hole() {
+  await sleep(10);
+  return <span id="c-h">{readS().hole}</span>;
+}
+export default function Page() {
+  return (
+    <main>
+      <span id="c-p">{readS().page}</span>
+      <Suspense fallback={<span>fb</span>}><Hole /></Suspense>
+    </main>
+  );
+}
+`
+    );
+
+    const buildRes = spawnSync(process.execPath, [CLI_PATH, "build:node:esbuild"], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 120_000,
+    });
+    assert.equal(
+      buildRes.status,
+      0,
+      `Phase 4 Stage 2 DenoKV AOT build failed:\n${buildRes.stdout}\n${buildRes.stderr}`
+    );
+
+    const verifyScript = path.join(tmpApp, "verify-p4s2-denokv.mjs");
+    fs.writeFileSync(
+      verifyScript,
+      `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const { DenoKVStorage, setStorageAdapter } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/storage-adapter.js")).href
+      )});
+const { revalidateTag, revalidateLayout } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/cache-revalidate.js")).href
+      )});
+
+const sharedDenoMap = new Map();
+let ver = 0;
+const makeDenoKv = () => ({
+  async get(keyTuple) {
+    const k = JSON.stringify(keyTuple);
+    const e = sharedDenoMap.get(k);
+    return e ? { key: keyTuple, value: structuredClone(e.value), versionstamp: e.vs } : { key: keyTuple, value: null, versionstamp: null };
+  },
+  async set(keyTuple, value) {
+    if (Buffer.byteLength(JSON.stringify(value ?? null), "utf8") > 65536) {
+      throw new TypeError("Deno KV value exceeds 65536 bytes");
+    }
+    ver += 1;
+    const vs = String(ver).padStart(10, "0");
+    sharedDenoMap.set(JSON.stringify(keyTuple), { key: [...keyTuple], value: structuredClone(value), vs });
+    return { ok: true, versionstamp: vs };
+  },
+  async delete(keyTuple) {
+    sharedDenoMap.delete(JSON.stringify(keyTuple));
+  },
+  atomic() {
+    const ops = [];
+    const tx = {
+      set(keyTuple, value) { ops.push({ type: "set", keyTuple: [...keyTuple], value }); return tx; },
+      delete(keyTuple) { ops.push({ type: "delete", keyTuple: [...keyTuple] }); return tx; },
+      async commit() {
+        for (const op of ops) {
+          if (op.type === "set" && Buffer.byteLength(JSON.stringify(op.value ?? null), "utf8") > 65536) {
+            throw new TypeError("Deno KV atomic value exceeds 65536 bytes");
+          }
+        }
+        ver += 1;
+        const vs = String(ver).padStart(10, "0");
+        for (const op of ops) {
+          const k = JSON.stringify(op.keyTuple);
+          if (op.type === "set") sharedDenoMap.set(k, { key: op.keyTuple, value: structuredClone(op.value), vs });
+          else sharedDenoMap.delete(k);
+        }
+        return { ok: true, versionstamp: vs };
+      },
+    };
+    return tx;
+  },
+  list(selector = {}) {
+    const prefix = Array.isArray(selector?.prefix) ? selector.prefix : [];
+    const matched = [];
+    for (const e of sharedDenoMap.values()) {
+      if (e.key.length >= prefix.length && prefix.every((seg, i) => e.key[i] === seg)) {
+        matched.push({ key: [...e.key], value: structuredClone(e.value), versionstamp: e.vs });
+      }
+    }
+    return {
+      async *[Symbol.asyncIterator]() { for (const item of matched) yield item; },
+    };
+  },
+});
+
+const isoA = new DenoKVStorage(makeDenoKv());
+const isoB = new DenoKVStorage(makeDenoKv());
+setStorageAdapter(isoA);
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+globalThis.__DINOU_RENDER_HTML_STREAM__ = ssrMod.renderHtml;
+const opts = { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml };
+
+const writeS = (patch) => {
+  const f = path.resolve("p4s2-state.json");
+  const cur = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : {};
+  fs.writeFileSync(f, JSON.stringify({ ...cur, ...patch }), "utf8");
+};
+const get = async (u) => {
+  const r = await rscMod.handleRequest(new Request("http://localhost" + u), opts);
+  assert.equal(r.status, 200, "Expected 200 for " + u);
+  return await r.text();
+};
+const textById = (html, id) => {
+  const m = html.match(new RegExp(\`id="\${id}"[^>]*>([^<]+)<\`));
+  return m ? m[1] : null;
+};
+
+// 1. Isolate A warms from .dinou/dist2 -> Deno KV (chunking >22KB L1 shell & HTML!)
+const h1 = await get("/cube/l2");
+assert.equal(textById(h1, "c-l1"), "100");
+assert.equal(textById(h1, "c-sl"), "100");
+assert.equal(textById(h1, "c-l2"), "100");
+assert.equal(textById(h1, "c-p"), "100");
+assert.equal(textById(h1, "c-h"), "100");
+assert.ok(h1.includes("Z".repeat(22000)), "Expected >22KB padded L1 content");
+
+// 2. Isolate A poisons L2 & Page, bumps Slot & L1, and runs revalidateTag("p4s2-slot-tag") + revalidateLayout("/cube")
+writeS({ l1: 601, slot: 602, l2: 999, page: 999, hole: 603 });
+await revalidateTag("p4s2-slot-tag");
+await revalidateLayout("/cube");
+
+// Confirm chunked keys were genuinely used for L1 own shell!
+const l1ChunkCount = [...sharedDenoMap.values()].filter(
+  (e) => e.key[0] === "dinou_cache_chunk" && e.key[1] === "cube/shell.layout.own.json"
+).length;
+assert.ok(l1ChunkCount >= 2, "Expected cube/shell.layout.own.json to be stored chunked in Deno KV (got " + l1ChunkCount + ")");
+
+// 3. Switch to cold Isolate B (empty local RAM, stale .dinou/dist2 still has 100 on disk!)
+setStorageAdapter(isoB);
+const h2 = await get("/cube/l2");
+assert.equal(textById(h2, "c-l1"), "601", "Cold Isolate B must serve fresh chunked L1 from Deno KV");
+assert.equal(textById(h2, "c-sl"), "602", "Cold Isolate B must serve fresh slot from Deno KV (no .dinou/dist2 resurrection!)");
+assert.equal(textById(h2, "c-l2"), "100", "Cold Isolate B must keep L2 frozen (no 999 re-exec)");
+assert.equal(textById(h2, "c-p"), "100", "Cold Isolate B must keep Page frozen (no 999 re-exec)");
+assert.equal(textById(h2, "c-h"), "603", "Cold Isolate B must stream live PPR hole");
+assert.ok(h2.includes("Z".repeat(22000)), "Cold Isolate B must reassemble chunked L1 payload losslessly");
+
+// 4. Pure webhook-style deletion on Isolate A (delete slot + markTagInvalidatedAsync WITHOUT re-rendering)
+//    -> Brand-new cold Isolate C MUST see tombstone & regenerate 702 instead of resurrecting stale 100 from .dinou/dist2!
+setStorageAdapter(isoA);
+writeS({ l1: 999, slot: 702, l2: 999, page: 999, hole: 703 });
+await isoA.markTagInvalidatedAsync("p4s2-slot-tag");
+await isoA.delete("slots/p4s2-slot/slot.json");
+
+const isoC = new DenoKVStorage(makeDenoKv());
+setStorageAdapter(isoC);
+assert.equal(await isoC.isKeyDeleted("slots/p4s2-slot/slot.json"), true);
+const h3 = await get("/cube/l2");
+assert.equal(textById(h3, "c-l1"), "601", "Cold Isolate C must keep L1 shell frozen at 601 (never poisoned 999!)");
+assert.equal(textById(h3, "c-sl"), "702", "Cold Isolate C must regenerate fresh 702 slot on tombstone (never resurrect 100 from .dinou/dist2!)");
+assert.equal(textById(h3, "c-l2"), "100", "Cold Isolate C must keep L2 frozen");
+assert.equal(textById(h3, "c-p"), "100", "Cold Isolate C must keep Page frozen");
+assert.equal(textById(h3, "c-h"), "703", "Cold Isolate C must stream live PPR hole");
+
+console.log("PHASE4_STAGE2_DENOKV_DISTRIBUTED_OK");
+`
+    );
+
+    const runRes = spawnSync(process.execPath, [verifyScript], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+      timeout: 60_000,
+    });
+    assert.equal(
+      runRes.status,
+      0,
+      `Phase 4 Stage 2 AOT multi-isolate DenoKV failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+    );
+    assert.ok(runRes.stdout.includes("PHASE4_STAGE2_DENOKV_DISTRIBUTED_OK"));
   } finally {
     removeDirSafe(tmpApp);
   }
