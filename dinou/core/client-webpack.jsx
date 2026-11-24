@@ -324,23 +324,19 @@ const consumeInlineRscResponse = (kind) => {
 const isStaticExportMode = () =>
   typeof window !== "undefined" && Boolean(window.__DINOU_STATIC_EXPORT__);
 
-let isDocumentUnloading = false;
 if (typeof window !== "undefined") {
   const markDocumentUnloading = () => {
-    isDocumentUnloading = true;
     window.__DINOU_STATIC_EXPORT_UNLOADING__ = true;
   };
   window.addEventListener("beforeunload", markDocumentUnloading);
   window.addEventListener("pagehide", markDocumentUnloading);
   window.addEventListener("pageshow", () => {
-    isDocumentUnloading = false;
     window.__DINOU_STATIC_EXPORT_UNLOADING__ = false;
   });
 }
 
 const isStaticExportUnloading = () =>
-  typeof window !== "undefined" &&
-  (isDocumentUnloading || Boolean(window.__DINOU_STATIC_EXPORT_UNLOADING__));
+  typeof window !== "undefined" && Boolean(window.__DINOU_STATIC_EXPORT_UNLOADING__);
 
 // Static-export .rsc payloads are pre-rendered static files (not streaming SSR).
 // Buffer the body into an in-memory ArrayBuffer before handing a Response to
