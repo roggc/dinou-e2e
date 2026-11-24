@@ -11,7 +11,7 @@ All 6 checks below are designed to be implemented and verified **incrementally (
 ## Master Checklist (Phase 5)
 
 - [x] **Stage 1 — Check `#73`:** Unbundled Classic Node Production Runtime (`isEdgeRuntime() === false`: `dinou build` + `dinou start`) & Legacy `revalidating.js` 3D Cube Parity
-- [ ] **Stage 2 — Check `#74`:** Static Site Export (`dinou export-static`) Under Full 3D Cube Topologies (`(group)` / `[[...slug]]` / Nested `<DinouCacheSlot>` / Zero-Hole PPR / `reset_layout` & `no_layout`)
+- [x] **Stage 2 — Check `#74`:** Static Site Export (`dinou export-static`) Under Full 3D Cube Topologies (`(group)` / `[[...slug]]` / Nested `<DinouCacheSlot>` / Zero-Hole PPR / `reset_layout` & `no_layout`)
 - [ ] **Stage 3 — Check `#75`:** Perimeter Guard Contracts (`validateParams`, `allowISG = false`, `getProps` `redirect()`, and `notFound()`/404 Fallback) Inside Asymmetric 3D PPR Chains
 - [ ] **Stage 4 — Check `#76`:** React 19 `useId()` Collision & Scoped-ID Hydration Integrity Across Asymmetric 3D Composition, Nested `<DinouCacheSlot>`, and Staggered PPR Holes
 - [ ] **Stage 5 — Check `#77`:** `error.tsx` & Client `ErrorBoundary` Fault Isolation, `reset()`, and Soft-Navigation Recovery Inside Asymmetric 3D PPR + `<DinouCacheSlot>`

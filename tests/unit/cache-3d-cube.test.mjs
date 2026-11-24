@@ -6614,3 +6614,464 @@ console.log("PHASE5_STAGE1_CLASSIC_NODE_PARITY_OK");
     removeDirSafe(tmpApp);
   }
 });
+
+test("25. [Phase 5 / Stage 2 / Check #74] Static Site Export (dinou export-static) Under Full 3D Cube Topologies ((group), [[...slug]], Nested Slots, Zero-Hole PPR, reset_layout & no_layout)", async () => {
+  // 25a. Unit contract checks on discover-layouts.js (reset_layout) & client.jsx / client-webpack.jsx static-export helpers
+  const { discoverLayoutsFromFileRelPaths } = await importDinou("core/discover-layouts.js");
+  const discoveredRules = discoverLayoutsFromFileRelPaths([
+    "layout.tsx",
+    "se/layout.tsx",
+    "se/(alpha)/layout.tsx",
+    "se/(alpha)/a/page.tsx",
+    "se/(beta)/layout.tsx",
+    "se/(beta)/b/page.tsx",
+    "se/docs/[[...slug]]/layout.tsx",
+    "se/docs/[[...slug]]/page.tsx",
+    "se/reset-own/reset_layout",
+    "se/reset-own/layout.tsx",
+    "se/reset-own/page.tsx",
+    "se/reset-bare/reset_layout",
+    "se/reset-bare/page.tsx",
+    "se/bare/no_layout",
+    "se/bare/page.tsx",
+  ]);
+  assert.ok(
+    discoveredRules.includes("=se/a:~se/(alpha)"),
+    `Expected =se/a:~se/(alpha), got: ${JSON.stringify(discoveredRules)}`
+  );
+  assert.ok(
+    discoveredRules.includes("=se/b:~se/(beta)"),
+    `Expected =se/b:~se/(beta), got: ${JSON.stringify(discoveredRules)}`
+  );
+  assert.ok(
+    discoveredRules.includes("=se/docs/[[...slug]]:~se/docs/[[...slug]]"),
+    `Expected optional catch-all template rule, got: ${JSON.stringify(discoveredRules)}`
+  );
+  assert.ok(
+    discoveredRules.includes("=se/reset-own:2"),
+    `reset_layout WITH its own layout.tsx must map to depth 2, got: ${JSON.stringify(discoveredRules)}`
+  );
+  assert.ok(
+    discoveredRules.includes("=se/reset-bare:-1"),
+    `reset_layout WITHOUT its own layout.tsx must stop climbing and map to -1, got: ${JSON.stringify(discoveredRules)}`
+  );
+  assert.ok(
+    discoveredRules.includes("=se/bare:-1"),
+    `no_layout must map to -1, got: ${JSON.stringify(discoveredRules)}`
+  );
+
+  for (const relClient of ["core/client.jsx", "core/client-webpack.jsx"]) {
+    const src = fs.readFileSync(path.join(DINOU_ROOT, relClient), "utf8");
+    const safeDecodeMatch = src.match(/const safeDecodeSeg = [\s\S]*?\n\};/);
+    const buildUrlMatch = src.match(/const buildStaticExportRscUrl = [\s\S]*?\n\};/);
+    assert.ok(safeDecodeMatch && buildUrlMatch, `Missing static-export URL helpers in ${relClient}`);
+    const buildStaticExportRscUrl = new Function(
+      `${safeDecodeMatch[0]}\n${buildUrlMatch[0]}\nreturn buildStaticExportRscUrl;`
+    )();
+    assert.equal(buildStaticExportRscUrl("/", "page.rsc"), "/page.rsc");
+    assert.equal(buildStaticExportRscUrl("/se/a/", "page.rsc"), "/se/a/page.rsc");
+    assert.equal(buildStaticExportRscUrl("/se/(alpha)", "layout.rsc"), "/se/(alpha)/layout.rsc");
+    assert.equal(
+      buildStaticExportRscUrl("/se/docs/[[...slug]]", "layout.rsc"),
+      "/se/docs/%5B%5B...slug%5D%5D/layout.rsc",
+      `${relClient}: optional catch-all brackets must be percent-encoded for strict static hosts`
+    );
+    assert.equal(
+      buildStaticExportRscUrl("/se/hello%20world?tab=1#sec", "page.rsc"),
+      "/se/hello%20world/page.rsc?tab=1",
+      `${relClient}: must not double-encode existing percent escapes and must preserve query`
+    );
+    assert.match(
+      src,
+      /export const refreshSlot = \(slotId, options\) => \{\s*if \(typeof window !== "undefined"\) \{\s*if \(isStaticExportMode\(\) \|\| isStaticExportUnloading\(\)\)/,
+      `${relClient}: refreshSlot must gracefully no-op in static-export mode`
+    );
+  }
+
+  // 25b. Full compiled build + dinou export-static + dumb zero-logic static HTTP server verification
+  const tmpApp = createFixtureDir("p5-s2-static-export-");
+  try {
+    writeDinouShim(tmpApp);
+    fs.writeFileSync(
+      path.join(tmpApp, "package.json"),
+      JSON.stringify({ name: "p5-s2-static-export", private: true, type: "module" }, null, 2)
+    );
+    const write = (rel, content) => {
+      const full = path.join(tmpApp, rel);
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, content, "utf8");
+    };
+
+    write(
+      "src/layout.tsx",
+      `import type { ReactNode } from "react";
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return <html lang="en"><head><title>P5S2 Static Export</title></head><body>{children}</body></html>;
+}
+`
+    );
+    write("src/page.tsx", `export default function Home() { return <main id="se-home">home</main>; }\n`);
+
+    write(
+      "src/se/probe.tsx",
+      `"use client";
+import { useRef, useState } from "react";
+export default function OuterProbe() {
+  const mountRef = useRef("m-" + Math.random().toString(36).slice(2, 8));
+  const [n, setN] = useState(0);
+  return (
+    <div id="se-outer-probe">
+      <span id="se-outer-mount">{mountRef.current}</span>
+      <span id="se-outer-count">{n}</span>
+      <button id="se-outer-inc" type="button" onClick={() => setN((v) => v + 1)}>+1</button>
+    </div>
+  );
+}
+`
+    );
+
+    write(
+      "src/se/layout.tsx",
+      `import type { ReactNode } from "react";
+import { DinouCacheSlot } from "dinou/server";
+import OuterProbe from "./probe";
+
+export default function SeOuterLayout({ children }: { children: ReactNode }) {
+  return (
+    <div id="se-outer-shell">
+      <OuterProbe />
+      <DinouCacheSlot id="se-outer-slot" revalidate={3600} tags={["se-outer-tag"]}>
+        {async () => <span id="se-outer-slot-val">outer-baked-101</span>}
+      </DinouCacheSlot>
+      {children}
+    </div>
+  );
+}
+`
+    );
+
+    // Sibling Route Group (alpha) + zero-hole PPR page + nested <DinouCacheSlot>
+    write(
+      "src/se/(alpha)/layout.tsx",
+      `import type { ReactNode } from "react";
+import { DinouCacheSlot } from "dinou/server";
+
+export default function AlphaLayout({ children }: { children: ReactNode }) {
+  return (
+    <section id="se-alpha-layout">
+      <DinouCacheSlot id="se-alpha-slot" revalidate={3600} tags={["se-alpha-tag"]}>
+        {async () => <span id="se-alpha-slot-val">alpha-baked-201</span>}
+      </DinouCacheSlot>
+      {children}
+    </section>
+  );
+}
+`
+    );
+    write("src/se/(alpha)/a/page_functions.ts", `export const ppr = true;\nexport const revalidate = 3600;\n`);
+    write(
+      "src/se/(alpha)/a/page.tsx",
+      `import { Link } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+
+export default function AlphaPage() {
+  return (
+    <article id="se-alpha-page">
+      <h1>Alpha Zero-Hole PPR</h1>
+      <DinouCacheSlot id="se-alpha-page-slot" revalidate={3600}>
+        {async () => <span id="se-alpha-page-slot-val">alpha-page-baked-301</span>}
+      </DinouCacheSlot>
+      <Link id="link-to-beta" href="/se/b">Beta</Link>
+      <Link id="link-to-docs-0" href="/se/docs">Docs Root</Link>
+    </article>
+  );
+}
+`
+    );
+
+    // Sibling Route Group (beta) + zero-hole PPR page
+    write(
+      "src/se/(beta)/layout.tsx",
+      `import type { ReactNode } from "react";
+import { DinouCacheSlot } from "dinou/server";
+
+export default function BetaLayout({ children }: { children: ReactNode }) {
+  return (
+    <section id="se-beta-layout">
+      <DinouCacheSlot id="se-beta-slot" revalidate={3600}>
+        {async () => <span id="se-beta-slot-val">beta-baked-202</span>}
+      </DinouCacheSlot>
+      {children}
+    </section>
+  );
+}
+`
+    );
+    write("src/se/(beta)/b/page_functions.ts", `export const ppr = true;\nexport const revalidate = 3600;\n`);
+    write(
+      "src/se/(beta)/b/page.tsx",
+      `import { Link } from "dinou";
+export default function BetaPage() {
+  return (
+    <article id="se-beta-page">
+      <h1>Beta Zero-Hole PPR</h1>
+      <Link id="link-to-alpha" href="/se/a">Alpha</Link>
+    </article>
+  );
+}
+`
+    );
+
+    // Optional Catch-All [[...slug]] with its own layout + getStaticPaths (0, 1, 2 segs)
+    write(
+      "src/se/docs/[[...slug]]/layout.tsx",
+      `import type { ReactNode } from "react";
+import { DinouCacheSlot } from "dinou/server";
+
+export default function DocsCatchAllLayout({
+  children,
+  params,
+}: {
+  children: ReactNode;
+  params?: { slug?: string[] };
+}) {
+  const slugLabel = Array.isArray(params?.slug) && params.slug.length > 0 ? params.slug.join("/") : "root";
+  return (
+    <section id="se-docs-layout" data-slug={slugLabel}>
+      <DinouCacheSlot id="se-docs-slot" revalidate={3600}>
+        {async () => <span id="se-docs-slot-val">docs-baked-401</span>}
+      </DinouCacheSlot>
+      {children}
+    </section>
+  );
+}
+`
+    );
+    write(
+      "src/se/docs/[[...slug]]/page_functions.ts",
+      `export function getStaticPaths() {
+  return [[], ["guide"], ["guide", "intro"]];
+}
+`
+    );
+    write(
+      "src/se/docs/[[...slug]]/page.tsx",
+      `export default function DocsCatchAllPage({ params }: { params?: { slug?: string[] } }) {
+  const slugLabel = Array.isArray(params?.slug) && params.slug.length > 0 ? params.slug.join("/") : "root";
+  return <article id="se-docs-page">{\`docs-slug:\${slugLabel}\`}</article>;
+}
+`
+    );
+
+    // reset_layout WITH its own layout.tsx
+    write("src/se/reset-own/reset_layout", "");
+    write(
+      "src/se/reset-own/layout.tsx",
+      `import type { ReactNode } from "react";
+export default function ResetOwnLayout({ children }: { children: ReactNode }) {
+  return <html lang="en"><head><title>ResetOwn</title></head><body><div id="se-reset-own-shell">{children}</div></body></html>;
+}
+`
+    );
+    write("src/se/reset-own/page.tsx", `export default function ResetOwnPage() { return <main id="se-reset-own-page">reset-own</main>; }\n`);
+
+    // reset_layout WITHOUT its own layout.tsx
+    write("src/se/reset-bare/reset_layout", "");
+    write(
+      "src/se/reset-bare/page.tsx",
+      `export default function ResetBarePage() {
+  return <html lang="en"><head><title>ResetBare</title></head><body><main id="se-reset-bare-page">reset-bare</main></body></html>;
+}
+`
+    );
+
+    // no_layout
+    write("src/se/bare/no_layout", "");
+    write(
+      "src/se/bare/page.tsx",
+      `export default function BareNoLayoutPage() {
+  return <html lang="en"><head><title>Bare</title></head><body><main id="se-bare-page">bare-no-layout</main></body></html>;
+}
+`
+    );
+
+    const buildRes = spawnSync(process.execPath, [CLI_PATH, "build"], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 120_000,
+    });
+    assert.equal(
+      buildRes.status,
+      0,
+      `Phase 5 Stage 2 build failed:\n${buildRes.stdout}\n${buildRes.stderr}`
+    );
+
+    const exportRes = spawnSync(process.execPath, [CLI_PATH, "export-static"], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 60_000,
+    });
+    assert.equal(
+      exportRes.status,
+      0,
+      `Phase 5 Stage 2 export-static failed:\n${exportRes.stdout}\n${exportRes.stderr}`
+    );
+
+    const outDir = path.join(tmpApp, "out");
+    assert.ok(fs.existsSync(outDir), "out/ directory must exist after export-static");
+
+    // 1. Collect EVERY exported file under out/ and verify strict artifact completeness & hygiene
+    const exportedFiles = [];
+    const walkOut = (dir, rel = "") => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const nextRel = rel ? `${rel}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) {
+          walkOut(path.join(dir, entry.name), nextRel);
+        } else {
+          exportedFiles.push(nextRel);
+        }
+      }
+    };
+    walkOut(outDir);
+
+    const requiredOutFiles = [
+      "index.html",
+      "page.rsc",
+      "layout.rsc",
+      "se/a/index.html",
+      "se/a/page.rsc",
+      "se/(alpha)/layout.rsc",
+      "se/b/index.html",
+      "se/b/page.rsc",
+      "se/(beta)/layout.rsc",
+      "se/docs/index.html",
+      "se/docs/page.rsc",
+      "se/docs/[[...slug]]/layout.rsc",
+      "se/docs/guide/index.html",
+      "se/docs/guide/page.rsc",
+      "se/docs/guide/layout.rsc",
+      "se/docs/guide/intro/index.html",
+      "se/docs/guide/intro/page.rsc",
+      "se/docs/guide/intro/layout.rsc",
+      "se/reset-own/index.html",
+      "se/reset-own/page.rsc",
+      "se/reset-own/layout.rsc",
+      "se/reset-bare/index.html",
+      "se/reset-bare/page.rsc",
+      "se/bare/index.html",
+      "se/bare/page.rsc",
+    ];
+    for (const reqFile of requiredOutFiles) {
+      assert.ok(
+        exportedFiles.includes(reqFile),
+        `Expected exported file missing from out/: ${reqFile}\nExported files:\n${exportedFiles.join("\n")}`
+      );
+    }
+
+    // Strict hygiene: ZERO internal server/cache metadata or slot JSONs leaked into out/
+    const leaked = exportedFiles.filter(
+      (f) =>
+        f.endsWith("metadata.json") ||
+        f.includes("shell.") ||
+        f.startsWith("slots/") ||
+        f.includes("/slots/") ||
+        f.includes("._old.") ||
+        f.endsWith("status-manifest.json") ||
+        f.endsWith("rsc.rsc") ||
+        f.endsWith(".map")
+    );
+    assert.deepEqual(
+      leaked,
+      [],
+      `Internal server/cache artifacts leaked into out/: ${JSON.stringify(leaked)}`
+    );
+
+    // 2. Zero-hole PPR HTML cleanliness check: baked slots present, __DINOU_STATIC_EXPORT__ injected, NO dangling $RB scripts!
+    for (const pprRel of ["se/a/index.html", "se/b/index.html"]) {
+      const html = fs.readFileSync(path.join(outDir, pprRel), "utf8");
+      assert.ok(
+        html.includes("window.__DINOU_STATIC_EXPORT__=true"),
+        `${pprRel} must have __DINOU_STATIC_EXPORT__ injected`
+      );
+      assert.ok(
+        html.includes("outer-baked-101"),
+        `${pprRel} must include pre-baked outer <DinouCacheSlot>`
+      );
+      assert.ok(
+        !html.includes("$RB=") && !html.includes("$RC("),
+        `${pprRel} (zero-hole PPR) must be self-contained with zero dangling $RB/$RC suspense scripts`
+      );
+    }
+    assert.ok(
+      fs.readFileSync(path.join(outDir, "se/a/index.html"), "utf8").includes("alpha-page-baked-301"),
+      "se/a/index.html must include pre-baked page <DinouCacheSlot>"
+    );
+
+    // 3. Exercise a dumb zero-logic static file responder serving out/ (zero rewrites, URL percent-decoding only)
+    //    and verify EVERY static HTML + .rsc URL (including percent-encoded [[...slug]]/layout.rsc) returns 200!
+    const { getStaticContentType, resolveConfinedStaticFile } = await importDinou("core/static-assets.js");
+    const dumbStaticFetch = (urlPath) => {
+      const urlObj = new URL(urlPath, "http://127.0.0.1");
+      let decoded = "";
+      try {
+        decoded = decodeURIComponent(urlObj.pathname).replace(/^\/+/, "");
+      } catch {
+        return { status: 400, contentType: "text/plain", text: "Bad Request" };
+      }
+      const candidates = decoded ? [decoded, `${decoded.replace(/\/+$/, "")}/index.html`] : ["index.html"];
+      for (const cand of candidates) {
+        const abs = resolveConfinedStaticFile(outDir, cand);
+        if (abs && fs.existsSync(abs) && fs.statSync(abs).isFile()) {
+          return {
+            status: 200,
+            contentType: cand.endsWith(".rsc") ? "text/x-component; charset=utf-8" : getStaticContentType(cand),
+            text: fs.readFileSync(abs, "utf8"),
+          };
+        }
+      }
+      return {
+        status: 404,
+        contentType: "text/html; charset=utf-8",
+        text: "<!DOCTYPE html><html><body>404 Not Found</body></html>",
+      };
+    };
+
+    const check200 = (urlPath, expectedSnippet) => {
+      const r = dumbStaticFetch(urlPath);
+      assert.equal(r.status, 200, `Dumb static server expected 200 for ${urlPath}, got ${r.status}`);
+      if (expectedSnippet) {
+        assert.ok(r.text.includes(expectedSnippet), `${urlPath} missing expected snippet "${expectedSnippet}"`);
+      }
+    };
+
+    check200("/se/a", "alpha-baked-201");
+    check200("/se/a/page.rsc", "alpha-page-baked-301");
+    check200("/se/(alpha)/layout.rsc", "alpha-baked-201");
+    check200("/se/b", "beta-baked-202");
+    check200("/se/b/page.rsc", "Beta Zero-Hole PPR");
+    check200("/se/(beta)/layout.rsc", "beta-baked-202");
+    check200("/se/docs", "docs-slug:root");
+    check200("/se/docs/page.rsc", "docs-slug:root");
+    check200("/se/docs/%5B%5B...slug%5D%5D/layout.rsc", "docs-baked-401");
+    check200("/se/docs/guide", "docs-slug:guide");
+    check200("/se/docs/guide/page.rsc", "docs-slug:guide");
+    check200("/se/docs/guide/layout.rsc", "docs-baked-401");
+    check200("/se/docs/guide/intro", "docs-slug:guide/intro");
+    check200("/se/docs/guide/intro/page.rsc", "docs-slug:guide/intro");
+    check200("/se/docs/guide/intro/layout.rsc", "docs-baked-401");
+    check200("/se/reset-own", "se-reset-own-shell");
+    check200("/se/reset-own/layout.rsc", "se-reset-own-shell");
+    check200("/se/reset-bare", "se-reset-bare-page");
+    check200("/se/bare", "bare-no-layout");
+
+    // Verify internal files return 404 on dumb static host
+    for (const secretUrl of ["/metadata.json", "/se/a/shell.page.json", "/slots/se-outer-slot/slot.json", "/____rsc_slot____/se-alpha-slot"]) {
+      const r = dumbStaticFetch(secretUrl);
+      assert.equal(r.status, 404, `Dumb static host must return 404 for ${secretUrl}`);
+    }
+  } finally {
+    removeDirSafe(tmpApp);
+  }
+});

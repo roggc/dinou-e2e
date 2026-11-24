@@ -374,8 +374,14 @@ const buildStaticExportRscUrl = (rawRouteOrKey, fileName) => {
   const qIdx = withoutHash.indexOf("?");
   const rawPathname = qIdx === -1 ? withoutHash : withoutHash.slice(0, qIdx);
   const existingQuery = qIdx === -1 ? "" : withoutHash.slice(qIdx + 1);
-  const cleanPathname = rawPathname.replace(/\/+$/, "");
-  const baseRscPath = cleanPathname ? `${cleanPathname}/${fileName}` : `/${fileName}`;
+  const encodedSegments = rawPathname
+    .split("/")
+    .filter(Boolean)
+    .map((seg) => encodeURIComponent(safeDecodeSeg(seg)));
+  const baseRscPath =
+    encodedSegments.length > 0
+      ? `/${encodedSegments.join("/")}/${fileName}`
+      : `/${fileName}`;
   return existingQuery ? `${baseRscPath}?${existingQuery}` : baseRscPath;
 };
 
@@ -561,6 +567,7 @@ const getLayoutPayload = (layoutKey, searchPart = "", version = 0) => {
             (!res.ok ||
               (res.headers.get("content-type") || "").toLowerCase().includes("text/html"))
           ) {
+            layoutCache.delete(cacheKey);
             return new Promise(() => {});
           }
           if (staticExport) {
@@ -657,6 +664,9 @@ const getErrorRSCPayload = (route, error) => {
 };
 
 const fetchSlotRSC = (slotId, options = {}) => {
+  if (isStaticExportMode() || isStaticExportUnloading()) {
+    return new Promise(() => {});
+  }
   const currentPath =
     (options && options.currentPath) ||
     (typeof window !== "undefined" ? window.location.pathname : "/");
@@ -668,7 +678,15 @@ const fetchSlotRSC = (slotId, options = {}) => {
       headers: {
         "x-dinou-current-path": currentPath,
       },
-    }),
+    }).then(
+      (res) => (isStaticExportUnloading() ? new Promise(() => {}) : res),
+      (err) => {
+        if (isStaticExportUnloading()) {
+          return new Promise(() => {});
+        }
+        throw err;
+      }
+    ),
     {
       callServer: async (id, args) => {
         const proxy = createServerFunctionProxy(id);
@@ -680,6 +698,9 @@ const fetchSlotRSC = (slotId, options = {}) => {
 
 export const refreshSlot = (slotId, options) => {
   if (typeof window !== "undefined") {
+    if (isStaticExportMode() || isStaticExportUnloading()) {
+      return Promise.resolve();
+    }
     flushPendingSsrStreams();
     const promises = [];
     window.dispatchEvent(

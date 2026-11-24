@@ -393,6 +393,9 @@ if (
 ) {
   window.__DINOU_SLOT_REFRESH_DISPATCHER_INSTALLED__ = true;
   window.addEventListener("dinou:refresh-slot", (e) => {
+    if (window.__DINOU_STATIC_EXPORT__ || window.__DINOU_STATIC_EXPORT_UNLOADING__) {
+      return;
+    }
     const targetId = e?.detail?.id;
     const options = e?.detail?.options;
     if (typeof window.__DINOU_FETCH_SLOT__ !== "function") return;
