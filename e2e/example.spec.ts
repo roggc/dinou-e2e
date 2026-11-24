@@ -7239,12 +7239,34 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       await page.click("#ts-run-automated-suite");
       await page.waitForTimeout(400);
-      if ((await page.locator("#ts-suite-summary-badge").textContent())?.trim() === "IDLE") {
+      const isTsBtnDisabled = await page.locator("#ts-run-automated-suite").isDisabled();
+      const hasTsBadge = (await page.locator("#ts-suite-summary-badge").count()) > 0;
+      if (!isTsBtnDisabled && !hasTsBadge) {
         await page.click("#ts-run-automated-suite");
       }
-      await expect(page.locator("#ts-suite-summary-badge")).toHaveText("13/13 PASSED", {
+      await expect(page.locator("#ts-suite-summary-badge")).toBeVisible({
         timeout: 90000,
       });
+      const tsSummaryBadgeText = (
+        await page.locator("#ts-suite-summary-badge").textContent()
+      )?.trim();
+      if (tsSummaryBadgeText !== "13/13 PASSED") {
+        const failedScenarios: string[] = [];
+        for (let i = 1; i <= 13; i++) {
+          const st = (
+            await page.locator(`#ts-test-status-${i}`).textContent()
+          )?.trim();
+          if (st !== "passed") {
+            const det = (
+              await page.locator(`#ts-test-detail-${i}`).textContent()
+            )?.trim();
+            failedScenarios.push(`Scenario #${i} [${st}]: ${det}`);
+          }
+        }
+        throw new Error(
+          `Triple Synergy suite finished with "${tsSummaryBadgeText}". Failed scenarios:\n${failedScenarios.join("\n")}`
+        );
+      }
 
       for (let i = 1; i <= 13; i++) {
         await expect(page.locator(`#ts-test-status-${i}`)).toHaveText("passed");
@@ -21084,6 +21106,15 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("#stag-hole-a")).toHaveText(`fast:softabort-${nextHoleA}`, {
         timeout: 10000,
       });
+      if (!(await page.locator("#stag-hole-b-fb").isVisible())) {
+        const holeBVis = await page.locator("#stag-hole-b").isVisible();
+        const holeBTxt = holeBVis
+          ? (await page.locator("#stag-hole-b").textContent())?.trim()
+          : "<not-visible>";
+        console.log(
+          `[Test 35 Step 3 diag] #stag-hole-b-fb not visible right after #stag-hole-a; #stag-hole-b visible=${holeBVis} text="${holeBTxt}"`
+        );
+      }
       await expect(page.locator("#stag-hole-b-fb")).toBeVisible({ timeout: 5000 });
       await page.click("#link-stag-away");
       await expect(page.locator("#stag-hub-page")).toBeVisible({ timeout: 15000 });

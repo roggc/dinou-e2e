@@ -11,7 +11,51 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  quick-repro:
+    name: Quick Repro - Ubuntu - ${{ matrix.runtime.name }} - ${{ matrix.bundler }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - bundler: esbuild
+            runtime: { id: node-dev,   name: Node DEV,          build: '',                 start: 'npm run dev',                  start_bundler: true  }
+          - bundler: rollup
+            runtime: { id: node-aot,   name: Node AOT,          build: 'build:node',       start: 'npm run start:node',           start_bundler: true  }
+          - bundler: esbuild
+            runtime: { id: cloudflare, name: Cloudflare Worker, build: 'build:cloudflare', start: 'npx wrangler dev --port 3000', start_bundler: false }
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Environment & Dependencies
+        uses: ./.github/actions/setup-e2e
+        with:
+          deno: false
+          bun: false
+
+      - name: Build (${{ matrix.runtime.name }} / ${{ matrix.bundler }})
+        if: matrix.runtime.build != ''
+        run: npm run ${{ matrix.runtime.build }}:${{ matrix.bundler }}
+
+      - name: Run Targeted Playwright Repro (Rigorous Triple Synergy + Staggered PPR)
+        env:
+          TEST_CMD: ${{ matrix.runtime.start_bundler && format('{0}:{1}', matrix.runtime.start, matrix.bundler) || matrix.runtime.start }}
+          PORT: 3000
+        run: npx playwright test e2e/example.spec.ts -g "Rigorous Triple Synergy|Staggered Slow/Fast PPR"
+
+      - name: Upload Playwright Report
+        uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: report-quick-repro-${{ matrix.runtime.id }}-${{ matrix.bundler }}
+          path: playwright-report/
+          retention-days: 7
+
   e2e:
+    needs: quick-repro
     name: ${{ matrix.os }} - ${{ matrix.runtime.name }} - ${{ matrix.bundler }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
@@ -57,6 +101,7 @@ jobs:
           retention-days: 30
 
   unvendorized:
+    needs: quick-repro
     name: Ubuntu - Node AOT (-u Unvendorized) - esbuild
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -95,6 +140,7 @@ jobs:
           retention-days: 30
 
   compile-and-export-smoke:
+    needs: quick-repro
     name: Ubuntu - Compiled Binaries (Node, Bun, Deno) & Static Export Smoke
     runs-on: ubuntu-24.04
     timeout-minutes: 30
