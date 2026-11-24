@@ -5,6 +5,18 @@ on:
     branches: [main, master]
   pull_request:
     branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      quick_repro:
+        description: 'Run quick-repro gate before the full matrix'
+        type: boolean
+        required: false
+        default: false
+      quick_repro_grep:
+        description: 'Playwright -g pattern for quick-repro (optional)'
+        type: string
+        required: false
+        default: 'Rigorous Triple Synergy|Staggered Slow/Fast PPR'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -12,6 +24,9 @@ concurrency:
 
 jobs:
   quick-repro:
+    # Desactivado por defecto. Para activarlo en push/PR, cambia `false` por `true` en el `if:` de abajo
+    # (o lánzalo manualmente en GitHub Actions -> Run workflow -> quick_repro = true).
+    if: ${{ false || (github.event_name == 'workflow_dispatch' && inputs.quick_repro) }}
     name: Quick Repro - Ubuntu - ${{ matrix.runtime.name }} - ${{ matrix.bundler }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -40,11 +55,12 @@ jobs:
         if: matrix.runtime.build != ''
         run: npm run ${{ matrix.runtime.build }}:${{ matrix.bundler }}
 
-      - name: Run Targeted Playwright Repro (Rigorous Triple Synergy + Staggered PPR)
+      - name: Run Targeted Playwright Repro
         env:
           TEST_CMD: ${{ matrix.runtime.start_bundler && format('{0}:{1}', matrix.runtime.start, matrix.bundler) || matrix.runtime.start }}
           PORT: 3000
-        run: npx playwright test e2e/example.spec.ts -g "Rigorous Triple Synergy|Staggered Slow/Fast PPR"
+          QUICK_REPRO_GREP: ${{ inputs.quick_repro_grep || 'Rigorous Triple Synergy|Staggered Slow/Fast PPR' }}
+        run: npx playwright test e2e/example.spec.ts -g "$QUICK_REPRO_GREP"
 
       - name: Upload Playwright Report
         uses: actions/upload-artifact@v7
@@ -56,6 +72,7 @@ jobs:
 
   e2e:
     needs: quick-repro
+    if: ${{ !cancelled() && (needs.quick-repro.result == 'success' || needs.quick-repro.result == 'skipped') }}
     name: ${{ matrix.os }} - ${{ matrix.runtime.name }} - ${{ matrix.bundler }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
@@ -102,6 +119,7 @@ jobs:
 
   unvendorized:
     needs: quick-repro
+    if: ${{ !cancelled() && (needs.quick-repro.result == 'success' || needs.quick-repro.result == 'skipped') }}
     name: Ubuntu - Node AOT (-u Unvendorized) - esbuild
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -141,6 +159,7 @@ jobs:
 
   compile-and-export-smoke:
     needs: quick-repro
+    if: ${{ !cancelled() && (needs.quick-repro.result == 'success' || needs.quick-repro.result == 'skipped') }}
     name: Ubuntu - Compiled Binaries (Node, Bun, Deno) & Static Export Smoke
     runs-on: ubuntu-24.04
     timeout-minutes: 30
