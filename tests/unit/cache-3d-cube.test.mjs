@@ -7441,3 +7441,422 @@ console.log("PHASE5_STAGE3_PERIMETER_GUARDS_OK");
     removeDirSafe(tmpApp);
   }
 });
+
+test("27. [Phase 5 / Stage 4 / Check #76] React 19 useId() Collision & Scoped-ID Hydration Integrity Across Asymmetric 3D Composition, Nested <DinouCacheSlot> & Staggered PPR Resume", async () => {
+  const tmpApp = createFixtureDir("dinou-p5-stage4-useid-");
+  try {
+    writeDinouShim(tmpApp);
+    fs.writeFileSync(path.join(tmpApp, "package.json"), JSON.stringify({ name: "p5-s4-useid", type: "module" }));
+
+    const write = (relPath, content) => {
+      const full = path.join(tmpApp, relPath);
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, content);
+    };
+
+    write(
+      "src/_state.ts",
+      `const KEY = Symbol.for("dinou.p5.s4.useid.state");
+export function getState() {
+  if (!(globalThis as any)[KEY]) {
+    (globalThis as any)[KEY] = {
+      l1Shell: 100, l1Slot: 100, l1Inner: 100, l1Hole: 100,
+      l2Dyn: 100, l2Slot: 100,
+      pageShell: 100, pageSlot: 100, holeA: 100, holeB: 100,
+      resShell: 100, resSlot: 100, resHoleA: 100, resHoleB: 100,
+    };
+  }
+  return (globalThis as any)[KEY];
+}
+`
+    );
+
+    write(
+      "src/layout.tsx",
+      `import type { ReactNode } from "react";
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return <html><head><title>useId-3D</title></head><body>{children}</body></html>;
+}
+`
+    );
+    write("src/page.tsx", `export default function Home() { return <main>home</main>; }\n`);
+
+    write(
+      "src/uid/components/client-probe.tsx",
+      `"use client";
+import { useId, type ReactNode } from "react";
+
+export function ClientUid({ owner, seq }: { owner: string; seq: number }) {
+  const id = useId();
+  return (
+    <div data-c-owner={owner} data-c-id={id}>
+      <label htmlFor={id}>{owner}</label>
+      <input id={id} defaultValue={owner + ":" + seq} readOnly />
+    </div>
+  );
+}
+
+export function ClientUidWrap({ owner, children }: { owner: string; children: ReactNode }) {
+  const id = useId();
+  return (
+    <div data-c-owner={owner} data-c-id={id}>
+      <label htmlFor={id}>{owner}</label>
+      <input id={id} defaultValue={"wrap:" + owner} readOnly />
+      <div>{children}</div>
+    </div>
+  );
+}
+`
+    );
+
+    write(
+      "src/uid/components/server-probe.tsx",
+      `import { useId } from "react";
+export function ServerUid({ owner, seq }: { owner: string; seq: number }) {
+  const id = useId();
+  return (
+    <div data-s-owner={owner} data-s-id={id}>
+      <label htmlFor={id}>{"srv-" + owner}</label>
+      <input id={id} defaultValue={"srv-" + owner + ":" + seq} readOnly />
+    </div>
+  );
+}
+`
+    );
+
+    write(
+      "src/uid/layout_functions.ts",
+      `export const ppr = true;
+export function revalidate() { return 3600; }
+export function getCacheTags() { return ["uid-l1-tag"]; }
+`
+    );
+    write(
+      "src/uid/layout.tsx",
+      `import { Suspense, type ReactNode } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { getState } from "../_state";
+import { ClientUid, ClientUidWrap } from "./components/client-probe";
+import { ServerUid } from "./components/server-probe";
+
+async function L1Hole() {
+  void getContext()?.req?.headers?.["x-uid-h"];
+  await Promise.resolve();
+  const v = getState().l1Hole;
+  return <div><ClientUid owner="l1-hole" seq={v} /><ServerUid owner="l1-hole" seq={v} /></div>;
+}
+
+export default function UidL1Layout({ children }: { children: ReactNode }) {
+  const s = getState();
+  return (
+    <section id="uid-l1">
+      <ClientUid owner="l1-shell" seq={s.l1Shell} />
+      <ServerUid owner="l1-shell" seq={s.l1Shell} />
+      <DinouCacheSlot id="p5-uid-l1-slot" revalidate={3600} tags={["p5-uid-l1-slot-tag"]}>
+        {async () => {
+          const st = getState();
+          return (
+            <div>
+              <ClientUid owner="l1-slot" seq={st.l1Slot} />
+              <ServerUid owner="l1-slot" seq={st.l1Slot} />
+              <DinouCacheSlot id="p5-uid-l1-inner" revalidate={3600} tags={["p5-uid-l1-inner-tag"]}>
+                {async () => {
+                  const ist = getState();
+                  return <div><ClientUid owner="l1-inner" seq={ist.l1Inner} /><ServerUid owner="l1-inner" seq={ist.l1Inner} /></div>;
+                }}
+              </DinouCacheSlot>
+            </div>
+          );
+        }}
+      </DinouCacheSlot>
+      <ClientUidWrap owner="l1-wrap">
+        <Suspense fallback={<span>fb-l1</span>}>
+          <L1Hole />
+        </Suspense>
+      </ClientUidWrap>
+      {children}
+    </section>
+  );
+}
+`
+    );
+
+    // Asymmetric route: L1 (Static PPR) -> L2 (Dynamic) -> Page (Static PPR + 2 holes)
+    write("src/uid/asym/layout_functions.ts", `export function revalidate() { return 0; }\n`);
+    write(
+      "src/uid/asym/layout.tsx",
+      `import type { ReactNode } from "react";
+import { DinouCacheSlot } from "dinou/server";
+import { getState } from "../../_state";
+import { ClientUid } from "../components/client-probe";
+import { ServerUid } from "../components/server-probe";
+
+export default function UidL2Dyn({ children }: { children: ReactNode }) {
+  const s = getState();
+  return (
+    <section id="uid-l2">
+      <ClientUid owner="l2-dyn" seq={s.l2Dyn} />
+      <ServerUid owner="l2-dyn" seq={s.l2Dyn} />
+      <DinouCacheSlot id="p5-uid-l2-slot" revalidate={3600} tags={["p5-uid-l2-slot-tag"]}>
+        {async () => {
+          const st = getState();
+          return <div><ClientUid owner="l2-slot" seq={st.l2Slot} /><ServerUid owner="l2-slot" seq={st.l2Slot} /></div>;
+        }}
+      </DinouCacheSlot>
+      {children}
+    </section>
+  );
+}
+`
+    );
+    write("src/uid/asym/page_functions.ts", `export const ppr = true; export function revalidate() { return 3600; }\n`);
+    write(
+      "src/uid/asym/page.tsx",
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { getState } from "../../_state";
+import { ClientUid } from "../components/client-probe";
+import { ServerUid } from "../components/server-probe";
+
+async function HoleA() {
+  void getContext()?.req?.headers?.["x-uid-ha"];
+  await Promise.resolve();
+  const v = getState().holeA;
+  return <div><ClientUid owner="page-hole-a" seq={v} /><ServerUid owner="page-hole-a" seq={v} /></div>;
+}
+async function HoleB() {
+  void getContext()?.req?.headers?.["x-uid-hb"];
+  await new Promise((r) => setTimeout(r, 15));
+  const v = getState().holeB;
+  return <div><ClientUid owner="page-hole-b" seq={v} /><ServerUid owner="page-hole-b" seq={v} /></div>;
+}
+
+export default function UidAsymPage() {
+  const s = getState();
+  return (
+    <article id="uid-asym-page">
+      <ClientUid owner="page-shell" seq={s.pageShell} />
+      <ServerUid owner="page-shell" seq={s.pageShell} />
+      <DinouCacheSlot id="p5-uid-page-slot" revalidate={3600} tags={["p5-uid-page-slot-tag"]}>
+        {async () => {
+          const st = getState();
+          return <div><ClientUid owner="page-slot" seq={st.pageSlot} /><ServerUid owner="page-slot" seq={st.pageSlot} /></div>;
+        }}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>fb-a</span>}><HoleA /></Suspense>
+      <Suspense fallback={<span>fb-b</span>}><HoleB /></Suspense>
+    </article>
+  );
+}
+`
+    );
+
+    // Warm PPR Resume route: L1 (Static PPR) -> Page (Static PPR + 2 holes, one inside ClientUidWrap)
+    write("src/uid/resume/page_functions.ts", `export const ppr = true; export function revalidate() { return 3600; }\n`);
+    write(
+      "src/uid/resume/page.tsx",
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { getState } from "../../_state";
+import { ClientUid, ClientUidWrap } from "../components/client-probe";
+import { ServerUid } from "../components/server-probe";
+
+async function ResHoleA() {
+  void getContext()?.req?.headers?.["x-uid-ra"];
+  await Promise.resolve();
+  const v = getState().resHoleA;
+  return <div><ClientUid owner="res-hole-a" seq={v} /><ServerUid owner="res-hole-a" seq={v} /></div>;
+}
+async function ResHoleB() {
+  void getContext()?.req?.headers?.["x-uid-rb"];
+  await new Promise((r) => setTimeout(r, 15));
+  const v = getState().resHoleB;
+  return <div><ClientUid owner="res-hole-b" seq={v} /><ServerUid owner="res-hole-b" seq={v} /></div>;
+}
+
+export default function UidResumePage() {
+  const s = getState();
+  return (
+    <article id="uid-resume-page">
+      <ClientUid owner="res-shell" seq={s.resShell} />
+      <ServerUid owner="res-shell" seq={s.resShell} />
+      <DinouCacheSlot id="p5-uid-res-slot" revalidate={3600} tags={["p5-uid-res-slot-tag"]}>
+        {async () => {
+          const st = getState();
+          return <div><ClientUid owner="res-slot" seq={st.resSlot} /><ServerUid owner="res-slot" seq={st.resSlot} /></div>;
+        }}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>fb-ra</span>}><ResHoleA /></Suspense>
+      <ClientUidWrap owner="res-wrap">
+        <Suspense fallback={<span>fb-rb</span>}><ResHoleB /></Suspense>
+      </ClientUidWrap>
+    </article>
+  );
+}
+`
+    );
+
+    const buildRes = spawnSync(
+      process.execPath,
+      [path.join(DINOU_ROOT, "cli.js"), "build:node:esbuild"],
+      { cwd: tmpApp, encoding: "utf8", env: { ...process.env, NODE_OPTIONS: "" }, timeout: 120_000 }
+    );
+    assert.equal(buildRes.status, 0, `Build failed:\n${buildRes.stdout}\n${buildRes.stderr}`);
+
+    const verifyScript = path.join(tmpApp, "verify-p5-stage4.mjs");
+    fs.writeFileSync(
+      verifyScript,
+      `import assert from "node:assert/strict";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+
+const KEY = Symbol.for("dinou.p5.s4.useid.state");
+const getState = () => {
+  if (!globalThis[KEY]) {
+    globalThis[KEY] = {
+      l1Shell: 100, l1Slot: 100, l1Inner: 100, l1Hole: 100,
+      l2Dyn: 100, l2Slot: 100,
+      pageShell: 100, pageSlot: 100, holeA: 100, holeB: 100,
+      resShell: 100, resSlot: 100, resHoleA: 100, resHoleB: 100,
+    };
+  }
+  return globalThis[KEY];
+};
+
+async function req(urlPath) {
+  const res = await rscMod.handleRequest(new Request("http://localhost:3000" + urlPath), {
+    runtime: "node-bundle",
+    renderHtmlStream: ssrMod.renderHtml,
+  });
+  return { status: res.status, text: await res.text() };
+}
+
+function extractOwnerMap(html, attrPrefix) {
+  const map = new Map();
+  const re = new RegExp('data-' + attrPrefix + '-owner="([^"]+)"[^>]*data-' + attrPrefix + '-id="([^"]+)"', "g");
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    assert.equal(map.has(m[1]), false, "Duplicate owner rendered: " + attrPrefix + ":" + m[1]);
+    map.set(m[1], m[2]);
+  }
+  return map;
+}
+
+function assertAllUniqueIds(html, label, expectedClientOwners, expectedServerOwners) {
+  const cMap = extractOwnerMap(html, "c");
+  const sMap = extractOwnerMap(html, "s");
+  for (const o of expectedClientOwners) {
+    assert.ok(cMap.has(o), label + " missing client useId owner: " + o);
+    assert.ok(cMap.get(o).length > 0, label + " empty client useId for: " + o);
+  }
+  for (const o of expectedServerOwners) {
+    assert.ok(sMap.has(o), label + " missing server useId owner: " + o);
+    assert.ok(sMap.get(o).length > 0, label + " empty server useId for: " + o);
+  }
+  const allVals = [...cMap.values(), ...sMap.values()];
+  const uniqueVals = new Set(allVals);
+  assert.equal(
+    uniqueVals.size,
+    allVals.length,
+    label + " had colliding useId values: " + JSON.stringify([...cMap.entries(), ...sMap.entries()])
+  );
+  // Also check EVERY <input id="..."> in the HTML has zero duplicates and matches a <label for="...">!
+  const inputIds = [...html.matchAll(/<input\\s+id="([^"]+)"/g)].map((x) => x[1]);
+  assert.equal(new Set(inputIds).size, inputIds.length, label + " duplicate <input id> in HTML: " + JSON.stringify(inputIds));
+  for (const id of inputIds) {
+    assert.ok(html.includes('for="' + id + '"'), label + " missing matching <label for> for input id " + id);
+  }
+  return { cMap, sMap };
+}
+
+// Poison static shells & bump live holes
+Object.assign(getState(), {
+  l1Shell: 999, l1Slot: 999, l1Inner: 999, l2Slot: 999, pageShell: 999, pageSlot: 999, resShell: 999, resSlot: 999,
+  l1Hole: 201, l2Dyn: 202, holeA: 203, holeB: 204, resHoleA: 205, resHoleB: 206,
+});
+
+// 1. Asymmetric 3D PPR (/uid/asym): 11 Client useId + 10 Server useId = 21 globally unique IDs!
+const asymRes = await req("/uid/asym");
+assert.equal(asymRes.status, 200);
+assert.ok(!asymRes.text.includes(":999"), "Poisoned shells must stay frozen on /uid/asym");
+assert.ok(asymRes.text.includes("l1-hole:201") && asymRes.text.includes("l2-dyn:202") && asymRes.text.includes("page-hole-a:203") && asymRes.text.includes("page-hole-b:204"));
+const asymIds = assertAllUniqueIds(
+  asymRes.text,
+  "ASYM SSR",
+  ["l1-shell", "l1-slot", "l1-inner", "l1-wrap", "l1-hole", "l2-dyn", "l2-slot", "page-shell", "page-slot", "page-hole-a", "page-hole-b"],
+  ["l1-shell", "l1-slot", "l1-inner", "l1-hole", "l2-dyn", "l2-slot", "page-shell", "page-slot", "page-hole-a", "page-hole-b"]
+);
+// Specifically verify L1 PPR hole Server useId !== Page PPR hole A Server useId (both are hole-1 in their segments!)
+assert.notEqual(asymIds.sMap.get("l1-hole"), asymIds.sMap.get("page-hole-a"), "L1 hole and Page hole Server useId must NEVER collide!");
+
+// 2. Warm PPR Streaming Resume (/uid/resume): 10 Client useId + 8 Server useId = 18 globally unique IDs!
+//    CRITICAL: Without buildPprHoleSkeleton, l1-hole, res-hole-a, and res-hole-b ALL emitted _R_0_!
+const resumeRes = await req("/uid/resume");
+assert.equal(resumeRes.status, 200);
+assert.ok(!resumeRes.text.includes(":999"), "Poisoned shells must stay frozen on /uid/resume");
+assert.ok(resumeRes.text.includes("l1-hole:201") && resumeRes.text.includes("res-hole-a:205") && resumeRes.text.includes("res-hole-b:206"));
+const resumeIds = assertAllUniqueIds(
+  resumeRes.text,
+  "PPR RESUME SSR",
+  ["l1-shell", "l1-slot", "l1-inner", "l1-wrap", "l1-hole", "res-shell", "res-slot", "res-hole-a", "res-wrap", "res-hole-b"],
+  ["l1-shell", "l1-slot", "l1-inner", "l1-hole", "res-shell", "res-slot", "res-hole-a", "res-hole-b"]
+);
+// NONE of the 3 streamed PPR holes may have the standalone root ID "_R_0_"!
+for (const holeOwner of ["l1-hole", "res-hole-a", "res-hole-b"]) {
+  assert.notEqual(
+    resumeIds.cMap.get(holeOwner),
+    "_R_0_",
+    "Streamed PPR hole " + holeOwner + " must use exact full-tree TreeId, NOT standalone root _R_0_!"
+  );
+}
+// Verify l1-hole's Client useId on /uid/resume matches its EXACT full-tree Client useId on /uid/asym (same L1 tree path!)
+assert.equal(
+  resumeIds.cMap.get("l1-hole"),
+  asymIds.cMap.get("l1-hole"),
+  "PPR Resume skeleton TreeId for l1-hole MUST match full-tree render TreeId bit-for-bit!"
+);
+
+// 3. Revalidate layout & page + fresh slot endpoint: verify post-mutation uniqueness!
+Object.assign(getState(), { l1Slot: 301, pageSlot: 302, l1Shell: 303, pageShell: 304 });
+const freshL1Slot = await req("/____rsc_slot____/p5-uid-l1-slot?fresh=true&currentPath=/uid/asym");
+assert.equal(freshL1Slot.status, 200);
+assert.ok(freshL1Slot.text.includes("301"));
+await rscMod.revalidateLayout("/uid");
+await rscMod.revalidatePage("/uid/asym");
+const asymAfter = await req("/uid/asym");
+assert.equal(asymAfter.status, 200);
+assert.ok(asymAfter.text.includes("l1-shell:303") && asymAfter.text.includes("page-shell:304"));
+assertAllUniqueIds(
+  asymAfter.text,
+  "ASYM POST-REVAL",
+  ["l1-shell", "l1-slot", "l1-inner", "l1-wrap", "l1-hole", "l2-dyn", "l2-slot", "page-shell", "page-slot", "page-hole-a", "page-hole-b"],
+  ["l1-shell", "l1-slot", "l1-inner", "l1-hole", "l2-dyn", "l2-slot", "page-shell", "page-slot", "page-hole-a", "page-hole-b"]
+);
+
+console.log("PHASE5_STAGE4_USEID_CUBE_OK");
+`
+    );
+
+    const runRes = spawnSync(process.execPath, [verifyScript], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+      timeout: 60_000,
+    });
+    assert.equal(
+      runRes.status,
+      0,
+      `Phase 5 Stage 4 useId integration failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+    );
+    assert.ok(runRes.stdout.includes("PHASE5_STAGE4_USEID_CUBE_OK"));
+  } finally {
+    removeDirSafe(tmpApp);
+  }
+});

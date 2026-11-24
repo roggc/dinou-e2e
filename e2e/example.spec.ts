@@ -21280,7 +21280,242 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(pageErrors).toEqual([]);
     });
 
-    test("37. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
+    test("37. [Phase 5 / Stage 4 / Check #76] React 19 useId() Collision & Scoped-ID Hydration Integrity Across Asymmetric 3D Composition, Nested <DinouCacheSlot> & Staggered PPR Resume", async ({
+      page,
+    }) => {
+      test.skip(
+        !isProd,
+        "useId() 3D PPR composition & warm resume hydration integrity requires production mode"
+      );
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      const ASYM_CLIENT_OWNERS = [
+        "l1-shell",
+        "l1-slot",
+        "l1-inner",
+        "l1-wrap",
+        "l1-hole",
+        "l2-dyn",
+        "l2-slot",
+        "page-shell",
+        "page-slot",
+        "page-hole-a",
+        "page-hole-b",
+      ];
+      const ASYM_SERVER_OWNERS = [
+        "l1-shell",
+        "l1-slot",
+        "l1-inner",
+        "l1-hole",
+        "l2-dyn",
+        "l2-slot",
+        "page-shell",
+        "page-slot",
+        "page-hole-a",
+        "page-hole-b",
+      ];
+      const RESUME_CLIENT_OWNERS = [
+        "l1-shell",
+        "l1-slot",
+        "l1-inner",
+        "l1-wrap",
+        "l1-hole",
+        "resume-shell",
+        "resume-slot",
+        "resume-hole-a",
+        "resume-wrap",
+        "resume-hole-b",
+      ];
+      const RESUME_SERVER_OWNERS = [
+        "l1-shell",
+        "l1-slot",
+        "l1-inner",
+        "l1-hole",
+        "resume-shell",
+        "resume-slot",
+        "resume-hole-a",
+        "resume-hole-b",
+      ];
+
+      async function assertDomUseIdIntegrity(
+        expectedClientOwners: string[],
+        expectedServerOwners: string[]
+      ) {
+        const audit = await page.evaluate(() => {
+          const allIdEls = Array.from(document.querySelectorAll("[id]"));
+          const idCounts: Record<string, number> = {};
+          for (const el of allIdEls) {
+            const id = el.getAttribute("id") || "";
+            if (id) idCounts[id] = (idCounts[id] || 0) + 1;
+          }
+          const duplicates = Object.entries(idCounts).filter(([, c]) => c > 1);
+
+          const clientMap: Record<string, { val: string; labelFor: string; inputId: string; text: string }> = {};
+          for (const box of Array.from(document.querySelectorAll("[data-uid-client]"))) {
+            const owner = box.getAttribute("data-uid-client") || "";
+            const label = box.querySelector(`label[data-uid-label="${owner}"]`);
+            const input = box.querySelector(`input[data-uid-input="${owner}"]`);
+            const code = box.querySelector(`code[data-uid-text="${owner}"]`);
+            clientMap[owner] = {
+              val: box.getAttribute("data-uid-val") || "",
+              labelFor: label?.getAttribute("for") || "",
+              inputId: input?.getAttribute("id") || "",
+              text: code?.textContent || "",
+            };
+          }
+
+          const serverMap: Record<string, { val: string; labelFor: string; inputId: string; text: string }> = {};
+          for (const box of Array.from(document.querySelectorAll("[data-uid-server]"))) {
+            const owner = box.getAttribute("data-uid-server") || "";
+            const label = box.querySelector(`label[data-uid-slabel="${owner}"]`);
+            const input = box.querySelector(`input[data-uid-sinput="${owner}"]`);
+            const code = box.querySelector(`code[data-uid-stext="${owner}"]`);
+            serverMap[owner] = {
+              val: box.getAttribute("data-uid-sval") || "",
+              labelFor: label?.getAttribute("for") || "",
+              inputId: input?.getAttribute("id") || "",
+              text: code?.textContent || "",
+            };
+          }
+
+          return { duplicates, clientMap, serverMap };
+        });
+
+        expect(audit.duplicates).toEqual([]);
+        const seenIds = new Set<string>();
+        for (const o of expectedClientOwners) {
+          const entry = audit.clientMap[o];
+          expect(entry, `Missing client useId owner: ${o}`).toBeTruthy();
+          expect(entry.val.length).toBeGreaterThan(0);
+          expect(entry.labelFor).toBe(entry.val);
+          expect(entry.inputId).toBe(entry.val);
+          expect(entry.text).toBe(entry.val);
+          expect(seenIds.has(entry.val), `Duplicate client useId ${entry.val} on ${o}`).toBe(false);
+          seenIds.add(entry.val);
+        }
+        for (const o of expectedServerOwners) {
+          const entry = audit.serverMap[o];
+          expect(entry, `Missing server useId owner: ${o}`).toBeTruthy();
+          expect(entry.val.length).toBeGreaterThan(0);
+          expect(entry.labelFor).toBe(entry.val);
+          expect(entry.inputId).toBe(entry.val);
+          expect(entry.text).toBe(entry.val);
+          expect(seenIds.has(entry.val), `Duplicate server useId ${entry.val} on ${o}`).toBe(false);
+          seenIds.add(entry.val);
+        }
+
+        // Verify clicking EVERY client label focuses its exact paired input!
+        for (const o of expectedClientOwners) {
+          await page.locator(`label[data-uid-label="${o}"]`).click();
+          const activeOwner = await page.evaluate(
+            () => document.activeElement?.getAttribute("data-uid-input") || null
+          );
+          expect(activeOwner).toBe(o);
+        }
+      }
+
+      // 1. Direct SSR load on Warm PPR Resume route (/ppr-resume) — exercises handlePprResume + buildPprHoleSkeleton!
+      const resumeResp = await page.goto("/t-3d-cube/use-id-cube/ppr-resume");
+      expect(resumeResp?.status()).toBe(200);
+      await expect(page.locator("#uid-resume-hole-b")).toBeVisible({ timeout: 15000 });
+      await waitCubeReady(page);
+      await assertDomUseIdIntegrity(RESUME_CLIENT_OWNERS, RESUME_SERVER_OWNERS);
+
+      // F5 reload on warm PPR resume route -> still zero #418 and zero duplicate IDs!
+      await page.reload();
+      await expect(page.locator("#uid-resume-hole-b")).toBeVisible({ timeout: 15000 });
+      await waitCubeReady(page);
+      await assertDomUseIdIntegrity(RESUME_CLIENT_OWNERS, RESUME_SERVER_OWNERS);
+
+      // 2. Soft <Link> from /ppr-resume -> /asym while preserving L1 client probe
+      await page.click("#probe-inc-uid-l1");
+      await expect(page.locator("#probe-count-uid-l1")).toHaveText("1");
+      const l1MountId = await page.locator("#probe-mount-uid-l1").textContent();
+
+      await page.click("#link-uid-asym");
+      await expect(page.locator("#uid-page-hole-b")).toBeVisible({ timeout: 15000 });
+      await expect(page.locator("#probe-mount-uid-l1")).toHaveText(String(l1MountId));
+      await expect(page.locator("#probe-count-uid-l1")).toHaveText("1");
+      await assertDomUseIdIntegrity(ASYM_CLIENT_OWNERS, ASYM_SERVER_OWNERS);
+
+      // Direct SSR F5 reload on Asymmetric 3D PPR chain (/asym)
+      await page.reload();
+      await expect(page.locator("#uid-page-hole-b")).toBeVisible({ timeout: 15000 });
+      await waitCubeReady(page);
+      await assertDomUseIdIntegrity(ASYM_CLIENT_OWNERS, ASYM_SERVER_OWNERS);
+
+      const baseL1Shell = Number(await page.locator('[data-uid-seq="l1-shell"]').textContent());
+      const baseL1Slot = Number(await page.locator('[data-uid-seq="l1-slot"]').textContent());
+      const basePageShell = Number(await page.locator('[data-uid-seq="page-shell"]').textContent());
+      const basePageSlot = Number(await page.locator('[data-uid-seq="page-slot"]').textContent());
+
+      // 3. Post-mutation stability: refreshSlot("cube-uid-l1-slot") & refreshSlot("cube-uid-page-slot")
+      const nextL1Slot = baseL1Slot + 761;
+      const nextPageSlot = basePageSlot + 762;
+      const nextL1Shell = baseL1Shell + 763;
+      const nextPageShell = basePageShell + 764;
+      const nextL1Hole = baseL1Shell + 765;
+      const nextL2Dyn = baseL1Shell + 766;
+      const nextHoleA = baseL1Shell + 767;
+      const nextHoleB = baseL1Shell + 768;
+
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          uidL1SlotSeq: nextL1Slot,
+          uidPageSlotSeq: nextPageSlot,
+          uidL1ShellSeq: nextL1Shell,
+          uidPageShellSeq: nextPageShell,
+          uidL1HoleSeq: nextL1Hole,
+          uidL2DynSeq: nextL2Dyn,
+          uidPageHoleASeq: nextHoleA,
+          uidPageHoleBSeq: nextHoleB,
+        }
+      );
+
+      await page.evaluate(async () => {
+        await (window as any).__CUBE_3D__.refreshSlot("cube-uid-l1-slot", true);
+        await (window as any).__CUBE_3D__.refreshSlot("cube-uid-page-slot", true);
+      });
+      await expect(page.locator('[data-uid-seq="l1-slot"]')).toHaveText(String(nextL1Slot), {
+        timeout: 10000,
+      });
+      await expect(page.locator('[data-uid-seq="page-slot"]')).toHaveText(String(nextPageSlot), {
+        timeout: 10000,
+      });
+      // Unrevalidated static shells must stay frozen!
+      await expect(page.locator('[data-uid-seq="l1-shell"]')).toHaveText(String(baseL1Shell));
+      await expect(page.locator('[data-uid-seq="page-shell"]')).toHaveText(String(basePageShell));
+      await assertDomUseIdIntegrity(ASYM_CLIENT_OWNERS, ASYM_SERVER_OWNERS);
+
+      // 4. Server revalidateLayout + revalidatePage + F5 reload -> refreshed shells & all 21 IDs still unique & focusable!
+      await page.evaluate(async () => {
+        await (window as any).__CUBE_3D__.revalLayout("/t-3d-cube/use-id-cube");
+        await (window as any).__CUBE_3D__.revalPage("/t-3d-cube/use-id-cube/asym");
+      });
+      await page.reload();
+      await expect(page.locator("#uid-page-hole-b")).toBeVisible({ timeout: 15000 });
+      await waitCubeReady(page);
+      await expect(page.locator('[data-uid-seq="l1-shell"]')).toHaveText(String(nextL1Shell));
+      await expect(page.locator('[data-uid-seq="page-shell"]')).toHaveText(String(nextPageShell));
+      await expect(page.locator('[data-uid-seq="l1-hole"]')).toHaveText(String(nextL1Hole));
+      await expect(page.locator('[data-uid-seq="l2-dyn"]')).toHaveText(String(nextL2Dyn));
+      await expect(page.locator('[data-uid-seq="page-hole-a"]')).toHaveText(String(nextHoleA));
+      await expect(page.locator('[data-uid-seq="page-hole-b"]')).toHaveText(String(nextHoleB));
+      await assertDomUseIdIntegrity(ASYM_CLIENT_OWNERS, ASYM_SERVER_OWNERS);
+
+      // 5. Soft <Link> back to /ppr-resume -> zero collisions & zero #418!
+      await page.click("#link-uid-resume");
+      await expect(page.locator("#uid-resume-hole-b")).toBeVisible({ timeout: 15000 });
+      await assertDomUseIdIntegrity(RESUME_CLIENT_OWNERS, RESUME_SERVER_OWNERS);
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("38. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
       browserName,
     }) => {
       test.skip(

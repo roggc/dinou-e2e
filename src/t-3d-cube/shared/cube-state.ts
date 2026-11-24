@@ -347,6 +347,22 @@ export interface Cube3DState {
   guardsStrictHoleSeq: number;
   guardsLandedShellSeq: number;
   guardsLandedHoleSeq: number;
+
+  // Phase 5 — Stage 4 — Check #76: React 19 useId() Collision & Scoped-ID Hydration Integrity
+  uidL1ShellSeq: number;
+  uidL1SlotSeq: number;
+  uidL1InnerSeq: number;
+  uidL1HoleSeq: number;
+  uidL2DynSeq: number;
+  uidL2SlotSeq: number;
+  uidPageShellSeq: number;
+  uidPageSlotSeq: number;
+  uidPageHoleASeq: number;
+  uidPageHoleBSeq: number;
+  uidResumeShellSeq: number;
+  uidResumeSlotSeq: number;
+  uidResumeHoleASeq: number;
+  uidResumeHoleBSeq: number;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -664,6 +680,21 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   guardsStrictHoleSeq: 100,
   guardsLandedShellSeq: 100,
   guardsLandedHoleSeq: 100,
+
+  uidL1ShellSeq: 100,
+  uidL1SlotSeq: 100,
+  uidL1InnerSeq: 100,
+  uidL1HoleSeq: 100,
+  uidL2DynSeq: 100,
+  uidL2SlotSeq: 100,
+  uidPageShellSeq: 100,
+  uidPageSlotSeq: 100,
+  uidPageHoleASeq: 100,
+  uidPageHoleBSeq: 100,
+  uidResumeShellSeq: 100,
+  uidResumeSlotSeq: 100,
+  uidResumeHoleASeq: 100,
+  uidResumeHoleBSeq: 100,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {
