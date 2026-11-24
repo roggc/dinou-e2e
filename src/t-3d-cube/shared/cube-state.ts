@@ -335,6 +335,18 @@ export interface Cube3DState {
   stagHoleBSeq: number;
   stagSlowSlotSeq: number;
   stagHubSeq: number;
+
+  // Phase 5 — Stage 3 — Check #75: Perimeter Guard Contracts (validateParams, allowISG=false, getProps redirect & 404)
+  guardsL1ShellSeq: number;
+  guardsL1SlotSeq: number;
+  guardsL1HoleSeq: number;
+  guardsItemL2ShellSeq: number;
+  guardsItemPageShellSeq: number;
+  guardsItemHoleSeq: number;
+  guardsStrictShellSeq: number;
+  guardsStrictHoleSeq: number;
+  guardsLandedShellSeq: number;
+  guardsLandedHoleSeq: number;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -641,6 +653,17 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   stagHoleBSeq: 100,
   stagSlowSlotSeq: 100,
   stagHubSeq: 100,
+
+  guardsL1ShellSeq: 100,
+  guardsL1SlotSeq: 100,
+  guardsL1HoleSeq: 100,
+  guardsItemL2ShellSeq: 100,
+  guardsItemPageShellSeq: 100,
+  guardsItemHoleSeq: 100,
+  guardsStrictShellSeq: 100,
+  guardsStrictHoleSeq: 100,
+  guardsLandedShellSeq: 100,
+  guardsLandedHoleSeq: 100,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {

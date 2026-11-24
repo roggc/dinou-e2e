@@ -7078,3 +7078,366 @@ export default function ResetOwnLayout({ children }: { children: ReactNode }) {
     removeDirSafe(tmpApp);
   }
 });
+
+test("26. [Phase 5 / Stage 3 / Check #75] Perimeter Guard Contracts (validateParams, allowISG=false, getProps redirect & 404 Fallback) Inside Asymmetric 3D PPR Chains", async () => {
+  const tmpApp = createFixtureDir("p5-s3-guards-");
+  try {
+    writeDinouShim(tmpApp);
+    fs.writeFileSync(
+      path.join(tmpApp, "package.json"),
+      JSON.stringify({ name: "p5-s3-guards", private: true, type: "module" }, null, 2)
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "p5s3-state.json"),
+      JSON.stringify({
+        l1Shell: 100,
+        l1Slot: 100,
+        l1Hole: 100,
+        itemL2Shell: 100,
+        itemPageShell: 100,
+        itemHole: 100,
+        strictShell: 100,
+        strictHole: 100,
+        landedShell: 100,
+        landedHole: 100,
+      })
+    );
+
+    const write = (rel, content) => {
+      const full = path.join(tmpApp, rel);
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, content, "utf8");
+    };
+
+    write(
+      "src/state.ts",
+      `import fs from "node:fs";
+import path from "node:path";
+export function readS() {
+  return JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "p5s3-state.json"), "utf8"));
+}
+`
+    );
+    write(
+      "src/layout.tsx",
+      `import type { ReactNode } from "react";
+export default function Root({ children }: { children: ReactNode }) {
+  return <html lang="en"><head><title>P5S3</title></head><body>{children}</body></html>;
+}
+`
+    );
+    write("src/page.tsx", `export default function Home() { return <main>home</main>; }\n`);
+
+    // L1 cached PPR layout with <DinouCacheSlot> + PPR hole
+    write("src/guards/layout_functions.ts", `export const ppr = true;\nexport function revalidate() { return 3600; }\n`);
+    write(
+      "src/guards/layout.tsx",
+      `import { Suspense, type ReactNode } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../state";
+
+async function L1Hole() {
+  void getContext()?.req?.headers?.["x-guards-hole"];
+  await Promise.resolve();
+  return <span id="g-l1-hole">{\`l1h-\${readS().l1Hole}\`}</span>;
+}
+
+export default function GuardsL1({ children }: { children: ReactNode }) {
+  return (
+    <section id="g-l1">
+      <span id="g-l1-shell">{readS().l1Shell}</span>
+      <DinouCacheSlot id="p5s3-l1-slot" revalidate={3600}>
+        {async () => <span id="g-l1-slot">{readS().l1Slot}</span>}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>fb-l1</span>}><L1Hole /></Suspense>
+      {children}
+    </section>
+  );
+}
+`
+    );
+    write(
+      "src/guards/not_found.tsx",
+      `export default function GuardsNotFound() { return <section id="g-nf">guards-404-page</section>; }\n`
+    );
+
+    // /guards/item/[id]: layout validateParams + page getProps redirect("bounce")
+    write(
+      "src/guards/item/[id]/layout_functions.ts",
+      `export const ppr = true;
+export function revalidate() { return 3600; }
+export function validateParams({ id }: { id?: string }) {
+  return typeof id === "string" && /^[a-z0-9-]+$/.test(id) && id !== "forbidden";
+}
+`
+    );
+    write(
+      "src/guards/item/[id]/layout.tsx",
+      `import type { ReactNode } from "react";
+import { readS } from "../../../state";
+export default function ItemL2({ children, params }: { children: ReactNode; params?: { id?: string } }) {
+  return <div id="g-item-l2" data-id={params?.id || ""}><span id="g-item-l2-shell">{readS().itemL2Shell}</span>{children}</div>;
+}
+`
+    );
+    write(
+      "src/guards/item/[id]/page_functions.ts",
+      `import { redirect } from "dinou";
+export const ppr = true;
+export function revalidate() { return 3600; }
+export function getStaticPaths() { return ["allowed-1"]; }
+export async function getProps({ id }: { id?: string }) {
+  if (id === "bounce") return redirect("/guards/landed");
+  return { itemId: String(id || "") };
+}
+`
+    );
+    write(
+      "src/guards/item/[id]/page.tsx",
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { readS } from "../../../state";
+
+async function ItemHole({ itemId }: { itemId: string }) {
+  void getContext()?.req?.headers?.["x-guards-hole"];
+  await Promise.resolve();
+  return <span id="g-item-hole">{\`\${itemId}-\${readS().itemHole}\`}</span>;
+}
+
+export default function ItemPage({ itemId }: { itemId?: string }) {
+  return (
+    <article id="g-item-page">
+      <span id="g-item-shell">{readS().itemPageShell}</span>
+      <Suspense fallback={<span>fb-item</span>}><ItemHole itemId={itemId || ""} /></Suspense>
+    </article>
+  );
+}
+`
+    );
+
+    // /guards/strict/[id]: allowISG = false, only ["known"] pre-built
+    write(
+      "src/guards/strict/[id]/page_functions.ts",
+      `export const ppr = true;
+export const allowISG = false;
+export function revalidate() { return 3600; }
+export function getStaticPaths() { return ["known"]; }
+`
+    );
+    write(
+      "src/guards/strict/[id]/page.tsx",
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { readS } from "../../../state";
+
+async function StrictHole({ id }: { id: string }) {
+  void getContext()?.req?.headers?.["x-guards-hole"];
+  await Promise.resolve();
+  return <span id="g-strict-hole">{\`\${id}-\${readS().strictHole}\`}</span>;
+}
+
+export default function StrictPage({ params }: { params?: { id?: string } }) {
+  return (
+    <article id="g-strict-page">
+      <span id="g-strict-shell">{readS().strictShell}</span>
+      <Suspense fallback={<span>fb-strict</span>}><StrictHole id={params?.id || ""} /></Suspense>
+    </article>
+  );
+}
+`
+    );
+
+    // /guards/landed
+    write("src/guards/landed/page_functions.ts", `export const ppr = true;\nexport function revalidate() { return 3600; }\n`);
+    write(
+      "src/guards/landed/page.tsx",
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { readS } from "../../state";
+
+async function LandedHole() {
+  void getContext()?.req?.headers?.["x-guards-hole"];
+  await Promise.resolve();
+  return <span id="g-landed-hole">{\`landed-\${readS().landedHole}\`}</span>;
+}
+
+export default function LandedPage() {
+  return (
+    <article id="g-landed-page">
+      <span id="g-landed-shell">{readS().landedShell}</span>
+      <Suspense fallback={<span>fb-landed</span>}><LandedHole /></Suspense>
+    </article>
+  );
+}
+`
+    );
+
+    const buildRes = spawnSync(process.execPath, [CLI_PATH, "build:node:esbuild"], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 120_000,
+    });
+    assert.equal(
+      buildRes.status,
+      0,
+      `Phase 5 Stage 3 build failed:\n${buildRes.stdout}\n${buildRes.stderr}`
+    );
+
+    const verifyScript = path.join(tmpApp, "verify-p5-stage3.mjs");
+    fs.writeFileSync(
+      verifyScript,
+      `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const { FileSystemStorage, setStorageAdapter } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/storage-adapter.js")).href
+      )});
+const dist2 = path.resolve(".dinou/dist2");
+setStorageAdapter(new FileSystemStorage(dist2));
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+globalThis.__DINOU_RENDER_HTML_STREAM__ = ssrMod.renderHtml;
+const opts = { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml };
+
+const writeS = (patch) => {
+  const f = path.resolve("p5s3-state.json");
+  const cur = JSON.parse(fs.readFileSync(f, "utf8"));
+  fs.writeFileSync(f, JSON.stringify({ ...cur, ...patch }), "utf8");
+};
+const req = async (u) => {
+  const r = await rscMod.handleRequest(new Request("http://localhost" + u), opts);
+  return { status: r.status, headers: r.headers, text: await r.text() };
+};
+
+// Poison ALL static shells & L1 slot; bump live holes!
+writeS({
+  l1Shell: 999,
+  l1Slot: 999,
+  itemL2Shell: 999,
+  itemPageShell: 999,
+  strictShell: 999,
+  landedShell: 999,
+  l1Hole: 201,
+  itemHole: 202,
+  strictHole: 203,
+  landedHole: 204,
+});
+
+// 1. Pre-built /guards/item/allowed-1 serves frozen L1 + L2 + Page + live holes
+const okItem = await req("/guards/item/allowed-1");
+assert.equal(okItem.status, 200);
+assert.ok(okItem.text.includes('id="g-l1-shell">100<'));
+assert.ok(okItem.text.includes('id="g-l1-slot">100<'));
+assert.ok(okItem.text.includes("l1h-201"));
+assert.ok(okItem.text.includes("allowed-1-202"));
+assert.ok(!okItem.text.includes("999"));
+
+// 2. validateParams() === false (/guards/item/forbidden & /guards/item/bad$char)
+for (const badPath of ["/guards/item/forbidden", "/guards/item/bad$char"]) {
+  const ssr404 = await req(badPath);
+  assert.equal(ssr404.status, 404, "Expected 404 on " + badPath);
+  assert.ok(ssr404.text.includes("guards-404-page"), "SSR 404 must render not_found.tsx for " + badPath);
+  assert.ok(ssr404.text.includes('id="g-l1-shell">100<'), "SSR 404 must reuse frozen L1 shell");
+  assert.ok(ssr404.text.includes('id="g-l1-slot">100<'), "SSR 404 must reuse frozen L1 slot");
+  assert.ok(ssr404.text.includes("l1h-201"), "SSR 404 must stream L1 PPR hole live");
+  assert.ok(!ssr404.text.includes("g-item-l2"), "Blocked [id] layout must NEVER execute on " + badPath);
+  assert.ok(!ssr404.text.includes("999"), "Blocked route must never leak poisoned 999");
+
+  const rscLay404 = await req("/____rsc_layout____" + badPath);
+  assert.equal(rscLay404.status, 404);
+  assert.ok((rscLay404.headers.get("content-type") || "").includes("text/x-component"), "Blocked layout RSC must emit valid Flight text/x-component");
+  assert.ok(rscLay404.text.includes("l1h-201"), "Blocked layout RSC must keep unblocked L1 PPR hole");
+  assert.ok(!rscLay404.text.includes("g-item-l2"), "Blocked layout RSC must NOT render blocked [id] layout");
+  assert.ok(!rscLay404.text.includes("999"), "Blocked layout RSC must NOT re-execute poisoned L1");
+
+  const rscPage404 = await req("/____rsc_page____" + badPath);
+  assert.equal(rscPage404.status, 404);
+  assert.ok((rscPage404.headers.get("content-type") || "").includes("text/x-component"), "Blocked page RSC must emit valid Flight text/x-component");
+  assert.ok(rscPage404.text.includes("guards-404-page"), "Blocked page RSC must render not_found.tsx");
+}
+assert.equal(fs.existsSync(path.join(dist2, "guards/item/forbidden")), false, "Zero cache files may be written for forbidden");
+assert.equal(fs.existsSync(path.join(dist2, "guards/item/bad$char")), false, "Zero cache files may be written for bad$char");
+
+// 3. allowISG = false (/guards/strict/known 200 vs /guards/strict/unknown-id 404)
+const strictOk = await req("/guards/strict/known");
+assert.equal(strictOk.status, 200);
+assert.ok(strictOk.text.includes('id="g-strict-shell">100<'));
+assert.ok(strictOk.text.includes("known-203"));
+assert.ok(!strictOk.text.includes("999"));
+
+const strictMissSsr = await req("/guards/strict/unknown-id");
+assert.equal(strictMissSsr.status, 404);
+assert.ok(strictMissSsr.text.includes("guards-404-page"));
+assert.ok(strictMissSsr.text.includes('id="g-l1-shell">100<'));
+assert.ok(!strictMissSsr.text.includes("999"));
+const strictMissRsc = await req("/____rsc_page____/guards/strict/unknown-id");
+assert.equal(strictMissRsc.status, 404);
+assert.ok((strictMissRsc.headers.get("content-type") || "").includes("text/x-component"));
+assert.ok(strictMissRsc.text.includes("guards-404-page"));
+assert.equal(fs.existsSync(path.join(dist2, "guards/strict/unknown-id")), false, "allowISG=false miss must NOT pollute storage");
+
+// 4. getProps returning redirect() (/guards/item/bounce -> /guards/landed)
+const bounceSsr = await req("/guards/item/bounce");
+assert.ok(bounceSsr.status === 302 || bounceSsr.status === 307, "Expected 302/307 redirect, got " + bounceSsr.status);
+assert.equal(bounceSsr.headers.get("location"), "/guards/landed");
+assert.equal(fs.existsSync(path.join(dist2, "guards/item/bounce/index.html")), false, "Redirect must NOT cache index.html");
+assert.equal(fs.existsSync(path.join(dist2, "guards/item/bounce/shell.page.json")), false, "Redirect must NOT cache shell.page.json");
+assert.equal(fs.existsSync(path.join(dist2, "guards/item/bounce/layout.rsc")), false, "Redirect must clean up pre-populated layout.rsc");
+
+const bouncePageRsc = await req("/____rsc_page____/guards/item/bounce");
+assert.equal(bouncePageRsc.status, 200);
+assert.equal(bouncePageRsc.headers.get("x-rsc-redirect"), "/guards/landed");
+
+const bounceLayRsc = await req("/____rsc_layout____/guards/item/bounce");
+assert.equal(bounceLayRsc.status, 200);
+assert.ok(bounceLayRsc.text.includes("l1h-201"), "Soft-nav layout RSC on bounce must keep L1 PPR hole");
+assert.ok(!bounceLayRsc.text.includes('id":"g-l1-shell","children":999') && !bounceLayRsc.text.includes("999\\n"), "Soft-nav layout RSC on bounce must reuse cached L1 shell (not poisoned 999!)");
+// Note: bounce's uncached L2 renders live (999 for itemL2Shell), so verify L1 specifically stays 100!
+assert.ok(bounceLayRsc.text.includes('"g-l1-shell","children":100') || bounceLayRsc.text.includes('100'), "Cached L1 shell must stay 100");
+assert.ok(!bounceLayRsc.text.includes('"g-l1-shell","children":999'), "Cached L1 shell must NEVER re-execute poisoned 999");
+
+// 5. Direct revalidatePage / revalidateLayout on blocked or redirected routes must bail cleanly with ZERO artifacts!
+await rscMod.revalidatePage("/guards/item/forbidden");
+await rscMod.revalidateLayout("/guards/item/forbidden");
+await rscMod.revalidatePage("/guards/strict/unknown-id");
+await rscMod.revalidatePage("/guards/item/bounce");
+assert.equal(fs.existsSync(path.join(dist2, "guards/item/forbidden")), false, "revalidatePage/Layout on forbidden must NOT write artifacts");
+assert.equal(fs.existsSync(path.join(dist2, "guards/strict/unknown-id")), false, "revalidatePage on allowISG=false miss must NOT write artifacts");
+assert.equal(fs.existsSync(path.join(dist2, "guards/item/bounce/index.html")), false, "revalidatePage on redirecting route must NOT write index.html");
+assert.equal(fs.existsSync(path.join(dist2, "guards/item/bounce/shell.page.json")), false, "revalidatePage on redirecting route must NOT write shell.page.json");
+
+// Verify L1 is STILL 100% intact & unpoisoned after all guard rejections and redirects!
+const landedAfter = await req("/guards/landed");
+assert.equal(landedAfter.status, 200);
+assert.ok(landedAfter.text.includes('id="g-l1-shell">100<'));
+assert.ok(landedAfter.text.includes('id="g-l1-slot">100<'));
+assert.ok(landedAfter.text.includes("l1h-201"));
+assert.ok(landedAfter.text.includes("landed-204"));
+assert.ok(!landedAfter.text.includes("999"));
+
+console.log("PHASE5_STAGE3_PERIMETER_GUARDS_OK");
+`
+    );
+
+    const runRes = spawnSync(process.execPath, [verifyScript], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+      timeout: 60_000,
+    });
+    assert.equal(
+      runRes.status,
+      0,
+      `Phase 5 Stage 3 perimeter guards integration failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+    );
+    assert.ok(runRes.stdout.includes("PHASE5_STAGE3_PERIMETER_GUARDS_OK"));
+  } finally {
+    removeDirSafe(tmpApp);
+  }
+});

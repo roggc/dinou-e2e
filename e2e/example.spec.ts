@@ -21166,7 +21166,121 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(pageErrors).toEqual([]);
     });
 
-    test("36. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
+    test("36. [Phase 5 / Stage 3 / Check #75] Perimeter Guard Contracts (validateParams, allowISG=false, getProps redirect & 404 Fallback) Inside Asymmetric 3D PPR Chains", async ({
+      page,
+      request,
+    }) => {
+      test.skip(
+        !isProd,
+        "Perimeter guard 3D PPR caching contracts require production mode"
+      );
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      // 1. Baseline load on pre-built /t-3d-cube/guards/item/allowed-1
+      const okResp = await page.goto("/t-3d-cube/guards/item/allowed-1");
+      expect(okResp?.status()).toBe(200);
+      await waitCubeReady(page);
+
+      const baseL1Shell = Number(await page.locator("#guards-l1-shell-seq").textContent());
+      const baseL1Slot = Number(await page.locator("#guards-l1-slot-seq").textContent());
+      const baseItemL2 = Number(await page.locator("#guards-item-l2-shell-seq").textContent());
+      const baseItemShell = Number(await page.locator("#guards-item-shell-seq").textContent());
+
+      // Poison ALL static shells & L1 slot; bump live holes!
+      const poison = Math.max(baseL1Shell, baseL1Slot, baseItemL2, baseItemShell) + 899;
+      const nextL1Hole = baseL1Shell + 751;
+      const nextItemHole = baseL1Shell + 752;
+      const nextStrictHole = baseL1Shell + 753;
+      const nextLandedHole = baseL1Shell + 754;
+
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          guardsL1ShellSeq: poison,
+          guardsL1SlotSeq: poison,
+          guardsItemL2ShellSeq: poison,
+          guardsItemPageShellSeq: poison,
+          guardsStrictShellSeq: poison,
+          guardsLandedShellSeq: poison,
+          guardsL1HoleSeq: nextL1Hole,
+          guardsItemHoleSeq: nextItemHole,
+          guardsStrictHoleSeq: nextStrictHole,
+          guardsLandedHoleSeq: nextLandedHole,
+        }
+      );
+
+      // 2. Direct SSR HTTP checks: validateParams=false -> 404, allowISG=false cold miss -> 404, getProps redirect -> 302/307
+      const forbiddenRes = await request.get("/t-3d-cube/guards/item/forbidden");
+      expect(forbiddenRes.status()).toBe(404);
+      const forbiddenHtml = await forbiddenRes.text();
+      expect(forbiddenHtml).toContain("guards-not-found");
+      expect(forbiddenHtml).toContain(`id="guards-l1-shell-seq">${baseL1Shell}<`);
+      expect(forbiddenHtml).toContain(`id="guards-l1-slot-seq">${baseL1Slot}<`);
+      expect(forbiddenHtml).not.toContain("guards-item-l2");
+      expect(forbiddenHtml).not.toContain(String(poison));
+
+      const badCharRes = await request.get("/t-3d-cube/guards/item/bad$char");
+      expect(badCharRes.status()).toBe(404);
+
+      const strictMissRes = await request.get("/t-3d-cube/guards/strict/unknown-id");
+      expect(strictMissRes.status()).toBe(404);
+      const strictMissHtml = await strictMissRes.text();
+      expect(strictMissHtml).toContain("guards-not-found");
+      expect(strictMissHtml).not.toContain(String(poison));
+
+      const bounceRes = await request.get("/t-3d-cube/guards/item/bounce", {
+        maxRedirects: 0,
+      });
+      expect([302, 307]).toContain(bounceRes.status());
+      expect(bounceRes.headers()["location"]).toBe("/t-3d-cube/guards/landed");
+
+      // 3. Soft <Link> navigation from /allowed-1 while preserving L1 client probe state:
+      //    (a) /allowed-1 -> /forbidden (404 not_found.tsx inside frozen L1, zero crash!)
+      //    (b) -> /strict/known (200 frozen PPR + live hole)
+      //    (c) -> /strict/unknown-id (404 not_found.tsx inside frozen L1)
+      //    (d) -> /item/bounce (follows x-rsc-redirect -> /landed while keeping L1 probe mountId & count=1!)
+      await page.click("#probe-inc-guards-l1");
+      await expect(page.locator("#probe-count-guards-l1")).toHaveText("1");
+      const l1MountId = await page.locator("#probe-mount-guards-l1").textContent();
+
+      await page.click("#link-guards-forbidden");
+      await expect(page.locator("#guards-not-found")).toBeVisible({ timeout: 10000 });
+      await expect(page.locator("#guards-item-l2")).toHaveCount(0);
+      await expect(page.locator("#guards-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#guards-l1-slot-seq")).toHaveText(String(baseL1Slot));
+      await expect(page.locator("#probe-mount-guards-l1")).toHaveText(String(l1MountId));
+      await expect(page.locator("#probe-count-guards-l1")).toHaveText("1");
+
+      await page.click("#link-guards-strict-known");
+      await expect(page.locator("#guards-strict-page")).toBeVisible({ timeout: 10000 });
+      await expect(page.locator("#guards-strict-hole-seq")).toHaveText(`known:${nextStrictHole}`);
+      await expect(page.locator("#guards-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#probe-mount-guards-l1")).toHaveText(String(l1MountId));
+      await expect(page.locator("#probe-count-guards-l1")).toHaveText("1");
+
+      await page.click("#link-guards-strict-unknown");
+      await expect(page.locator("#guards-not-found")).toBeVisible({ timeout: 10000 });
+      await expect(page.locator("#guards-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#probe-mount-guards-l1")).toHaveText(String(l1MountId));
+      await expect(page.locator("#probe-count-guards-l1")).toHaveText("1");
+
+      await page.click("#link-guards-bounce");
+      await expect(page.locator("#guards-landed-page")).toBeVisible({ timeout: 10000 });
+      expect(new URL(page.url()).pathname).toBe("/t-3d-cube/guards/landed");
+      await expect(page.locator("#guards-landed-hole-seq")).toHaveText(String(nextLandedHole));
+      await expect(page.locator("#guards-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#guards-l1-slot-seq")).toHaveText(String(baseL1Slot));
+      await expect(page.locator("#guards-l1-hole-seq")).toHaveText(String(nextL1Hole));
+      await expect(page.locator("#probe-mount-guards-l1")).toHaveText(String(l1MountId));
+      await expect(page.locator("#probe-count-guards-l1")).toHaveText("1");
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("37. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
       browserName,
     }) => {
       test.skip(
