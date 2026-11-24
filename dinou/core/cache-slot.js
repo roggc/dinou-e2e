@@ -324,7 +324,17 @@ function deserializeJSX(json) {
         const regServerRef = getRegisterServerReference();
         if (regServerRef) {
           try {
-            serverRef = regServerRef(serverRef, value.id, null);
+            const rawId = typeof value.id === "string" ? value.id : "";
+            const hashIdx = rawId.lastIndexOf("#");
+            if (hashIdx !== -1) {
+              serverRef = regServerRef(
+                serverRef,
+                rawId.slice(0, hashIdx),
+                rawId.slice(hashIdx + 1)
+              );
+            } else {
+              serverRef = regServerRef(serverRef, rawId, null);
+            }
             if (Array.isArray(value.bound) && typeof serverRef.bind === "function") {
               serverRef = serverRef.bind(null, ...value.bound);
             }

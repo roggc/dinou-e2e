@@ -20647,7 +20647,139 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(pageErrors).toEqual([]);
     });
 
-    test("33. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
+    test("33. [Phase 4 / Stage 3 / Check #69] Server Functions ('use server', <form action>, useActionState, Bound Inline Closures) Hosted Inside <DinouCacheSlot> & PPR Shells/Holes", async ({
+      page,
+    }) => {
+      test.skip(
+        !isProd,
+        "Server Function deserialization across cached <DinouCacheSlot> & PPR shells requires production mode"
+      );
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      // 1. Initial visit + F5 reload (forcing deserialized shell.layout.own.json / shell.page.json / slots/*/slot.json)
+      await page.goto("/t-3d-cube/sf-in-cube?q=init");
+      await waitCubeReady(page);
+      await page.reload();
+      await waitCubeReady(page);
+
+      const baseL1Shell = Number(await page.locator("#sf-l1-shell-seq").textContent());
+      const baseL1Slot = Number(await page.locator("#sf-card-seq-l1").textContent());
+      const basePageShell = Number(await page.locator("#sf-page-shell-seq").textContent());
+      const basePageSlot = Number(await page.locator("#sf-card-seq-page").textContent());
+
+      // Invoke BOTH imported & bound inline closure actions inside L1 slot + Page slot + bound <form action>
+      await page.click("#sf-btn-imported-l1");
+      await expect(page.locator("#sf-imported-res-l1")).toContainText(`imported:l1-${baseL1Slot}:`, {
+        timeout: 10000,
+      });
+
+      await page.click("#sf-btn-bound-l1");
+      await expect(page.locator("#sf-bound-res-l1")).toHaveText(
+        `l1-bound:l1-item:slot-${baseL1Slot}:cli-l1`,
+        { timeout: 10000 }
+      );
+
+      await page.click("#sf-btn-bound-page");
+      await expect(page.locator("#sf-bound-res-page")).toHaveText(
+        `page-bound:page-item:slot-${basePageSlot}:cli-page`,
+        { timeout: 10000 }
+      );
+
+      await page.click("#sf-btn-bound-form-page");
+      await expect(page.locator("#sf-bound-form-res-page")).toHaveText(
+        `page-form-bound:page-item:slot-${basePageSlot}:fd-page`,
+        { timeout: 10000 }
+      );
+
+      // 2. Poison static shells; submit useActionState form -> mutates state + revalidateTag -> live refreshSlot!
+      const sfPoison = Math.max(baseL1Shell, baseL1Slot, basePageShell, basePageSlot) + 899;
+      const nextPageSlot = basePageSlot + 691;
+      const nextHoleSeq = basePageShell + 692;
+      const nextL1Slot = baseL1Slot + 693;
+      const formMsg = `as-msg-${nextPageSlot}`;
+
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          sfL1ShellSeq: sfPoison,
+          sfPageShellSeq: sfPoison,
+          sfHoleSeq: nextHoleSeq,
+        }
+      );
+
+      await page.fill("#sf-as-msg-input", formMsg);
+      await page.fill("#sf-as-next-slot-input", String(nextPageSlot));
+      await page.click("#sf-btn-submit-action-state");
+
+      await expect(page.locator("#sf-as-count")).toHaveText("1", { timeout: 10000 });
+      await expect(page.locator("#sf-as-msg")).toHaveText(formMsg, { timeout: 10000 });
+
+      // Live refreshSlot updates Page slot without re-executing poisoned shells, AND bound closure captures NEW slot value!
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.refreshSlot("cube-sf-page-slot", true)
+      );
+      await expect(page.locator("#sf-card-seq-page")).toHaveText(String(nextPageSlot), {
+        timeout: 10000,
+      });
+      await expect(page.locator("#sf-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#sf-page-shell-seq")).toHaveText(String(basePageShell));
+
+      await page.click("#sf-btn-bound-page");
+      await expect(page.locator("#sf-bound-res-page")).toHaveText(
+        `page-bound:page-item:slot-${nextPageSlot}:cli-page`,
+        { timeout: 10000 }
+      );
+      await page.click("#sf-btn-bound-form-page");
+      await expect(page.locator("#sf-bound-form-res-page")).toHaveText(
+        `page-form-bound:page-item:slot-${nextPageSlot}:fd-page`,
+        { timeout: 10000 }
+      );
+
+      // F5 reload confirms deserialized shell.page.json + slots/cube-sf-page-slot/slot.json STILL preserve bound closure!
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#sf-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#sf-page-shell-seq")).toHaveText(String(basePageShell));
+      await expect(page.locator("#sf-card-seq-page")).toHaveText(String(nextPageSlot));
+      await expect(page.locator("#sf-hole-seq")).toHaveText(`init-${nextHoleSeq}`);
+      await expect(page.locator("#sf-hole-note")).toHaveText(formMsg);
+
+      await page.click("#sf-btn-bound-page");
+      await expect(page.locator("#sf-bound-res-page")).toHaveText(
+        `page-bound:page-item:slot-${nextPageSlot}:cli-page`,
+        { timeout: 10000 }
+      );
+
+      // 3. Submit <form action> inside PPR dynamic hole that mutates + revalidateTag(L1 slot) + redirect()!
+      const redirectNote = `hole-redir-${nextL1Slot}`;
+      await page.fill("#sf-hole-note-input", redirectNote);
+      await page.fill("#sf-hole-next-l1-input", String(nextL1Slot));
+      await page.click("#sf-btn-hole-redirect");
+
+      await expect(page.locator("#sf-done-page")).toBeVisible({ timeout: 15000 });
+      await expect(page.locator("#sf-done-from")).toHaveText("hole", { timeout: 10000 });
+      await expect(page.locator("#sf-done-redirect-note")).toHaveText(redirectNote, {
+        timeout: 10000,
+      });
+
+      // Reload destination proves L1 static shell stayed frozen (never poisoned!) & L1 slot reflects nextL1Slot
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#sf-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#sf-card-seq-l1")).toHaveText(String(nextL1Slot));
+      await page.click("#sf-btn-bound-l1");
+      await expect(page.locator("#sf-bound-res-l1")).toHaveText(
+        `l1-bound:l1-item:slot-${nextL1Slot}:cli-l1`,
+        { timeout: 10000 }
+      );
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("34. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
       browserName,
     }) => {
       test.skip(

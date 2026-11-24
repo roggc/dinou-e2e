@@ -304,6 +304,15 @@ export interface Cube3DState {
   caDocsV2LayoutHoleSeq: number;
   caDocsV2PageShellSeq: number;
   caDocsV2PageHoleSeq: number;
+
+  // Phase 4 — Stage 3 — Check #69: Server Functions ("use server", <form action>, useActionState, Bound Closures) Inside <DinouCacheSlot> & PPR
+  sfL1ShellSeq: number;
+  sfL1SlotSeq: number;
+  sfPageShellSeq: number;
+  sfPageSlotSeq: number;
+  sfHoleSeq: number;
+  sfActionNote: string;
+  sfRedirectNote: string;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -582,6 +591,14 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   caDocsV2LayoutHoleSeq: 100,
   caDocsV2PageShellSeq: 100,
   caDocsV2PageHoleSeq: 100,
+
+  sfL1ShellSeq: 100,
+  sfL1SlotSeq: 100,
+  sfPageShellSeq: 100,
+  sfPageSlotSeq: 100,
+  sfHoleSeq: 100,
+  sfActionNote: "init",
+  sfRedirectNote: "none",
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {

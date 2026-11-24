@@ -4544,3 +4544,436 @@ console.log("PHASE4_STAGE1_GROUPS_CATCHALL_OK");
     removeDirSafe(tmpApp);
   }
 });
+
+test("20. Phase 4 Stage 3 (Check #69) unit & compiled Node AOT integration: Server Functions ('use server', <form action>, useActionState, Bound Inline Closures) Inside <DinouCacheSlot> & PPR Shells/Holes", async () => {
+  // Part 1: Direct unit test proving serializeJSX/deserializeJSX preserves exact $$id & $$bound
+  // under BOTH @roggc/react-server-dom-esm (unconditional `id + "#" + exportName`) AND react-server-dom-webpack!
+  const cacheSlotUrl = pathToFileURL(path.join(DINOU_ROOT, "core/cache-slot.js")).href;
+  const esmUnitProbe = `
+    import assert from "node:assert/strict";
+    import React from "react";
+    const SERVER_REF_TAG = Symbol.for("react.server.reference");
+    // Simulate @roggc/react-server-dom-esm registerServerReference which ALWAYS concatenates id + "#" + exportName
+    function esmRegisterServerReference(ref, id, exportName) {
+      function bind() {
+        const next = Function.prototype.bind.apply(this, arguments);
+        const extra = Array.prototype.slice.call(arguments, 1);
+        return Object.defineProperties(next, {
+          $$typeof: { value: SERVER_REF_TAG },
+          $$id: { value: this.$$id, configurable: true },
+          $$bound: { value: this.$$bound ? this.$$bound.concat(extra) : extra, configurable: true },
+          bind: { value: bind, configurable: true },
+        });
+      }
+      return Object.defineProperties(ref, {
+        $$typeof: { value: SERVER_REF_TAG },
+        $$id: { value: id + "#" + exportName, configurable: true },
+        $$bound: { value: null, configurable: true },
+        bind: { value: bind, configurable: true },
+      });
+    }
+    globalThis.__DINOU_EDGE_RENDERER__ = {
+      registerServerReference: esmRegisterServerReference,
+    };
+    const { serializeJSX, deserializeJSX } = await import(${JSON.stringify(cacheSlotUrl)});
+    const importedFn = esmRegisterServerReference(function ping() {}, "file:///src/sf/actions.ts", "ping");
+    const hoistedFn = esmRegisterServerReference(function hoisted() {}, "file:///src/sf/page.tsx", "$$dinou_action_save_0");
+    const boundFn = hoistedFn.bind(null, "label-100", { nested: 42 });
+
+    const tree = React.createElement("div", {
+      imported: importedFn,
+      bound: boundFn,
+    });
+    const round1 = deserializeJSX(serializeJSX(tree));
+    assert.equal(round1.props.imported.$$typeof, SERVER_REF_TAG);
+    assert.equal(round1.props.imported.$$id, "file:///src/sf/actions.ts#ping", "Imported SF $$id must NOT gain a trailing #null!");
+    assert.equal(round1.props.imported.$$bound, null);
+    assert.equal(round1.props.bound.$$typeof, SERVER_REF_TAG);
+    assert.equal(round1.props.bound.$$id, "file:///src/sf/page.tsx#$$dinou_action_save_0", "Bound SF $$id must NOT gain a trailing #null!");
+    assert.deepEqual(round1.props.bound.$$bound, ["label-100", { nested: 42 }], "Bound closure args must survive serializeJSX/deserializeJSX");
+
+    // Second round-trip (simulating slot.json -> shell.page.json re-serialization)
+    const round2 = deserializeJSX(serializeJSX(round1));
+    assert.equal(round2.props.bound.$$id, "file:///src/sf/page.tsx#$$dinou_action_save_0");
+    assert.deepEqual(round2.props.bound.$$bound, ["label-100", { nested: 42 }]);
+    console.log("ESM_SERVER_REF_ROUNDTRIP_OK");
+  `;
+  const unitRes = spawnSync(process.execPath, ["--input-type=module", "-e", esmUnitProbe], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    env: { ...process.env, NODE_OPTIONS: "" },
+    timeout: 15_000,
+  });
+  assert.equal(
+    unitRes.status,
+    0,
+    `ESM registerServerReference roundtrip unit check failed:\nSTDOUT:\n${unitRes.stdout}\nSTDERR:\n${unitRes.stderr}`
+  );
+  assert.ok(unitRes.stdout.includes("ESM_SERVER_REF_ROUNDTRIP_OK"));
+
+  // Part 2: Full compiled Node AOT integration test with imported SF, bound inline closure SF,
+  // useActionState FormData RPC, revalidateTag + refreshSlot, and PPR hole redirect()!
+  const tmpApp = createFixtureDir("tmp-3d-p4-s3-sf-cube-");
+  try {
+    fs.mkdirSync(path.join(tmpApp, "src/sf/done"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpApp, "package.json"),
+      JSON.stringify(
+        {
+          name: "tmp-3d-p4-s3-sf-cube",
+          private: true,
+          type: "module",
+          dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+        },
+        null,
+        2
+      )
+    );
+    writeDinouShim(tmpApp);
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src/state.ts"),
+      `import fs from "node:fs";
+import path from "node:path";
+const FILE = path.resolve(process.cwd(), "p4s3-state.json");
+const DEF = { l1S: 100, l1Sl: 100, pS: 100, pSl: 100, hS: 100, note: "init", redir: "none" };
+export function readS() {
+  try { if (fs.existsSync(FILE)) return { ...DEF, ...JSON.parse(fs.readFileSync(FILE, "utf8")) }; } catch {}
+  return { ...DEF };
+}
+export function writeS(patch: Record<string, any>) {
+  const next = { ...readS(), ...patch };
+  fs.writeFileSync(FILE, JSON.stringify(next), "utf8");
+  return next;
+}
+export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+`
+    );
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src/layout.tsx"),
+      `import type { ReactNode } from "react";
+export default function Root({ children }: { children: ReactNode }) {
+  return <html><head><title>P4S3</title></head><body>{children}</body></html>;
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/page.tsx"),
+      `export default function Home() { return <main>home</main>; }\n`
+    );
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src/sf/actions.ts"),
+      `"use server";
+import { getContext } from "dinou";
+import { revalidateTag } from "dinou/server";
+import { readS, writeS } from "../state";
+
+export async function pingImported(tag: string) {
+  return { ok: true, reply: \`imp:\${tag}:\${readS().note}\` };
+}
+
+export async function formActionState(prev: { count: number; msg: string }, fd: FormData) {
+  const msg = String(fd.get("msg") || "empty");
+  const nextSlot = Number(fd.get("nextSlot") || 0);
+  writeS({ note: msg, ...(nextSlot > 0 ? { pSl: nextSlot } : {}) });
+  await revalidateTag("p4s3-page-slot-tag");
+  return { count: (prev?.count || 0) + 1, msg };
+}
+
+export async function holeMutateRedirect(fd: FormData) {
+  const redir = String(fd.get("redir") || "done");
+  const nextL1 = Number(fd.get("nextL1") || 0);
+  writeS({ redir, ...(nextL1 > 0 ? { l1Sl: nextL1 } : {}) });
+  await revalidateTag("p4s3-l1-slot-tag");
+  getContext()?.res?.redirect("/sf/done?from=hole");
+  return { ok: true };
+}
+`
+    );
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src/sf/client-card.tsx"),
+      `"use client";
+export function SfCard({
+  id,
+  seq,
+  importedAction,
+  boundAction,
+}: {
+  id: string;
+  seq: number;
+  importedAction: any;
+  boundAction: any;
+}) {
+  return (
+    <div id={\`card-\${id}\`} data-has-imp={String(typeof importedAction === "function")} data-has-bound={String(typeof boundAction === "function")}>
+      <span id={\`seq-\${id}\`}>{seq}</span>
+    </div>
+  );
+}
+`
+    );
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src/sf/layout_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/sf/layout.tsx"),
+      `import type { ReactNode } from "react";
+import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../state";
+import { pingImported } from "./actions";
+import { SfCard } from "./client-card";
+
+export default function SfLayout({ children }: { children: ReactNode }) {
+  const l1Tag = "l1-item";
+  return (
+    <section id="sf-l1">
+      <span id="l1-s">{readS().l1S}</span>
+      <DinouCacheSlot id="p4s3-l1-slot" revalidate={3600} tags={["p4s3-l1-slot-tag"]}>
+        {async () => {
+          const seq = readS().l1Sl;
+          const lbl = \`\${l1Tag}:s\${seq}\`;
+          async function boundL1(arg: string) {
+            "use server";
+            return \`L1:\${lbl}:\${arg}\`;
+          }
+          return <SfCard id="l1" seq={seq} importedAction={pingImported} boundAction={boundL1} />;
+        }}
+      </DinouCacheSlot>
+      {children}
+    </section>
+  );
+}
+`
+    );
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src/sf/page_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/sf/page.tsx"),
+      `import { Suspense } from "react";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep } from "../state";
+import { pingImported, formActionState, holeMutateRedirect } from "./actions";
+import { SfCard } from "./client-card";
+
+async function Hole() {
+  await sleep(5);
+  return (
+    <div id="sf-hole">
+      <span id="h-s">{readS().hS}</span>
+      <form action={holeMutateRedirect}><button type="submit">go</button></form>
+    </div>
+  );
+}
+
+export default function SfPage() {
+  const pTag = "p-item";
+  return (
+    <article id="sf-p">
+      <span id="p-s">{readS().pS}</span>
+      <form action={formActionState as any}><button type="submit">save</button></form>
+      <DinouCacheSlot id="p4s3-page-slot" revalidate={3600} tags={["p4s3-page-slot-tag"]}>
+        {async () => {
+          const seq = readS().pSl;
+          const lbl = \`\${pTag}:s\${seq}\`;
+          async function boundPage(arg: string) {
+            "use server";
+            return \`PAGE:\${lbl}:\${arg}\`;
+          }
+          return <SfCard id="page" seq={seq} importedAction={pingImported} boundAction={boundPage} />;
+        }}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>fb</span>}><Hole /></Suspense>
+    </article>
+  );
+}
+`
+    );
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src/sf/done/page.tsx"),
+      `import { readS } from "../../state";
+export default function Done() {
+  return <div id="done-redir">{readS().redir}</div>;
+}
+`
+    );
+
+    const buildRes = spawnSync(process.execPath, [CLI_PATH, "build:node:esbuild"], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 120_000,
+    });
+    assert.equal(
+      buildRes.status,
+      0,
+      `Phase 4 Stage 3 build failed:\n${buildRes.stdout}\n${buildRes.stderr}`
+    );
+
+    const verifyScript = path.join(tmpApp, "verify-p4-stage3.mjs");
+    fs.writeFileSync(
+      verifyScript,
+      `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const { FileSystemStorage, setStorageAdapter } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/storage-adapter.js")).href
+      )});
+setStorageAdapter(new FileSystemStorage(path.resolve(".dinou/dist2")));
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+globalThis.__DINOU_RENDER_HTML_STREAM__ = ssrMod.renderHtml;
+const opts = { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml };
+
+const writeS = (patch) => {
+  const f = path.resolve("p4s3-state.json");
+  const cur = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : {};
+  fs.writeFileSync(f, JSON.stringify({ ...cur, ...patch }), "utf8");
+};
+const callSfJson = async (id, args) => {
+  const r = await rscMod.handleRequest(
+    new Request("http://localhost/____server_function____", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-server-function-call": "1",
+        "x-dinou-current-path": "/sf",
+      },
+      body: JSON.stringify({ id, args }),
+    }),
+    opts
+  );
+  return { status: r.status, headers: r.headers, text: await r.text() };
+};
+const callSfForm = async (id, formData, extraArgs = null, formDataIndex = 0) => {
+  formData.append("__dinou_func_id", id);
+  formData.append("__dinou_formData_index", String(formDataIndex));
+  if (extraArgs) formData.append("__dinou_args", JSON.stringify(extraArgs));
+  const r = await rscMod.handleRequest(
+    new Request("http://localhost/____server_function____", {
+      method: "POST",
+      headers: {
+        "x-server-function-call": "1",
+        "x-dinou-current-path": "/sf",
+      },
+      body: formData,
+    }),
+    opts
+  );
+  return { status: r.status, headers: r.headers, text: await r.text() };
+};
+
+// 1. Inspect serialized slot.json & shell.layout.own.json / shell.page.json on disk:
+//    BOTH imported & bound inline closure server references MUST preserve exact $$id & $$bound!
+const l1SlotJson = fs.readFileSync(path.resolve(".dinou/dist2/slots/p4s3-l1-slot/slot.json"), "utf8");
+const pageSlotJson = fs.readFileSync(path.resolve(".dinou/dist2/slots/p4s3-page-slot/slot.json"), "utf8");
+assert.ok(l1SlotJson.includes("__dinou_server_ref__"), "L1 slot.json must serialize server references");
+assert.ok(l1SlotJson.includes("l1-item:s100"), "L1 slot.json must preserve bound closure label l1-item:s100");
+assert.ok(pageSlotJson.includes("p-item:s100"), "Page slot.json must preserve bound closure label p-item:s100");
+assert.ok(!l1SlotJson.includes("#null"), "Serialized L1 slot.json must never contain #null");
+assert.ok(!pageSlotJson.includes("#null"), "Serialized Page slot.json must never contain #null");
+
+const extractBoundActionRef = (rawJson, fileMatch) => {
+  const re = new RegExp('\\\\{"__dinou_server_ref__":true,"id":"([^"]*' + fileMatch + '[^"]*)","bound":(\\\\[[^\\\\]]*\\\\])\\\\}');
+  const m = rawJson.match(re);
+  assert.ok(m, "Missing serialized bound server ref for " + fileMatch + " in: " + rawJson);
+  return { id: m[1], bound: JSON.parse(m[2]) };
+};
+const l1BoundRef = extractBoundActionRef(l1SlotJson, "layout\\\\.tsx");
+const pageBoundRef = extractBoundActionRef(pageSlotJson, "page\\\\.tsx");
+
+// 2. Invoke BOTH imported & bound inline closures via POST /____server_function____ (simulating cold deserialized client call!)
+const impRes = await callSfJson("file:///src/sf/actions.ts#pingImported", ["cold-l1"]);
+assert.equal(impRes.status, 200);
+assert.ok(impRes.text.includes("imp:cold-l1:init"), "Imported SF failed: " + impRes.text);
+
+const l1BoundRes = await callSfJson(l1BoundRef.id, [...l1BoundRef.bound, "from-client"]);
+assert.equal(l1BoundRes.status, 200, "L1 bound closure failed: " + l1BoundRes.text);
+assert.ok(l1BoundRes.text.includes("L1:l1-item:s100:from-client"), "Unexpected L1 bound reply: " + l1BoundRes.text);
+
+const pageBoundRes = await callSfJson(pageBoundRef.id, [...pageBoundRef.bound, "from-client"]);
+assert.equal(pageBoundRes.status, 200, "Page bound closure failed: " + pageBoundRes.text);
+assert.ok(pageBoundRes.text.includes("PAGE:p-item:s100:from-client"), "Unexpected Page bound reply: " + pageBoundRes.text);
+
+// 3. Poison static shells (l1S=999, pS=999); invoke useActionState FormData SF -> mutates pSl=301 + revalidateTag!
+writeS({ l1S: 999, pS: 999, hS: 205 });
+const fd1 = new FormData();
+fd1.append("msg", "action-state-v2");
+fd1.append("nextSlot", "301");
+const asRes = await callSfForm(
+  "file:///src/sf/actions.ts#formActionState",
+  fd1,
+  [{ count: 0, msg: "init" }, null],
+  1
+);
+assert.equal(asRes.status, 200, "useActionState SF failed: " + asRes.text);
+assert.ok(asRes.text.includes("action-state-v2"), "useActionState reply missing updated msg: " + asRes.text);
+
+// Refresh slot live via /____rsc_slot____ -> Page slot now binds NEW slot value s301 while keeping build-time outer scope label p-item!
+const slotRefreshRes = await rscMod.handleRequest(
+  new Request("http://localhost/____rsc_slot____/p4s3-page-slot?fresh=1", {
+    headers: { "x-dinou-current-path": "/sf" },
+  }),
+  opts
+);
+assert.equal(slotRefreshRes.status, 200);
+const slotRefreshBody = await slotRefreshRes.text();
+assert.ok(slotRefreshBody.includes("p-item:s301"), "Refreshed slot RSC must stream new bound arg p-item:s301");
+assert.ok(!slotRefreshBody.includes("999"), "Refreshed slot must NOT leak poisoned page shell 999");
+
+const refreshedSlotJson = fs.readFileSync(path.resolve(".dinou/dist2/slots/p4s3-page-slot/slot.json"), "utf8");
+const pageBoundRef2 = extractBoundActionRef(refreshedSlotJson, "page\\\\.tsx");
+const pageBoundRes2 = await callSfJson(pageBoundRef2.id, [...pageBoundRef2.bound, "after-refresh"]);
+assert.equal(pageBoundRes2.status, 200);
+assert.ok(pageBoundRes2.text.includes("PAGE:p-item:s301:after-refresh"));
+
+// 4. Invoke PPR dynamic hole SF that mutates + revalidateTag(L1 slot) + res.redirect("/sf/done?from=hole")!
+const fd2 = new FormData();
+fd2.append("redir", "hole-went-done");
+fd2.append("nextL1", "401");
+const redirRes = await callSfForm("file:///src/sf/actions.ts#holeMutateRedirect", fd2);
+assert.equal(redirRes.status, 200);
+assert.equal(redirRes.headers.get("x-dinou-redirect"), "/sf/done?from=hole");
+
+// Verify SSR after redirect: L1 shell stays frozen (100, NOT 999!), L1 slot updated to 401!
+const sfHtmlRes = await rscMod.handleRequest(new Request("http://localhost/sf"), opts);
+assert.equal(sfHtmlRes.status, 200);
+const sfHtml = await sfHtmlRes.text();
+assert.ok(sfHtml.includes('id="l1-s">100<'), "L1 static shell must stay frozen at 100");
+assert.ok(sfHtml.includes('id="seq-l1">401<'), "L1 slot must reflect 401 after hole SF revalidateTag");
+assert.ok(sfHtml.includes('id="p-s">100<'), "Page static shell must stay frozen at 100");
+assert.ok(sfHtml.includes('id="seq-page">301<'), "Page slot must reflect 301 after useActionState revalidateTag");
+assert.ok(sfHtml.includes('id="h-s">205<'), "PPR dynamic hole must stream live 205");
+
+console.log("PHASE4_STAGE3_SF_IN_CUBE_OK");
+`
+    );
+
+    const runRes = spawnSync(process.execPath, [verifyScript], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+      timeout: 60_000,
+    });
+    assert.equal(
+      runRes.status,
+      0,
+      `Phase 4 Stage 3 compiled integration failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+    );
+    assert.ok(runRes.stdout.includes("PHASE4_STAGE3_SF_IN_CUBE_OK"));
+  } finally {
+    removeDirSafe(tmpApp);
+  }
+});

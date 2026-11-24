@@ -10,7 +10,7 @@ All 6 checks below are designed to be implemented and verified **incrementally (
 
 - [x] **Stage 1 — Check `#67`:** Sibling Route Groups `(groupA)` / `(groupB)` & Catch-All (`[...slug]` / `[[...slug]]`) Layouts Under 3D Triple Synergy
 - [x] **Stage 2 — Check `#68`:** Distributed `DenoKVStorage` Consistency (Cross-Isolate Tombstones, Tag Invalidations, Chunked >16KB Payloads & 3D Layout Composition)
-- [ ] **Stage 3 — Check `#69`:** Server Functions (`"use server"`, `<form action>`, `useActionState`, Bound Inline Closures) Hosted Inside `<DinouCacheSlot>` & PPR Shells/Holes
+- [x] **Stage 3 — Check `#69`:** Server Functions (`"use server"`, `<form action>`, `useActionState`, Bound Inline Closures) Hosted Inside `<DinouCacheSlot>` & PPR Shells/Holes
 - [ ] **Stage 4 — Check `#70`:** Custom Middleware & Plugin Context Propagation (`copyCustomContextProperties`) Across Every 3D Cube Execution Path
 - [ ] **Stage 5 — Check `#71`:** Same-Pathname Query Transitions (`?tab=a` ↔ `?tab=b` → `Back`) + `router.refresh()` / `router.refresh({ layout: true })` Under Asymmetric 3D PPR
 - [ ] **Stage 6 — Check `#72`:** Staggered Slow/Fast PPR Streaming Holes + Mid-Flight Navigation Abort & Concurrent `refreshSlot` Resilience
@@ -110,6 +110,12 @@ Real-world interactive apps embed `<form action={...}>` and `useActionState` com
 ### Potential Dinou Core Risk Areas
 - Verify `serializeJSX` / `deserializeJSX` in `dinou/core/cache-slot.js` preserves `$$bound` arguments on bound `react.server.reference` proxies (`fn.bind(null, ...)`) inside `shell.page.json`, `shell.layout.own.json`, and `slots/*/slot.json`!
 - Verify `registerServerReference` works identically across Esbuild, Rollup, and Webpack bundles when deserializing cached slots after a cold server restart.
+
+> **Verified (Stage 3 Complete):**
+> - Fixtures: `src/t-3d-cube/sf-in-cube/` (`actions.ts`, `sf-client.tsx`, `layout.tsx`, `page.tsx`, `done/page.tsx`) and `src/t-3d-cube/shared/cube-state.ts`.
+> - Unit / Compiled Node AOT: Test `20.` in `tests/unit/cache-3d-cube.test.mjs` (**20/20 PASS**), `scripts/verify-sf-fixes-ci.mjs` (**PASS**), `scripts/verify-ssr-server-references-ci.mjs` (**PASS**), and `tests/type-safe-contextual.test.mjs` (**5/5 PASS**, 127 strict TS files).
+> - Browser E2E: Test `33.` in `e2e/example.spec.ts` (**3 passed / 0 failed** across Chromium, Firefox, and WebKit — initial load, F5 deserialized reload, imported + bound inline `"use server"` closures + bound `<form action>`, `useActionState` + `revalidateTag` + live `refreshSlot`, and PPR hole `redirect()` with zero `#418`, router warnings, or `pageerror`).
+> - Core fix documented in `y-changelog-cube-phase4.md`.
 
 ---
 
