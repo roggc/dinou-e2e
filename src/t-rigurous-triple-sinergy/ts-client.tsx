@@ -1143,6 +1143,7 @@ export function TsAutomatedSuiteRunner() {
         clickEl("ts-no-layout-back-link");
         await waitForEl("ts-section-layout");
         await waitForEl("ts-ppr-a-page");
+        await waitForEl("ts-ppr-a-hole-resolved");
 
         return `router.refresh() preserved ?mode=live-query & layout state with 0 layout fetches; no_layout PPR boundary isolated & restored #ts-section-layout cleanly`;
       });
@@ -1159,6 +1160,7 @@ export function TsAutomatedSuiteRunner() {
         await tsRunRevalidateTag("ts-ppr-a-ttl-shell-slot-tag");
         await tsRunRevalidateTag("ts-ppr-a-ttl-hole-slot-tag");
 
+        await waitForEl("ts-ppr-a-hole-slot-seq");
         const curLayoutSeq = getText("ts-layout-seq");
         const curPageSeq = getText("ts-ppr-a-page-seq");
         const curShellSlotSeq = getText("ts-ppr-a-shell-slot-seq");

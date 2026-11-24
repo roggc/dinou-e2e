@@ -1010,6 +1010,13 @@ function applyStreamingResponseHeaders(headers) {
   if (!headers.has("X-Accel-Buffering")) {
     headers.set("X-Accel-Buffering", "no");
   }
+  const contentType = headers.get("Content-Type") || "";
+  if (
+    contentType.toLowerCase().startsWith("text/x-component") &&
+    !headers.has("X-Content-Type-Options")
+  ) {
+    headers.set("X-Content-Type-Options", "nosniff");
+  }
   const cacheControl = headers.get("Cache-Control");
   if (!cacheControl) {
     headers.set("Cache-Control", "no-store, no-cache, must-revalidate, no-transform");

@@ -10,17 +10,17 @@ export default function StaggeredHubPage() {
       <nav style={{ display: "flex", gap: 8, margin: "6px 0" }}>
         <Link
           id="link-hub-to-stag-abort"
-          href="/t-3d-cube/staggered-ppr?tag=softabort&fastMs=15&slowMs=1000"
+          href="/t-3d-cube/staggered-ppr?tag=softabort&fastMs=15&slowMs=2200"
           prefetch={false}
         >
-          Soft Nav to Staggered (Abort 1000ms)
+          Soft Nav to Staggered (Abort 2200ms)
         </Link>
         <Link
           id="link-hub-to-stag-slot"
-          href="/t-3d-cube/staggered-ppr?tag=softslot&fastMs=15&slowMs=1000"
+          href="/t-3d-cube/staggered-ppr?tag=softslot&fastMs=15&slowMs=1800"
           prefetch={false}
         >
-          Soft Nav to Staggered (Mid-Stream Slot 1000ms)
+          Soft Nav to Staggered (Mid-Stream Slot 1800ms)
         </Link>
       </nav>
     </article>

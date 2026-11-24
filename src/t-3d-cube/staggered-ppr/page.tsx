@@ -3,7 +3,7 @@ import { Link, getContext } from "dinou";
 import { DinouCacheSlot } from "dinou/server";
 import { readCubeState, cubeSleep } from "../shared/cube-state";
 
-function clampMs(raw: unknown, fallback: number, max = 2000): number {
+function clampMs(raw: unknown, fallback: number, max = 4000): number {
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 0) return fallback;
   return Math.min(n, max);
@@ -20,7 +20,7 @@ async function FastHoleA() {
 
 async function SlowHoleB() {
   const q = getContext()?.req?.query || {};
-  const slowMs = clampMs(q.slowMs, 350, 2000);
+  const slowMs = clampMs(q.slowMs, 350, 4000);
   const tag = String(q.tag || "base");
   await cubeSleep(slowMs);
   const s = readCubeState();
