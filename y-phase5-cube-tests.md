@@ -15,7 +15,7 @@ All 6 checks below are designed to be implemented and verified **incrementally (
 - [x] **Stage 3 — Check `#75`:** Perimeter Guard Contracts (`validateParams`, `allowISG = false`, `getProps` `redirect()`, and `notFound()`/404 Fallback) Inside Asymmetric 3D PPR Chains
 - [x] **Stage 4 — Check `#76`:** React 19 `useId()` Collision & Scoped-ID Hydration Integrity Across Asymmetric 3D Composition, Nested `<DinouCacheSlot>`, and Staggered PPR Holes
 - [x] **Stage 5 — Check `#77`:** `error.tsx` & Client `ErrorBoundary` Fault Isolation, `reset()`, and Soft-Navigation Recovery Inside Asymmetric 3D PPR + `<DinouCacheSlot>`
-- [ ] **Stage 6 — Check `#78`:** Standalone Compiled Single-File Binaries (`build:node:compile` × `build:bun:compile` × `build:deno:compile`) Under Full 3D Cube Topologies
+- [x] **Stage 6 — Check `#78`:** Standalone Compiled Single-File Binaries (`build:node:compile` × `build:bun:compile` × `build:deno:compile`) Under Full 3D Cube Topologies
 
 ---
 

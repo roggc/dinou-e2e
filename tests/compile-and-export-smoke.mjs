@@ -7,6 +7,7 @@
 
 import { execSync, spawn } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 const projectRoot = process.cwd();
@@ -58,6 +59,46 @@ function assertHeadImportmapOrder(html, label, { expectOgImage = false } = {}) {
       `[Smoke] ${label} <script type="importmap"> must appear before <link rel="modulepreload">`
     );
   }
+}
+
+function readExpectedCubeState(rootDir) {
+  const statePath = path.join(rootDir, ".dinou", "cube-3d-state.json");
+  let disk = {};
+  try {
+    if (fs.existsSync(statePath)) {
+      disk = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    }
+  } catch (e) {}
+  return (key) => String(disk[key] ?? 100);
+}
+
+function extractTextById(html, id) {
+  const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(
+    `<([a-z0-9-]+)\\b[^>]*\\bid="${escaped}"[^>]*>([\\s\\S]*?)<\\/\\1>`,
+    "i"
+  );
+  const m = html.match(re);
+  if (!m) return null;
+  return m[2]
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<[^>]+>/g, "")
+    .trim();
+}
+
+function findDuplicateElementIds(html) {
+  const counts = new Map();
+  const re = /\bid="([^"]+)"/g;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const id = m[1];
+    counts.set(id, (counts.get(id) || 0) + 1);
+  }
+  const dups = [];
+  for (const [id, c] of counts.entries()) {
+    if (c > 1) dups.push(`${id} (x${c})`);
+  }
+  return dups;
 }
 
 async function probeBinary(binaryPath, port, label) {
@@ -606,6 +647,341 @@ async function probeBinary(binaryPath, port, label) {
       `✅ [Smoke] ${label} verified /t-importmap-head (DOCTYPE byte 0, <head> importmap ordering, PPR <=1 importmap & bare no_layout)`
     );
 
+    // Phase 5 Stage 6 (#78): Full 3D Caching Cube topologies inside standalone compiled binary
+    const cubeSt = readExpectedCubeState(projectRoot);
+
+    // 1. Asymmetric 3D Triple Synergy (/t-3d-cube/triple-asym/dyn-l2/l3): Direct SSR + /____rsc_layout____ + /____rsc_page____
+    const taSsrRes = await fetch(
+      `http://127.0.0.1:${port}/t-3d-cube/triple-asym/dyn-l2/l3?l3=smokeL3&pm=smokePm`,
+      {
+        headers: {
+          Accept: "text/html",
+          Cookie: "ta_user=smokeAlice",
+        },
+      }
+    );
+    const taSsrHtml = await taSsrRes.text();
+    const taChecks = {
+      "ta-l1-shell-seq": cubeSt("taL1ShellSeq"),
+      "ta-l1-slot-seq": cubeSt("taL1SlotSeq"),
+      "ta-l1-hole-user": "smokeAlice",
+      "ta-l2-host-seq": cubeSt("taDynL2HostSeq"),
+      "ta-l2-slot-seq": cubeSt("taDynL2SlotSeq"),
+      "ta-l3-shell-seq": cubeSt("taL3ShellSeq"),
+      "ta-l3-slot-seq": cubeSt("taL3SlotSeq"),
+      "ta-l3-hole-val": "smokeL3",
+      "ta-page-shell-seq": cubeSt("taPageShellSeq"),
+      "ta-page-shell-slot-seq": cubeSt("taPageShellSlotSeq"),
+      "ta-page-hole-val": "smokePm",
+      "ta-hole-slot-seq": cubeSt("taHoleSlotSeq"),
+    };
+    for (const [id, expected] of Object.entries(taChecks)) {
+      const actual = extractTextById(taSsrHtml, id);
+      if (taSsrRes.status !== 200 || actual !== expected) {
+        throw new Error(
+          `[Smoke] ${label} /t-3d-cube/triple-asym/dyn-l2/l3 SSR #${id} expected "${expected}", got "${actual}" (status=${taSsrRes.status})`
+        );
+      }
+    }
+    assertHeadImportmapOrder(
+      taSsrHtml,
+      `${label} /t-3d-cube/triple-asym/dyn-l2/l3`
+    );
+
+    const taLayoutRscRes = await fetch(
+      `http://127.0.0.1:${port}/____rsc_layout____/t-3d-cube/triple-asym/dyn-l2/l3?l3=rscL3`,
+      {
+        headers: { Cookie: "ta_user=rscAlice" },
+      }
+    );
+    const taLayoutRsc = await taLayoutRscRes.text();
+    if (
+      taLayoutRscRes.status !== 200 ||
+      !(taLayoutRscRes.headers.get("content-type") || "").includes(
+        "text/x-component"
+      ) ||
+      !taLayoutRsc.includes("ta-l1-shell-seq") ||
+      !taLayoutRsc.includes("ta-l1-slot-seq") ||
+      !taLayoutRsc.includes("rscAlice") ||
+      !taLayoutRsc.includes("ta-l2-host-seq") ||
+      !taLayoutRsc.includes("ta-l3-shell-seq") ||
+      !taLayoutRsc.includes("rscL3")
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /____rsc_layout____/t-3d-cube/triple-asym/dyn-l2/l3 failed (${taLayoutRscRes.status})`
+      );
+    }
+
+    const taPageRscRes = await fetch(
+      `http://127.0.0.1:${port}/____rsc_page____/t-3d-cube/triple-asym/dyn-l2/l3?pm=rscPm`
+    );
+    const taPageRsc = await taPageRscRes.text();
+    if (
+      taPageRscRes.status !== 200 ||
+      !(taPageRscRes.headers.get("content-type") || "").includes(
+        "text/x-component"
+      ) ||
+      !taPageRsc.includes("ta-page-shell-seq") ||
+      !taPageRsc.includes("ta-page-shell-slot-seq") ||
+      !taPageRsc.includes("rscPm") ||
+      !taPageRsc.includes("ta-hole-slot-seq")
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /____rsc_page____/t-3d-cube/triple-asym/dyn-l2/l3 failed (${taPageRscRes.status})`
+      );
+    }
+
+    // 2. Sibling Route Groups (/t-3d-cube/group-collision/promo & /settings)
+    const grpAlphaRes = await fetch(
+      `http://127.0.0.1:${port}/t-3d-cube/group-collision/promo?q=smokeAlpha`,
+      { headers: { Accept: "text/html" } }
+    );
+    const grpAlphaHtml = await grpAlphaRes.text();
+    if (
+      grpAlphaRes.status !== 200 ||
+      !grpAlphaHtml.includes("Group Alpha Shell") ||
+      grpAlphaHtml.includes("Group Beta Shell") ||
+      extractTextById(grpAlphaHtml, "grp-alpha-slot-seq") !==
+        cubeSt("grpAlphaSlotSeq") ||
+      extractTextById(grpAlphaHtml, "grp-alpha-hole-seq") !==
+        `smokeAlpha-${cubeSt("grpAlphaHoleSeq")}` ||
+      extractTextById(grpAlphaHtml, "grp-promo-hole-seq") !==
+        `smokeAlpha-${cubeSt("grpAlphaPromoHoleSeq")}`
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-3d-cube/group-collision/promo SSR failed (${grpAlphaRes.status})`
+      );
+    }
+    const grpBetaRes = await fetch(
+      `http://127.0.0.1:${port}/t-3d-cube/group-collision/settings?q=smokeBeta`,
+      { headers: { Accept: "text/html" } }
+    );
+    const grpBetaHtml = await grpBetaRes.text();
+    if (
+      grpBetaRes.status !== 200 ||
+      !grpBetaHtml.includes("Group Beta Shell") ||
+      grpBetaHtml.includes("Group Alpha Shell") ||
+      extractTextById(grpBetaHtml, "grp-beta-slot-seq") !==
+        cubeSt("grpBetaSlotSeq") ||
+      extractTextById(grpBetaHtml, "grp-beta-hole-seq") !==
+        `smokeBeta-${cubeSt("grpBetaHoleSeq")}` ||
+      extractTextById(grpBetaHtml, "grp-settings-hole-seq") !==
+        `smokeBeta-${cubeSt("grpBetaSettingsHoleSeq")}`
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-3d-cube/group-collision/settings SSR failed (${grpBetaRes.status})`
+      );
+    }
+    const grpAlphaLayoutRscRes = await fetch(
+      `http://127.0.0.1:${port}/____rsc_layout____/t-3d-cube/group-collision/(alpha)?q=rscA`
+    );
+    const grpAlphaLayoutRsc = await grpAlphaLayoutRscRes.text();
+    const grpBetaLayoutRscRes = await fetch(
+      `http://127.0.0.1:${port}/____rsc_layout____/t-3d-cube/group-collision/(beta)?q=rscB`
+    );
+    const grpBetaLayoutRsc = await grpBetaLayoutRscRes.text();
+    if (
+      grpAlphaLayoutRscRes.status !== 200 ||
+      !grpAlphaLayoutRsc.includes("Group Alpha Shell") ||
+      grpAlphaLayoutRsc.includes("Group Beta Shell") ||
+      grpBetaLayoutRscRes.status !== 200 ||
+      !grpBetaLayoutRsc.includes("Group Beta Shell") ||
+      grpBetaLayoutRsc.includes("Group Alpha Shell")
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /____rsc_layout____ sibling route groups (alpha)/(beta) failed (${grpAlphaLayoutRscRes.status}/${grpBetaLayoutRscRes.status})`
+      );
+    }
+
+    // 3. Optional Catch-All 0-Segment Pre-Built & Cold On-Demand ISG (/t-3d-cube/catchall-isg & /docs/v2)
+    const caRootRes = await fetch(
+      `http://127.0.0.1:${port}/t-3d-cube/catchall-isg?q=caRoot`,
+      { headers: { Accept: "text/html" } }
+    );
+    const caRootHtml = await caRootRes.text();
+    if (
+      caRootRes.status !== 200 ||
+      extractTextById(caRootHtml, "ca-l2-slug-key") !== "root" ||
+      extractTextById(caRootHtml, "ca-l2-slot-seq") !==
+        cubeSt("caRootLayoutSlotSeq") ||
+      extractTextById(caRootHtml, "ca-l2-hole-seq") !==
+        `root:caRoot-${cubeSt("caRootLayoutHoleSeq")}` ||
+      extractTextById(caRootHtml, "ca-page-hole-seq") !==
+        `root:caRoot-${cubeSt("caRootPageHoleSeq")}`
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-3d-cube/catchall-isg 0-seg SSR failed (${caRootRes.status})`
+      );
+    }
+    const caColdRes = await fetch(
+      `http://127.0.0.1:${port}/t-3d-cube/catchall-isg/docs/v2?q=caV2Cold`,
+      { headers: { Accept: "text/html" } }
+    );
+    const caColdHtml = await caColdRes.text();
+    if (
+      caColdRes.status !== 200 ||
+      extractTextById(caColdHtml, "ca-l2-slug-key") !== "docs-v2" ||
+      extractTextById(caColdHtml, "ca-page-slug-key") !== "docs-v2" ||
+      extractTextById(caColdHtml, "ca-l2-hole-seq") !==
+        `docs-v2:caV2Cold-${cubeSt("caDocsV2LayoutHoleSeq")}` ||
+      extractTextById(caColdHtml, "ca-page-hole-seq") !==
+        `docs-v2:caV2Cold-${cubeSt("caDocsV2PageHoleSeq")}`
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-3d-cube/catchall-isg/docs/v2 cold ISG failed (${caColdRes.status})`
+      );
+    }
+    const caWarmRes = await fetch(
+      `http://127.0.0.1:${port}/t-3d-cube/catchall-isg/docs/v2?q=caV2Warm`,
+      { headers: { Accept: "text/html" } }
+    );
+    const caWarmHtml = await caWarmRes.text();
+    if (
+      caWarmRes.status !== 200 ||
+      extractTextById(caWarmHtml, "ca-l2-slug-key") !== "docs-v2" ||
+      extractTextById(caWarmHtml, "ca-l2-hole-seq") !==
+        `docs-v2:caV2Warm-${cubeSt("caDocsV2LayoutHoleSeq")}` ||
+      extractTextById(caWarmHtml, "ca-page-hole-seq") !==
+        `docs-v2:caV2Warm-${cubeSt("caDocsV2PageHoleSeq")}`
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-3d-cube/catchall-isg/docs/v2 warm PPR resume failed (${caWarmRes.status})`
+      );
+    }
+
+    // 4. Live <DinouCacheSlot> Endpoint (/____rsc_slot____/<id>?fresh=true) & Embedded Server Function Route (/t-3d-cube/sf-in-cube)
+    const liveSlotTaRes = await fetch(
+      `http://127.0.0.1:${port}/____rsc_slot____/cube-ta-l1-slot?fresh=true`,
+      {
+        headers: {
+          "x-dinou-current-path": "/t-3d-cube/triple-asym/dyn-l2/l3",
+        },
+      }
+    );
+    const liveSlotTaText = await liveSlotTaRes.text();
+    if (
+      liveSlotTaRes.status !== 200 ||
+      !(liveSlotTaRes.headers.get("content-type") || "").includes(
+        "text/x-component"
+      ) ||
+      !liveSlotTaText.includes("ta-l1-slot-seq")
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /____rsc_slot____/cube-ta-l1-slot?fresh=true failed (${liveSlotTaRes.status})`
+      );
+    }
+    const liveSlotAlphaRes = await fetch(
+      `http://127.0.0.1:${port}/____rsc_slot____/cube-grp-alpha-slot?fresh=true`,
+      {
+        headers: {
+          "x-dinou-current-path": "/t-3d-cube/group-collision/promo",
+        },
+      }
+    );
+    const liveSlotAlphaText = await liveSlotAlphaRes.text();
+    if (
+      liveSlotAlphaRes.status !== 200 ||
+      !(liveSlotAlphaRes.headers.get("content-type") || "").includes(
+        "text/x-component"
+      ) ||
+      !liveSlotAlphaText.includes("grp-alpha-slot-seq")
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /____rsc_slot____/cube-grp-alpha-slot?fresh=true failed (${liveSlotAlphaRes.status})`
+      );
+    }
+    const sfCubeRes = await fetch(
+      `http://127.0.0.1:${port}/t-3d-cube/sf-in-cube?q=sfSmoke`,
+      { headers: { Accept: "text/html" } }
+    );
+    const sfCubeHtml = await sfCubeRes.text();
+    if (
+      sfCubeRes.status !== 200 ||
+      extractTextById(sfCubeHtml, "sf-l1-shell-seq") !==
+        cubeSt("sfL1ShellSeq") ||
+      extractTextById(sfCubeHtml, "sf-page-shell-seq") !==
+        cubeSt("sfPageShellSeq") ||
+      extractTextById(sfCubeHtml, "sf-hole-seq") !==
+        `sfSmoke-${cubeSt("sfHoleSeq")}`
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-3d-cube/sf-in-cube failed (${sfCubeRes.status})`
+      );
+    }
+
+    // 5. Phase 5 Stages 3-5 Parity Spot-Checks (Perimeter Guards, React 19 useId() Uniqueness, Error Cube)
+    const guardAllowedRes = await fetch(
+      `http://127.0.0.1:${port}/t-3d-cube/guards/item/allowed-1`,
+      { headers: { Accept: "text/html" } }
+    );
+    const guardAllowedHtml = await guardAllowedRes.text();
+    const guardForbiddenHtmlRes = await fetch(
+      `http://127.0.0.1:${port}/t-3d-cube/guards/item/forbidden`,
+      { headers: { Accept: "text/html" } }
+    );
+    const guardForbiddenRscRes = await fetch(
+      `http://127.0.0.1:${port}/____rsc_page____/t-3d-cube/guards/item/forbidden`
+    );
+    const guardBounceRes = await fetch(
+      `http://127.0.0.1:${port}/t-3d-cube/guards/item/bounce`,
+      { headers: { Accept: "text/html" }, redirect: "manual" }
+    );
+    const guardStrictUnknownRes = await fetch(
+      `http://127.0.0.1:${port}/t-3d-cube/guards/strict/unknown-smoke`
+    );
+    if (
+      guardAllowedRes.status !== 200 ||
+      !guardAllowedHtml.includes('data-item-id="allowed-1"') ||
+      guardForbiddenHtmlRes.status !== 404 ||
+      guardForbiddenRscRes.status !== 404 ||
+      !(guardForbiddenRscRes.headers.get("content-type") || "").includes(
+        "text/x-component"
+      ) ||
+      guardBounceRes.status !== 302 ||
+      guardBounceRes.headers.get("location") !== "/t-3d-cube/guards/landed" ||
+      guardStrictUnknownRes.status !== 404
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-3d-cube/guards parity failed (allowed=${guardAllowedRes.status}, forbidden=${guardForbiddenHtmlRes.status}/${guardForbiddenRscRes.status}, bounce=${guardBounceRes.status}, strict=${guardStrictUnknownRes.status})`
+      );
+    }
+
+    const useIdRes = await fetch(
+      `http://127.0.0.1:${port}/t-3d-cube/use-id-cube/ppr-resume`,
+      { headers: { Accept: "text/html" } }
+    );
+    const useIdHtml = await useIdRes.text();
+    const dupIds = findDuplicateElementIds(useIdHtml);
+    if (
+      useIdRes.status !== 200 ||
+      !useIdHtml.includes("Warm PPR Resume Page") ||
+      dupIds.length > 0
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-3d-cube/use-id-cube/ppr-resume failed (status=${useIdRes.status}, duplicateIds=${JSON.stringify(dupIds)})`
+      );
+    }
+
+    const errHealthyRes = await fetch(
+      `http://127.0.0.1:${port}/t-3d-cube/error-cube/healthy`,
+      { headers: { Accept: "text/html" } }
+    );
+    const errHealthyHtml = await errHealthyRes.text();
+    if (
+      errHealthyRes.status !== 200 ||
+      !errHealthyHtml.includes("Healthy Page") ||
+      extractTextById(errHealthyHtml, "err-healthy-hole-seq") !==
+        cubeSt("errHealthyHoleSeq")
+    ) {
+      throw new Error(
+        `[Smoke] ${label} /t-3d-cube/error-cube/healthy failed (${errHealthyRes.status})`
+      );
+    }
+
+    console.log(
+      `✅ [Smoke] ${label} verified 3D Caching Cube (triple-asym SSR/RSC, (alpha)/(beta) groups, [[...slug]] 0-seg & cold ISG, /____rsc_slot____?fresh=true, sf-in-cube, guards, useId() zero-dups & error-cube)`
+    );
+
     // Also probe a secondary route / RSC endpoint if available
     const candidateRoutes = ["/t-rigurous-hs", "/horizontal-segmentation-test", "/about"];
     for (const route of candidateRoutes) {
@@ -630,6 +1006,265 @@ async function probeBinary(binaryPath, port, label) {
     await new Promise((r) => setTimeout(r, 300));
     try {
       child.kill("SIGKILL");
+    } catch (e) {}
+  }
+}
+
+/**
+ * Spawns the standalone compiled Deno binary from a clean temp working directory
+ * containing ONLY a copy of the pre-seeded `.dinou/kv.db` (ZERO `.dinou/dist2` on disk!)
+ * with poisoned static-shell values in `.dinou/cube-3d-state.json`, proving that
+ * `dinou/deno/seed-kv.js` seeded `shell.layout.own.json`, `shell.page.json`,
+ * `(alpha)/(beta)/layout.rsc`, `[[...slug]]/layout.rsc`, and `slots/*\/slot.json`
+ * completely into Deno KV without relying on local `.dinou/dist2` disk fallback.
+ */
+async function probeDenoPureKvIsolation(binaryPath, port) {
+  const srcKvPath = path.join(projectRoot, ".dinou", "kv.db");
+  if (!fs.existsSync(srcKvPath)) {
+    throw new Error(`[Smoke] Deno KV file missing at ${srcKvPath}`);
+  }
+  const isoDir = fs.mkdtempSync(path.join(os.tmpdir(), "dinou-deno-kv-iso-"));
+  const isoDinouDir = path.join(isoDir, ".dinou");
+  fs.mkdirSync(isoDinouDir, { recursive: true });
+  const isoKvPath = path.join(isoDinouDir, "kv.db");
+  fs.copyFileSync(srcKvPath, isoKvPath);
+  for (const suffix of ["-wal", "-shm"]) {
+    if (fs.existsSync(srcKvPath + suffix)) {
+      fs.copyFileSync(srcKvPath + suffix, isoKvPath + suffix);
+    }
+  }
+
+  // Poison every static shell & pre-built cached slot (baseline + 899) while mutating dynamic L2, PPR holes,
+  // cold ISG & runtime-materialized hole-slot (baseline + 611..619)
+  const baseSt = readExpectedCubeState(projectRoot);
+  const poison = (k) => Number(baseSt(k)) + 899;
+  const live = (k, delta) => Number(baseSt(k)) + delta;
+  const isoStatePath = path.join(isoDinouDir, "cube-3d-state.json");
+  const isoState = {
+    taL1ShellSeq: poison("taL1ShellSeq"),
+    taL1SlotSeq: poison("taL1SlotSeq"),
+    taL3ShellSeq: poison("taL3ShellSeq"),
+    taL3SlotSeq: poison("taL3SlotSeq"),
+    taPageShellSeq: poison("taPageShellSeq"),
+    taPageShellSlotSeq: poison("taPageShellSlotSeq"),
+    taHoleSlotSeq: live("taHoleSlotSeq", 619),
+    taDynL2SlotSeq: poison("taDynL2SlotSeq"),
+    taDynL2HostSeq: live("taDynL2HostSeq", 611),
+    taL1HoleSeq: live("taL1HoleSeq", 612),
+    taL3HoleSeq: live("taL3HoleSeq", 613),
+    taPageHoleHostSeq: live("taPageHoleHostSeq", 614),
+    grpOuterShellSeq: poison("grpOuterShellSeq"),
+    grpOuterSlotSeq: poison("grpOuterSlotSeq"),
+    grpAlphaShellSeq: poison("grpAlphaShellSeq"),
+    grpAlphaSlotSeq: poison("grpAlphaSlotSeq"),
+    grpAlphaPromoShellSeq: poison("grpAlphaPromoShellSeq"),
+    grpBetaShellSeq: poison("grpBetaShellSeq"),
+    grpBetaSlotSeq: poison("grpBetaSlotSeq"),
+    grpBetaSettingsShellSeq: poison("grpBetaSettingsShellSeq"),
+    grpAlphaHoleSeq: live("grpAlphaHoleSeq", 615),
+    grpBetaHoleSeq: live("grpBetaHoleSeq", 616),
+    caOuterShellSeq: poison("caOuterShellSeq"),
+    caOuterSlotSeq: poison("caOuterSlotSeq"),
+    caRootLayoutShellSeq: poison("caRootLayoutShellSeq"),
+    caDocsV2LayoutShellSeq: live("caDocsV2LayoutShellSeq", 617),
+    caDocsV2PageShellSeq: live("caDocsV2PageShellSeq", 618),
+  };
+  fs.writeFileSync(isoStatePath, JSON.stringify(isoState, null, 2), "utf8");
+
+  console.log(
+    `\n🔒 [Smoke] Spawning Deno Compiled Binary in pure-KV isolation (no .dinou/dist2 on disk) on port ${port}...`
+  );
+  const child = spawn(binaryPath, [], {
+    cwd: isoDir,
+    env: {
+      ...process.env,
+      NODE_ENV: "production",
+      PORT: String(port),
+      HOST: "127.0.0.1",
+      DENO_KV_PATH: isoKvPath,
+    },
+    stdio: "inherit",
+  });
+
+  try {
+    let ready = false;
+    let lastErr = null;
+    for (let i = 0; i < 60; i++) {
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/`, {
+          headers: { Accept: "text/html" },
+        });
+        if (res.status === 200) {
+          ready = true;
+          break;
+        }
+        lastErr = new Error(`Unexpected status ${res.status}`);
+      } catch (e) {
+        lastErr = e;
+      }
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    if (!ready) {
+      throw new Error(
+        `[Smoke] Deno pure-KV isolation binary failed to boot: ${lastErr?.message || lastErr}`
+      );
+    }
+
+    // 1. Asymmetric Triple Synergy: static L1/L3/Page shells & slots MUST stay frozen at build baseline from seeded KV (zero poison leak!)
+    const taRes = await fetch(
+      `http://127.0.0.1:${port}/t-3d-cube/triple-asym/dyn-l2/l3?l3=kvL3&pm=kvPm`,
+      {
+        headers: {
+          Accept: "text/html",
+          Cookie: "ta_user=kvAlice",
+        },
+      }
+    );
+    const taHtml = await taRes.text();
+    const taExpected = {
+      "ta-l1-shell-seq": baseSt("taL1ShellSeq"),
+      "ta-l1-slot-seq": baseSt("taL1SlotSeq"),
+      "ta-l1-hole-user": "kvAlice",
+      "ta-l1-hole-seq": String(live("taL1HoleSeq", 612)),
+      "ta-l2-host-seq": String(live("taDynL2HostSeq", 611)),
+      "ta-l2-slot-seq": baseSt("taDynL2SlotSeq"),
+      "ta-l3-shell-seq": baseSt("taL3ShellSeq"),
+      "ta-l3-slot-seq": baseSt("taL3SlotSeq"),
+      "ta-l3-hole-val": "kvL3",
+      "ta-l3-hole-seq": String(live("taL3HoleSeq", 613)),
+      "ta-page-shell-seq": baseSt("taPageShellSeq"),
+      "ta-page-shell-slot-seq": baseSt("taPageShellSlotSeq"),
+      "ta-page-hole-val": "kvPm",
+      "ta-page-hole-host-seq": String(live("taPageHoleHostSeq", 614)),
+      "ta-hole-slot-seq": String(live("taHoleSlotSeq", 619)),
+    };
+    for (const [id, expected] of Object.entries(taExpected)) {
+      const actual = extractTextById(taHtml, id);
+      if (taRes.status !== 200 || actual !== expected) {
+        throw new Error(
+          `[Smoke] Deno pure-KV triple-asym #${id} expected "${expected}", got "${actual}" (status=${taRes.status})`
+        );
+      }
+    }
+
+    // 1b. Poison taHoleSlotSeq and re-request: hole-nested <DinouCacheSlot> MUST now stay frozen in isolated KV!
+    isoState.taHoleSlotSeq = poison("taHoleSlotSeq");
+    fs.writeFileSync(isoStatePath, JSON.stringify(isoState, null, 2), "utf8");
+    const taRes2 = await fetch(
+      `http://127.0.0.1:${port}/t-3d-cube/triple-asym/dyn-l2/l3?l3=kvL3b&pm=kvPmb`,
+      {
+        headers: {
+          Accept: "text/html",
+          Cookie: "ta_user=kvBob",
+        },
+      }
+    );
+    const taHtml2 = await taRes2.text();
+    if (
+      taRes2.status !== 200 ||
+      extractTextById(taHtml2, "ta-hole-slot-seq") !==
+        String(live("taHoleSlotSeq", 619)) ||
+      extractTextById(taHtml2, "ta-l1-hole-user") !== "kvBob" ||
+      extractTextById(taHtml2, "ta-page-hole-val") !== "kvPmb"
+    ) {
+      throw new Error(
+        `[Smoke] Deno pure-KV triple-asym repeat #ta-hole-slot-seq failed (status=${taRes2.status}, actual=${extractTextById(taHtml2, "ta-hole-slot-seq")})`
+      );
+    }
+
+    // 2. Sibling Route Groups: (alpha) & (beta) shells frozen at baseline from KV while PPR holes run live
+    const alphaRes = await fetch(
+      `http://127.0.0.1:${port}/t-3d-cube/group-collision/promo?q=kvA`,
+      { headers: { Accept: "text/html" } }
+    );
+    const alphaHtml = await alphaRes.text();
+    const betaRes = await fetch(
+      `http://127.0.0.1:${port}/t-3d-cube/group-collision/settings?q=kvB`,
+      { headers: { Accept: "text/html" } }
+    );
+    const betaHtml = await betaRes.text();
+    if (
+      alphaRes.status !== 200 ||
+      extractTextById(alphaHtml, "grp-outer-shell-seq") !==
+        baseSt("grpOuterShellSeq") ||
+      extractTextById(alphaHtml, "grp-alpha-shell-seq") !==
+        baseSt("grpAlphaShellSeq") ||
+      extractTextById(alphaHtml, "grp-alpha-slot-seq") !==
+        baseSt("grpAlphaSlotSeq") ||
+      extractTextById(alphaHtml, "grp-alpha-hole-seq") !==
+        `kvA-${live("grpAlphaHoleSeq", 615)}` ||
+      betaRes.status !== 200 ||
+      extractTextById(betaHtml, "grp-outer-shell-seq") !==
+        baseSt("grpOuterShellSeq") ||
+      extractTextById(betaHtml, "grp-beta-shell-seq") !==
+        baseSt("grpBetaShellSeq") ||
+      extractTextById(betaHtml, "grp-beta-slot-seq") !==
+        baseSt("grpBetaSlotSeq") ||
+      extractTextById(betaHtml, "grp-beta-hole-seq") !==
+        `kvB-${live("grpBetaHoleSeq", 616)}`
+    ) {
+      throw new Error(
+        `[Smoke] Deno pure-KV sibling route groups failed (${alphaRes.status}/${betaRes.status})`
+      );
+    }
+
+    // 3. Cold on-demand ISG /catchall-isg/docs/v2 materializes cleanly into isolated KV while outer shell stays frozen at baseline
+    const caRes = await fetch(
+      `http://127.0.0.1:${port}/t-3d-cube/catchall-isg/docs/v2?q=kvCa`,
+      { headers: { Accept: "text/html" } }
+    );
+    const caHtml = await caRes.text();
+    if (
+      caRes.status !== 200 ||
+      extractTextById(caHtml, "ca-outer-shell-seq") !==
+        baseSt("caOuterShellSeq") ||
+      extractTextById(caHtml, "ca-outer-slot-seq") !==
+        baseSt("caOuterSlotSeq") ||
+      extractTextById(caHtml, "ca-l2-slug-key") !== "docs-v2" ||
+      extractTextById(caHtml, "ca-l2-shell-seq") !==
+        String(live("caDocsV2LayoutShellSeq", 617)) ||
+      extractTextById(caHtml, "ca-page-shell-seq") !==
+        String(live("caDocsV2PageShellSeq", 618))
+    ) {
+      throw new Error(
+        `[Smoke] Deno pure-KV cold ISG /catchall-isg/docs/v2 failed (${caRes.status})`
+      );
+    }
+
+    // 4. Live /____rsc_slot____?fresh=true refreshes slot directly in isolated KV from baseline -> poison!
+    const freshSlotRes = await fetch(
+      `http://127.0.0.1:${port}/____rsc_slot____/cube-ta-l1-slot?fresh=true`,
+      {
+        headers: {
+          "x-dinou-current-path": "/t-3d-cube/triple-asym/dyn-l2/l3",
+        },
+      }
+    );
+    const freshSlotText = await freshSlotRes.text();
+    const expectedFreshSlotVal = String(poison("taL1SlotSeq"));
+    if (
+      freshSlotRes.status !== 200 ||
+      !freshSlotText.includes("ta-l1-slot-seq") ||
+      !freshSlotText.includes(expectedFreshSlotVal)
+    ) {
+      throw new Error(
+        `[Smoke] Deno pure-KV /____rsc_slot____/cube-ta-l1-slot?fresh=true did not refresh to ${expectedFreshSlotVal} (${freshSlotRes.status})`
+      );
+    }
+
+    console.log(
+      `✅ [Smoke] Deno Compiled Binary pure-KV isolation verified (zero .dinou/dist2 disk fallback; poisoned shells/slots stayed frozen at build baseline while Dynamic L2, PPR holes, cold ISG & /____rsc_slot____ executed live)`
+    );
+  } finally {
+    try {
+      child.kill("SIGTERM");
+    } catch (e) {}
+    await new Promise((r) => setTimeout(r, 300));
+    try {
+      child.kill("SIGKILL");
+    } catch (e) {}
+    try {
+      fs.rmSync(isoDir, { recursive: true, force: true });
     } catch (e) {}
   }
 }
@@ -1013,6 +1648,44 @@ async function main() {
       );
     }
   }
+  // Phase 5 Stage 6 (#78): Verify 3D Cube route-group & optional catch-all static export completeness & hygiene
+  for (const requiredCubeExport of [
+    "t-3d-cube/group-collision/(alpha)/layout.rsc",
+    "t-3d-cube/group-collision/(beta)/layout.rsc",
+    "t-3d-cube/group-collision/promo/index.html",
+    "t-3d-cube/group-collision/promo/page.rsc",
+    "t-3d-cube/group-collision/settings/index.html",
+    "t-3d-cube/group-collision/settings/page.rsc",
+    "t-3d-cube/catchall-isg/[[...slug]]/layout.rsc",
+    "t-3d-cube/catchall-isg/index.html",
+    "t-3d-cube/catchall-isg/page.rsc",
+    "t-3d-cube/sf-in-cube/index.html",
+    "t-3d-cube/sf-in-cube/page.rsc",
+  ]) {
+    const absCubeExport = path.join(outDir, requiredCubeExport);
+    if (!fs.existsSync(absCubeExport) || fs.statSync(absCubeExport).size === 0) {
+      throw new Error(
+        `[Smoke] export-static missing or empty 3D Cube artifact out/${requiredCubeExport}`
+      );
+    }
+  }
+  for (const forbiddenCubeInternal of [
+    "t-3d-cube/group-collision/(alpha)/shell.layout.own.json",
+    "t-3d-cube/group-collision/(alpha)/shell.layout.json",
+    "t-3d-cube/group-collision/(alpha)/layout.metadata.json",
+    "t-3d-cube/group-collision/(beta)/shell.layout.own.json",
+    "t-3d-cube/catchall-isg/[[...slug]]/shell.layout.own.json",
+    "t-3d-cube/triple-asym/shell.layout.own.json",
+    "t-3d-cube/triple-asym/dyn-l2/l3/shell.page.json",
+    "t-3d-cube/sf-in-cube/shell.page.json",
+    "slots/cube-ta-l1-slot/slot.json",
+  ]) {
+    if (fs.existsSync(path.join(outDir, forbiddenCubeInternal))) {
+      throw new Error(
+        `[Smoke] export-static leaked internal 3D Cube artifact into out/${forbiddenCubeInternal}`
+      );
+    }
+  }
   for (const netlifyArtifact of [
     ".dinou/netlify/functions/ssr.mjs",
     ".dinou/netlify/functions/package.json",
@@ -1068,6 +1741,7 @@ async function main() {
   if (!fs.existsSync(denoBin)) {
     throw new Error(`[Smoke] Deno compiled binary missing at ${denoBin}`);
   }
+  await probeDenoPureKvIsolation(denoBin, 3104);
   await probeBinary(denoBin, 3103, "Deno Compiled Binary");
 
   // Clean up
