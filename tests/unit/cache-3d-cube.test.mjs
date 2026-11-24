@@ -4977,3 +4977,394 @@ console.log("PHASE4_STAGE3_SF_IN_CUBE_OK");
     removeDirSafe(tmpApp);
   }
 });
+
+test("21. Phase 4 Stage 4 (Check #70) compiled Node AOT integration: Custom Middleware & Plugin Context Propagation (copyCustomContextProperties) Across Every 3D Cube Path & Zero Cross-Tenant Leaks", async () => {
+  const tmpApp = createFixtureDir("tmp-3d-p4-s4-ctx-prop-");
+  try {
+    fs.mkdirSync(path.join(tmpApp, "src/mt/asym"), { recursive: true });
+    fs.mkdirSync(path.join(tmpApp, "src/mt/pure-ppr"), { recursive: true });
+
+    fs.writeFileSync(
+      path.join(tmpApp, "package.json"),
+      JSON.stringify(
+        {
+          name: "tmp-3d-p4-s4-ctx-prop",
+          private: true,
+          type: "module",
+          dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+        },
+        null,
+        2
+      )
+    );
+    writeDinouShim(tmpApp);
+
+    fs.writeFileSync(
+      path.join(tmpApp, "dinou.config.mjs"),
+      `export default {
+  plugins: [
+    {
+      name: "cube-tenant-plugin",
+      async onRequest(request, context) {
+        const tenant = request.headers.get("x-cube-tenant");
+        const trace = request.headers.get("x-cube-trace");
+        if (tenant) {
+          context.cubePluginTenant = tenant;
+        }
+        if (trace) {
+          context.req.cubeTraceId = trace;
+        }
+      },
+    },
+  ],
+};
+`
+    );
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src/layout.tsx"),
+      `import type { ReactNode } from "react";
+export default function Root({ children }: { children: ReactNode }) {
+  return <html><head><title>P4S4</title></head><body>{children}</body></html>;
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/page.tsx"),
+      `export default function Home() { return <main>home</main>; }\n`
+    );
+
+    // L1: Static PPR + revalidate=0 dynamic slot + PPR hole
+    fs.writeFileSync(
+      path.join(tmpApp, "src/mt/layout_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/mt/layout.tsx"),
+      `import { Suspense, type ReactNode } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function L1Hole() {
+  const ctx: any = getContext();
+  await sleep(8);
+  return (
+    <span id="l1-hole">{\`\${ctx?.cubePluginTenant || "missing"}|\${ctx?.req?.cubeTraceId || "no-trace"}\`}</span>
+  );
+}
+
+export default function MtL1Layout({ children }: { children: ReactNode }) {
+  const ctx: any = getContext();
+  const staticTenant = ctx?.cubePluginTenant || "static-clean";
+  return (
+    <section id="mt-l1">
+      <span id="l1-shell">{staticTenant}</span>
+      <Suspense fallback={<span>l1-slot-fb</span>}>
+        <DinouCacheSlot id="mt-l1-dyn-slot" revalidate={0}>
+          {async () => {
+            const sCtx: any = getContext();
+            await sleep(5);
+            return (
+              <span id="l1-dyn-slot">{\`\${sCtx?.cubePluginTenant || "missing"}|\${sCtx?.req?.cubeTraceId || "no-trace"}\`}</span>
+            );
+          }}
+        </DinouCacheSlot>
+      </Suspense>
+      <Suspense fallback={<span>l1-fb</span>}><L1Hole /></Suspense>
+      {children}
+    </section>
+  );
+}
+`
+    );
+
+    // Pure PPR child route (exercises handlePprResume + /____rsc_layout____/mt + /____rsc_page____/mt/pure-ppr)
+    fs.writeFileSync(
+      path.join(tmpApp, "src/mt/pure-ppr/page_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/mt/pure-ppr/page.tsx"),
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+async function PureHole() {
+  const ctx: any = getContext();
+  await sleep(8);
+  return <span id="pure-hole">{\`\${ctx?.cubePluginTenant || "missing"}|\${ctx?.req?.cubeTraceId || "no-trace"}\`}</span>;
+}
+export default function PurePprPage() {
+  const ctx: any = getContext();
+  return (
+    <article id="mt-pure">
+      <span id="pure-shell">{ctx?.cubePluginTenant || "static-clean"}</span>
+      <Suspense fallback={<span>p-fb</span>}><PureHole /></Suspense>
+    </article>
+  );
+}
+`
+    );
+
+    // Asymmetric route: L1 Static PPR -> L2 Dynamic (revalidate=0) + Dynamic Slot -> Page Static PPR + Hole
+    fs.writeFileSync(
+      path.join(tmpApp, "src/mt/asym/layout_functions.ts"),
+      `export const revalidate = 0;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/mt/asym/layout.tsx"),
+      `import type { ReactNode } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+export default function MtAsymL2Layout({ children }: { children: ReactNode }) {
+  const ctx: any = getContext();
+  const hostTenant = ctx?.cubePluginTenant || "missing";
+  const hostTrace = ctx?.req?.cubeTraceId || "no-trace";
+  // Record whether cold slot discovery preserved middleware context on L2 host!
+  if (ctx?._isSlotDiscovery) {
+    (globalThis as any).__LAST_DISCOVERY_TENANT__ = hostTenant;
+    (globalThis as any).__LAST_DISCOVERY_TRACE__ = hostTrace;
+  }
+  return (
+    <div id="mt-asym-l2">
+      <span id="l2-host">{\`\${hostTenant}|\${hostTrace}\`}</span>
+      <DinouCacheSlot id="mt-l2-dyn-slot" revalidate={0}>
+        {async () => {
+          const sCtx: any = getContext();
+          await sleep(5);
+          return (
+            <span id="l2-dyn-slot">{\`\${sCtx?.cubePluginTenant || "missing"}|\${sCtx?.req?.cubeTraceId || "no-trace"}\`}</span>
+          );
+        }}
+      </DinouCacheSlot>
+      <main>{children}</main>
+    </div>
+  );
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/mt/asym/page_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/mt/asym/page.tsx"),
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function AsymPageHole() {
+  const ctx: any = getContext();
+  await sleep(8);
+  return (
+    <span id="asym-page-hole">{\`\${ctx?.cubePluginTenant || "missing"}|\${ctx?.req?.cubeTraceId || "no-trace"}\`}</span>
+  );
+}
+
+export default function MtAsymPage() {
+  const ctx: any = getContext();
+  return (
+    <article id="mt-asym-page">
+      <span id="asym-page-shell">{ctx?.cubePluginTenant || "static-clean"}</span>
+      <Suspense fallback={<span>ap-fb</span>}><AsymPageHole /></Suspense>
+    </article>
+  );
+}
+`
+    );
+
+    const buildRes = spawnSync(process.execPath, [CLI_PATH, "build:node:esbuild"], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 120_000,
+    });
+    assert.equal(
+      buildRes.status,
+      0,
+      `Phase 4 Stage 4 build failed:\n${buildRes.stdout}\n${buildRes.stderr}`
+    );
+
+    const verifyScript = path.join(tmpApp, "verify-p4-stage4.mjs");
+    fs.writeFileSync(
+      verifyScript,
+      `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const { FileSystemStorage, setStorageAdapter } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/storage-adapter.js")).href
+      )});
+const { revalidateLayout, revalidatePage } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/cache-revalidate.js")).href
+      )});
+setStorageAdapter(new FileSystemStorage(path.resolve(".dinou/dist2")));
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+globalThis.__DINOU_RENDER_HTML_STREAM__ = ssrMod.renderHtml;
+const opts = { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml };
+
+const get = async (u, tenant, trace, extraHeaders = {}) => {
+  const headers = { ...extraHeaders };
+  if (tenant) headers["x-cube-tenant"] = tenant;
+  if (trace) headers["x-cube-trace"] = trace;
+  const r = await rscMod.handleRequest(new Request("http://localhost" + u, { headers }), opts);
+  assert.equal(r.status, 200, "Expected 200 for " + u + " got " + r.status);
+  return await r.text();
+};
+const textById = (html, id) => {
+  const m = html.match(new RegExp('id="' + id + '"[^>]*>([\\\\s\\\\S]*?)<\\\\/'));
+  assert.ok(m, "Missing #" + id + " in HTML");
+  return m[1].replace(/<!--\\s*\\/?\\s*-->/g, "");
+};
+
+// 1. Cold-server /____rsc_slot____ discovery on revalidate=0 slot inside Dynamic L2:
+//    createDiscoveryContext MUST propagate cubePluginTenant & req.cubeTraceId to L2 host AND slot!
+const coldSlotA = await get("/____rsc_slot____/mt-l2-dyn-slot?fresh=1", "tenant-alpha", "tr-cold-A", {
+  "x-dinou-current-path": "/mt/asym",
+});
+assert.equal(
+  globalThis.__LAST_DISCOVERY_TENANT__,
+  "tenant-alpha",
+  "createDiscoveryContext MUST copy custom context properties (cubePluginTenant) on live /____rsc_slot____!"
+);
+assert.equal(
+  globalThis.__LAST_DISCOVERY_TRACE__,
+  "tr-cold-A",
+  "createDiscoveryContext MUST copy custom req properties (req.cubeTraceId) on live /____rsc_slot____!"
+);
+assert.ok(coldSlotA.includes("tenant-alpha|tr-cold-A"), "Cold L2 dynamic slot must render tenant-alpha|tr-cold-A");
+
+// 2. Immediate (<500ms) follow-up & concurrent /____rsc_slot____ on revalidate=0 slot from Tenant B vs Tenant C:
+//    MUST NEVER hit recentFreshSlotRenders or inflightSlotRenders cross-tenant!
+const immediateSlotB = await get("/____rsc_slot____/mt-l2-dyn-slot?fresh=1", "tenant-beta", "tr-imm-B", {
+  "x-dinou-current-path": "/mt/asym",
+});
+assert.ok(
+  immediateSlotB.includes("tenant-beta|tr-imm-B") && !immediateSlotB.includes("tenant-alpha"),
+  "Immediate <500ms /____rsc_slot____ on revalidate=0 slot MUST NOT leak Tenant A to Tenant B! Got: " + immediateSlotB
+);
+
+const [concSlotA, concSlotB] = await Promise.all([
+  get("/____rsc_slot____/mt-l2-dyn-slot?fresh=1", "tenant-conc-A", "tr-cA", { "x-dinou-current-path": "/mt/asym" }),
+  get("/____rsc_slot____/mt-l2-dyn-slot?fresh=1", "tenant-conc-B", "tr-cB", { "x-dinou-current-path": "/mt/asym" }),
+]);
+assert.ok(concSlotA.includes("tenant-conc-A|tr-cA") && !concSlotA.includes("tenant-conc-B"), "Concurrent slot A leaked: " + concSlotA);
+assert.ok(concSlotB.includes("tenant-conc-B|tr-cB") && !concSlotB.includes("tenant-conc-A"), "Concurrent slot B leaked: " + concSlotB);
+
+// 3. Cold-ISG static page shell rebuild underneath Dynamic L2 during Tenant A's live request:
+//    Delete mt/asym/shell.page.json -> Tenant A triggers rebuild -> Tenant B MUST see "static-clean" (NOT "tenant-secret-A"!)
+for (const k of ["mt/asym/shell.page.json", "mt/asym/page.rsc", "mt/asym/metadata.json"]) {
+  fs.rmSync(path.resolve(".dinou/dist2", k), { force: true });
+}
+const asymA = await get("/mt/asym", "tenant-secret-A", "tr-asym-A");
+assert.equal(textById(asymA, "l1-shell"), "static-clean", "L1 static shell must stay clean");
+assert.equal(textById(asymA, "l1-dyn-slot"), "tenant-secret-A|tr-asym-A", "L1 PPR dynamic slot must receive Tenant A");
+assert.equal(textById(asymA, "asym-page-shell"), "static-clean", "Cold-rebuilt static page shell underneath Dynamic L2 MUST NOT capture Tenant A's cubePluginTenant!");
+assert.equal(textById(asymA, "l1-hole"), "tenant-secret-A|tr-asym-A");
+assert.equal(textById(asymA, "l2-host"), "tenant-secret-A|tr-asym-A");
+assert.equal(textById(asymA, "l2-dyn-slot"), "tenant-secret-A|tr-asym-A");
+assert.equal(textById(asymA, "asym-page-hole"), "tenant-secret-A|tr-asym-A");
+
+const asymB = await get("/mt/asym", "tenant-public-B", "tr-asym-B");
+assert.equal(textById(asymB, "l1-shell"), "static-clean");
+assert.equal(textById(asymB, "l1-dyn-slot"), "tenant-public-B|tr-asym-B", "L1 PPR dynamic slot must receive Tenant B without leaking A");
+assert.equal(textById(asymB, "asym-page-shell"), "static-clean", "Shared shell.page.json MUST NOT leak Tenant A to Tenant B!");
+assert.equal(textById(asymB, "l1-hole"), "tenant-public-B|tr-asym-B");
+assert.equal(textById(asymB, "l2-host"), "tenant-public-B|tr-asym-B");
+assert.equal(textById(asymB, "l2-dyn-slot"), "tenant-public-B|tr-asym-B");
+assert.equal(textById(asymB, "asym-page-hole"), "tenant-public-B|tr-asym-B");
+
+// 3b. Live /____rsc_slot____ on revalidate=0 slot hosted inside Static PPR L1 layout!
+const [l1SlotA, l1SlotB] = await Promise.all([
+  get("/____rsc_slot____/mt-l1-dyn-slot?fresh=1", "l1-slot-A", "tr-l1sA", { "x-dinou-current-path": "/mt/pure-ppr" }),
+  get("/____rsc_slot____/mt-l1-dyn-slot?fresh=1", "l1-slot-B", "tr-l1sB", { "x-dinou-current-path": "/mt/pure-ppr" }),
+]);
+assert.ok(l1SlotA.includes("l1-slot-A|tr-l1sA") && !l1SlotA.includes("l1-slot-B"), "L1 dynamic slot A leaked: " + l1SlotA);
+assert.ok(l1SlotB.includes("l1-slot-B|tr-l1sB") && !l1SlotB.includes("l1-slot-A"), "L1 dynamic slot B leaked: " + l1SlotB);
+
+// 4. Concurrent interleaved SSR (handlePprResume on /mt/pure-ppr AND asymmetric /mt/asym) + soft-nav RSC endpoints!
+const [pureA, pureB, rscL1A, rscL1B, rscLayoutA, rscLayoutB, rscPageA, rscPageB, rscPurePageA, rscPurePageB] = await Promise.all([
+  get("/mt/pure-ppr", "pure-A", "tr-pA"),
+  get("/mt/pure-ppr", "pure-B", "tr-pB"),
+  get("/____rsc_layout____/mt", "l1-nav-A", "tr-l1nA"),
+  get("/____rsc_layout____/mt", "l1-nav-B", "tr-l1nB"),
+  get("/____rsc_layout____/mt/asym", "nav-A", "tr-nA"),
+  get("/____rsc_layout____/mt/asym", "nav-B", "tr-nB"),
+  get("/____rsc_page____/mt/asym", "nav-A", "tr-nA"),
+  get("/____rsc_page____/mt/asym", "nav-B", "tr-nB"),
+  get("/____rsc_page____/mt/pure-ppr", "pure-nav-A", "tr-pnA"),
+  get("/____rsc_page____/mt/pure-ppr", "pure-nav-B", "tr-pnB"),
+]);
+
+assert.equal(textById(pureA, "l1-shell"), "static-clean");
+assert.equal(textById(pureA, "l1-dyn-slot"), "pure-A|tr-pA");
+assert.equal(textById(pureA, "pure-shell"), "static-clean");
+assert.equal(textById(pureA, "l1-hole"), "pure-A|tr-pA");
+assert.equal(textById(pureA, "pure-hole"), "pure-A|tr-pA");
+assert.equal(textById(pureB, "l1-dyn-slot"), "pure-B|tr-pB");
+assert.equal(textById(pureB, "l1-hole"), "pure-B|tr-pB");
+assert.equal(textById(pureB, "pure-hole"), "pure-B|tr-pB");
+
+assert.ok(rscL1A.includes("l1-nav-A|tr-l1nA") && !rscL1A.includes("l1-nav-B"), "Soft-nav Static PPR L1 A mismatch: " + rscL1A);
+assert.ok(rscL1B.includes("l1-nav-B|tr-l1nB") && !rscL1B.includes("l1-nav-A"), "Soft-nav Static PPR L1 B mismatch: " + rscL1B);
+assert.ok(rscLayoutA.includes("nav-A|tr-nA") && !rscLayoutA.includes("nav-B"), "Soft-nav layout A mismatch");
+assert.ok(rscLayoutB.includes("nav-B|tr-nB") && !rscLayoutB.includes("nav-A"), "Soft-nav layout B mismatch");
+assert.ok(rscPageA.includes("nav-A|tr-nA") && !rscPageA.includes("nav-B"), "Soft-nav page A mismatch");
+assert.ok(rscPageB.includes("nav-B|tr-nB") && !rscPageB.includes("nav-A"), "Soft-nav page B mismatch");
+assert.ok(rscPurePageA.includes("pure-nav-A|tr-pnA") && !rscPurePageA.includes("pure-nav-B"), "Soft-nav pure PPR page A mismatch");
+assert.ok(rscPurePageB.includes("pure-nav-B|tr-pnB") && !rscPurePageB.includes("pure-nav-A"), "Soft-nav pure PPR page B mismatch");
+
+// 5. Background revalidateLayout & revalidatePage + live shell.html recomposition keep static shells 100% clean!
+await revalidateLayout("/mt");
+await revalidatePage("/mt/pure-ppr");
+const afterReval = await get("/mt/pure-ppr", "after-reval-user", "tr-after");
+assert.equal(textById(afterReval, "l1-shell"), "static-clean");
+assert.equal(textById(afterReval, "l1-dyn-slot"), "after-reval-user|tr-after");
+assert.equal(textById(afterReval, "pure-shell"), "static-clean");
+assert.equal(textById(afterReval, "l1-hole"), "after-reval-user|tr-after");
+assert.equal(textById(afterReval, "pure-hole"), "after-reval-user|tr-after");
+
+// Verify on-disk shared shell artifacts never captured any tenant identity!
+for (const diskFile of [
+  ".dinou/dist2/mt/shell.layout.own.json",
+  ".dinou/dist2/mt/pure-ppr/shell.page.json",
+  ".dinou/dist2/mt/pure-ppr/shell.html",
+  ".dinou/dist2/mt/asym/shell.page.json",
+]) {
+  const raw = fs.readFileSync(path.resolve(diskFile), "utf8");
+  assert.ok(raw.includes("static-clean"), diskFile + " should contain static-clean");
+  assert.ok(
+    !raw.includes("tenant-secret-A") && !raw.includes("pure-A") && !raw.includes("after-reval-user"),
+    diskFile + " MUST NEVER leak any user tenant into shared disk artifacts!"
+  );
+}
+
+console.log("PHASE4_STAGE4_CONTEXT_PROPAGATION_OK");
+`
+    );
+
+    const runRes = spawnSync(process.execPath, [verifyScript], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+      timeout: 60_000,
+    });
+    assert.equal(
+      runRes.status,
+      0,
+      `Phase 4 Stage 4 compiled integration failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+    );
+    assert.ok(runRes.stdout.includes("PHASE4_STAGE4_CONTEXT_PROPAGATION_OK"));
+  } finally {
+    removeDirSafe(tmpApp);
+  }
+});

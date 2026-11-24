@@ -12,7 +12,11 @@ import {
 } from "./storage-adapter.js";
 import { asyncRenderJSXToClientJSX } from "./render-jsx-to-client-jsx.js";
 import { DinouCacheSlotBoundary as RawDinouCacheSlotBoundary } from "./slot.js";
-import { getContext, requestStorage } from "./request-context.js";
+import {
+  getContext,
+  requestStorage,
+  copyCustomContextProperties,
+} from "./request-context.js";
 import { createBailoutProxy, unwrapBailoutProxy } from "./bailout-proxy.js";
 import { getJSX } from "./get-jsx.js";
 import { getActiveLayoutChain } from "./layout-functions.js";
@@ -140,7 +144,7 @@ function createDiscoveryContext(currentPath) {
       ? currentPath.split("?")[0]
       : outerCtx?.req?.path || "/";
   if (!reqPath.startsWith("/")) reqPath = "/" + reqPath;
-  return {
+  const discoveryCtx = {
     req: {
       query: createBailoutProxy(
         rawQuery && typeof rawQuery === "object" ? { ...rawQuery } : {},
@@ -173,6 +177,10 @@ function createDiscoveryContext(currentPath) {
     _isStaticHtmlRender: Boolean(outerCtx?._isStaticHtmlRender),
     _isSlotDiscovery: true,
   };
+  if (outerCtx && !outerCtx._isStaticHtmlRender) {
+    copyCustomContextProperties(outerCtx, discoveryCtx);
+  }
+  return discoveryCtx;
 }
 
 let _registerServerRefFn = null;
@@ -1327,18 +1335,20 @@ async function getSlotJSX(slotId, options = {}) {
 
   if (slotRegistry.has(targetId)) {
     const entry = slotRegistry.get(targetId);
+    const isEntryNoCache =
+      typeof entry.revalidate === "number" && entry.revalidate < 1;
     const reqUrl = String(options.req?.url || "");
     const qIdx = reqUrl.indexOf("?");
     const queryKey = qIdx !== -1 ? reqUrl.slice(qIdx) : "";
     const stampedeKey = `${storageKey}::${queryKey}`;
     const inflightKey = options.fresh ? stampedeKey : storageKey;
     try {
-      if (inflightSlotRenders.has(inflightKey)) {
+      if (!isEntryNoCache && inflightSlotRenders.has(inflightKey)) {
         const deduped = await inflightSlotRenders.get(inflightKey);
         return await refreshNestedSlotsInTree(deduped, targetId, options);
       }
 
-      if (options.fresh && recentFreshSlotRenders.has(stampedeKey)) {
+      if (!isEntryNoCache && options.fresh && recentFreshSlotRenders.has(stampedeKey)) {
         const recent = recentFreshSlotRenders.get(stampedeKey);
         if (recent && Date.now() - recent.timestamp < 500 && recent.serialized) {
           recent.timestamp = Date.now();
@@ -1352,13 +1362,10 @@ async function getSlotJSX(slotId, options = {}) {
       slotRenderGenerations.set(storageKey, renderGen);
       const isLatestGen = () => slotRenderGenerations.get(storageKey) === renderGen;
 
-      const isEntryNoCache =
-        typeof entry.revalidate === "number" && entry.revalidate < 1;
-
       const renderPromise = (async () => {
         const resolved = await entry.render();
         const serialized = serializeJSX(resolved);
-        if (options.fresh && isLatestGen()) {
+        if (!isEntryNoCache && options.fresh && isLatestGen()) {
           recentFreshSlotRenders.set(stampedeKey, {
             timestamp: Date.now(),
             serialized,
@@ -1378,7 +1385,7 @@ async function getSlotJSX(slotId, options = {}) {
             inStaticSuspense: Boolean(cached?.metadata?.inStaticSuspense),
           });
         }
-        if (options.fresh && isLatestGen()) {
+        if (!isEntryNoCache && options.fresh && isLatestGen()) {
           recentFreshSlotRenders.set(stampedeKey, {
             timestamp: Date.now(),
             serialized,
@@ -1388,11 +1395,15 @@ async function getSlotJSX(slotId, options = {}) {
       })();
 
       let restored;
-      inflightSlotRenders.set(inflightKey, renderPromise);
+      if (!isEntryNoCache) {
+        inflightSlotRenders.set(inflightKey, renderPromise);
+      }
       try {
         restored = await renderPromise;
       } finally {
-        inflightSlotRenders.delete(inflightKey);
+        if (!isEntryNoCache) {
+          inflightSlotRenders.delete(inflightKey);
+        }
       }
 
       if (

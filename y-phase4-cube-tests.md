@@ -11,7 +11,7 @@ All 6 checks below are designed to be implemented and verified **incrementally (
 - [x] **Stage 1 — Check `#67`:** Sibling Route Groups `(groupA)` / `(groupB)` & Catch-All (`[...slug]` / `[[...slug]]`) Layouts Under 3D Triple Synergy
 - [x] **Stage 2 — Check `#68`:** Distributed `DenoKVStorage` Consistency (Cross-Isolate Tombstones, Tag Invalidations, Chunked >16KB Payloads & 3D Layout Composition)
 - [x] **Stage 3 — Check `#69`:** Server Functions (`"use server"`, `<form action>`, `useActionState`, Bound Inline Closures) Hosted Inside `<DinouCacheSlot>` & PPR Shells/Holes
-- [ ] **Stage 4 — Check `#70`:** Custom Middleware & Plugin Context Propagation (`copyCustomContextProperties`) Across Every 3D Cube Execution Path
+- [x] **Stage 4 — Check `#70`:** Custom Middleware & Plugin Context Propagation (`copyCustomContextProperties`) Across Every 3D Cube Execution Path
 - [ ] **Stage 5 — Check `#71`:** Same-Pathname Query Transitions (`?tab=a` ↔ `?tab=b` → `Back`) + `router.refresh()` / `router.refresh({ layout: true })` Under Asymmetric 3D PPR
 - [ ] **Stage 6 — Check `#72`:** Staggered Slow/Fast PPR Streaming Holes + Mid-Flight Navigation Abort & Concurrent `refreshSlot` Resilience
 
@@ -136,6 +136,11 @@ Dinou plugins and Node/Edge middlewares attach custom properties (e.g., `ctx.ten
 
 ### Potential Dinou Core Risk Areas
 - Check `createDiscoveryContext` (`dinou/core/cache-slot.js:126-175`), `/____rsc_slot____` handler (`dinou/core/handler.js`), `handlePprResume` (`dinou/core/ppr-runtime.js`), and asymmetric `renderSingleLayoutLevel` / `spliceSingleLayoutOwnHoles` for complete `copyCustomContextProperties` coverage.
+
+> **Verified (Stage 4 Complete):**
+> - Compiled Node AOT Integration: Test `21.` added to `tests/unit/cache-3d-cube.test.mjs` (**21/21 PASS**) with a custom `dinou.config.mjs` `onRequest` plugin attaching `context.cubePluginTenant` and `context.req.cubeTraceId` across cold `/____rsc_slot____` discovery, immediate `<500ms` & concurrent `revalidate = 0` dynamic slot isolation (both inside Dynamic `L2` and Static PPR `L1`), cold-ISG `shell.page.json` rebuild underneath Dynamic `L2`, concurrent interleaved `handlePprResume` + asymmetric SSR + `/____rsc_layout____` / `/____rsc_page____`, background `revalidateLayout` / `revalidatePage`, and on-disk shared shell cleanliness (`shell.layout.own.json`, `shell.page.json`, `shell.html`).
+> - Additional Regression Suites: `tests/unit/cache-3d-distributed-storage.test.mjs` (**7/7 PASS**), `tests/unit/page-functions-precedence.test.mjs`, `tests/unit/importmap-head-injection.test.mjs`, `scripts/verify-plugins-ci.mjs`, `scripts/verify-revalidation-fixes-ci.mjs`, `scripts/verify-cache-slot-bailout-ci.mjs`, and `scripts/verify-bailout-ci.mjs` (**all PASS**).
+> - Core fixes documented in `y-changelog-cube-phase4.md`.
 
 ---
 

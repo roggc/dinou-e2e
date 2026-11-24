@@ -29,7 +29,11 @@ import importModule from "./import-module.js";
 import { resolveLayoutFunctionsConfig, getActiveLayoutChain, resolveLayoutChainPpr } from "./layout-functions.js";
 import { revalidating, regenerating, inFlightGenerations } from "./revalidating.js";
 import { generatingISG } from "./generating-isg.js";
-import { requestStorage, setCurrentContext } from "./request-context.js";
+import {
+  requestStorage,
+  setCurrentContext,
+  copyCustomContextProperties,
+} from "./request-context.js";
 import {
   createUnifiedEnv,
   syncEdgeEnvToProcessEnv,
@@ -163,48 +167,6 @@ if (
           }
         } catch (err) {}
         break;
-      }
-    }
-  }
-}
-
-function copyCustomContextProperties(source, target) {
-  if (!source || !target) return;
-  for (const key of Object.keys(source)) {
-    if (
-      ![
-        "req",
-        "res",
-        "env",
-        "ctx",
-        "platformContext",
-        "_markDynamic",
-        "_dynamicState",
-        "_hasRedirected",
-        "_isStaticHtmlRender",
-        "_isPprRuntimeResume",
-      ].includes(key)
-    ) {
-      target[key] = source[key];
-    }
-  }
-  if (source.req && target.req) {
-    for (const key of Object.keys(source.req)) {
-      if (
-        ![
-          "cookies",
-          "headers",
-          "query",
-          "path",
-          "rawPath",
-          "isRscRequest",
-          "url",
-          "method",
-          "env",
-          "ctx",
-        ].includes(key)
-      ) {
-        target.req[key] = source.req[key];
       }
     }
   }
@@ -3567,12 +3529,15 @@ async function handleRequest(request, platformContext = {}) {
               }
               bootstrapScriptContent += `window.__DINOU_BUILD_ID__ = "${leafLayout.generatedAt}";\n`;
               const clientEntry = getAssetFromManifest("main.js");
-              const recomposeSimReq = simReq
-                ? { ...simReq, query: {}, cookies: {} }
-                : { query: {}, cookies: {}, headers: {}, path: reqPath, method: "GET" };
+              const recomposeSimReq = {
+                query: {},
+                cookies: {},
+                headers: {},
+                path: reqPath,
+                method: "GET",
+              };
               const recomposeCtx = createRequestContext(recomposeSimReq, bridge, platformContext);
               recomposeCtx._isStaticHtmlRender = true;
-              copyCustomContextProperties(rootContext, recomposeCtx);
               let htmlStream;
               await requestStorage.run(recomposeCtx, async () => {
                 htmlStream = await platformContext.renderHtmlStream(toStream(layoutRscText), {
@@ -4227,9 +4192,13 @@ async function handleRequest(request, platformContext = {}) {
                       }
                     } else if (allowISGValue !== false) {
                       const staticPageDynState = { value: false };
-                      const staticPageSimReq = simReq
-                        ? { ...simReq, query: {}, cookies: {} }
-                        : { query: {}, cookies: {}, headers: {}, path: reqPath, method: "GET" };
+                      const staticPageSimReq = {
+                        query: {},
+                        cookies: {},
+                        headers: {},
+                        path: reqPath,
+                        method: "GET",
+                      };
                       const staticPageBridge = new WebResponseBridge();
                       const staticPageCtx = createRequestContext(
                         staticPageSimReq,
@@ -4238,7 +4207,6 @@ async function handleRequest(request, platformContext = {}) {
                         staticPageDynState
                       );
                       staticPageCtx._isStaticHtmlRender = true;
-                      copyCustomContextProperties(rootContext, staticPageCtx);
                       let staticPageJsx;
                       let staticPageHoles = [];
                       if (isPagePprConfig) {
