@@ -21111,8 +21111,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         const holeBTxt = holeBVis
           ? (await page.locator("#stag-hole-b").textContent())?.trim()
           : "<not-visible>";
-        console.log(
-          `[Test 35 Step 3 diag] #stag-hole-b-fb not visible right after #stag-hole-a; #stag-hole-b visible=${holeBVis} text="${holeBTxt}"`
+        throw new Error(
+          `[Test 35 Step 3 diag] #stag-hole-b-fb missing right after #stag-hole-a; #stag-hole-b visible=${holeBVis} text="${holeBTxt}" url=${page.url()}`
         );
       }
       await expect(page.locator("#stag-hole-b-fb")).toBeVisible({ timeout: 5000 });

@@ -1216,14 +1216,21 @@ export function TsAutomatedSuiteRunner() {
             )}`
           );
         }
+        const wireLayoutSeq = extractIdValueFromHtml(shellPart, "ts-layout-seq");
+        const wirePageSeq = extractIdValueFromHtml(shellPart, "ts-ppr-a-page-seq");
+        const wireShellSlotSeq = extractIdValueFromHtml(shellPart, "ts-ppr-a-shell-slot-seq");
+        const wireHoleSlotSeq = extractIdValueFromHtml(streamPart, "ts-ppr-a-hole-slot-seq");
         if (
-          extractIdValueFromHtml(shellPart, "ts-layout-seq") !== curLayoutSeq ||
-          extractIdValueFromHtml(shellPart, "ts-ppr-a-page-seq") !== curPageSeq ||
-          extractIdValueFromHtml(shellPart, "ts-ppr-a-shell-slot-seq") !== curShellSlotSeq ||
-          extractIdValueFromHtml(streamPart, "ts-ppr-a-hole-slot-seq") !== curHoleSlotSeq
+          wireLayoutSeq !== curLayoutSeq ||
+          wirePageSeq !== curPageSeq ||
+          wireShellSlotSeq !== curShellSlotSeq ||
+          wireHoleSlotSeq !== curHoleSlotSeq
         ) {
           throw new Error(
-            "Clock-TTL slot refresh leaked poisoned host layout/page or 3600s slot state!"
+            `Clock-TTL slot refresh leaked poisoned host layout/page or 3600s slot state! ` +
+              `wire={layout:${wireLayoutSeq}, page:${wirePageSeq}, shellSlot:${wireShellSlotSeq}, holeSlot:${wireHoleSlotSeq}} ` +
+              `dom={layout:${curLayoutSeq}, page:${curPageSeq}, shellSlot:${curShellSlotSeq}, holeSlot:${curHoleSlotSeq}} ` +
+              `isProdMode=${isProdMode} splitIdx=${wireSplitIdx} href=${window.location.href}`
           );
         }
 
