@@ -5743,3 +5743,360 @@ console.log("PHASE4_STAGE5_QUERY_PPR_OK");
     removeDirSafe(tmpApp);
   }
 });
+
+test("23. Phase 4 Stage 6 (Check #72) unit & compiled Node AOT integration: Staggered Slow/Fast PPR Streaming Holes + Mid-Flight Abort & Concurrent refreshSlot Resilience", async () => {
+  // Part A: pruneOrphanedSsrStreams() MUST prune detached-subtree boundaries (isConnected === false even when parentNode is non-null!)
+  const slotPruneScript = `
+    import assert from "node:assert/strict";
+    let removedHidden = false;
+    const detachedParent = { tagName: "ARTICLE" };
+    const detachedBoundary = { isConnected: false, parentNode: detachedParent };
+    const connectedBoundary = { isConnected: true, parentNode: { tagName: "DIV" } };
+    const hiddenDetached = {
+      parentNode: {
+        removeChild(node) {
+          if (node === hiddenDetached) removedHidden = true;
+        },
+      },
+    };
+    const hiddenConnected = { parentNode: { removeChild() {} } };
+    globalThis.window = {
+      addEventListener() {},
+      $RB: [detachedBoundary, hiddenDetached, connectedBoundary, hiddenConnected],
+    };
+    const { pruneOrphanedSsrStreams } = await import(${JSON.stringify(
+      pathToFileURL(path.join(DINOU_ROOT, "core/slot.js")).href
+    )});
+    pruneOrphanedSsrStreams();
+    assert.equal(removedHidden, true, "Detached hiddenSlot must be removed from DOM");
+    assert.equal(globalThis.window.$RB.length, 2, "Detached-subtree $RB entry must be pruned even when parentNode is non-null!");
+    assert.equal(globalThis.window.$RB[0], connectedBoundary);
+    console.log("SLOT_PRUNE_DETACHED_OK");
+  `;
+  const pruneRes = spawnSync(
+    process.execPath,
+    ["--input-type=module", "-e", slotPruneScript],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 30_000,
+    }
+  );
+  assert.equal(
+    pruneRes.status,
+    0,
+    `pruneOrphanedSsrStreams detached-subtree unit check failed:\nSTDOUT:\n${pruneRes.stdout}\nSTDERR:\n${pruneRes.stderr}`
+  );
+  assert.ok(pruneRes.stdout.includes("SLOT_PRUNE_DETACHED_OK"));
+
+  // Part B: sendWebResponseToNode() MUST cancel Web ReadableStream cleanly on premature Node res 'close' with zero error logs
+  const adapterAbortScript = `
+    import assert from "node:assert/strict";
+    import { Writable } from "node:stream";
+    const { sendWebResponseToNode } = await import(${JSON.stringify(
+      pathToFileURL(path.join(DINOU_ROOT, "core/http-adapter.js")).href
+    )});
+    let streamCancelled = false;
+    const errLogs = [];
+    const origErr = console.error;
+    console.error = (...args) => errLogs.push(args.join(" "));
+    try {
+      const encoder = new TextEncoder();
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode("prelude-chunk"));
+        },
+        cancel() {
+          streamCancelled = true;
+        },
+      });
+      const webRes = new Response(body, { status: 200, headers: { "Content-Type": "text/html" } });
+      const mockRes = new Writable({
+        write(_chunk, _enc, cb) { cb(); },
+      });
+      mockRes.statusCode = 200;
+      mockRes.headersSent = false;
+      mockRes.setHeader = () => {};
+      await sendWebResponseToNode(webRes, mockRes);
+      await new Promise((r) => setTimeout(r, 30));
+      mockRes.emit("close");
+      await new Promise((r) => setTimeout(r, 60));
+      assert.equal(streamCancelled, true, "sendWebResponseToNode MUST cancel webResponse.body when Node res closes prematurely!");
+      assert.equal(errLogs.length, 0, "Premature client close must NOT log spurious [http-adapter] errors: " + errLogs.join(" | "));
+      console.log("HTTP_ADAPTER_ABORT_OK");
+    } finally {
+      console.error = origErr;
+    }
+  `;
+  const adapterRes = spawnSync(
+    process.execPath,
+    ["--input-type=module", "-e", adapterAbortScript],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 30_000,
+    }
+  );
+  assert.equal(
+    adapterRes.status,
+    0,
+    `sendWebResponseToNode premature-close unit check failed:\nSTDOUT:\n${adapterRes.stdout}\nSTDERR:\n${adapterRes.stderr}`
+  );
+  assert.ok(adapterRes.stdout.includes("HTTP_ADAPTER_ABORT_OK"));
+
+  // Part C: Full compiled Node AOT integration test of staggered PPR holes + mid-flight reader.cancel() abort + concurrent refreshSlot
+  const tmpApp = createFixtureDir("tmp-3d-p4-s6-staggered-ppr-");
+  try {
+    fs.mkdirSync(path.join(tmpApp, "src/stag"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpApp, "package.json"),
+      JSON.stringify(
+        {
+          name: "tmp-3d-p4-s6-staggered-ppr",
+          private: true,
+          type: "module",
+          dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+        },
+        null,
+        2
+      )
+    );
+    writeDinouShim(tmpApp);
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src/state.ts"),
+      `import fs from "node:fs";
+import path from "node:path";
+const FILE = path.resolve(process.cwd(), "p4s6-state.json");
+const DEF = {
+  shell: 100, shellSlot: 100, holeA: 100, holeB: 100, slowSlot: 100,
+};
+export function readS() {
+  try { if (fs.existsSync(FILE)) return { ...DEF, ...JSON.parse(fs.readFileSync(FILE, "utf8")) }; } catch {}
+  return { ...DEF };
+}
+export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+`
+    );
+
+    fs.writeFileSync(
+      path.join(tmpApp, "src/layout.tsx"),
+      `import type { ReactNode } from "react";
+export default function Root({ children }: { children: ReactNode }) {
+  return <html><head><title>P4S6</title></head><body>{children}</body></html>;
+}
+`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/page.tsx"),
+      `export default function Home() { return <main>home</main>; }\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/stag/page_functions.ts"),
+      `export const ppr = true;\nexport const revalidate = 3600;\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "src/stag/page.tsx"),
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep } from "../state";
+
+async function FastHoleA() {
+  const q = getContext()?.req?.query || {};
+  const ms = Number(q.fastMs || 15);
+  await sleep(ms);
+  return <span id="stag-a">{\`fast-\${readS().holeA}\`}</span>;
+}
+
+async function SlowHoleB() {
+  const q = getContext()?.req?.query || {};
+  const ms = Number(q.slowMs || 350);
+  await sleep(ms);
+  return (
+    <div id="stag-b-box">
+      <span id="stag-b">{\`slow-\${readS().holeB}\`}</span>
+      <DinouCacheSlot id="p4s6-slow-slot" revalidate={3600}>
+        {async () => <span id="stag-slow-sl">{readS().slowSlot}</span>}
+      </DinouCacheSlot>
+    </div>
+  );
+}
+
+export default function StagPage() {
+  return (
+    <article id="stag-art">
+      <span id="stag-shell">{readS().shell}</span>
+      <DinouCacheSlot id="p4s6-shell-slot" revalidate={3600}>
+        {async () => <span id="stag-shell-sl">{readS().shellSlot}</span>}
+      </DinouCacheSlot>
+      <Suspense fallback={<span id="stag-a-fb">fb-a</span>}><FastHoleA /></Suspense>
+      <Suspense fallback={<span id="stag-b-fb">fb-b</span>}><SlowHoleB /></Suspense>
+    </article>
+  );
+}
+`
+    );
+
+    const buildRes = spawnSync(process.execPath, [CLI_PATH, "build:node:esbuild"], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 120_000,
+    });
+    assert.equal(
+      buildRes.status,
+      0,
+      `Phase 4 Stage 6 build failed:\n${buildRes.stdout}\n${buildRes.stderr}`
+    );
+
+    const verifyScript = path.join(tmpApp, "verify-p4-stage6.mjs");
+    fs.writeFileSync(
+      verifyScript,
+      `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const unhandled = [];
+process.on("unhandledRejection", (reason) => {
+  unhandled.push(String(reason));
+});
+
+const consoleErrors = [];
+const origErr = console.error;
+console.error = (...args) => {
+  const msg = args.join(" ");
+  consoleErrors.push(msg);
+  origErr(...args);
+};
+
+const { FileSystemStorage, setStorageAdapter } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/storage-adapter.js")).href
+      )});
+setStorageAdapter(new FileSystemStorage(path.resolve(".dinou/dist2")));
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+globalThis.__DINOU_RENDER_HTML_STREAM__ = ssrMod.renderHtml;
+const opts = { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml };
+
+const writeS = (patch) => {
+  const f = path.resolve("p4s6-state.json");
+  const cur = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : {};
+  fs.writeFileSync(f, JSON.stringify({ ...cur, ...patch }), "utf8");
+};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Warm slow slot once
+const warmRes = await rscMod.handleRequest(new Request("http://localhost/stag?fastMs=5&slowMs=10"), opts);
+assert.equal(warmRes.status, 200);
+await warmRes.text();
+
+// Poison static shell & slow slot; bump holes!
+writeS({ shell: 999, shellSlot: 999, slowSlot: 999, holeA: 201, holeB: 202 });
+
+// 1. Staggered streaming arrival on handlePprResume: Fast Hole A MUST arrive BEFORE Slow Hole B!
+const stagRes = await rscMod.handleRequest(new Request("http://localhost/stag?fastMs=15&slowMs=300"), opts);
+assert.equal(stagRes.status, 200);
+const reader1 = stagRes.body.getReader();
+const decoder = new TextDecoder();
+let buf1 = "";
+let fastArrivedAt = 0;
+let slowArrivedAt = 0;
+let fastArrivedBeforeSlow = false;
+while (true) {
+  const { done, value } = await reader1.read();
+  if (done) break;
+  buf1 += decoder.decode(value, { stream: true });
+  if (!fastArrivedAt && buf1.includes("fast-201")) {
+    fastArrivedAt = Date.now();
+    if (!buf1.includes("slow-202")) fastArrivedBeforeSlow = true;
+  }
+  if (!slowArrivedAt && buf1.includes("slow-202")) {
+    slowArrivedAt = Date.now();
+  }
+}
+assert.ok(fastArrivedBeforeSlow, "Fast Hole A must stream BEFORE Slow Hole B!");
+assert.ok(slowArrivedAt - fastArrivedAt >= 120, "Expected staggered delay between fast & slow holes, got " + (slowArrivedAt - fastArrivedAt) + "ms");
+assert.ok(buf1.includes('id="stag-shell">100<'), "Static shell must stay frozen at 100");
+assert.ok(buf1.includes('id="stag-slow-sl">100<'), "Inner slow-hole slot must stay frozen at 100");
+
+// 2. Mid-flight abort: cancel reader RIGHT AFTER Fast Hole A arrives while Slow Hole B sleeps 320ms!
+const abortRes = await rscMod.handleRequest(new Request("http://localhost/stag?fastMs=15&slowMs=320"), opts);
+assert.equal(abortRes.status, 200);
+const reader2 = abortRes.body.getReader();
+let buf2 = "";
+while (true) {
+  const { done, value } = await reader2.read();
+  if (done) break;
+  buf2 += decoder.decode(value, { stream: true });
+  if (buf2.includes("fast-201")) {
+    assert.ok(!buf2.includes("slow-202"), "Slow hole should still be pending when we abort!");
+    await reader2.cancel("client-navigated-away");
+    break;
+  }
+}
+// Wait well past Slow Hole B's 320ms timer to confirm ZERO unhandled rejections & ZERO false PPR errors!
+await sleep(450);
+assert.equal(unhandled.length, 0, "Mid-flight PPR abort caused unhandledRejection: " + unhandled.join(" | "));
+const pprErrors = consoleErrors.filter((m) => m.includes("[Dinou PPR]"));
+assert.equal(pprErrors.length, 0, "Mid-flight PPR abort must NOT log false PPR hole/resume errors: " + pprErrors.join(" | "));
+
+// 3. Concurrent /____rsc_slot____ refresh while /____rsc_page____ is actively streaming Slow Hole B!
+writeS({ shellSlot: 301, holeA: 302, holeB: 303 });
+const rscPageRes = await rscMod.handleRequest(
+  new Request("http://localhost/____rsc_page____/stag?fastMs=15&slowMs=280"),
+  opts
+);
+assert.equal(rscPageRes.status, 200);
+const rscReader = rscPageRes.body.getReader();
+let rscBuf = "";
+let slotRefreshDone = null;
+while (true) {
+  const { done, value } = await rscReader.read();
+  if (done) break;
+  rscBuf += decoder.decode(value, { stream: true });
+  if (!slotRefreshDone && rscBuf.includes("fast-302")) {
+    slotRefreshDone = rscMod.handleRequest(
+      new Request("http://localhost/____rsc_slot____/p4s6-shell-slot?fresh=1", {
+        headers: { "x-dinou-current-path": "/stag" },
+      }),
+      opts
+    ).then(async (r) => {
+      assert.equal(r.status, 200);
+      return await r.text();
+    });
+  }
+}
+assert.ok(slotRefreshDone, "Expected Fast Hole A to trigger concurrent slot refresh");
+const slotRscText = await slotRefreshDone;
+assert.ok(slotRscText.includes("301"), "Mid-stream refreshSlot must return fresh 301");
+assert.ok(rscBuf.includes("slow-303"), "Slow Hole B must still complete cleanly during mid-stream refreshSlot");
+assert.ok(!rscBuf.includes("999"), "Static shell & frozen slow slot must never leak 999");
+
+assert.equal(unhandled.length, 0);
+console.error = origErr;
+console.log("PHASE4_STAGE6_STAGGERED_ABORT_OK");
+`
+    );
+
+    const runRes = spawnSync(process.execPath, [verifyScript], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+      timeout: 60_000,
+    });
+    assert.equal(
+      runRes.status,
+      0,
+      `Phase 4 Stage 6 compiled integration failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+    );
+    assert.ok(runRes.stdout.includes("PHASE4_STAGE6_STAGGERED_ABORT_OK"));
+  } finally {
+    removeDirSafe(tmpApp);
+  }
+});

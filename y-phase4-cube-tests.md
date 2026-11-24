@@ -13,7 +13,7 @@ All 6 checks below are designed to be implemented and verified **incrementally (
 - [x] **Stage 3 — Check `#69`:** Server Functions (`"use server"`, `<form action>`, `useActionState`, Bound Inline Closures) Hosted Inside `<DinouCacheSlot>` & PPR Shells/Holes
 - [x] **Stage 4 — Check `#70`:** Custom Middleware & Plugin Context Propagation (`copyCustomContextProperties`) Across Every 3D Cube Execution Path
 - [x] **Stage 5 — Check `#71`:** Same-Pathname Query Transitions (`?tab=a` ↔ `?tab=b` → `Back`) + `router.refresh()` / `router.refresh({ layout: true })` Under Asymmetric 3D PPR
-- [ ] **Stage 6 — Check `#72`:** Staggered Slow/Fast PPR Streaming Holes + Mid-Flight Navigation Abort & Concurrent `refreshSlot` Resilience
+- [x] **Stage 6 — Check `#72`:** Staggered Slow/Fast PPR Streaming Holes + Mid-Flight Navigation Abort & Concurrent `refreshSlot` Resilience
 
 ---
 
@@ -191,6 +191,12 @@ Real network latency makes PPR holes resolve at wildly different speeds (e.g., 1
 ### Potential Dinou Core Risk Areas
 - Verify `handlePprResume` (`dinou/core/ppr-runtime.js`) handles `writer.write(...)` gracefully when the client closes/aborts the HTTP connection mid-stream (especially on Cloudflare Workers `workerd` and Node HTTP/1.1 keep-alive!).
 - Verify `flushPendingSsrStreams()` / `pruneOrphanedSsrStreams()` (`dinou/core/slot.js`) cleans up partially-streamed `$RB` boundaries cleanly on mid-stream navigation.
+
+> **Verified (Stage 6 Complete — Phase 4 100% Complete):**
+> - Fixtures: `src/t-3d-cube/staggered-ppr/` (`layout.tsx` + `page.tsx` with Fast Hole A `15ms`, Slow Hole B `350–1000ms` hosting inner `<DinouCacheSlot id="cube-stag-slow-slot">`, shell `<DinouCacheSlot id="cube-stag-shell-slot">`, and `hub/page.tsx`) and `src/t-3d-cube/shared/cube-state.ts`.
+> - Unit / Compiled Node AOT: Test `23.` added to `tests/unit/cache-3d-cube.test.mjs` (**23/23 PASS**), `tests/unit/cache-3d-distributed-storage.test.mjs` (**7/7 PASS**), `scripts/verify-streaming-suspense-ci.mjs` (**PASS**), and `tests/type-safe-contextual.test.mjs` (**5/5 PASS**, 127 strict contextual files).
+> - Browser E2E: Test `35.` (`Check #72`) + Test `30.` (`Check #65`) in `e2e/example.spec.ts` (**6 passed / 0 failed** across Chromium, Firefox, and WebKit — staggered Fast Hole A arrival before Slow Hole B, mid-stream direct SSR HTTP abort, mid-stream soft `<Link>` abort with L1 client probe preservation and zero `$RB` leaks, and mid-stream concurrent `refreshSlot` while Slow Hole B streams cleanly, with zero `#418`, router warnings, `pageerror`, or server stream errors).
+> - Core fixes documented in `y-changelog-cube-phase4.md`.
 
 ---
 

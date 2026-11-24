@@ -21014,7 +21014,124 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(pageErrors).toEqual([]);
     });
 
-    test("35. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
+    test("35. [Phase 4 / Stage 6 / Check #72] Staggered Slow/Fast PPR Streaming Holes + Mid-Flight Navigation Abort & Concurrent refreshSlot Resilience", async ({
+      page,
+    }) => {
+      test.skip(
+        !isProd,
+        "Staggered PPR streaming holes, mid-flight abort & concurrent refreshSlot require production mode"
+      );
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      // 1. Staggered arrival integrity (Direct SSR): Fast Hole A replaces its fallback BEFORE Slow Hole B finishes,
+      //    then Slow Hole B + inner <DinouCacheSlot> complete & hydrate cleanly with zero #418/#425!
+      await page.goto("/t-3d-cube/staggered-ppr?tag=init&fastMs=15&slowMs=450", {
+        waitUntil: "commit",
+      });
+      await expect(page.locator("#stag-hole-a")).toBeVisible({ timeout: 10000 });
+      await expect(page.locator("#stag-hole-b-fb")).toBeVisible({ timeout: 5000 });
+      await expect(page.locator("#stag-hole-b")).toBeVisible({ timeout: 15000 });
+      await waitCubeReady(page);
+      await expect(page.locator("#stag-slow-slot-seq")).toBeVisible();
+
+      const baseL1Shell = Number(await page.locator("#stag-l1-shell-seq").textContent());
+      const baseShell = Number(await page.locator("#stag-shell-seq").textContent());
+      const baseShellSlot = Number(await page.locator("#stag-shell-slot-seq").textContent());
+      const baseSlowSlot = Number(await page.locator("#stag-slow-slot-seq").textContent());
+
+      // Poison ALL static shells & slow slot; bump holes to wave 1!
+      const stagPoison = Math.max(baseL1Shell, baseShell, baseShellSlot, baseSlowSlot) + 899;
+      const nextHoleA = baseShell + 721;
+      const nextHoleB = baseShell + 722;
+      const nextShellSlot = baseShellSlot + 723;
+
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          stagL1ShellSeq: stagPoison,
+          stagShellSeq: stagPoison,
+          stagSlowSlotSeq: stagPoison,
+          stagHoleASeq: nextHoleA,
+          stagHoleBSeq: nextHoleB,
+        }
+      );
+
+      // 2. Mid-stream Direct SSR HTTP abort: navigate to staggered-ppr (slowMs=800), wait until Fast Hole A is visible
+      //    while Slow Hole B fallback is STILL visible, and immediately click #link-stag-away!
+      await page.goto("/t-3d-cube/staggered-ppr?tag=abortssr&fastMs=15&slowMs=800", {
+        waitUntil: "commit",
+      });
+      await expect(page.locator("#stag-hole-a")).toHaveText(`fast:abortssr-${nextHoleA}`, {
+        timeout: 10000,
+      });
+      await expect(page.locator("#stag-hole-b-fb")).toBeVisible({ timeout: 5000 });
+      await page.click("#link-stag-away");
+      await expect(page.locator("#stag-hub-page")).toBeVisible({ timeout: 15000 });
+      await waitCubeReady(page);
+      const rbAfterSsrAbort = await page.evaluate(() =>
+        Array.isArray((window as any).$RB) ? (window as any).$RB.length : 0
+      );
+      expect(rbAfterSsrAbort).toBe(0);
+
+      // 3. Mid-stream Soft <Link> abort: increment L1 client probe on Hub, soft-nav to staggered-ppr (slowMs=800, prefetch=false),
+      //    wait until Fast Hole A is visible while Slow Hole B fallback is STILL visible, immediately click #link-stag-away!
+      await page.click("#probe-inc-stag-l1");
+      await expect(page.locator("#probe-count-stag-l1")).toHaveText("1");
+      const l1MountId = await page.locator("#probe-mount-stag-l1").textContent();
+
+      await page.click("#link-hub-to-stag-abort");
+      await expect(page.locator("#stag-hole-a")).toHaveText(`fast:softabort-${nextHoleA}`, {
+        timeout: 10000,
+      });
+      await expect(page.locator("#stag-hole-b-fb")).toBeVisible({ timeout: 5000 });
+      await page.click("#link-stag-away");
+      await expect(page.locator("#stag-hub-page")).toBeVisible({ timeout: 15000 });
+      await expect(page.locator("#probe-mount-stag-l1")).toHaveText(String(l1MountId));
+      await expect(page.locator("#probe-count-stag-l1")).toHaveText("1");
+
+      // Wait briefly past aborted slow hole to confirm zero delayed errors or $RB leaks
+      await page.waitForTimeout(300);
+      const rbAfterSoftAbort = await page.evaluate(() =>
+        Array.isArray((window as any).$RB) ? (window as any).$RB.length : 0
+      );
+      expect(rbAfterSoftAbort).toBe(0);
+
+      // 4. Mid-stream concurrent refreshSlot: mutate shell slot -> soft-nav to staggered-ppr (slowMs=650),
+      //    wait until Fast Hole A is visible while Slow Hole B fallback is STILL visible, immediately trigger
+      //    refreshSlot("cube-stag-shell-slot", { fresh: true }) -> BOTH shell slot AND Slow Hole B complete cleanly!
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        { stagShellSlotSeq: nextShellSlot }
+      );
+      await page.click("#link-hub-to-stag-slot");
+      await expect(page.locator("#stag-hole-a")).toHaveText(`fast:softslot-${nextHoleA}`, {
+        timeout: 10000,
+      });
+      await expect(page.locator("#stag-hole-b-fb")).toBeVisible({ timeout: 5000 });
+
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.refreshSlot("cube-stag-shell-slot", true)
+      );
+
+      await expect(page.locator("#stag-shell-slot-seq")).toHaveText(String(nextShellSlot), {
+        timeout: 10000,
+      });
+      await expect(page.locator("#stag-hole-b")).toHaveText(`slow:softslot-${nextHoleB}`, {
+        timeout: 15000,
+      });
+      await expect(page.locator("#stag-slow-slot-seq")).toHaveText(String(baseSlowSlot));
+      await expect(page.locator("#stag-shell-seq")).toHaveText(String(baseShell));
+      await expect(page.locator("#stag-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#probe-mount-stag-l1")).toHaveText(String(l1MountId));
+      await expect(page.locator("#probe-count-stag-l1")).toHaveText("1");
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("36. Standalone 3D Cache Cube Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-cube.test.mjs)", async ({
       browserName,
     }) => {
       test.skip(

@@ -326,6 +326,15 @@ export interface Cube3DState {
   qpAsymPageShellSeq: number;
   qpAsymPageSlotSeq: number;
   qpAsymPageHoleSeq: number;
+
+  // Phase 4 — Stage 6 — Check #72: Staggered Slow/Fast PPR Streaming Holes + Mid-Flight Abort & Concurrent refreshSlot
+  stagL1ShellSeq: number;
+  stagShellSeq: number;
+  stagShellSlotSeq: number;
+  stagHoleASeq: number;
+  stagHoleBSeq: number;
+  stagSlowSlotSeq: number;
+  stagHubSeq: number;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -624,6 +633,14 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   qpAsymPageShellSeq: 100,
   qpAsymPageSlotSeq: 100,
   qpAsymPageHoleSeq: 100,
+
+  stagL1ShellSeq: 100,
+  stagShellSeq: 100,
+  stagShellSlotSeq: 100,
+  stagHoleASeq: 100,
+  stagHoleBSeq: 100,
+  stagSlowSlotSeq: 100,
+  stagHubSeq: 100,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {
