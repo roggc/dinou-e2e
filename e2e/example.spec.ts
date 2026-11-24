@@ -21102,17 +21102,32 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("#probe-count-stag-l1")).toHaveText("1");
       const l1MountId = await page.locator("#probe-mount-stag-l1").textContent();
 
+      const tClickSoftAbort = Date.now();
+      const step3NetDiag: string[] = [];
+      const onStep3Resp = (res: any) => {
+        const u = res.url();
+        if (u.includes("____rsc_")) {
+          const dt = Date.now() - tClickSoftAbort;
+          const h = res.headers();
+          step3NetDiag.push(
+            `${u.replace(/^https?:\/\/[^/]+/, "")} status=${res.status()} dtResp=${dt}ms ce=${h["content-encoding"] || ""} ct=${h["content-type"] || ""} te=${h["transfer-encoding"] || ""} cl=${h["content-length"] || ""} xcto=${h["x-content-type-options"] || ""}`
+          );
+        }
+      };
+      page.on("response", onStep3Resp);
       await page.click("#link-hub-to-stag-abort");
       await expect(page.locator("#stag-hole-a")).toHaveText(`fast:softabort-${nextHoleA}`, {
         timeout: 10000,
       });
+      const dtHoleA = Date.now() - tClickSoftAbort;
+      page.off("response", onStep3Resp);
       if (!(await page.locator("#stag-hole-b-fb").isVisible())) {
         const holeBVis = await page.locator("#stag-hole-b").isVisible();
         const holeBTxt = holeBVis
           ? (await page.locator("#stag-hole-b").textContent())?.trim()
           : "<not-visible>";
         throw new Error(
-          `[Test 35 Step 3 diag] #stag-hole-b-fb missing right after #stag-hole-a; #stag-hole-b visible=${holeBVis} text="${holeBTxt}" url=${page.url()}`
+          `[Test 35 Step 3 diag] #stag-hole-b-fb missing right after #stag-hole-a (dtHoleA=${dtHoleA}ms); #stag-hole-b visible=${holeBVis} text="${holeBTxt}" url=${page.url()} net=[${step3NetDiag.join(" | ")}]`
         );
       }
       await expect(page.locator("#stag-hole-b-fb")).toBeVisible({ timeout: 5000 });
