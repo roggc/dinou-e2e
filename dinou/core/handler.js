@@ -1613,6 +1613,11 @@ async function handleRequest(request, platformContext = {}) {
   if (typeof globalThis !== "undefined") {
     if (platformContext?.renderHtmlStream) {
       globalThis.__DINOU_RENDER_HTML_STREAM__ = platformContext.renderHtmlStream;
+    } else if (typeof globalThis.__DINOU_RENDER_HTML_STREAM__ === "function") {
+      platformContext = {
+        ...platformContext,
+        renderHtmlStream: globalThis.__DINOU_RENDER_HTML_STREAM__,
+      };
     }
     if (platformContext?.env) {
       globalThis.__DINOU_ENV__ = platformContext.env;
@@ -2122,7 +2127,7 @@ async function handleRequest(request, platformContext = {}) {
     let hasDetectedSegmentPpr = false;
     let currentGeneratedAt = null;
     let leafLayoutSuspenseCount = 0;
-    if (!isDevelopment && isEdgeRuntime(platformContext)) {
+    if (!isDevelopment) {
       const storage = getStorageAdapter();
       const cleanRel = cleanPath.replace(/^\/+/, "").replace(/\/+$/, "");
       try {
@@ -2395,8 +2400,8 @@ async function handleRequest(request, platformContext = {}) {
         return new Response("Forbidden", { status: 403 });
       }
 
-      if (isEdgeRuntime(platformContext)) {
-        const storage = getStorageAdapter();
+      const storage = getStorageAdapter();
+      if (storage) {
         const cleanRel = cleanPath.replace(/^\/+/, "").replace(/\/+$/, "");
         const rscKey = cleanRel ? `${cleanRel}/${actualFileName}` : actualFileName;
         try {
@@ -2597,7 +2602,7 @@ async function handleRequest(request, platformContext = {}) {
         let jsx;
         if (platformContext?.isSSG) {
           let handledPerLevelSsgLayout = false;
-          if (isLayoutReq && isEdgeRuntime(platformContext)) {
+          if (isLayoutReq) {
             try {
               const storage = getStorageAdapter();
               const cleanRel = cleanPath.replace(/^\/+/, "").replace(/\/+$/, "");
@@ -2765,7 +2770,7 @@ async function handleRequest(request, platformContext = {}) {
               if (rscDynamicState.value) {
                 bridge.setHeader("X-Dinou-Dynamic", "true");
               }
-              if (rendered && !rscDynamicState.value && isEdgeRuntime(platformContext)) {
+              if (rendered && !rscDynamicState.value) {
                 try {
                   const storage = getStorageAdapter();
                   const cleanRel = cleanPath.replace(/^\/+/, "").replace(/\/+$/, "");
@@ -2776,7 +2781,7 @@ async function handleRequest(request, platformContext = {}) {
               return rendered;
             });
           }
-        } else if (!isDevelopment && !dynamicState.value && (isPageReq || isLayoutReq) && isRoutePpr && isEdgeRuntime(platformContext)) {
+        } else if (!isDevelopment && !dynamicState.value && (isPageReq || isLayoutReq) && isRoutePpr) {
           const storage = getStorageAdapter();
           const cleanRel = cleanPath.replace(/^\/+/, "").replace(/\/+$/, "");
           const shellKey = isLayoutReq
@@ -2857,8 +2862,7 @@ async function handleRequest(request, platformContext = {}) {
             !isDevelopment &&
             !platformContext?.isSSG &&
             isLayoutReq &&
-            dynamicState.value &&
-            isEdgeRuntime(platformContext)
+            dynamicState.value
           ) {
             try {
               const storage = getStorageAdapter();
@@ -3137,8 +3141,7 @@ async function handleRequest(request, platformContext = {}) {
           hasDynamicLayoutConfig = true;
         } else if (
           !isDevelopment &&
-          !platformContext?.isSSG &&
-          isEdgeRuntime(platformContext)
+          !platformContext?.isSSG
         ) {
           try {
             const storageForMeta = getStorageAdapter();
@@ -3227,8 +3230,8 @@ async function handleRequest(request, platformContext = {}) {
     }
   }
 
-  // Edge Runtime: ISR, ISG & Static Delivery via storageAdapter and env.ASSETS
-  if (isEdgeRuntime(platformContext)) {
+  // Unified Runtime (Edge, Dual-Bundle & Classic Node with HTML renderer): ISR, ISG & 3D Caching Cube Delivery
+  if (isEdgeRuntime(platformContext) || typeof platformContext?.renderHtmlStream === "function") {
     const cleanPath = reqPath.replace(/^\/+/, "").replace(/\/+$/, "");
     const storage = getStorageAdapter();
     const htmlKey = cleanPath ? `${cleanPath}/index.html` : "index.html";
@@ -5205,7 +5208,15 @@ async function handleRequest(request, platformContext = {}) {
       htmlPathOld = path.join(".dinou/dist2", reqPath, "index._old.html");
     }
     const htmlPath = path.join(".dinou/dist2", reqPath, "index.html");
-    const fileToRead = (htmlPathOld && existsSync(htmlPathOld)) ? htmlPathOld : htmlPath;
+    const shellHtmlPath = path.join(".dinou/dist2", reqPath, "shell.html");
+    const fileToRead =
+      htmlPathOld && existsSync(htmlPathOld)
+        ? htmlPathOld
+        : existsSync(htmlPath)
+        ? htmlPath
+        : isPprConfig && existsSync(shellHtmlPath)
+        ? shellHtmlPath
+        : htmlPath;
 
     if (existsSync(fileToRead) && (!dynamicState.value || isPprConfig)) {
       bridge.setHeader("Content-Type", "text/html; charset=utf-8");

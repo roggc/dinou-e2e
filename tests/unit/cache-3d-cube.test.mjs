@@ -6100,3 +6100,517 @@ console.log("PHASE4_STAGE6_STAGGERED_ABORT_OK");
     removeDirSafe(tmpApp);
   }
 });
+
+test("24. [Phase 5 / Stage 1 / Check #73] Unbundled Classic Node Runtime (isEdgeRuntime() === false) & revalidating.js 3D Cube Parity", async () => {
+  const tmpApp = createFixtureDir("p5-s1-classic-node-");
+  try {
+    writeDinouShim(tmpApp);
+    fs.writeFileSync(
+      path.join(tmpApp, "package.json"),
+      JSON.stringify({ name: "p5-s1-app", private: true, type: "module" }, null, 2)
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "p5s1-state.json"),
+      JSON.stringify({
+        rootShell: 100,
+        rootSlot: 100,
+        l1Shell: 100,
+        l1Slot: 100,
+        l1Hole: 100,
+        l2Shell: 100,
+        pprShell: 100,
+        pprSlot: 100,
+        pprHole: 100,
+        subShell: 100,
+        subHole: 100,
+        asymL1: 100,
+        asymDynL2: 100,
+        asymPageShell: 100,
+        asymHole: 100,
+      })
+    );
+
+    const write = (rel, content) => {
+      const full = path.join(tmpApp, rel);
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, content, "utf8");
+    };
+
+    write(
+      "src/state.ts",
+      `import fs from "node:fs";
+import path from "node:path";
+export function readS() {
+  return JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "p5s1-state.json"), "utf8"));
+}
+`
+    );
+
+    // Root static layout (3600s)
+    write(
+      "src/layout_functions.ts",
+      `export function revalidate() { return 3600; }
+export function getCacheTags() { return ["p5s1-root-tag"]; }
+`
+    );
+    write(
+      "src/layout.tsx",
+      `import type { ReactNode } from "react";
+import { DinouCacheSlot } from "dinou/server";
+import { readS } from "./state";
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  const s = readS();
+  return (
+    <html lang="en">
+      <head><title>P5S1</title></head>
+      <body>
+        <span id="p5-root-shell">{s.rootShell}</span>
+        <DinouCacheSlot id="p5s1-root-slot" revalidate={3600} tags={["p5s1-root-slot-tag"]}>
+          {async () => <span id="p5-root-slot">{readS().rootSlot}</span>}
+        </DinouCacheSlot>
+        {children}
+      </body>
+    </html>
+  );
+}
+`
+    );
+    write("src/page.tsx", `export default function Home() { return <main id="p5-home">home</main>; }\n`);
+
+    // /ppr: L1 PPR Layout (2s TTL) + L1 Slot (3600s) + L1 Hole
+    write(
+      "src/ppr/layout_functions.ts",
+      `export const ppr = true;
+export function revalidate() { return 2; }
+export function getCacheTags() { return ["p5s1-l1-tag"]; }
+`
+    );
+    write(
+      "src/ppr/layout.tsx",
+      `import { Suspense, type ReactNode } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../state";
+
+async function L1Hole() {
+  void getContext()?.req?.headers?.["x-p5-hole"];
+  await Promise.resolve();
+  return <span id="p5-l1-hole">{\`l1h-\${readS().l1Hole}\`}</span>;
+}
+
+export default function PprL1Layout({ children }: { children: ReactNode }) {
+  const s = readS();
+  return (
+    <section id="p5-l1">
+      <span id="p5-l1-shell">{s.l1Shell}</span>
+      <DinouCacheSlot id="p5s1-l1-slot" revalidate={3600} tags={["p5s1-l1-slot-tag"]}>
+        {async () => <span id="p5-l1-slot">{readS().l1Slot}</span>}
+      </DinouCacheSlot>
+      <Suspense fallback={<span id="p5-l1-hole-fb">fb-l1</span>}>
+        <L1Hole />
+      </Suspense>
+      {children}
+    </section>
+  );
+}
+`
+    );
+
+    // /ppr page: PPR Page (2s TTL) + Page Slot (3600s) + Page Hole
+    write(
+      "src/ppr/page_functions.ts",
+      `export const ppr = true;
+export function revalidate() { return 2; }
+export function getCacheTags() { return ["p5s1-ppr-page-tag"]; }
+`
+    );
+    write(
+      "src/ppr/page.tsx",
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../state";
+
+async function PprHole() {
+  void getContext()?.req?.headers?.["x-p5-hole"];
+  await Promise.resolve();
+  return <span id="p5-ppr-hole">{\`pprh-\${readS().pprHole}\`}</span>;
+}
+
+export default function PprPage() {
+  const s = readS();
+  return (
+    <article id="p5-ppr-page">
+      <span id="p5-ppr-shell">{s.pprShell}</span>
+      <DinouCacheSlot id="p5s1-ppr-slot" revalidate={3600} tags={["p5s1-ppr-slot-tag"]}>
+        {async () => <span id="p5-ppr-slot">{readS().pprSlot}</span>}
+      </DinouCacheSlot>
+      <Suspense fallback={<span id="p5-ppr-hole-fb">fb-ppr</span>}>
+        <PprHole />
+      </Suspense>
+    </article>
+  );
+}
+`
+    );
+
+    // /ppr/sub: Long-TTL L2 Layout (3600s) + Long-TTL PPR SubPage (3600s) underneath 1s L1
+    write(
+      "src/ppr/sub/layout_functions.ts",
+      `export function revalidate() { return 3600; }
+export function getCacheTags() { return ["p5s1-l2-tag"]; }
+`
+    );
+    write(
+      "src/ppr/sub/layout.tsx",
+      `import type { ReactNode } from "react";
+import { readS } from "../../state";
+
+export default function SubL2Layout({ children }: { children: ReactNode }) {
+  return (
+    <div id="p5-l2">
+      <span id="p5-l2-shell">{readS().l2Shell}</span>
+      {children}
+    </div>
+  );
+}
+`
+    );
+    write(
+      "src/ppr/sub/page_functions.ts",
+      `export const ppr = true;
+export function revalidate() { return 3600; }
+export function getCacheTags() { return ["p5s1-sub-page-tag"]; }
+`
+    );
+    write(
+      "src/ppr/sub/page.tsx",
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { readS } from "../../state";
+
+async function SubHole() {
+  void getContext()?.req?.headers?.["x-p5-hole"];
+  await Promise.resolve();
+  return <span id="p5-sub-hole">{\`subh-\${readS().subHole}\`}</span>;
+}
+
+export default function SubPage() {
+  return (
+    <article id="p5-sub-page">
+      <span id="p5-sub-shell">{readS().subShell}</span>
+      <Suspense fallback={<span id="p5-sub-hole-fb">fb-sub</span>}>
+        <SubHole />
+      </Suspense>
+    </article>
+  );
+}
+`
+    );
+
+    // /asym/dyn: Asymmetric S (L1 3600s) -> D (L2 dynamic) -> PPR Page (3600s)
+    write("src/asym/layout_functions.ts", `export function revalidate() { return 3600; }\n`);
+    write(
+      "src/asym/layout.tsx",
+      `import type { ReactNode } from "react";
+import { readS } from "../state";
+export default function AsymL1({ children }: { children: ReactNode }) {
+  return <section id="p5-asym-l1"><span id="p5-asym-l1-val">{readS().asymL1}</span>{children}</section>;
+}
+`
+    );
+    write("src/asym/dyn/layout_functions.ts", `export function revalidate() { return 0; }\n`);
+    write(
+      "src/asym/dyn/layout.tsx",
+      `import type { ReactNode } from "react";
+import { readS } from "../../state";
+export default function AsymDynL2({ children }: { children: ReactNode }) {
+  return <div id="p5-asym-l2"><span id="p5-asym-l2-val">{readS().asymDynL2}</span>{children}</div>;
+}
+`
+    );
+    write(
+      "src/asym/dyn/page_functions.ts",
+      `export const ppr = true;
+export function revalidate() { return 3600; }
+`
+    );
+    write(
+      "src/asym/dyn/page.tsx",
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { readS } from "../../state";
+
+async function AsymHole() {
+  void getContext()?.req?.headers?.["x-p5-hole"];
+  await Promise.resolve();
+  return <span id="p5-asym-hole">{\`asymh-\${readS().asymHole}\`}</span>;
+}
+
+export default function AsymPage() {
+  return (
+    <article id="p5-asym-page">
+      <span id="p5-asym-page-shell">{readS().asymPageShell}</span>
+      <Suspense fallback={<span id="p5-asym-hole-fb">fb-asym</span>}>
+        <AsymHole />
+      </Suspense>
+    </article>
+  );
+}
+`
+    );
+
+    // Build via classic `dinou build`
+    const buildRes = spawnSync(process.execPath, [CLI_PATH, "build"], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 120_000,
+    });
+    assert.equal(
+      buildRes.status,
+      0,
+      `Phase 5 Stage 1 dinou build failed:\n${buildRes.stdout}\n${buildRes.stderr}`
+    );
+
+    const verifyScript = path.join(tmpApp, "verify-p5-stage1.mjs");
+    fs.writeFileSync(
+      verifyScript,
+      `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+// Strictly enforce classic Node mode: isEdgeRuntime() === false!
+delete process.env.DINOU_RUNTIME;
+delete globalThis.__DINOU_RUNTIME__;
+
+const { isEdgeRuntime } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/rsc-renderer.js")).href
+      )});
+assert.equal(isEdgeRuntime(), false, "Precondition failed: isEdgeRuntime() must be false");
+
+const { FileSystemStorage, setStorageAdapter } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/storage-adapter.js")).href
+      )});
+const dist2Dir = path.resolve(".dinou/dist2");
+setStorageAdapter(new FileSystemStorage(dist2Dir));
+
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+
+// Re-verify isEdgeRuntime() is STILL false after loading compiled engines!
+assert.equal(isEdgeRuntime(), false, "isEdgeRuntime() must remain false with DINOU_RUNTIME unset");
+const classicOpts = { renderHtmlStream: ssrMod.renderHtml }; // NO runtime: "node-bundle"!
+
+const writeS = (patch) => {
+  const f = path.resolve("p5s1-state.json");
+  const cur = JSON.parse(fs.readFileSync(f, "utf8"));
+  fs.writeFileSync(f, JSON.stringify({ ...cur, ...patch }), "utf8");
+};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const req = async (u, opts = classicOpts, headers = {}) => {
+  const r = await rscMod.handleRequest(new Request("http://localhost" + u, { headers }), opts);
+  return { status: r.status, headers: r.headers, text: await r.text() };
+};
+
+// Refresh short-TTL timestamps after build overhead so Step 1 runs cleanly within the 2s TTL window
+const stampFresh = (relMeta) => {
+  const p = path.join(dist2Dir, relMeta);
+  const m = JSON.parse(fs.readFileSync(p, "utf8"));
+  const nowTs = Date.now();
+  m.generatedAt = nowTs;
+  if ("layoutGeneratedAt" in m) m.layoutGeneratedAt = nowTs;
+  if ("ownGeneratedAt" in m) m.ownGeneratedAt = nowTs;
+  if ("pageGeneratedAt" in m) m.pageGeneratedAt = nowTs;
+  fs.writeFileSync(p, JSON.stringify(m), "utf8");
+};
+stampFresh("ppr/layout.metadata.json");
+stampFresh("ppr/metadata.json");
+
+// 1. Poison ALL static shells & cached slots; bump live holes & dynamic L2!
+writeS({
+  rootShell: 999,
+  rootSlot: 999,
+  l1Shell: 999,
+  l1Slot: 999,
+  l2Shell: 999,
+  pprShell: 999,
+  pprSlot: 999,
+  subShell: 999,
+  asymL1: 999,
+  asymPageShell: 999,
+  l1Hole: 201,
+  pprHole: 202,
+  subHole: 203,
+  asymHole: 204,
+  asymDynL2: 205,
+});
+
+// 1a. Classic Node Direct SSR + Soft-Nav (/____rsc_layout____ & /____rsc_page____) on 3D PPR
+const pprHtml1 = await req("/ppr");
+assert.equal(pprHtml1.status, 200);
+assert.ok(pprHtml1.text.includes('id="p5-root-shell">100<'), "Root shell must stay frozen at 100");
+assert.ok(pprHtml1.text.includes('id="p5-l1-shell">100<'), "L1 shell must stay frozen at 100");
+assert.ok(pprHtml1.text.includes('id="p5-l1-slot">100<'), "L1 slot must stay frozen at 100");
+assert.ok(pprHtml1.text.includes('id="p5-ppr-shell">100<'), "PPR page shell must stay frozen at 100");
+assert.ok(pprHtml1.text.includes('id="p5-ppr-slot">100<'), "PPR page slot must stay frozen at 100");
+assert.ok(pprHtml1.text.includes("l1h-201"), "L1 PPR hole must stream live 201");
+assert.ok(pprHtml1.text.includes("pprh-202"), "Page PPR hole must stream live 202");
+assert.ok(!pprHtml1.text.includes("999"), "Classic Node SSR must never leak poisoned 999");
+
+const pprLayRsc1 = await req("/____rsc_layout____/ppr");
+assert.equal(pprLayRsc1.status, 200);
+assert.ok(
+  (pprLayRsc1.headers.get("content-type") || "").includes("text/x-component"),
+  "Classic Node /____rsc_layout____ must send text/x-component, got " + pprLayRsc1.headers.get("content-type")
+);
+assert.ok(pprLayRsc1.text.includes("l1h-201"), "Classic Node /____rsc_layout____ must splice live L1 hole 201");
+assert.ok(!pprLayRsc1.text.includes("999"), "Classic Node /____rsc_layout____ must NOT re-execute poisoned L1 shell");
+
+const pprPageRsc1 = await req("/____rsc_page____/ppr");
+assert.equal(pprPageRsc1.status, 200);
+assert.ok(
+  (pprPageRsc1.headers.get("content-type") || "").includes("text/x-component"),
+  "Classic Node /____rsc_page____ must send text/x-component"
+);
+assert.ok(pprPageRsc1.text.includes("pprh-202"), "Classic Node /____rsc_page____ must splice live page hole 202");
+assert.ok(!pprPageRsc1.text.includes("999"), "Classic Node /____rsc_page____ must NOT re-execute poisoned page shell");
+
+// 1b. Asymmetric S -> D -> PPR on Classic Node (must NOT return 500 or leak poisoned L1/Page!)
+const asymHtml1 = await req("/asym/dyn");
+assert.equal(asymHtml1.status, 200, "Asymmetric S->D->PPR must succeed on classic Node");
+assert.ok(asymHtml1.text.includes('id="p5-asym-l1-val">100<'), "Asymmetric L1 must stay frozen at 100");
+assert.ok(asymHtml1.text.includes('id="p5-asym-l2-val">205<'), "Asymmetric dynamic L2 must render live 205");
+assert.ok(asymHtml1.text.includes('id="p5-asym-page-shell">100<'), "Asymmetric PPR page shell must stay frozen at 100");
+assert.ok(asymHtml1.text.includes("asymh-204"), "Asymmetric PPR hole must stream live 204");
+assert.ok(!asymHtml1.text.includes("999"), "Asymmetric S->D->PPR must never leak poisoned 999");
+
+const asymLayRsc1 = await req("/____rsc_layout____/asym/dyn");
+assert.equal(asymLayRsc1.status, 200);
+assert.ok(asymLayRsc1.text.includes("205"), "Asymmetric /____rsc_layout____ must include fresh dynamic L2 205");
+assert.ok(!asymLayRsc1.text.includes("999"), "Asymmetric /____rsc_layout____ must compose cached L1 without re-executing poisoned L1");
+
+// 2. Clock-based ISR expiration (revalidate = 2s) via revalidating.js directly under isEdgeRuntime() === false!
+await sleep(2150);
+writeS({ l1Shell: 301, pprShell: 302, l1Hole: 303, pprHole: 304 });
+const dynRef1 = { value: false };
+const didReval1 = await rscMod.revalidating("/ppr", dynRef1);
+assert.equal(didReval1, true, "revalidating('/ppr') must detect expired 2s TTL and regenerate");
+assert.equal(dynRef1.value, false, "PPR page must remain static-shell PPR (not dynamic bailout)");
+
+// Verify 3D Cube PPR artifacts were NOT wiped or downgraded to non-PPR HTML!
+assert.ok(fs.existsSync(path.join(dist2Dir, "ppr/shell.page.json")), "ppr/shell.page.json must be preserved");
+assert.ok(fs.existsSync(path.join(dist2Dir, "ppr/shell.layout.own.json")), "ppr/shell.layout.own.json must be preserved");
+assert.ok(fs.existsSync(path.join(dist2Dir, "ppr/shell.html")), "ppr/shell.html must be preserved");
+const pprMetaAfter = JSON.parse(fs.readFileSync(path.join(dist2Dir, "ppr/metadata.json"), "utf8"));
+assert.equal(pprMetaAfter.ppr, true, "ppr/metadata.json must retain ppr: true after revalidating()");
+assert.ok(Array.isArray(pprMetaAfter.holes) && pprMetaAfter.holes.length > 0, "ppr/metadata.json must retain PPR holes");
+
+const pprHtml2 = await req("/ppr");
+assert.equal(pprHtml2.status, 200);
+assert.ok(pprHtml2.text.includes('id="p5-l1-shell">301<'), "Expired 1s L1 must update to 301");
+assert.ok(pprHtml2.text.includes('id="p5-ppr-shell">302<'), "Expired 1s PPR page shell must update to 302");
+assert.ok(pprHtml2.text.includes("l1h-303"), "L1 hole must still stream live 303 after revalidating()");
+assert.ok(pprHtml2.text.includes("pprh-304"), "Page hole must still stream live 304 after revalidating()");
+assert.ok(pprHtml2.text.includes('id="p5-root-shell">100<'), "Non-expired root layout must stay frozen at 100");
+assert.ok(pprHtml2.text.includes('id="p5-l1-slot">100<'), "3600s L1 slot must stay frozen at 100");
+assert.ok(pprHtml2.text.includes('id="p5-ppr-slot">100<'), "3600s Page slot must stay frozen at 100");
+assert.ok(!pprHtml2.text.includes("999"), "revalidating('/ppr') must never leak poisoned 999");
+
+// 3. Multi-level layout expiration (L1=1s expired, L2=3600s & SubPage=3600s poisoned!) via revalidating('/ppr/sub')
+const l1MetaPath = path.join(dist2Dir, "ppr/layout.metadata.json");
+const l1Meta = JSON.parse(fs.readFileSync(l1MetaPath, "utf8"));
+const expiredTs = Date.now() - 5000;
+l1Meta.generatedAt = expiredTs;
+l1Meta.layoutGeneratedAt = expiredTs;
+l1Meta.ownGeneratedAt = expiredTs;
+fs.writeFileSync(l1MetaPath, JSON.stringify(l1Meta), "utf8");
+
+writeS({ l1Shell: 401, l2Shell: 999, subShell: 999, l1Slot: 999, subHole: 402, l1Hole: 403 });
+const dynRef2 = { value: false };
+const didReval2 = await rscMod.revalidating("/ppr/sub", dynRef2);
+assert.equal(didReval2, true, "revalidating('/ppr/sub') must detect expired ancestor L1");
+assert.equal(dynRef2.value, false);
+
+const subHtml = await req("/ppr/sub");
+assert.equal(subHtml.status, 200);
+assert.ok(subHtml.text.includes('id="p5-l1-shell">401<'), "Expired ancestor L1 must update to 401 on /ppr/sub");
+assert.ok(subHtml.text.includes('id="p5-l2-shell">100<'), "3600s L2 must recompose without executing poisoned 999");
+assert.ok(subHtml.text.includes('id="p5-sub-shell">100<'), "3600s SubPage must stay frozen without executing poisoned 999");
+assert.ok(subHtml.text.includes("subh-402"), "SubPage PPR hole must stream live 402");
+assert.ok(subHtml.text.includes("l1h-403"), "L1 PPR hole must stream live 403");
+assert.ok(!subHtml.text.includes("999"), "Multi-level revalidating('/ppr/sub') must never leak poisoned 999");
+
+// 4. Surgical revalidateTag, revalidateLayout, revalidatePage & /____rsc_slot____?fresh=1 under isEdgeRuntime() === false
+writeS({ pprSlot: 501, pprShell: 999, l1Shell: 999 });
+await rscMod.revalidateTag("p5s1-ppr-slot-tag");
+assert.ok(fs.existsSync(path.join(dist2Dir, "ppr/shell.page.json")), "revalidateTag must preserve ppr/shell.page.json");
+const pprAfterTag = await req("/ppr");
+assert.ok(pprAfterTag.text.includes('id="p5-ppr-slot">501<'), "revalidateTag must refresh slot to 501");
+assert.ok(pprAfterTag.text.includes('id="p5-ppr-shell">302<'), "revalidateTag on slot must keep page shell at 302");
+assert.ok(!pprAfterTag.text.includes("999"), "revalidateTag on slot must not leak poisoned 999");
+
+writeS({ l2Shell: 502, l1Shell: 999, subShell: 999 });
+await rscMod.revalidateLayout("/ppr/sub");
+assert.ok(fs.existsSync(path.join(dist2Dir, "ppr/sub/shell.layout.own.json")), "revalidateLayout must preserve shell.layout.own.json (no accidental disk deletion!)");
+const subAfterLay = await req("/ppr/sub");
+assert.ok(subAfterLay.text.includes('id="p5-l2-shell">502<'), "revalidateLayout must update L2 to 502");
+assert.ok(subAfterLay.text.includes('id="p5-l1-shell">401<'), "revalidateLayout on L2 must keep L1 frozen at 401");
+assert.ok(subAfterLay.text.includes('id="p5-sub-shell">100<'), "revalidateLayout on L2 must keep SubPage frozen at 100");
+assert.ok(!subAfterLay.text.includes("999"));
+
+writeS({ subShell: 503, l1Shell: 999, l2Shell: 999 });
+await rscMod.revalidatePage("/ppr/sub");
+assert.ok(fs.existsSync(path.join(dist2Dir, "ppr/sub/shell.page.json")), "revalidatePage must preserve ppr/sub/shell.page.json");
+const subAfterPage = await req("/ppr/sub");
+assert.ok(subAfterPage.text.includes('id="p5-sub-shell">503<'), "revalidatePage must update SubPage to 503");
+assert.ok(subAfterPage.text.includes('id="p5-l2-shell">502<'), "revalidatePage must keep L2 frozen at 502");
+assert.ok(subAfterPage.text.includes('id="p5-l1-shell">401<'), "revalidatePage must keep L1 frozen at 401");
+assert.ok(!subAfterPage.text.includes("999"));
+
+writeS({ l1Slot: 504, l1Shell: 999, pprShell: 999 });
+const slotRes = await req("/____rsc_slot____/p5s1-l1-slot?fresh=1", classicOpts, {
+  "x-dinou-current-path": "/ppr",
+});
+assert.equal(slotRes.status, 200);
+assert.ok(slotRes.text.includes("504"), "refreshSlot?fresh=1 under classic Node must return 504");
+const pprAfterSlot = await req("/ppr");
+assert.ok(pprAfterSlot.text.includes('id="p5-l1-slot">504<'), "refreshSlot?fresh=1 must persist 504 into L1 layout");
+assert.ok(!pprAfterSlot.text.includes("999"));
+
+// 5. Pure disk fallback (NO renderHtmlStream passed & globalThis.__DINOU_RENDER_HTML_STREAM__ cleared)
+stampFresh("ppr/layout.metadata.json");
+stampFresh("ppr/metadata.json");
+delete globalThis.__DINOU_RENDER_HTML_STREAM__;
+writeS({ l1Hole: 601, pprHole: 602 });
+const pureDiskRes = await req("/ppr", {});
+assert.equal(pureDiskRes.status, 200, "Pure disk fallback on PPR route must return 200");
+assert.ok(pureDiskRes.text.includes('id="p5-l1-shell">401<'), "Pure disk fallback must serve updated L1 shell 401");
+assert.ok(pureDiskRes.text.includes('id="p5-ppr-shell">302<'), "Pure disk fallback must serve updated PPR shell 302");
+assert.ok(pureDiskRes.text.includes("l1h-601"), "Pure disk fallback must resume L1 PPR hole 601");
+assert.ok(pureDiskRes.text.includes("pprh-602"), "Pure disk fallback must resume Page PPR hole 602");
+assert.ok(!pureDiskRes.text.includes("999"));
+
+assert.equal(isEdgeRuntime(), false, "isEdgeRuntime() must still be false at end of classic Node run");
+console.log("PHASE5_STAGE1_CLASSIC_NODE_PARITY_OK");
+`
+    );
+
+    const runRes = spawnSync(process.execPath, [verifyScript], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+      timeout: 60_000,
+    });
+    assert.equal(
+      runRes.status,
+      0,
+      `Phase 5 Stage 1 classic Node integration failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+    );
+    assert.ok(runRes.stdout.includes("PHASE5_STAGE1_CLASSIC_NODE_PARITY_OK"));
+  } finally {
+    removeDirSafe(tmpApp);
+  }
+});

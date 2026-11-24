@@ -465,8 +465,12 @@ async function revalidatePage(reqPath, internalOptions = {}) {
               : 0;
           const leafGen = leafLayout.generatedAt || 0;
           const leafOwnGen = leafLayout.layoutGeneratedAt || leafGen;
+          const hasRouteEngine = Boolean(
+            typeof globalThis !== "undefined" && globalThis.__DINOU_ROUTE_MAP__
+          );
           const isLeafMissing =
-            !hasValidLeafRsc && (isEdgeRuntime() || maxAncestorGen > 0 || onlyRefreshSlots);
+            !hasValidLeafRsc &&
+            (isEdgeRuntime() || hasRouteEngine || maxAncestorGen > 0 || onlyRefreshSlots);
           const isAncestorOwnNewer = leafOwnGen > 0 && maxAncestorOwnGen > leafOwnGen;
           const isAncestorSlotOnlyNewer =
             !isAncestorOwnNewer && leafGen > 0 && maxAncestorGen > leafGen;
@@ -831,6 +835,7 @@ async function revalidatePage(reqPath, internalOptions = {}) {
         rscKey,
         shellRscKey,
         shellPageKey,
+        shellPageOldKey,
         oldRscKey,
         legacyRscKey,
         metaKey,

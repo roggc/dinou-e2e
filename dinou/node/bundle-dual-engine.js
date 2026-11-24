@@ -728,6 +728,8 @@ export function handleRequest(request, platformContext) {
 }
 export { WebResponseBridge, resolvePageFunctionsConfig };
 export { buildStaticPages, getStaticPaths, getStaticLayouts, getStaticMetadata } from "${dinouDirSlash}/core/build-static-pages.js";
+export { revalidatePath, revalidatePage, revalidateLayout, revalidateTag } from "${dinouDirSlash}/core/cache-revalidate.js";
+export { revalidating, regenerating } from "${dinouDirSlash}/core/revalidating.js";
 `;
   const rscEntryPath = path.join(nodeDir, "rsc-entry.mjs");
   fs.writeFileSync(rscEntryPath, rscEntryContent, "utf8");
