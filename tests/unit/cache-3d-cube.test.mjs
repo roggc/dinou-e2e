@@ -6715,13 +6715,16 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     write(
       "src/se/probe.tsx",
       `"use client";
-import { useRef, useState } from "react";
+import { useEffect, useState } from "react";
 export default function OuterProbe() {
-  const mountRef = useRef("m-" + Math.random().toString(36).slice(2, 8));
+  const [mountId, setMountId] = useState("ssr");
   const [n, setN] = useState(0);
+  useEffect(() => {
+    setMountId("m-" + Math.random().toString(36).slice(2, 8));
+  }, []);
   return (
     <div id="se-outer-probe">
-      <span id="se-outer-mount">{mountRef.current}</span>
+      <span id="se-outer-mount">{mountId}</span>
       <span id="se-outer-count">{n}</span>
       <button id="se-outer-inc" type="button" onClick={() => setN((v) => v + 1)}>+1</button>
     </div>

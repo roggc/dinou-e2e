@@ -102,13 +102,20 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   write(
     "src/se/probe.tsx",
     `"use client";
-import { useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { refreshSlot } from "dinou";
 
+let probeSeq = 0;
+
 export default function OuterProbe() {
-  const mountRef = useRef("m-" + Math.random().toString(36).slice(2, 8));
+  const [mountId, setMountId] = useState("ssr");
   const [count, setCount] = useState(0);
   const [refreshStatus, setRefreshStatus] = useState("idle");
+
+  useEffect(() => {
+    probeSeq += 1;
+    setMountId("m-" + probeSeq + "-" + Math.random().toString(36).slice(2, 8));
+  }, []);
 
   const handleRefresh = async () => {
     setRefreshStatus("running");
@@ -119,7 +126,7 @@ export default function OuterProbe() {
 
   return (
     <div id="se-outer-probe">
-      <span id="se-outer-mount">{mountRef.current}</span>
+      <span id="se-outer-mount">{mountId}</span>
       <span id="se-outer-count">{count}</span>
       <span id="se-refresh-status">{refreshStatus}</span>
       <button id="se-outer-inc" type="button" onClick={() => setCount((v) => v + 1)}>+1</button>
@@ -482,6 +489,7 @@ test.describe.serial(
       };
 
       // Increment shared outer layout client probe
+      await expect(page.locator("#se-outer-mount")).toHaveText(/^m-/, { timeout: 10000 });
       await page.click("#se-outer-inc");
       await expect(page.locator("#se-outer-count")).toHaveText("1");
       const outerMountId = await page.locator("#se-outer-mount").textContent();
