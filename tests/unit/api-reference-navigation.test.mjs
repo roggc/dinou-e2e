@@ -421,7 +421,9 @@ test("4. client.jsx & client-webpack.jsx parity, handler/get-jsx redirect guards
   }
 
   const handlerSrc = fs.readFileSync(path.join(DINOU_ROOT, "core/handler.js"), "utf8");
-  assert.match(handlerSrc, /"_hasRedirected"/, "handler.js must exclude _hasRedirected from copyCustomContextProperties");
+  const reqCtxSrc = fs.readFileSync(path.join(DINOU_ROOT, "core/request-context.js"), "utf8");
+  assert.match(reqCtxSrc, /"_hasRedirected"/, "request-context.js must exclude _hasRedirected from copyCustomContextProperties");
+  assert.match(handlerSrc, /copyCustomContextProperties\b/, "handler.js must import and use copyCustomContextProperties");
   assert.match(handlerSrc, /_hasRedirected:\s*false/, "handler.js must initialize _hasRedirected: false on context");
   assert.match(
     handlerSrc,

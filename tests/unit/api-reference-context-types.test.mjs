@@ -306,15 +306,24 @@ test("2. getContext() fallbacks (server & browser) provide rawPath & isRscReques
     else globalThis.window = prevWindow;
   }
 
-  // Source contract verification in handler.js
+  // Source contract verification in handler.js & request-context.js
   const handlerSrc = fs.readFileSync(
     path.join(DINOU_ROOT, "core", "handler.js"),
     "utf8"
   );
+  const reqCtxSrc = fs.readFileSync(
+    path.join(DINOU_ROOT, "core", "request-context.js"),
+    "utf8"
+  );
+  assert.match(
+    reqCtxSrc,
+    /"path",\s*"rawPath",\s*"isRscRequest",/,
+    "copyCustomContextProperties() in request-context.js must exclude rawPath & isRscRequest"
+  );
   assert.match(
     handlerSrc,
-    /"path",\s*"rawPath",\s*"isRscRequest",/,
-    "copyCustomContextProperties() must exclude rawPath & isRscRequest"
+    /copyCustomContextProperties\b/,
+    "handler.js must import and use copyCustomContextProperties()"
   );
   assert.match(
     handlerSrc,
