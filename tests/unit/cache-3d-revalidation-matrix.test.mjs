@@ -2795,3 +2795,652 @@ console.log("PHASE6_STAGE5_TTL_MATRIX_OK");
     removeDirSafe(tmpApp);
   }
 });
+
+// ============================================================================
+// 6. [Phase 6 / Stage 6 / Check #84] Revalidation Trigger Surfaces x Distributed Multi-Pod / Edge Runtimes
+// ============================================================================
+test("6. [Phase 6 / Stage 6 / Check #84] Revalidation Trigger Surfaces (Server Functions, Plugin Webhooks, Standalone Child Worker Process) x Distributed Runtimes (RedisStorage, DenoKVStorage, CloudflareKVStorage + env.ASSETS + ctx.waitUntil SWR)", async () => {
+  const tmpApp = createFixtureDir("p6-s6-surfaces-");
+  try {
+    writeDinouShim(tmpApp);
+    const write = (rel, content) => {
+      const full = path.join(tmpApp, rel);
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, content, "utf8");
+    };
+
+    write("package.json", JSON.stringify({ name: "p6-s6-surfaces", private: true, type: "module" }));
+    write(
+      "tsconfig.json",
+      JSON.stringify({
+        compilerOptions: {
+          target: "ES2022",
+          module: "ESNext",
+          moduleResolution: "bundler",
+          jsx: "react-jsx",
+        },
+      })
+    );
+    write(
+      "p6s6-state.json",
+      JSON.stringify({
+        l1Shell: 100,
+        l1Slot: 100,
+        pageShell: 100,
+        pageSlot: 100,
+        ttlVal: 100,
+      })
+    );
+    write(
+      "src/state.ts",
+      `export function readS() {
+  const fs = process.getBuiltinModule("node:fs");
+  const path = process.getBuiltinModule("node:path");
+  return JSON.parse(fs.readFileSync(path.resolve("p6s6-state.json"), "utf8"));
+}
+`
+    );
+    write(
+      "dinou.config.mjs",
+      `import {
+  revalidateTag,
+  revalidatePath,
+  revalidateLayout,
+  revalidatePage,
+} from "dinou/server";
+
+export default {
+  plugins: [
+    {
+      name: "p6s6-webhook",
+      async onRequest(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/api/cube-webhook" && request.method === "POST") {
+          const body = await request.json();
+          if (body.op === "tag") await revalidateTag(body.target);
+          else if (body.op === "path") await revalidatePath(body.target);
+          else if (body.op === "layout") await revalidateLayout(body.target);
+          else if (body.op === "page") await revalidatePage(body.target);
+          return Response.json({ ok: true, op: body.op, target: body.target });
+        }
+      },
+    },
+  ],
+};
+`
+    );
+    write(
+      "src/actions.ts",
+      `"use server";
+import {
+  getContext,
+  revalidateTag,
+  revalidatePath,
+  revalidateLayout,
+  revalidatePage,
+} from "dinou/server";
+
+export async function sfRevalTag(tag: string) {
+  await revalidateTag(tag);
+  return { ok: true, op: "tag", tag };
+}
+export async function sfRevalLayout(p: string) {
+  const ok = await revalidateLayout(p);
+  return { ok, op: "layout", p };
+}
+export async function sfRevalPage(p: string) {
+  await revalidatePage(p);
+  return { ok: true, op: "page", p };
+}
+export async function sfRevalPath(p: string) {
+  await revalidatePath(p);
+  return { ok: true, op: "path", p };
+}
+export async function sfRevalTagAndRedirect(tag: string, target: string) {
+  await revalidateTag(tag);
+  getContext()?.res?.redirect(target);
+  return { ok: true };
+}
+`
+    );
+    write(
+      "src/layout.tsx",
+      `export default function RootLayout({ children }: { children: any }) {
+  return (<html><head><title>P6S6</title></head><body>{children}</body></html>);
+}
+`
+    );
+    write("src/page.tsx", `export default function Home() { return <main>home</main>; }\n`);
+    write("src/landed/page.tsx", `export default function Landed() { return <main id="landed">landed</main>; }\n`);
+
+    write(
+      "src/cube/layout_functions.ts",
+      `export const revalidate = 3600;
+export function getCacheTags() { return ["s6-l1"]; }
+`
+    );
+    write(
+      "src/cube/layout.tsx",
+      `import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../state";
+export default function CubeLayout({ children }: { children: any }) {
+  return (
+    <section id="s6-l1">
+      <span id="s6-l1-shell">{readS().l1Shell}</span>
+      <DinouCacheSlot id="s6-l1-slot" revalidate={3600} tags={["s6-l1-slot-tag"]}>
+        {async () => <span id="s6-l1-slot-v">{readS().l1Slot}</span>}
+      </DinouCacheSlot>
+      {children}
+    </section>
+  );
+}
+`
+    );
+    write(
+      "src/cube/page_functions.ts",
+      `export const ppr = true;
+export const revalidate = 3600;
+export function getCacheTags() { return ["s6-p"]; }
+`
+    );
+    write(
+      "src/cube/page.tsx",
+      `import { Suspense } from "react";
+import { DinouCacheSlot, getContext } from "dinou/server";
+import { readS } from "../state";
+import { sfRevalTag, sfRevalLayout, sfRevalPage, sfRevalPath, sfRevalTagAndRedirect } from "../actions";
+
+async function LiveHole() {
+  const h = String(getContext()?.req?.headers?.["x-hole"] || "h0");
+  // Reference server actions so bundler includes them in server-functions manifest
+  const refs = [sfRevalTag, sfRevalLayout, sfRevalPage, sfRevalPath, sfRevalTagAndRedirect].length;
+  return <span id="s6-hole" data-refs={refs}>{h}</span>;
+}
+
+export default function CubePage() {
+  return (
+    <article id="s6-page">
+      <span id="s6-p-shell">{readS().pageShell}</span>
+      <DinouCacheSlot id="s6-p-slot" revalidate={3600} tags={["s6-p-slot-tag"]}>
+        {async () => <span id="s6-p-slot-v">{readS().pageSlot}</span>}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>fb</span>}><LiveHole /></Suspense>
+    </article>
+  );
+}
+`
+    );
+
+    write("src/ttl1/page_functions.ts", `export const revalidate = 1; export function getCacheTags() { return ["s6-ttl1"]; }\n`);
+    write(
+      "src/ttl1/page.tsx",
+      `import { readS } from "../state";
+export default function Ttl1Page() {
+  return <article id="s6-ttl1"><span id="s6-ttl1-v">{readS().ttlVal}</span></article>;
+}
+`
+    );
+
+    const buildRes = spawnSync(process.execPath, [CLI_PATH, "build:node:esbuild"], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 120_000,
+    });
+    assert.equal(buildRes.status, 0, `Phase 6 Stage 6 build failed:\n${buildRes.stdout}\n${buildRes.stderr}`);
+
+    // Standalone out-of-band child worker script (Surface C — runs in an independent Node process!)
+    const childWorkerScript = path.join(tmpApp, "standalone-worker.mjs");
+    fs.writeFileSync(
+      childWorkerScript,
+      `import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const op = process.argv[2];
+const target = process.argv[3];
+const serverApi = await import(pathToFileURL(path.resolve("node_modules/dinou/server.js")).href);
+serverApi.setStorageAdapter(new serverApi.FileSystemStorage(path.resolve(".dinou/dist2")));
+
+if (op === "layout") {
+  await serverApi.revalidateLayout(target);
+} else if (op === "tag") {
+  await serverApi.revalidateTag(target);
+} else if (op === "path") {
+  await serverApi.revalidatePath(target);
+} else if (op === "page") {
+  await serverApi.revalidatePage(target);
+}
+console.log("WORKER_DONE:" + op + ":" + target);
+`,
+      "utf8"
+    );
+
+    const verifyScript = path.join(tmpApp, "verify-p6-stage6.mjs");
+    fs.writeFileSync(
+      verifyScript,
+      `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
+
+const storageMod = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/storage-adapter.js")).href
+      )});
+const {
+  FileSystemStorage,
+  RedisStorage,
+  DenoKVStorage,
+  CloudflareKVStorage,
+  setStorageAdapter,
+} = storageMod;
+
+const dist2 = path.resolve(".dinou/dist2");
+setStorageAdapter(new FileSystemStorage(dist2));
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+globalThis.__DINOU_RENDER_HTML_STREAM__ = ssrMod.renderHtml;
+
+const opts = { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml };
+const writeS = (patch) => {
+  const f = path.resolve("p6s6-state.json");
+  const cur = JSON.parse(fs.readFileSync(f, "utf8"));
+  fs.writeFileSync(f, JSON.stringify({ ...cur, ...patch }), "utf8");
+};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const req = async (u, init = {}, customOpts = opts) => {
+  const r = await rscMod.handleRequest(new Request("http://localhost" + u, init), customOpts);
+  return { status: r.status, headers: r.headers, text: await r.text() };
+};
+const textById = (html, id) => {
+  const m = html.match(new RegExp('id="' + id + '"[^>]*>([^<]*)<'));
+  return m ? m[1] : null;
+};
+const callSf = async (exportName, args) => {
+  const id = "file:///src/actions.ts#" + exportName;
+  return await req("/____server_function____", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-server-function-call": "1",
+      host: "localhost",
+      origin: "http://localhost",
+    },
+    body: JSON.stringify({ id, args }),
+  });
+};
+const POISON = "POISON_999";
+
+// Keep a clean immutable copy of initial SSG dist2 (all 100s) for Surface D stale-dist2 multi-pod checks!
+const dist2SnapDir = path.resolve(".dinou/dist2-initial-snap");
+fs.cpSync(dist2, dist2SnapDir, { recursive: true });
+
+// ============================================================================
+// SURFACE A: "use server" Server Functions (POST /____server_function____)
+// ============================================================================
+// A1. sfRevalTag("s6-l1-slot-tag") -> updates ONLY L1 slot; L1 shell & Page stay frozen!
+writeS({ l1Shell: POISON, pageShell: POISON, pageSlot: POISON, l1Slot: 201 });
+const sf1 = await callSf("sfRevalTag", ["s6-l1-slot-tag"]);
+assert.equal(sf1.status, 200);
+const hA1 = await req("/cube", { headers: { "x-hole": "a1" } });
+assert.equal(textById(hA1.text, "s6-l1-slot-v"), "201");
+assert.equal(textById(hA1.text, "s6-l1-shell"), "100");
+assert.equal(textById(hA1.text, "s6-p-shell"), "100");
+assert.equal(textById(hA1.text, "s6-p-slot-v"), "100");
+assert.ok(!hA1.text.includes(POISON));
+
+// A2. sfRevalLayout("/cube") -> updates ONLY L1 shell; Page shell stays frozen!
+writeS({ l1Shell: 202, pageShell: POISON });
+const sf2 = await callSf("sfRevalLayout", ["/cube"]);
+assert.equal(sf2.status, 200);
+const hA2 = await req("/cube", { headers: { "x-hole": "a2" } });
+assert.equal(textById(hA2.text, "s6-l1-shell"), "202");
+assert.equal(textById(hA2.text, "s6-p-shell"), "100");
+assert.ok(!hA2.text.includes(POISON));
+
+// A3. sfRevalPage("/cube") -> updates ONLY Page shell; L1 shell stays frozen!
+writeS({ l1Shell: POISON, pageShell: 203 });
+const sf3 = await callSf("sfRevalPage", ["/cube"]);
+assert.equal(sf3.status, 200);
+const hA3 = await req("/cube", { headers: { "x-hole": "a3" } });
+assert.equal(textById(hA3.text, "s6-l1-shell"), "202");
+assert.equal(textById(hA3.text, "s6-p-shell"), "203");
+assert.ok(!hA3.text.includes(POISON));
+
+// A4. sfRevalPath("/cube") -> updates BOTH L1 & Page cleanly!
+writeS({ l1Shell: 204, pageShell: 205 });
+const sf4 = await callSf("sfRevalPath", ["/cube"]);
+assert.equal(sf4.status, 200);
+const hA4 = await req("/cube", { headers: { "x-hole": "a4" } });
+assert.equal(textById(hA4.text, "s6-l1-shell"), "204");
+assert.equal(textById(hA4.text, "s6-p-shell"), "205");
+
+// A5. sfRevalTagAndRedirect("s6-p-slot-tag", "/landed") -> updates slot AND returns redirect headers!
+writeS({ l1Shell: POISON, pageShell: POISON, pageSlot: 206 });
+const sf5 = await callSf("sfRevalTagAndRedirect", ["s6-p-slot-tag", "/landed"]);
+assert.equal(sf5.status, 200);
+assert.equal(sf5.headers.get("x-rsc-redirect"), "/landed");
+assert.equal(sf5.headers.get("x-dinou-redirect"), "/landed");
+const hA5 = await req("/cube", { headers: { "x-hole": "a5" } });
+assert.equal(textById(hA5.text, "s6-p-slot-v"), "206");
+assert.equal(textById(hA5.text, "s6-l1-shell"), "204");
+assert.equal(textById(hA5.text, "s6-p-shell"), "205");
+assert.ok(!hA5.text.includes(POISON));
+
+// ============================================================================
+// SURFACE B: Plugin onRequest Webhook (POST /api/cube-webhook outside React render)
+// ============================================================================
+const callWebhook = async (op, target, extraHeaders = {}) => {
+  const res = await req("/api/cube-webhook", {
+    method: "POST",
+    headers: { "content-type": "application/json", ...extraHeaders },
+    body: JSON.stringify({ op, target }),
+  });
+  assert.equal(res.status, 200, "Webhook failed: " + res.text);
+  return JSON.parse(res.text);
+};
+
+writeS({ l1Shell: POISON, pageShell: POISON, l1Slot: 301 });
+await callWebhook("tag", "s6-l1-slot-tag");
+const hB1 = await req("/cube", { headers: { "x-hole": "b1" } });
+assert.equal(textById(hB1.text, "s6-l1-slot-v"), "301");
+assert.equal(textById(hB1.text, "s6-l1-shell"), "204");
+assert.equal(textById(hB1.text, "s6-p-shell"), "205");
+assert.ok(!hB1.text.includes(POISON));
+
+writeS({ l1Shell: 302, pageShell: POISON });
+await callWebhook("layout", "/cube");
+const hB2 = await req("/cube", { headers: { "x-hole": "b2" } });
+assert.equal(textById(hB2.text, "s6-l1-shell"), "302");
+assert.equal(textById(hB2.text, "s6-p-shell"), "205");
+assert.ok(!hB2.text.includes(POISON));
+
+writeS({ l1Shell: POISON, pageShell: 303 });
+await callWebhook("page", "/cube");
+const hB3 = await req("/cube", { headers: { "x-hole": "b3" } });
+assert.equal(textById(hB3.text, "s6-l1-shell"), "302");
+assert.equal(textById(hB3.text, "s6-p-shell"), "303");
+assert.ok(!hB3.text.includes(POISON));
+
+// Relative path via webhook with x-dinou-current-path AND without headers
+writeS({ l1Shell: 304, pageShell: 305 });
+await callWebhook("path", "./cube", { "x-dinou-current-path": "/" });
+const hB4 = await req("/cube", { headers: { "x-hole": "b4" } });
+assert.equal(textById(hB4.text, "s6-l1-shell"), "304");
+assert.equal(textById(hB4.text, "s6-p-shell"), "305");
+
+// ============================================================================
+// SURFACE C: Standalone Out-of-Band Child Node Worker Process (DINOU_RUNTIME unset!)
+// ============================================================================
+const runChildWorker = (op, target) => {
+  const childEnv = { ...process.env, NODE_OPTIONS: "" };
+  delete childEnv.DINOU_RUNTIME;
+  const r = spawnSync(process.execPath, [path.resolve("standalone-worker.mjs"), op, target], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: childEnv,
+    timeout: 30_000,
+  });
+  assert.equal(r.status, 0, "Child worker failed (" + op + " " + target + "):\\n" + r.stdout + "\\n" + r.stderr);
+  assert.ok(r.stdout.includes("WORKER_DONE:" + op + ":" + target));
+};
+
+// C1. Standalone worker calls revalidateLayout("/cube") -> evicts cube/layout.* while cube/index.html stays!
+//     Running server MUST detect the evicted static layout and regenerate fresh L1 (501) while keeping Page frozen (305)!
+writeS({ l1Shell: 501, pageShell: POISON });
+runChildWorker("layout", "/cube");
+const hC1 = await req("/cube", { headers: { "x-hole": "c1" } });
+assert.equal(hC1.status, 200);
+assert.equal(textById(hC1.text, "s6-l1-shell"), "501", "Server MUST detect layout evicted by standalone child worker!");
+assert.equal(textById(hC1.text, "s6-p-shell"), "305", "Page shell must remain frozen at 305 when standalone worker only invalidated layout!");
+assert.ok(!hC1.text.includes(POISON));
+
+// C2. Standalone worker calls revalidateTag("s6-p-slot-tag") -> evicts slot & page on disk!
+writeS({ l1Shell: POISON, pageSlot: 502, pageShell: 503 });
+runChildWorker("tag", "s6-p-slot-tag");
+const hC2 = await req("/cube", { headers: { "x-hole": "c2" } });
+assert.equal(hC2.status, 200);
+assert.equal(textById(hC2.text, "s6-p-slot-v"), "502", "Server MUST serve fresh slot 502 after standalone child worker revalidateTag!");
+assert.equal(textById(hC2.text, "s6-l1-shell"), "501", "Untouched L1 shell must stay frozen at 501!");
+assert.ok(!hC2.text.includes(POISON));
+
+// C3. Standalone worker calls revalidatePath("./cube") with NO AsyncLocalStorage context (zero TypeError!)
+writeS({ l1Shell: 504, pageShell: 505 });
+runChildWorker("path", "./cube");
+const hC3 = await req("/cube", { headers: { "x-hole": "c3" } });
+assert.equal(hC3.status, 200);
+assert.equal(textById(hC3.text, "s6-l1-shell"), "504");
+assert.equal(textById(hC3.text, "s6-p-shell"), "505");
+
+// ============================================================================
+// SURFACE D: Distributed Multi-Pod & Edge Runtimes (with STALE 100 .dinou/dist2 on disk!)
+// ============================================================================
+// Restore initial SSG 100 .dinou/dist2 on disk so Cold Pod B / Cold Isolate B has STALE 100 fallback files!
+fs.rmSync(dist2, { recursive: true, force: true });
+fs.cpSync(dist2SnapDir, dist2, { recursive: true });
+const clearPodLocalCaches = () => {
+  globalThis[Symbol.for("dinou.slot.registry")]?.clear?.();
+  globalThis[Symbol.for("dinou.slot.recent.fresh")]?.clear?.();
+  globalThis[Symbol.for("dinou.isDynamic.map")]?.clear?.();
+};
+
+// ---- D1: RedisStorage (Pod A -> Cold Pod B) ----
+const redisData = new Map();
+const mockRedis = {
+  async get(k) { return redisData.has(k) ? redisData.get(k) : null; },
+  async set(k, v) { redisData.set(k, String(v)); return "OK"; },
+  async del(k) { return redisData.delete(k) ? 1 : 0; },
+  async exists(k) { return redisData.has(k) ? 1 : 0; },
+  async keys(pattern) {
+    const prefix = String(pattern || "").replace(/\\*$/, "");
+    return Array.from(redisData.keys()).filter((k) => k.startsWith(prefix));
+  },
+};
+
+// Pod A executes revalidateTag, revalidateLayout, revalidatePage, and refreshSlot({ fresh: true })
+setStorageAdapter(new RedisStorage(mockRedis, "p6s6:"));
+writeS({ l1Shell: 601, l1Slot: 602, pageShell: 603, pageSlot: 604 });
+await rscMod.revalidatePath("/cube");
+await rscMod.revalidateTag("s6-l1-slot-tag");
+const podARefresh = await req("/____rsc_slot____/s6-p-slot?fresh=1", {
+  headers: { "x-dinou-current-path": "/cube" },
+});
+assert.equal(podARefresh.status, 200);
+assert.ok(podARefresh.text.includes("604"));
+
+// Cold Pod B: brand-new RedisStorage instance + cleared local registries, stale 100 .dinou/dist2 on disk!
+clearPodLocalCaches();
+setStorageAdapter(new RedisStorage(mockRedis, "p6s6:"));
+writeS({ l1Shell: POISON, l1Slot: POISON, pageShell: POISON, pageSlot: POISON });
+const podBSsr = await req("/cube", { headers: { "x-hole": "pod-b" } });
+assert.equal(podBSsr.status, 200);
+assert.equal(textById(podBSsr.text, "s6-l1-shell"), "601", "Redis Cold Pod B must serve Pod A L1 601 (zero dist2 resurrection!)");
+assert.equal(textById(podBSsr.text, "s6-l1-slot-v"), "602");
+assert.equal(textById(podBSsr.text, "s6-p-shell"), "603");
+assert.equal(textById(podBSsr.text, "s6-p-slot-v"), "604");
+assert.ok(!podBSsr.text.includes(POISON));
+const podBRscL = await req("/____rsc_layout____/cube");
+assert.ok(podBRscL.text.includes("601") && podBRscL.text.includes("602"));
+const podBRscP = await req("/____rsc_page____/cube", { headers: { "x-hole": "pod-b-rsc" } });
+assert.ok(podBRscP.text.includes("603") && podBRscP.text.includes("604"));
+const podBSlot = await req("/____rsc_slot____/s6-p-slot?fresh=0", { headers: { "x-dinou-current-path": "/cube" } });
+assert.ok(podBSlot.text.includes("604") && !podBSlot.text.includes("100"));
+
+// ---- D2: DenoKVStorage (Isolate A -> Cold Isolate B) ----
+const denoStore = new Map();
+const dkKey = (arr) => JSON.stringify(arr);
+const mockDenoKv = {
+  async get(k) {
+    const sk = dkKey(k);
+    return denoStore.has(sk) ? { key: k, value: denoStore.get(sk) } : { key: k, value: null };
+  },
+  async set(k, v) { denoStore.set(dkKey(k), v); return { ok: true }; },
+  async delete(k) { denoStore.delete(dkKey(k)); },
+  atomic() {
+    const ops = [];
+    return {
+      set(k, v) { ops.push({ type: "set", k, v }); return this; },
+      delete(k) { ops.push({ type: "del", k }); return this; },
+      async commit() {
+        for (const op of ops) {
+          if (op.type === "set") denoStore.set(dkKey(op.k), op.v);
+          else denoStore.delete(dkKey(op.k));
+        }
+        return { ok: true };
+      },
+    };
+  },
+  async *list({ prefix }) {
+    for (const [sk, value] of denoStore.entries()) {
+      const k = JSON.parse(sk);
+      if (prefix.every((seg, i) => k[i] === seg)) {
+        yield { key: k, value };
+      }
+    }
+  },
+};
+
+clearPodLocalCaches();
+setStorageAdapter(new DenoKVStorage(mockDenoKv));
+writeS({ l1Shell: 701, l1Slot: 702, pageShell: 703, pageSlot: 704 });
+await rscMod.revalidatePath("/cube");
+await rscMod.revalidateTag("s6-l1-slot-tag");
+const isoARefresh = await req("/____rsc_slot____/s6-p-slot?fresh=1", {
+  headers: { "x-dinou-current-path": "/cube" },
+});
+assert.equal(isoARefresh.status, 200);
+assert.ok(isoARefresh.text.includes("704"));
+
+// Cold Isolate B (brand-new DenoKVStorage + cleared local registries, stale 100 .dinou/dist2 on disk!)
+clearPodLocalCaches();
+setStorageAdapter(new DenoKVStorage(mockDenoKv));
+writeS({ l1Shell: POISON, l1Slot: POISON, pageShell: POISON, pageSlot: POISON });
+const isoBSsr = await req("/cube", { headers: { "x-hole": "deno-b" } });
+assert.equal(isoBSsr.status, 200);
+assert.equal(textById(isoBSsr.text, "s6-l1-shell"), "701", "DenoKV Cold Isolate B must serve 701");
+assert.equal(textById(isoBSsr.text, "s6-l1-slot-v"), "702");
+assert.equal(textById(isoBSsr.text, "s6-p-shell"), "703");
+assert.equal(textById(isoBSsr.text, "s6-p-slot-v"), "704");
+assert.ok(!isoBSsr.text.includes(POISON));
+
+// ---- D3: CloudflareKVStorage + env.ASSETS (stale 100) + ctx.waitUntil SWR + Cloudflare-Workers UA ----
+const origNavigatorDesc = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+Object.defineProperty(globalThis, "navigator", {
+  value: { userAgent: "Cloudflare-Workers" },
+  configurable: true,
+});
+try {
+  const cfKvMap = new Map();
+  const mockCfKv = {
+    async get(k) { return cfKvMap.has(k) ? cfKvMap.get(k).value : null; },
+    async getWithMetadata(k) {
+      if (!cfKvMap.has(k)) return { value: null, metadata: null };
+      const e = cfKvMap.get(k);
+      return { value: e.value, metadata: e.metadata || null };
+    },
+    async put(k, v, o = {}) { cfKvMap.set(k, { value: String(v), metadata: o?.metadata || null }); },
+    async delete(k) { cfKvMap.delete(k); },
+    async list({ prefix } = {}) {
+      const keys = Array.from(cfKvMap.keys())
+        .filter((k) => !prefix || k.startsWith(prefix))
+        .map((name) => ({ name }));
+      return { keys, list_complete: true };
+    },
+  };
+  const mockAssets = {
+    async fetch(reqOrUrl) {
+      const u = new URL(typeof reqOrUrl === "string" ? reqOrUrl : reqOrUrl.url);
+      const rel = u.pathname.replace(/^\\/+/, "").replace(/^__dinou_dist2__\\//, "");
+      const diskFile = path.join(dist2, rel);
+      if (fs.existsSync(diskFile) && fs.statSync(diskFile).isFile()) {
+        const body = fs.readFileSync(diskFile, "utf8");
+        const ct = diskFile.endsWith(".json")
+          ? "application/json"
+          : diskFile.endsWith(".html")
+          ? "text/html; charset=utf-8"
+          : "text/x-component";
+        return new Response(body, { status: 200, headers: { "content-type": ct } });
+      }
+      return new Response("Not Found", { status: 404 });
+    },
+  };
+  const cfWaitUntil = [];
+  const makeCfOpts = () => ({
+    runtime: "edge",
+    renderHtmlStream: ssrMod.renderHtml,
+    env: { DINOU_CACHE: mockCfKv, ASSETS: mockAssets },
+    ctx: { waitUntil: (p) => { cfWaitUntil.push(Promise.resolve(p)); } },
+  });
+
+  // D3a: Tag invalidation BEFORE hydration into KV MUST block stale env.ASSETS resurrection on Cold Isolate B!
+  clearPodLocalCaches();
+  const cfStorageA = new CloudflareKVStorage(mockCfKv);
+  cfStorageA.hydrateFromDisk = false;
+  setStorageAdapter(cfStorageA);
+  // Isolate A runs webhook revalidateTag("s6-ttl1") before /ttl1 was ever hydrated into KV!
+  await req(
+    "/api/cube-webhook",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ op: "tag", target: "s6-ttl1" }),
+    },
+    makeCfOpts()
+  );
+
+  // Cold Isolate B receives GET /ttl1 with stale 100 env.ASSETS -> MUST NOT resurrect 100!
+  clearPodLocalCaches();
+  const cfStorageB = new CloudflareKVStorage(mockCfKv);
+  cfStorageB.hydrateFromDisk = false;
+  setStorageAdapter(cfStorageB);
+  writeS({ ttlVal: 901 });
+  const cfTtlFresh = await req("/ttl1", {}, makeCfOpts());
+  assert.equal(cfTtlFresh.status, 200);
+  assert.equal(textById(cfTtlFresh.text, "s6-ttl1-v"), "901", "Cloudflare Cold Isolate B must NOT resurrect tag-invalidated 100 from env.ASSETS!");
+
+  // D3b: Clock-based 1s TTL SWR inside ctx.waitUntil on Cloudflare Workers!
+  await sleep(1150);
+  writeS({ ttlVal: 950 });
+  cfWaitUntil.length = 0;
+  const cfSwr1 = await req("/ttl1", {}, makeCfOpts());
+  assert.equal(cfSwr1.status, 200);
+  assert.equal(textById(cfSwr1.text, "s6-ttl1-v"), "901", "First hit after 1s TTL serves SWR 901 while scheduling ctx.waitUntil");
+  assert.ok(cfWaitUntil.length > 0, "Cloudflare SWR MUST register background revalidation with ctx.waitUntil!");
+  await Promise.all(cfWaitUntil.splice(0, cfWaitUntil.length));
+
+  // Cold Isolate C reads /ttl1 -> immediately serves fresh 950!
+  clearPodLocalCaches();
+  const cfStorageC = new CloudflareKVStorage(mockCfKv);
+  cfStorageC.hydrateFromDisk = false;
+  setStorageAdapter(cfStorageC);
+  const cfSwr2 = await req("/ttl1", {}, makeCfOpts());
+  assert.equal(cfSwr2.status, 200);
+  assert.equal(textById(cfSwr2.text, "s6-ttl1-v"), "950", "Cold Isolate C must serve fresh 950 committed by ctx.waitUntil!");
+} finally {
+  if (origNavigatorDesc) {
+    Object.defineProperty(globalThis, "navigator", origNavigatorDesc);
+  }
+}
+
+console.log("PHASE6_STAGE6_SURFACES_DISTRIBUTED_OK");
+`
+    );
+
+    const runRes = spawnSync(process.execPath, [verifyScript], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+      timeout: 90_000,
+    });
+    assert.equal(
+      runRes.status,
+      0,
+      `Phase 6 Stage 6 surfaces/distributed failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+    );
+    assert.ok(runRes.stdout.includes("PHASE6_STAGE6_SURFACES_DISTRIBUTED_OK"));
+  } finally {
+    removeDirSafe(tmpApp);
+  }
+});

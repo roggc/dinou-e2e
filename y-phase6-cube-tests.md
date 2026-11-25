@@ -29,7 +29,7 @@ All 6 checks below are designed to be implemented and verified **incrementally (
 - [x] **Stage 3 — Check `#81`:** `revalidateLayout()` & `revalidatePage()` Surgical Contracts, No-Op Guards & Causal `_old` Hydration Snapshots Under Stampede
 - [x] **Stage 4 — Check `#82`:** `refreshSlot(idOrTag, { fresh: false | true })` & `refreshSlot("*")` Complete Matrix (Shared Tags, Nested Slots, `<500ms` Fresh Race, `revalidate = 0` Stampede & Cross-Route Propagation)
 - [x] **Stage 5 — Check `#83`:** Clock-Based TTL (`revalidate = N`) Exhaustive Matrix (Multi-Level Simultaneous Expiration, All-3-Axes 1s Slots, Per-Param Dynamic `revalidate(params)` Function & Mid-ISR Dynamic Bailout)
-- [ ] **Stage 6 — Check `#84`:** Revalidation Trigger Surfaces (Server Functions, Plugins/Webhooks, Standalone Workers) × Distributed Multi-Pod / Edge Runtimes (`Redis`, `Deno KV`, `Cloudflare KV + waitUntil`)
+- [x] **Stage 6 — Check `#84`:** Revalidation Trigger Surfaces (Server Functions, Plugins/Webhooks, Standalone Workers) × Distributed Multi-Pod / Edge Runtimes (`Redis`, `Deno KV`, `Cloudflare KV + waitUntil`)
 
 ---
 

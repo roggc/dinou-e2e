@@ -1,7 +1,13 @@
 // dinou.config.mjs
 // Configuration and Plugins for Dinou v7
 import { defineConfig } from "dinou/config";
-import { getContext } from "dinou/server";
+import {
+  getContext,
+  revalidateTag,
+  revalidatePath,
+  revalidateLayout,
+  revalidatePage,
+} from "dinou/server";
 import { ALIAS_EXACT_SETTINGS } from "@alias-exact-cfg";
 import { createE2ETPluginsSuite } from "@/_plugins/t-plugins-suite";
 
@@ -40,6 +46,29 @@ export default defineConfig({
             method: request.method,
             timestamp: 123456789,
           });
+        }
+
+        // 1b. Phase 6 Stage 6 (#84) Surface B: Revalidation webhook outside React render
+        if (url.pathname === "/api/cube-webhook" && request.method === "POST") {
+          let body = {};
+          try {
+            body = await request.json();
+          } catch {}
+          const op = String(body?.op || "");
+          const target = String(body?.target || "");
+          if (op === "tag") {
+            await revalidateTag(target);
+          } else if (op === "path") {
+            await revalidatePath(target);
+          } else if (op === "layout") {
+            const ok = await revalidateLayout(target);
+            return Response.json({ ok, op, target, source: "cube-webhook" });
+          } else if (op === "page") {
+            await revalidatePage(target);
+          } else {
+            return Response.json({ ok: false, error: "unknown-op" }, { status: 400 });
+          }
+          return Response.json({ ok: true, op, target, source: "cube-webhook" });
         }
 
         // 2. Protected middleware route: Returns 401 if missing valid token

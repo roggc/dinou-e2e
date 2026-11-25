@@ -2257,6 +2257,7 @@ async function handleRequest(request, platformContext = {}) {
             const lMetaKey = entry.cleanLayoutKey ? `${entry.cleanLayoutKey}/layout.metadata.json` : "layout.metadata.json";
             const lRscKey = entry.cleanLayoutKey ? `${entry.cleanLayoutKey}/layout.rsc` : "layout.rsc";
             const lMeta = await readMetaFromStorage(storage, lMetaKey, lRscKey, platformContext, request.url);
+            entry.hasMeta = Boolean(lMeta);
             entry.generatedAt = Number(lMeta?.generatedAt || 0);
             entry.layoutGeneratedAt = Number(lMeta?.layoutGeneratedAt || lMeta?.generatedAt || 0);
             entry.ownGeneratedAt = Number(lMeta?.ownGeneratedAt || lMeta?.layoutGeneratedAt || lMeta?.generatedAt || 0);
@@ -2273,6 +2274,15 @@ async function handleRequest(request, platformContext = {}) {
             const pendingRscLayoutSlotRevalPaths = [];
             for (let i = activeChain.length - 1; i >= 0; i--) {
               const entry = activeChain[i];
+              let isLayoutEvictedStatic = false;
+              if (isLayoutReq && !internalBuildId && !entry.hasMeta) {
+                try {
+                  const lCfg = await resolveLayoutFunctionsConfig(entry.layoutPath, entry.dParams);
+                  if (!lCfg?.isDynamic) {
+                    isLayoutEvictedStatic = true;
+                  }
+                } catch (e) {}
+              }
               const isLayoutTtlExpired =
                 typeof entry.revalidate === "number" &&
                 entry.revalidate >= 1 &&
@@ -2308,24 +2318,31 @@ async function handleRequest(request, platformContext = {}) {
               const isAncestorNewer = isAncestorOwnNewer || isAncestorSlotOnlyNewer;
               if (
                 isLayoutSlotTtlExpired &&
+                !isLayoutEvictedStatic &&
                 !isLayoutSlotNewer &&
                 !isLayoutTtlExpired &&
                 !(isLayoutReq && isAncestorNewer)
               ) {
                 pendingRscLayoutSlotRevalPaths.push(entry.layoutRoutePath);
               } else if (
+                isLayoutEvictedStatic ||
                 isLayoutTtlExpired ||
                 isLayoutSlotNewer ||
                 (isLayoutReq && isAncestorNewer)
               ) {
                 const { revalidateLayout } = await import("./cache-revalidate.js");
                 await revalidateLayout(entry.layoutRoutePath, {
-                  recomposeOnly: !isLayoutTtlExpired && !isLayoutSlotNewer && isAncestorOwnNewer,
+                  recomposeOnly:
+                    !isLayoutEvictedStatic && !isLayoutTtlExpired && !isLayoutSlotNewer && isAncestorOwnNewer,
                   onlyRefreshSlots:
+                    !isLayoutEvictedStatic &&
                     !isLayoutTtlExpired &&
                     (isLayoutSlotNewer || (!isAncestorOwnNewer && isAncestorSlotOnlyNewer)),
                   onlyIfExpired:
-                    isLayoutTtlExpired && !isLayoutSlotNewer && !(isLayoutReq && isAncestorNewer),
+                    !isLayoutEvictedStatic &&
+                    isLayoutTtlExpired &&
+                    !isLayoutSlotNewer &&
+                    !(isLayoutReq && isAncestorNewer),
                 });
                 const lMetaKey = entry.cleanLayoutKey
                   ? `${entry.cleanLayoutKey}/layout.metadata.json`
@@ -3583,31 +3600,52 @@ async function handleRequest(request, platformContext = {}) {
             } catch (e) {}
 
             if (metadata && typeof metadata === "object" && metadata.generatedAt) {
-              const assetRes = await fetchCloudflareDist2Asset(
-                platformContext.env.ASSETS,
-                htmlKey,
-                request.url
-              );
-              if (assetRes && assetRes.status === 200) {
-                const html = await assetRes.text();
-                cachedItem = {
-                  content: html,
-                  metadata,
-                };
-                await storage.set(htmlKey, html, cachedItem.metadata);
-                await storage.set(metaKey, JSON.stringify(cachedItem.metadata));
-                const layoutMetaKey = cleanPath ? `${cleanPath}/layout.metadata.json` : "layout.metadata.json";
-                try {
-                  const layoutMetaRes = await fetchCloudflareDist2Asset(
-                    platformContext.env.ASSETS,
-                    layoutMetaKey,
-                    request.url
-                  );
-                  if (layoutMetaRes && layoutMetaRes.status === 200) {
-                    const layoutMetaText = await layoutMetaRes.text();
-                    await storage.set(layoutMetaKey, layoutMetaText);
-                  }
-                } catch (e) {}
+              const assetCombinedTags = new Set([
+                ...(Array.isArray(metadata.tags) ? metadata.tags : []),
+                ...(Array.isArray(metadata.slotTags) ? metadata.slotTags : []),
+                ...(Array.isArray(metadata.ownSlotTags) ? metadata.ownSlotTags : []),
+              ]);
+              let isAssetTagInvalidated = false;
+              for (const t of assetCombinedTags) {
+                if (!t) continue;
+                const invAt =
+                  typeof storage.getTagInvalidatedAtAsync === "function"
+                    ? await storage.getTagInvalidatedAtAsync(t)
+                    : typeof storage.getTagInvalidatedAt === "function"
+                    ? storage.getTagInvalidatedAt(t)
+                    : 0;
+                if (invAt > 0 && invAt >= Number(metadata.generatedAt || 0)) {
+                  isAssetTagInvalidated = true;
+                  break;
+                }
+              }
+              if (!isAssetTagInvalidated) {
+                const assetRes = await fetchCloudflareDist2Asset(
+                  platformContext.env.ASSETS,
+                  htmlKey,
+                  request.url
+                );
+                if (assetRes && assetRes.status === 200) {
+                  const html = await assetRes.text();
+                  cachedItem = {
+                    content: html,
+                    metadata,
+                  };
+                  await storage.set(htmlKey, html, cachedItem.metadata);
+                  await storage.set(metaKey, JSON.stringify(cachedItem.metadata));
+                  const layoutMetaKey = cleanPath ? `${cleanPath}/layout.metadata.json` : "layout.metadata.json";
+                  try {
+                    const layoutMetaRes = await fetchCloudflareDist2Asset(
+                      platformContext.env.ASSETS,
+                      layoutMetaKey,
+                      request.url
+                    );
+                    if (layoutMetaRes && layoutMetaRes.status === 200) {
+                      const layoutMetaText = await layoutMetaRes.text();
+                      await storage.set(layoutMetaKey, layoutMetaText);
+                    }
+                  } catch (e) {}
+                }
               }
             }
           }
@@ -3650,11 +3688,12 @@ async function handleRequest(request, platformContext = {}) {
     }
     if (
       !isDevelopment &&
+      Boolean(pagePath) &&
       !cachedItem &&
       !dynamicState.value &&
       !isDynamicConfig &&
       isPprConfig &&
-      (isShellDeletedInStorage || (hasDynamicUrlParams && allowISGValue !== false)) &&
+      (isShellDeletedInStorage || !hasDynamicUrlParams || allowISGValue !== false) &&
       !isPathBlocked &&
       queryObj.ssr_crash !== "true" &&
       !platformContext?.isSSG
@@ -3734,6 +3773,11 @@ async function handleRequest(request, platformContext = {}) {
         const activeLayoutChain = getActiveLayoutChain(reqSegments, queryObj, srcFolder);
         cachedHitActiveLayoutChain = activeLayoutChain;
         if (activeLayoutChain.length > 0) {
+          const dynLayoutKeys = new Set(
+            activeLayoutsForRoute
+              .filter((e) => Boolean(e?.isDynamicConfig))
+              .map((e) => e.cleanLayoutKey || "")
+          );
           for (const entry of activeLayoutChain) {
             const lMetaKey = entry.cleanLayoutKey
               ? `${entry.cleanLayoutKey}/layout.metadata.json`
@@ -3748,6 +3792,8 @@ async function handleRequest(request, platformContext = {}) {
               platformContext,
               request.url
             );
+            entry.hasMeta = Boolean(lMeta);
+            entry.isDynamicConfig = dynLayoutKeys.has(entry.cleanLayoutKey || "");
             entry.generatedAt = Number(lMeta?.generatedAt || 0);
             entry.layoutGeneratedAt = Number(lMeta?.layoutGeneratedAt || lMeta?.generatedAt || 0);
             entry.ownGeneratedAt = Number(lMeta?.ownGeneratedAt || lMeta?.layoutGeneratedAt || lMeta?.generatedAt || 0);
@@ -3761,6 +3807,7 @@ async function handleRequest(request, platformContext = {}) {
           }
           for (let i = activeLayoutChain.length - 1; i >= 0; i--) {
             const entry = activeLayoutChain[i];
+            const isLayoutEvictedStatic = !entry.hasMeta && !entry.isDynamicConfig;
             const isLayoutTtlExpired =
               typeof entry.revalidate === "number" &&
               entry.revalidate >= 1 &&
@@ -3793,16 +3840,30 @@ async function handleRequest(request, platformContext = {}) {
               entry.generatedAt > 0 &&
               maxAncestorGen > entry.generatedAt;
             const isAncestorNewer = isAncestorOwnNewer || isAncestorSlotOnlyNewer;
-            if (isLayoutSlotTtlExpired && !isLayoutSlotNewer && !isLayoutTtlExpired && !isAncestorNewer) {
+            if (
+              isLayoutSlotTtlExpired &&
+              !isLayoutEvictedStatic &&
+              !isLayoutSlotNewer &&
+              !isLayoutTtlExpired &&
+              !isAncestorNewer
+            ) {
               pendingLayoutSlotRevalPaths.push(entry.layoutRoutePath);
-            } else if (isLayoutTtlExpired || isLayoutSlotNewer || isAncestorNewer) {
+            } else if (
+              isLayoutEvictedStatic ||
+              isLayoutTtlExpired ||
+              isLayoutSlotNewer ||
+              isAncestorNewer
+            ) {
               const { revalidateLayout } = await import("./cache-revalidate.js");
               await revalidateLayout(entry.layoutRoutePath, {
-                recomposeOnly: !isLayoutTtlExpired && !isLayoutSlotNewer && isAncestorOwnNewer,
+                recomposeOnly:
+                  !isLayoutEvictedStatic && !isLayoutTtlExpired && !isLayoutSlotNewer && isAncestorOwnNewer,
                 onlyRefreshSlots:
+                  !isLayoutEvictedStatic &&
                   !isLayoutTtlExpired &&
                   (isLayoutSlotNewer || (!isAncestorOwnNewer && isAncestorSlotOnlyNewer)),
-                onlyIfExpired: isLayoutTtlExpired && !isLayoutSlotNewer && !isAncestorNewer,
+                onlyIfExpired:
+                  !isLayoutEvictedStatic && isLayoutTtlExpired && !isLayoutSlotNewer && !isAncestorNewer,
               });
               const refreshedMeta = await readMetaFromStorage(
                 storage,

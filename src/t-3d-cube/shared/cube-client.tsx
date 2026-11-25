@@ -9,6 +9,7 @@ import {
   cubeRevalidatePage,
   cubeRevalidateLayout,
   cubeRevalidatePath,
+  cubeRevalidateTagAndRedirect,
   cubePingAction,
   cubeGetStampedeExecs,
   cubeResetStampedeExecs,
@@ -103,6 +104,8 @@ export function CubeControlBridge() {
       revalPage: (p: string) => cubeRevalidatePage(p),
       revalLayout: (p: string) => cubeRevalidateLayout(p),
       revalPath: (p: string) => cubeRevalidatePath(p),
+      revalTagAndRedirect: (tag: string, url: string) =>
+        cubeRevalidateTagAndRedirect(tag, url),
       refreshPage: () => router.refresh(),
       refreshLayout: () => router.refresh({ layout: true }),
       refreshSlot: (idOrTag: string, fresh = true) =>

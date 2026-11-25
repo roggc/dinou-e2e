@@ -1024,6 +1024,11 @@ async function DinouCacheSlot(props) {
     const persistSlot = async () => {
       try {
         await storage.set(storageKey, serialized, slotMeta);
+        if (!storage.baseDir) {
+          try {
+            await storage.set(`slots/${slotId}/slot.metadata.json`, JSON.stringify(slotMeta));
+          } catch (metaErr) {}
+        }
       } catch (err) {
         console.error(`[DinouCacheSlot] Failed to write cache for slot "${slotId}":`, err);
       }
@@ -1399,14 +1404,20 @@ async function getSlotJSX(slotId, options = {}) {
           if (revalStateRef && nextSlotGenAt > (revalStateRef.lastGenTime || 0)) {
             revalStateRef.lastGenTime = nextSlotGenAt;
           }
-          await storage.set(storageKey, serialized, {
+          const freshSlotMeta = {
             tags: entry.tags,
             revalidate: entry.revalidate,
             generatedAt: nextSlotGenAt,
             slotId: targetId,
             inStaticShell: Boolean(cached?.metadata?.inStaticShell),
             inStaticSuspense: Boolean(cached?.metadata?.inStaticSuspense),
-          });
+          };
+          await storage.set(storageKey, serialized, freshSlotMeta);
+          if (!storage.baseDir) {
+            try {
+              await storage.set(`slots/${targetId}/slot.metadata.json`, JSON.stringify(freshSlotMeta));
+            } catch (metaErr) {}
+          }
         }
         if (!isEntryNoCache && options.fresh && hasRequestNonce && isLatestGen()) {
           recentFreshSlotRenders.set(stampedeKey, {
@@ -1463,7 +1474,13 @@ async function getSlotJSX(slotId, options = {}) {
             acc = acc ? `${acc}/${seg}` : seg;
             candidateLayoutKeySet.add(acc);
           }
-          for (const lKey of candidateLayoutKeySet) {
+          const sortedLayoutKeys = Array.from(candidateLayoutKeySet).sort((a, b) => {
+            const depthA = a ? a.split("/").filter(Boolean).length : 0;
+            const depthB = b ? b.split("/").filter(Boolean).length : 0;
+            if (depthA !== depthB) return depthA - depthB;
+            return a < b ? -1 : a > b ? 1 : 0;
+          });
+          for (const lKey of sortedLayoutKeys) {
             const lMetaKey = lKey ? `${lKey}/layout.metadata.json` : "layout.metadata.json";
             const lMeta = await readMetaFromStorageOrAssets(storage, lMetaKey);
             const lTags = Array.from(
@@ -1525,13 +1542,29 @@ async function inspectSlotsFreshness(slotTags, hostGeneratedAt = 0) {
     if (checkedIds.has(targetId)) continue;
     checkedIds.add(targetId);
     const storageKey = `slots/${targetId}/slot.json`;
-    const cached = await getSlotFromStorage(storage, storageKey, [targetId]);
+    const cached = await getSlotFromStorage(storage, storageKey, [targetId, rawTagOrId]);
     if (!cached || !cached.content) {
       const isDeleted =
         typeof storage.isKeyDeleted === "function"
           ? await storage.isKeyDeleted(storageKey)
           : typeof storage.isDeleted === "function" && storage.isDeleted(storageKey);
-      if (isDeleted) {
+      let isTagInvalidated = false;
+      if (!isDeleted && hostGen > 0) {
+        for (const t of new Set([rawTagOrId, targetId])) {
+          if (!t) continue;
+          const invAt =
+            typeof storage.getTagInvalidatedAtAsync === "function"
+              ? await storage.getTagInvalidatedAtAsync(t)
+              : typeof storage.getTagInvalidatedAt === "function"
+              ? storage.getTagInvalidatedAt(t)
+              : 0;
+          if (invAt > 0 && invAt >= hostGen) {
+            isTagInvalidated = true;
+            break;
+          }
+        }
+      }
+      if (isDeleted || isTagInvalidated) {
         result.hasNewer = true;
       }
       continue;

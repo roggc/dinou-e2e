@@ -1,6 +1,7 @@
 "use server";
 
 import {
+  getContext,
   revalidateLayout,
   revalidatePage,
   revalidatePath,
@@ -41,6 +42,15 @@ export async function cubeRevalidateLayout(targetPath: string) {
 export async function cubeRevalidatePath(targetPath: string) {
   await revalidatePath(targetPath);
   return { ok: true, targetPath, state: readCubeState() };
+}
+
+export async function cubeRevalidateTagAndRedirect(
+  tag: string,
+  redirectUrl: string
+) {
+  await revalidateTag(tag);
+  getContext()?.res?.redirect(redirectUrl);
+  return { ok: true, tag, redirectUrl };
 }
 
 export async function cubePingAction(label: string) {

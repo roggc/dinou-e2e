@@ -22588,5 +22588,120 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         await mutateState({ ttlTriggerBailout: false, ttlBailoutSeq: 100 }).catch(() => {});
       }
     });
+
+    test("46. [Phase 6 / Stage 6 / Check #84] Revalidation Trigger Surfaces Live Browser Matrix (Surface A Server Functions + revalidateTag/redirect & Surface B Plugin onRequest Webhook /api/cube-webhook)", async ({
+      page,
+    }) => {
+      test.setTimeout(90000);
+      test.skip(
+        !isProd,
+        "Phase 6 Stage 6 revalidation surfaces require production mode"
+      );
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      const mutateState = (patch: Record<string, any>) =>
+        page.evaluate((p) => (window as any).__CUBE_3D__.mutate(p), patch);
+
+      // Load /t-3d-cube/hs (static L1 layout + static Page) for surgical Surface A & Surface B testing
+      await page.goto("/t-3d-cube/hs");
+      await waitCubeReady(page);
+      const baseL1 = Number(await page.locator("#hs-l1-seq").innerText());
+      const basePage = Number(await page.locator("#hs-index-seq").innerText());
+
+      // 1. Surface B (Plugin onRequest Webhook POST /api/cube-webhook outside React render)
+      // 1a. Webhook revalidateLayout("/t-3d-cube/hs") -> updates ONLY L1; Page stays frozen!
+      const whL1 = baseL1 + 11;
+      await mutateState({ hsL1LayoutSeq: whL1, hsIndexPageSeq: basePage + 899 });
+      const whRes1 = await page.request.post("/api/cube-webhook", {
+        data: { op: "layout", target: "/t-3d-cube/hs" },
+      });
+      expect(whRes1.ok()).toBe(true);
+      await page.goto("/t-3d-cube/hs");
+      await waitCubeReady(page);
+      await expect(page.locator("#hs-l1-seq")).toHaveText(String(whL1));
+      await expect(page.locator("#hs-index-seq")).toHaveText(String(basePage));
+
+      // 1b. Webhook revalidatePage("/t-3d-cube/hs") -> updates ONLY Page; L1 stays frozen!
+      const whPage = basePage + 12;
+      await mutateState({ hsL1LayoutSeq: whL1 + 899, hsIndexPageSeq: whPage });
+      const whRes2 = await page.request.post("/api/cube-webhook", {
+        data: { op: "page", target: "/t-3d-cube/hs" },
+      });
+      expect(whRes2.ok()).toBe(true);
+      await page.goto("/t-3d-cube/hs");
+      await waitCubeReady(page);
+      await expect(page.locator("#hs-l1-seq")).toHaveText(String(whL1));
+      await expect(page.locator("#hs-index-seq")).toHaveText(String(whPage));
+
+      // 1c. Webhook revalidatePath("/t-3d-cube/hs") -> updates BOTH L1 and Page!
+      const whL1Both = whL1 + 13;
+      const whPageBoth = whPage + 14;
+      await mutateState({ hsL1LayoutSeq: whL1Both, hsIndexPageSeq: whPageBoth });
+      const whRes3 = await page.request.post("/api/cube-webhook", {
+        data: { op: "path", target: "/t-3d-cube/hs" },
+      });
+      expect(whRes3.ok()).toBe(true);
+      await page.goto("/t-3d-cube/hs");
+      await waitCubeReady(page);
+      await expect(page.locator("#hs-l1-seq")).toHaveText(String(whL1Both));
+      await expect(page.locator("#hs-index-seq")).toHaveText(String(whPageBoth));
+
+      // 2. Surface B Webhook revalidateTag + Surface A Server Function revalidateTag + redirect() on 3D PPR /t-3d-cube/reval-tag-matrix/dyn/l3
+      await page.goto("/t-3d-cube/reval-tag-matrix/dyn/l3");
+      await waitCubeReady(page);
+      const baseTmL1Shell = Number(await page.locator("#tm-l1-shell-seq").innerText());
+      const baseTmL1Slot = Number(await page.locator("#tm-l1-slot-seq").innerText());
+      const baseTmPageShell = Number(await page.locator("#tm-page-shell-seq").innerText());
+      const baseTmPageSlot = Number(await page.locator("#tm-page-slot-seq").innerText());
+
+      // 2a. Surface B Webhook revalidateTag("tm-l1-only") -> updates ONLY L1 slot; shells stay frozen!
+      const nextTmL1Slot = baseTmL1Slot + 21;
+      await mutateState({
+        tmL1ShellSeq: baseTmL1Shell + 899,
+        tmPageShellSeq: baseTmPageShell + 899,
+        tmL1SlotSeq: nextTmL1Slot,
+      });
+      const whTagRes = await page.request.post("/api/cube-webhook", {
+        data: { op: "tag", target: "tm-l1-only" },
+      });
+      expect(whTagRes.ok()).toBe(true);
+      await page.goto("/t-3d-cube/reval-tag-matrix/dyn/l3");
+      await waitCubeReady(page);
+      await expect(page.locator("#tm-l1-slot-seq")).toHaveText(String(nextTmL1Slot));
+      await expect(page.locator("#tm-l1-shell-seq")).toHaveText(String(baseTmL1Shell));
+      await expect(page.locator("#tm-page-shell-seq")).toHaveText(String(baseTmPageShell));
+
+      // 2b. Surface A Server Function revalidateTag + redirect() -> updates page slot AND redirects browser to /t-3d-cube/hs!
+      const nextTmPageSlot = baseTmPageSlot + 22;
+      await mutateState({
+        tmL1ShellSeq: baseTmL1Shell + 899,
+        tmPageShellSeq: baseTmPageShell + 899,
+        tmPageSlotSeq: nextTmPageSlot,
+      });
+      await Promise.all([
+        page.waitForURL(/\/t-3d-cube\/hs(?:\/)?$/, { timeout: 15000 }),
+        page.evaluate(() =>
+          (window as any).__CUBE_3D__.revalTagAndRedirect(
+            "tm-page-only",
+            "/t-3d-cube/hs"
+          )
+        ),
+      ]);
+      await waitCubeReady(page);
+      await expect(page.locator("#hs-l1-seq")).toHaveText(String(whL1Both));
+
+      // Navigate back to verify Surface A's revalidateTag persisted across the redirect (F5 reload!)
+      await page.goto("/t-3d-cube/reval-tag-matrix/dyn/l3");
+      await waitCubeReady(page);
+      await expect(page.locator("#tm-page-slot-seq")).toHaveText(String(nextTmPageSlot));
+      await expect(page.locator("#tm-l1-slot-seq")).toHaveText(String(nextTmL1Slot));
+      await expect(page.locator("#tm-l1-shell-seq")).toHaveText(String(baseTmL1Shell));
+      await expect(page.locator("#tm-page-shell-seq")).toHaveText(String(baseTmPageShell));
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
   });
 });
