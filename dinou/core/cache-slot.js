@@ -1131,17 +1131,26 @@ async function getSlotJSX(slotId, options = {}) {
   const reqUrlEarly = String(options.req?.url || "");
   const qIdxEarly = reqUrlEarly.indexOf("?");
   const queryKeyEarly = qIdxEarly !== -1 ? reqUrlEarly.slice(qIdxEarly) : "";
+  const hasRequestNonceEarly = /[?&]t=[^&]+/.test(queryKeyEarly);
   const earlyStampedeKey = `${storageKey}::${queryKeyEarly}`;
   const earlyInflightKey = options.fresh ? earlyStampedeKey : storageKey;
+  const regEntryEarly = slotRegistry.get(targetId);
+  const isEarlyNoCache =
+    typeof regEntryEarly?.revalidate === "number" && regEntryEarly.revalidate < 1;
 
-  if (inflightSlotRenders.has(earlyInflightKey)) {
+  if (!isEarlyNoCache && inflightSlotRenders.has(earlyInflightKey)) {
     try {
       const deduped = await inflightSlotRenders.get(earlyInflightKey);
       return await refreshNestedSlotsInTree(deduped, targetId, options);
     } catch (e) {}
   }
 
-  if (options.fresh && recentFreshSlotRenders.has(earlyStampedeKey)) {
+  if (
+    !isEarlyNoCache &&
+    options.fresh &&
+    hasRequestNonceEarly &&
+    recentFreshSlotRenders.has(earlyStampedeKey)
+  ) {
     const recent = recentFreshSlotRenders.get(earlyStampedeKey);
     if (recent && Date.now() - recent.timestamp < 500 && recent.serialized) {
       recent.timestamp = Date.now();
@@ -1340,6 +1349,7 @@ async function getSlotJSX(slotId, options = {}) {
     const reqUrl = String(options.req?.url || "");
     const qIdx = reqUrl.indexOf("?");
     const queryKey = qIdx !== -1 ? reqUrl.slice(qIdx) : "";
+    const hasRequestNonce = /[?&]t=[^&]+/.test(queryKey);
     const stampedeKey = `${storageKey}::${queryKey}`;
     const inflightKey = options.fresh ? stampedeKey : storageKey;
     try {
@@ -1348,7 +1358,12 @@ async function getSlotJSX(slotId, options = {}) {
         return await refreshNestedSlotsInTree(deduped, targetId, options);
       }
 
-      if (!isEntryNoCache && options.fresh && recentFreshSlotRenders.has(stampedeKey)) {
+      if (
+        !isEntryNoCache &&
+        options.fresh &&
+        hasRequestNonce &&
+        recentFreshSlotRenders.has(stampedeKey)
+      ) {
         const recent = recentFreshSlotRenders.get(stampedeKey);
         if (recent && Date.now() - recent.timestamp < 500 && recent.serialized) {
           recent.timestamp = Date.now();
@@ -1365,17 +1380,25 @@ async function getSlotJSX(slotId, options = {}) {
       const renderPromise = (async () => {
         const resolved = await entry.render();
         const serialized = serializeJSX(resolved);
-        if (!isEntryNoCache && options.fresh && isLatestGen()) {
+        if (!isEntryNoCache && options.fresh && hasRequestNonce && isLatestGen()) {
           recentFreshSlotRenders.set(stampedeKey, {
             timestamp: Date.now(),
             serialized,
           });
         }
         if (storage && !isEntryNoCache && isLatestGen()) {
+          const revalStateRef =
+            typeof globalThis !== "undefined"
+              ? globalThis[Symbol.for("dinou.reval.queue.state")]
+              : null;
           const nextSlotGenAt = Math.max(
             Date.now(),
-            Number(cached?.metadata?.generatedAt || 0) + 1
+            Number(cached?.metadata?.generatedAt || 0) + 1,
+            Number(revalStateRef?.lastGenTime || 0) + 1
           );
+          if (revalStateRef && nextSlotGenAt > (revalStateRef.lastGenTime || 0)) {
+            revalStateRef.lastGenTime = nextSlotGenAt;
+          }
           await storage.set(storageKey, serialized, {
             tags: entry.tags,
             revalidate: entry.revalidate,
@@ -1385,7 +1408,7 @@ async function getSlotJSX(slotId, options = {}) {
             inStaticSuspense: Boolean(cached?.metadata?.inStaticSuspense),
           });
         }
-        if (!isEntryNoCache && options.fresh && isLatestGen()) {
+        if (!isEntryNoCache && options.fresh && hasRequestNonce && isLatestGen()) {
           recentFreshSlotRenders.set(stampedeKey, {
             timestamp: Date.now(),
             serialized,

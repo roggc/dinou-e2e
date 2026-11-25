@@ -397,6 +397,18 @@ export interface Cube3DState {
   tmPfASeq: number;
   tmPfBSeq: number;
   tmThrowSlotB: boolean;
+
+  // Phase 6 — Stage 4 — Check #82: refreshSlot() Complete Matrix
+  rsmL1ShellSeq: number;
+  rsmSharedCartSeq: number;
+  rsmL1SharedTagSeq: number;
+  rsmTtl1Seq: number;
+  rsmPageAShellSeq: number;
+  rsmPageASharedTagSeq: number;
+  rsmOuterSeq: number;
+  rsmInnerSeq: number;
+  rsmNoCacheSeq: number;
+  rsmPageBShellSeq: number;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -761,6 +773,17 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   tmPfASeq: 100,
   tmPfBSeq: 100,
   tmThrowSlotB: false,
+
+  rsmL1ShellSeq: 100,
+  rsmSharedCartSeq: 100,
+  rsmL1SharedTagSeq: 100,
+  rsmTtl1Seq: 100,
+  rsmPageAShellSeq: 100,
+  rsmPageASharedTagSeq: 100,
+  rsmOuterSeq: 100,
+  rsmInnerSeq: 100,
+  rsmNoCacheSeq: 100,
+  rsmPageBShellSeq: 100,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {

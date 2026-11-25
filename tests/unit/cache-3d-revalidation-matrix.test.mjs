@@ -1800,3 +1800,335 @@ console.log("PHASE6_STAGE3_SURGICAL_OLD_STAMPEDE_OK");
     removeDirSafe(tmpApp);
   }
 });
+
+test("4. [Phase 6 / Stage 4 / Check #82] refreshSlot({ fresh: false | true }) & refreshSlot('*') Complete Matrix (<500ms Fresh Race, revalidate=0 Cross-Tenant Stampede, Nested Slots & Cross-Route Shared Slot Propagation)", async () => {
+  const tmpApp = createFixtureDir("p6-s4-refresh-slot-");
+  try {
+    writeDinouShim(tmpApp);
+    fs.writeFileSync(
+      path.join(tmpApp, "package.json"),
+      JSON.stringify({ name: "p6-s4-refresh-slot", private: true, type: "module" }, null, 2)
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "p6s4-state.json"),
+      JSON.stringify({
+        l1Shell: 100,
+        l1Shared: 100,
+        ttl1Slot: 100,
+        pageAShell: 100,
+        pageAShared: 100,
+        sharedCart: 100,
+        outerSlot: 100,
+        innerSlot: 100,
+        pageBShell: 100,
+        noCacheDelayMs: 60,
+      })
+    );
+
+    const write = (rel, content) => {
+      const full = path.join(tmpApp, rel);
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, content, "utf8");
+    };
+
+    write(
+      "src/state.ts",
+      `import fs from "node:fs";
+import path from "node:path";
+export function readS() {
+  return JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "p6s4-state.json"), "utf8"));
+}
+export function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+`
+    );
+    write(
+      "src/layout.tsx",
+      `import type { ReactNode } from "react";
+export default function Root({ children }: { children: ReactNode }) {
+  return <html lang="en"><head><title>P6S4</title></head><body>{children}</body></html>;
+}
+`
+    );
+    write("src/page.tsx", `export default function Home() { return <main>home</main>; }\n`);
+
+    write("src/rsm/layout_functions.ts", `export const ppr = true; export function revalidate() { return 3600; }\n`);
+    write(
+      "src/rsm/layout.tsx",
+      `import type { ReactNode } from "react";
+import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../state";
+export default function RsmLayout({ children }: { children: ReactNode }) {
+  return (
+    <section id="rsm-l1">
+      <span id="rsm-l1-shell">{readS().l1Shell}</span>
+      <DinouCacheSlot id="rsm-l1-shared" revalidate={3600} tags={["rsm-shared"]}>
+        {async () => <span id="rsm-l1-shared-v">{readS().l1Shared}</span>}
+      </DinouCacheSlot>
+      <DinouCacheSlot id="rsm-ttl1" revalidate={1} tags={["rsm-ttl1-tag"]}>
+        {async () => <span id="rsm-ttl1-v">{readS().ttl1Slot}</span>}
+      </DinouCacheSlot>
+      {children}
+    </section>
+  );
+}
+`
+    );
+
+    write("src/rsm/page-a/page_functions.ts", `export const ppr = true; export function revalidate() { return 3600; }\n`);
+    write(
+      "src/rsm/page-a/page.tsx",
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep } from "../../state";
+
+async function NoCacheHole() {
+  const ctx = getContext();
+  const tenant = String(ctx?.req?.headers?.["x-tenant"] || "anon");
+  return (
+    <div id="rsm-hole">
+      <DinouCacheSlot id="rsm-nocache" revalidate={0} tags={["rsm-nocache-tag"]}>
+        {async () => {
+          const liveCtx = getContext();
+          const liveTenant = String(liveCtx?.req?.headers?.["x-tenant"] || tenant);
+          const delay = readS().noCacheDelayMs || 0;
+          if (delay > 0) await sleep(delay);
+          return <span id="rsm-nocache-v">{liveTenant}</span>;
+        }}
+      </DinouCacheSlot>
+    </div>
+  );
+}
+
+export default function RsmPageA() {
+  return (
+    <article id="rsm-page-a">
+      <span id="rsm-pa-shell">{readS().pageAShell}</span>
+      <DinouCacheSlot id="rsm-cart" revalidate={3600} tags={["rsm-cart-tag"]}>
+        {async () => <span id="rsm-cart-v">{readS().sharedCart}</span>}
+      </DinouCacheSlot>
+      <DinouCacheSlot id="rsm-pa-shared" revalidate={3600} tags={["rsm-shared"]}>
+        {async () => <span id="rsm-pa-shared-v">{readS().pageAShared}</span>}
+      </DinouCacheSlot>
+      <DinouCacheSlot id="rsm-outer" revalidate={3600} tags={["rsm-outer-tag"]}>
+        {async () => (
+          <div id="rsm-outer-box">
+            <span id="rsm-outer-v">{readS().outerSlot}</span>
+            <DinouCacheSlot id="rsm-inner" revalidate={3600} tags={["rsm-inner-tag"]}>
+              {async () => <span id="rsm-inner-v">{readS().innerSlot}</span>}
+            </DinouCacheSlot>
+          </div>
+        )}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>fb-nc</span>}><NoCacheHole /></Suspense>
+    </article>
+  );
+}
+`
+    );
+
+    write("src/rsm/page-b/page_functions.ts", `export const ppr = true; export function revalidate() { return 3600; }\n`);
+    write(
+      "src/rsm/page-b/page.tsx",
+      `import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../../state";
+export default function RsmPageB() {
+  return (
+    <article id="rsm-page-b">
+      <span id="rsm-pb-shell">{readS().pageBShell}</span>
+      <DinouCacheSlot id="rsm-cart" revalidate={3600} tags={["rsm-cart-tag"]}>
+        {async () => <span id="rsm-cart-v">{readS().sharedCart}</span>}
+      </DinouCacheSlot>
+    </article>
+  );
+}
+`
+    );
+
+    const buildRes = spawnSync(process.execPath, [CLI_PATH, "build:node:esbuild"], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 120_000,
+    });
+    assert.equal(buildRes.status, 0, `Phase 6 Stage 4 build failed:\n${buildRes.stdout}\n${buildRes.stderr}`);
+
+    const verifyScript = path.join(tmpApp, "verify-p6-stage4.mjs");
+    fs.writeFileSync(
+      verifyScript,
+      `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const { FileSystemStorage, setStorageAdapter } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/storage-adapter.js")).href
+      )});
+const dist2 = path.resolve(".dinou/dist2");
+setStorageAdapter(new FileSystemStorage(dist2));
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+globalThis.__DINOU_RENDER_HTML_STREAM__ = ssrMod.renderHtml;
+const opts = { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml };
+
+const writeS = (patch) => {
+  const f = path.resolve("p6s4-state.json");
+  const cur = JSON.parse(fs.readFileSync(f, "utf8"));
+  fs.writeFileSync(f, JSON.stringify({ ...cur, ...patch }), "utf8");
+};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const req = async (u, headers = {}) => {
+  const r = await rscMod.handleRequest(new Request("http://localhost" + u, { headers }), opts);
+  return { status: r.status, headers: r.headers, text: await r.text() };
+};
+const textById = (html, id) => {
+  const m = html.match(new RegExp('id="' + id + '"[^>]*>([^<]*)<'));
+  return m ? m[1] : null;
+};
+const POISON = "POISON_999";
+
+// Warm Page A & Page B so slots register
+const warmA = await req("/rsm/page-a", { "x-tenant": "warm-t" });
+assert.equal(warmA.status, 200);
+assert.equal(textById(warmA.text, "rsm-cart-v"), "100");
+assert.equal(textById(warmA.text, "rsm-nocache-v"), "warm-t");
+const warmB = await req("/rsm/page-b");
+assert.equal(warmB.status, 200);
+assert.equal(textById(warmB.text, "rsm-pb-shell"), "100");
+assert.equal(textById(warmB.text, "rsm-cart-v"), "100");
+
+// ============================================================================
+// 1. Explicit { fresh: false } (?fresh=0, ?fresh=false, omitted) MUST return frozen cached V1 until TTL or revalidateTag!
+// ============================================================================
+writeS({ l1Shell: POISON, pageAShell: POISON, pageBShell: POISON, sharedCart: 201, ttl1Slot: 202 });
+const f0 = await req("/____rsc_slot____/rsm-cart?fresh=0", { "x-dinou-current-path": "/rsm/page-a" });
+assert.equal(f0.status, 200);
+assert.ok(f0.text.includes("100") && !f0.text.includes("201"), "?fresh=0 MUST return cached 100 (NOT 201!), got: " + f0.text);
+
+const fFalse = await req("/____rsc_slot____/rsm-cart?fresh=false", { "x-dinou-current-path": "/rsm/page-a" });
+assert.equal(fFalse.status, 200);
+assert.ok(fFalse.text.includes("100") && !fFalse.text.includes("201"), "?fresh=false MUST return cached 100!");
+
+const fOmitted = await req("/____rsc_slot____/rsm-cart", { "x-dinou-current-path": "/rsm/page-a" });
+assert.equal(fOmitted.status, 200);
+assert.ok(fOmitted.text.includes("100") && !fOmitted.text.includes("201"), "omitted ?fresh MUST return cached 100!");
+
+// After revalidateTag('rsm-cart-tag'), ?fresh=false immediately fetches V2 (201)!
+await rscMod.revalidateTag("rsm-cart-tag");
+const afterTagF0 = await req("/____rsc_slot____/rsm-cart?fresh=false", { "x-dinou-current-path": "/rsm/page-a" });
+assert.ok(afterTagF0.text.includes("201"), "After revalidateTag, ?fresh=false must return fresh 201");
+
+// After 1s TTL expires on rsm-ttl1, ?fresh=false immediately re-renders & returns fresh 202!
+await sleep(1150);
+const afterTtlF0 = await req("/____rsc_slot____/rsm-ttl1?fresh=false", { "x-dinou-current-path": "/rsm/page-a" });
+assert.equal(afterTtlF0.status, 200);
+assert.ok(afterTtlF0.text.includes("202"), "After 1s TTL expiry, ?fresh=false must regenerate & return 202, got: " + afterTtlF0.text);
+
+// ============================================================================
+// 2. Rapid <500ms sequential { fresh: true } calls WITHOUT ?t= nonce MUST NOT return stale recentFreshSlotRenders!
+// ============================================================================
+writeS({ sharedCart: 301 });
+const rapid1 = await req("/____rsc_slot____/rsm-cart?fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
+assert.ok(rapid1.text.includes("301"), "First rapid ?fresh=1 must return 301");
+
+// Mutate 2ms later (well inside 500ms window!) and call ?fresh=1 again WITHOUT distinct ?t= param!
+writeS({ sharedCart: 302 });
+const rapid2 = await req("/____rsc_slot____/rsm-cart?fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
+assert.ok(rapid2.text.includes("302") && !rapid2.text.includes("301"), "Second rapid (<500ms) ?fresh=1 MUST return fresh 302 (zero stale recentFreshSlotRenders leak!), got: " + rapid2.text);
+
+writeS({ sharedCart: 303 });
+const rapid3 = await req("/____rsc_slot____/rsm-cart?fresh=true", { "x-dinou-current-path": "/rsm/page-a" });
+assert.ok(rapid3.text.includes("303"), "Third rapid (<500ms) ?fresh=true MUST return fresh 303");
+
+// Verify identical ?t=nonce duplicate read within 500ms STILL deduplicates cleanly!
+writeS({ sharedCart: 304 });
+const nonce1 = await req("/____rsc_slot____/rsm-cart?t=same-nonce-1&fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
+assert.ok(nonce1.text.includes("304"));
+writeS({ sharedCart: 305 });
+const nonceDup = await req("/____rsc_slot____/rsm-cart?t=same-nonce-1&fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
+assert.ok(nonceDup.text.includes("304"), "Duplicate read with identical ?t=nonce within 500ms should coalesce cleanly");
+const nonceNew = await req("/____rsc_slot____/rsm-cart?t=new-nonce-2&fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
+assert.ok(nonceNew.text.includes("305"), "Distinct ?t=nonce must render fresh 305");
+
+// ============================================================================
+// 3. Concurrent revalidate=0 (isNoCache) slot refreshes under 2 distinct tenants MUST NEVER coalesce!
+// ============================================================================
+const [resTenantA, resTenantB] = await Promise.all([
+  req("/____rsc_slot____/rsm-nocache?t=nc-same&fresh=1", {
+    "x-dinou-current-path": "/rsm/page-a",
+    "x-tenant": "tenant-ALPHA",
+  }),
+  req("/____rsc_slot____/rsm-nocache?t=nc-same&fresh=1", {
+    "x-dinou-current-path": "/rsm/page-a",
+    "x-tenant": "tenant-BETA",
+  }),
+]);
+assert.equal(resTenantA.status, 200);
+assert.equal(resTenantB.status, 200);
+assert.ok(resTenantA.text.includes("tenant-ALPHA") && !resTenantA.text.includes("tenant-BETA"), "Tenant A must NEVER receive Tenant B on revalidate=0 slot: " + resTenantA.text);
+assert.ok(resTenantB.text.includes("tenant-BETA") && !resTenantB.text.includes("tenant-ALPHA"), "Tenant B must NEVER receive Tenant A on revalidate=0 slot: " + resTenantB.text);
+
+// ============================================================================
+// 4. Nested Outer -> Inner slot refresh isolation
+// ============================================================================
+writeS({ pageAShell: POISON, outerSlot: POISON, innerSlot: 401 });
+const innerFresh = await req("/____rsc_slot____/rsm-inner?fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
+assert.equal(innerFresh.status, 200);
+assert.ok(innerFresh.text.includes("401") && !innerFresh.text.includes(POISON));
+const paAfterInner = await req("/rsm/page-a", { "x-tenant": "t1" });
+assert.equal(textById(paAfterInner.text, "rsm-outer-v"), "100", "Outer slot must stay frozen at 100");
+assert.equal(textById(paAfterInner.text, "rsm-inner-v"), "401", "Inner slot must persist 401");
+assert.equal(textById(paAfterInner.text, "rsm-pa-shell"), "100");
+assert.ok(!paAfterInner.text.includes(POISON));
+
+writeS({ pageAShell: POISON, outerSlot: 402, innerSlot: POISON });
+const outerFresh = await req("/____rsc_slot____/rsm-outer?fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
+assert.equal(outerFresh.status, 200);
+assert.ok(outerFresh.text.includes("402") && outerFresh.text.includes("401") && !outerFresh.text.includes(POISON));
+const paAfterOuter = await req("/rsm/page-a", { "x-tenant": "t2" });
+assert.equal(textById(paAfterOuter.text, "rsm-outer-v"), "402");
+assert.equal(textById(paAfterOuter.text, "rsm-inner-v"), "401");
+assert.ok(!paAfterOuter.text.includes(POISON));
+
+// ============================================================================
+// 5. Cross-Route Shared Slot Propagation (Page A -> Page B, direct SSR & soft-nav RSC, Page B shell frozen!)
+// ============================================================================
+writeS({ pageBShell: POISON, sharedCart: 501 });
+const cartOnA = await req("/____rsc_slot____/rsm-cart?fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
+assert.equal(cartOnA.status, 200);
+assert.ok(cartOnA.text.includes("501"));
+
+const pbSoftNav = await req("/____rsc_page____/rsm/page-b");
+assert.equal(pbSoftNav.status, 200);
+assert.ok(pbSoftNav.text.includes("501") && !pbSoftNav.text.includes(POISON), "Page B soft-nav RSC must pick up 501 from Page A without executing poisoned Page B shell");
+
+const pbSsr = await req("/rsm/page-b");
+assert.equal(pbSsr.status, 200);
+assert.equal(textById(pbSsr.text, "rsm-cart-v"), "501", "Page B direct SSR must pick up 501 via inspectSlotsFreshness().hasNewer!");
+assert.equal(textById(pbSsr.text, "rsm-pb-shell"), "100", "Page B static shell must stay 100% frozen at 100!");
+assert.ok(!pbSsr.text.includes(POISON));
+
+console.log("PHASE6_STAGE4_REFRESH_SLOT_MATRIX_OK");
+`
+    );
+
+    const runRes = spawnSync(process.execPath, [verifyScript], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+      timeout: 60_000,
+    });
+    assert.equal(
+      runRes.status,
+      0,
+      `Phase 6 Stage 4 refreshSlot matrix failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+    );
+    assert.ok(runRes.stdout.includes("PHASE6_STAGE4_REFRESH_SLOT_MATRIX_OK"));
+  } finally {
+    removeDirSafe(tmpApp);
+  }
+});

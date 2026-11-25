@@ -22234,5 +22234,150 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         await tabB.close().catch(() => {});
       }
     });
+
+    test("44. [Phase 6 / Stage 4 / Check #82] refreshSlot({ fresh: false | true }) & refreshSlot('*') Live Browser Matrix (Shared Multi-Slot Tag, Nested Outer/Inner, 1s TTL, Rapid <500ms Fresh & Cross-Route Page A -> Page B)", async ({
+      page,
+    }) => {
+      test.skip(
+        !isProd,
+        "refreshSlot() 3D Caching Cube isolation & cross-route propagation require production mode"
+      );
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      // 1. Capture Page B baseline first, then load Page A
+      await page.goto("/t-3d-cube/refresh-slot-matrix/page-b");
+      await waitCubeReady(page);
+      const basePageBShell = Number(await page.locator("#rsm-page-b-shell-seq").textContent());
+
+      await page.goto("/t-3d-cube/refresh-slot-matrix/page-a");
+      await waitCubeReady(page);
+      const baseL1Shell = Number(await page.locator("#rsm-l1-shell-seq").textContent());
+      const basePageAShell = Number(await page.locator("#rsm-page-a-shell-seq").textContent());
+      const baseCart = Number(await page.locator("#rsm-cart-seq").textContent());
+      const baseL1Shared = Number(await page.locator("#rsm-l1-shared-seq").textContent());
+      const basePageShared = Number(await page.locator("#rsm-page-shared-seq").textContent());
+      const baseOuter = Number(await page.locator("#rsm-outer-seq").textContent());
+      const baseInner = Number(await page.locator("#rsm-inner-seq").textContent());
+
+      const poison =
+        Math.max(
+          baseL1Shell, basePageAShell, basePageBShell, baseCart,
+          baseL1Shared, basePageShared, baseOuter, baseInner
+        ) + 899;
+
+      // 2. { fresh: false } returns frozen cached cart even after mutation, UNTIL revalidateTag!
+      const cartV2 = poison + 11;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          rsmL1ShellSeq: poison,
+          rsmPageAShellSeq: poison,
+          rsmPageBShellSeq: poison,
+          rsmSharedCartSeq: cartV2,
+        }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.refreshSlot("cube-rsm-shared-cart", false)
+      );
+      await expect(page.locator("#rsm-cart-seq")).toHaveText(String(baseCart));
+
+      // Rapid <500ms sequential { fresh: true } V2 -> V3!
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.refreshSlot("cube-rsm-shared-cart", true)
+      );
+      await expect(page.locator("#rsm-cart-seq")).toHaveText(String(cartV2), { timeout: 10000 });
+      const cartV3 = poison + 12;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        { rsmSharedCartSeq: cartV3 }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.refreshSlot("cube-rsm-shared-cart", true)
+      );
+      await expect(page.locator("#rsm-cart-seq")).toHaveText(String(cartV3), { timeout: 10000 });
+
+      // 3. Shared tag "rsm-shared" refreshes BOTH L1 slot AND Page A slot simultaneously!
+      const nextL1Shared = poison + 21;
+      const nextPageShared = poison + 22;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          rsmL1SharedTagSeq: nextL1Shared,
+          rsmPageASharedTagSeq: nextPageShared,
+        }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.refreshSlot("rsm-shared", true)
+      );
+      await expect(page.locator("#rsm-l1-shared-seq")).toHaveText(String(nextL1Shared), { timeout: 10000 });
+      await expect(page.locator("#rsm-page-shared-seq")).toHaveText(String(nextPageShared), { timeout: 10000 });
+
+      // 4. Nested Inner-only then Outer-only refresh isolation!
+      const nextInner = poison + 31;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        { rsmOuterSeq: poison, rsmInnerSeq: nextInner }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.refreshSlot("cube-rsm-inner", true)
+      );
+      await expect(page.locator("#rsm-inner-seq")).toHaveText(String(nextInner), { timeout: 10000 });
+      await expect(page.locator("#rsm-outer-seq")).toHaveText(String(baseOuter));
+
+      const nextOuter = poison + 32;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        { rsmOuterSeq: nextOuter, rsmInnerSeq: poison }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.refreshSlot("cube-rsm-outer", true)
+      );
+      await expect(page.locator("#rsm-outer-seq")).toHaveText(String(nextOuter), { timeout: 10000 });
+      await expect(page.locator("#rsm-inner-seq")).toHaveText(String(nextInner));
+
+      // 5. refreshSlot("*") updates all mounted slots across L1 + Page + PPR hole while shells stay frozen!
+      const starCart = poison + 41;
+      const starL1Shared = poison + 42;
+      const starPageShared = poison + 43;
+      const starTtl1 = poison + 44;
+      const starNoCache = poison + 45;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          rsmSharedCartSeq: starCart,
+          rsmL1SharedTagSeq: starL1Shared,
+          rsmPageASharedTagSeq: starPageShared,
+          rsmTtl1Seq: starTtl1,
+          rsmNoCacheSeq: starNoCache,
+          rsmOuterSeq: nextOuter,
+          rsmInnerSeq: nextInner,
+        }
+      );
+      await page.click("#btn-refresh-all-slots");
+      await expect(page.locator("#rsm-cart-seq")).toHaveText(String(starCart), { timeout: 10000 });
+      await expect(page.locator("#rsm-l1-shared-seq")).toHaveText(String(starL1Shared), { timeout: 10000 });
+      await expect(page.locator("#rsm-page-shared-seq")).toHaveText(String(starPageShared), { timeout: 10000 });
+      await expect(page.locator("#rsm-ttl1-seq")).toHaveText(String(starTtl1), { timeout: 10000 });
+      await expect(page.locator("#rsm-nocache-seq")).toHaveText(String(starNoCache), { timeout: 10000 });
+      await expect(page.locator("#rsm-l1-shell-seq")).toHaveText(String(baseL1Shell));
+      await expect(page.locator("#rsm-page-a-shell-seq")).toHaveText(String(basePageAShell));
+
+      // 6. Cross-route propagation: Page A refreshed shared cart -> Page B (soft-nav AND direct SSR) sees starCart while Page B shell stays frozen!
+      await page.click("#link-rsm-page-b");
+      await expect(page.locator("#rsm-page-b")).toBeVisible({ timeout: 15000 });
+      await expect(page.locator("#rsm-cart-seq")).toHaveText(String(starCart), { timeout: 10000 });
+      await expect(page.locator("#rsm-page-b-shell-seq")).toHaveText(String(basePageBShell));
+
+      await page.goto("/t-3d-cube/refresh-slot-matrix/page-b");
+      await waitCubeReady(page);
+      await expect(page.locator("#rsm-cart-seq")).toHaveText(String(starCart));
+      await expect(page.locator("#rsm-page-b-shell-seq")).toHaveText(String(basePageBShell));
+      await expect(page.locator("#rsm-l1-shell-seq")).toHaveText(String(baseL1Shell));
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
   });
 });

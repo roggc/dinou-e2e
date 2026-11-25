@@ -1938,7 +1938,11 @@ async function handleRequest(request, platformContext = {}) {
       }
 
       const urlObj = new URL(request.url || `http://localhost${pathname}`);
-      const isFresh = urlObj.searchParams.get("fresh") === "1" || urlObj.searchParams.has("fresh");
+      const rawFreshParam = urlObj.searchParams.get("fresh");
+      const isFresh =
+        rawFreshParam !== null &&
+        rawFreshParam !== "0" &&
+        rawFreshParam.toLowerCase() !== "false";
 
       const currentPath =
         request.headers?.get?.("x-dinou-current-path") ||
