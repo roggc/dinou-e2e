@@ -6440,17 +6440,18 @@ stampFresh("ppr/layout.metadata.json");
 stampFresh("ppr/metadata.json");
 
 // 1. Poison ALL static shells & cached slots; bump live holes & dynamic L2!
+const POISON = "POISON_999";
 writeS({
-  rootShell: 999,
-  rootSlot: 999,
-  l1Shell: 999,
-  l1Slot: 999,
-  l2Shell: 999,
-  pprShell: 999,
-  pprSlot: 999,
-  subShell: 999,
-  asymL1: 999,
-  asymPageShell: 999,
+  rootShell: POISON,
+  rootSlot: POISON,
+  l1Shell: POISON,
+  l1Slot: POISON,
+  l2Shell: POISON,
+  pprShell: POISON,
+  pprSlot: POISON,
+  subShell: POISON,
+  asymL1: POISON,
+  asymPageShell: POISON,
   l1Hole: 201,
   pprHole: 202,
   subHole: 203,
@@ -6468,7 +6469,7 @@ assert.ok(pprHtml1.text.includes('id="p5-ppr-shell">100<'), "PPR page shell must
 assert.ok(pprHtml1.text.includes('id="p5-ppr-slot">100<'), "PPR page slot must stay frozen at 100");
 assert.ok(pprHtml1.text.includes("l1h-201"), "L1 PPR hole must stream live 201");
 assert.ok(pprHtml1.text.includes("pprh-202"), "Page PPR hole must stream live 202");
-assert.ok(!pprHtml1.text.includes("999"), "Classic Node SSR must never leak poisoned 999");
+assert.ok(!pprHtml1.text.includes(POISON), "Classic Node SSR must never leak poisoned sentinel");
 
 const pprLayRsc1 = await req("/____rsc_layout____/ppr");
 assert.equal(pprLayRsc1.status, 200);
@@ -6477,7 +6478,7 @@ assert.ok(
   "Classic Node /____rsc_layout____ must send text/x-component, got " + pprLayRsc1.headers.get("content-type")
 );
 assert.ok(pprLayRsc1.text.includes("l1h-201"), "Classic Node /____rsc_layout____ must splice live L1 hole 201");
-assert.ok(!pprLayRsc1.text.includes("999"), "Classic Node /____rsc_layout____ must NOT re-execute poisoned L1 shell");
+assert.ok(!pprLayRsc1.text.includes(POISON), "Classic Node /____rsc_layout____ must NOT re-execute poisoned L1 shell");
 
 const pprPageRsc1 = await req("/____rsc_page____/ppr");
 assert.equal(pprPageRsc1.status, 200);
@@ -6486,7 +6487,7 @@ assert.ok(
   "Classic Node /____rsc_page____ must send text/x-component"
 );
 assert.ok(pprPageRsc1.text.includes("pprh-202"), "Classic Node /____rsc_page____ must splice live page hole 202");
-assert.ok(!pprPageRsc1.text.includes("999"), "Classic Node /____rsc_page____ must NOT re-execute poisoned page shell");
+assert.ok(!pprPageRsc1.text.includes(POISON), "Classic Node /____rsc_page____ must NOT re-execute poisoned page shell");
 
 // 1b. Asymmetric S -> D -> PPR on Classic Node (must NOT return 500 or leak poisoned L1/Page!)
 const asymHtml1 = await req("/asym/dyn");
@@ -6495,12 +6496,12 @@ assert.ok(asymHtml1.text.includes('id="p5-asym-l1-val">100<'), "Asymmetric L1 mu
 assert.ok(asymHtml1.text.includes('id="p5-asym-l2-val">205<'), "Asymmetric dynamic L2 must render live 205");
 assert.ok(asymHtml1.text.includes('id="p5-asym-page-shell">100<'), "Asymmetric PPR page shell must stay frozen at 100");
 assert.ok(asymHtml1.text.includes("asymh-204"), "Asymmetric PPR hole must stream live 204");
-assert.ok(!asymHtml1.text.includes("999"), "Asymmetric S->D->PPR must never leak poisoned 999");
+assert.ok(!asymHtml1.text.includes(POISON), "Asymmetric S->D->PPR must never leak poisoned sentinel");
 
 const asymLayRsc1 = await req("/____rsc_layout____/asym/dyn");
 assert.equal(asymLayRsc1.status, 200);
 assert.ok(asymLayRsc1.text.includes("205"), "Asymmetric /____rsc_layout____ must include fresh dynamic L2 205");
-assert.ok(!asymLayRsc1.text.includes("999"), "Asymmetric /____rsc_layout____ must compose cached L1 without re-executing poisoned L1");
+assert.ok(!asymLayRsc1.text.includes(POISON), "Asymmetric /____rsc_layout____ must compose cached L1 without re-executing poisoned L1");
 
 // 2. Clock-based ISR expiration (revalidate = 2s) via revalidating.js directly under isEdgeRuntime() === false!
 await sleep(2150);
@@ -6527,9 +6528,9 @@ assert.ok(pprHtml2.text.includes("pprh-304"), "Page hole must still stream live 
 assert.ok(pprHtml2.text.includes('id="p5-root-shell">100<'), "Non-expired root layout must stay frozen at 100");
 assert.ok(pprHtml2.text.includes('id="p5-l1-slot">100<'), "3600s L1 slot must stay frozen at 100");
 assert.ok(pprHtml2.text.includes('id="p5-ppr-slot">100<'), "3600s Page slot must stay frozen at 100");
-assert.ok(!pprHtml2.text.includes("999"), "revalidating('/ppr') must never leak poisoned 999");
+assert.ok(!pprHtml2.text.includes(POISON), "revalidating('/ppr') must never leak poisoned sentinel");
 
-// 3. Multi-level layout expiration (L1=1s expired, L2=3600s & SubPage=3600s poisoned!) via revalidating('/ppr/sub')
+// 3. Multi-level layout expiration (L1=2s expired, L2=3600s & SubPage=3600s poisoned!) via revalidating('/ppr/sub')
 const l1MetaPath = path.join(dist2Dir, "ppr/layout.metadata.json");
 const l1Meta = JSON.parse(fs.readFileSync(l1MetaPath, "utf8"));
 const expiredTs = Date.now() - 5000;
@@ -6538,7 +6539,7 @@ l1Meta.layoutGeneratedAt = expiredTs;
 l1Meta.ownGeneratedAt = expiredTs;
 fs.writeFileSync(l1MetaPath, JSON.stringify(l1Meta), "utf8");
 
-writeS({ l1Shell: 401, l2Shell: 999, subShell: 999, l1Slot: 999, subHole: 402, l1Hole: 403 });
+writeS({ l1Shell: 401, l2Shell: POISON, subShell: POISON, l1Slot: POISON, subHole: 402, l1Hole: 403 });
 const dynRef2 = { value: false };
 const didReval2 = await rscMod.revalidating("/ppr/sub", dynRef2);
 assert.equal(didReval2, true, "revalidating('/ppr/sub') must detect expired ancestor L1");
@@ -6547,40 +6548,41 @@ assert.equal(dynRef2.value, false);
 const subHtml = await req("/ppr/sub");
 assert.equal(subHtml.status, 200);
 assert.ok(subHtml.text.includes('id="p5-l1-shell">401<'), "Expired ancestor L1 must update to 401 on /ppr/sub");
-assert.ok(subHtml.text.includes('id="p5-l2-shell">100<'), "3600s L2 must recompose without executing poisoned 999");
-assert.ok(subHtml.text.includes('id="p5-sub-shell">100<'), "3600s SubPage must stay frozen without executing poisoned 999");
+assert.ok(subHtml.text.includes('id="p5-l1-slot">100<'), "3600s L1 slot must stay frozen at 100 on /ppr/sub");
+assert.ok(subHtml.text.includes('id="p5-l2-shell">100<'), "3600s L2 must recompose without executing poisoned sentinel");
+assert.ok(subHtml.text.includes('id="p5-sub-shell">100<'), "3600s SubPage must stay frozen without executing poisoned sentinel");
 assert.ok(subHtml.text.includes("subh-402"), "SubPage PPR hole must stream live 402");
 assert.ok(subHtml.text.includes("l1h-403"), "L1 PPR hole must stream live 403");
-assert.ok(!subHtml.text.includes("999"), "Multi-level revalidating('/ppr/sub') must never leak poisoned 999");
+assert.ok(!subHtml.text.includes(POISON), "Multi-level revalidating('/ppr/sub') must never leak poisoned sentinel");
 
 // 4. Surgical revalidateTag, revalidateLayout, revalidatePage & /____rsc_slot____?fresh=1 under isEdgeRuntime() === false
-writeS({ pprSlot: 501, pprShell: 999, l1Shell: 999 });
+writeS({ pprSlot: 501, pprShell: POISON, l1Shell: POISON });
 await rscMod.revalidateTag("p5s1-ppr-slot-tag");
 assert.ok(fs.existsSync(path.join(dist2Dir, "ppr/shell.page.json")), "revalidateTag must preserve ppr/shell.page.json");
 const pprAfterTag = await req("/ppr");
 assert.ok(pprAfterTag.text.includes('id="p5-ppr-slot">501<'), "revalidateTag must refresh slot to 501");
 assert.ok(pprAfterTag.text.includes('id="p5-ppr-shell">302<'), "revalidateTag on slot must keep page shell at 302");
-assert.ok(!pprAfterTag.text.includes("999"), "revalidateTag on slot must not leak poisoned 999");
+assert.ok(!pprAfterTag.text.includes(POISON), "revalidateTag on slot must not leak poisoned sentinel");
 
-writeS({ l2Shell: 502, l1Shell: 999, subShell: 999 });
+writeS({ l2Shell: 502, l1Shell: POISON, subShell: POISON });
 await rscMod.revalidateLayout("/ppr/sub");
 assert.ok(fs.existsSync(path.join(dist2Dir, "ppr/sub/shell.layout.own.json")), "revalidateLayout must preserve shell.layout.own.json (no accidental disk deletion!)");
 const subAfterLay = await req("/ppr/sub");
 assert.ok(subAfterLay.text.includes('id="p5-l2-shell">502<'), "revalidateLayout must update L2 to 502");
 assert.ok(subAfterLay.text.includes('id="p5-l1-shell">401<'), "revalidateLayout on L2 must keep L1 frozen at 401");
 assert.ok(subAfterLay.text.includes('id="p5-sub-shell">100<'), "revalidateLayout on L2 must keep SubPage frozen at 100");
-assert.ok(!subAfterLay.text.includes("999"));
+assert.ok(!subAfterLay.text.includes(POISON));
 
-writeS({ subShell: 503, l1Shell: 999, l2Shell: 999 });
+writeS({ subShell: 503, l1Shell: POISON, l2Shell: POISON });
 await rscMod.revalidatePage("/ppr/sub");
 assert.ok(fs.existsSync(path.join(dist2Dir, "ppr/sub/shell.page.json")), "revalidatePage must preserve ppr/sub/shell.page.json");
 const subAfterPage = await req("/ppr/sub");
 assert.ok(subAfterPage.text.includes('id="p5-sub-shell">503<'), "revalidatePage must update SubPage to 503");
 assert.ok(subAfterPage.text.includes('id="p5-l2-shell">502<'), "revalidatePage must keep L2 frozen at 502");
 assert.ok(subAfterPage.text.includes('id="p5-l1-shell">401<'), "revalidatePage must keep L1 frozen at 401");
-assert.ok(!subAfterPage.text.includes("999"));
+assert.ok(!subAfterPage.text.includes(POISON));
 
-writeS({ l1Slot: 504, l1Shell: 999, pprShell: 999 });
+writeS({ l1Slot: 504, l1Shell: POISON, pprShell: POISON });
 const slotRes = await req("/____rsc_slot____/p5s1-l1-slot?fresh=1", classicOpts, {
   "x-dinou-current-path": "/ppr",
 });
@@ -6588,7 +6590,7 @@ assert.equal(slotRes.status, 200);
 assert.ok(slotRes.text.includes("504"), "refreshSlot?fresh=1 under classic Node must return 504");
 const pprAfterSlot = await req("/ppr");
 assert.ok(pprAfterSlot.text.includes('id="p5-l1-slot">504<'), "refreshSlot?fresh=1 must persist 504 into L1 layout");
-assert.ok(!pprAfterSlot.text.includes("999"));
+assert.ok(!pprAfterSlot.text.includes(POISON));
 
 // 5. Pure disk fallback (NO renderHtmlStream passed & globalThis.__DINOU_RENDER_HTML_STREAM__ cleared)
 stampFresh("ppr/layout.metadata.json");
@@ -6601,7 +6603,7 @@ assert.ok(pureDiskRes.text.includes('id="p5-l1-shell">401<'), "Pure disk fallbac
 assert.ok(pureDiskRes.text.includes('id="p5-ppr-shell">302<'), "Pure disk fallback must serve updated PPR shell 302");
 assert.ok(pureDiskRes.text.includes("l1h-601"), "Pure disk fallback must resume L1 PPR hole 601");
 assert.ok(pureDiskRes.text.includes("pprh-602"), "Pure disk fallback must resume Page PPR hole 602");
-assert.ok(!pureDiskRes.text.includes("999"));
+assert.ok(!pureDiskRes.text.includes(POISON));
 
 assert.equal(isEdgeRuntime(), false, "isEdgeRuntime() must still be false at end of classic Node run");
 console.log("PHASE5_STAGE1_CLASSIC_NODE_PARITY_OK");
@@ -7326,13 +7328,14 @@ const req = async (u) => {
 };
 
 // Poison ALL static shells & L1 slot; bump live holes!
+const POISON = "POISON_999";
 writeS({
-  l1Shell: 999,
-  l1Slot: 999,
-  itemL2Shell: 999,
-  itemPageShell: 999,
-  strictShell: 999,
-  landedShell: 999,
+  l1Shell: POISON,
+  l1Slot: POISON,
+  itemL2Shell: POISON,
+  itemPageShell: POISON,
+  strictShell: POISON,
+  landedShell: POISON,
   l1Hole: 201,
   itemHole: 202,
   strictHole: 203,
@@ -7346,7 +7349,7 @@ assert.ok(okItem.text.includes('id="g-l1-shell">100<'));
 assert.ok(okItem.text.includes('id="g-l1-slot">100<'));
 assert.ok(okItem.text.includes("l1h-201"));
 assert.ok(okItem.text.includes("allowed-1-202"));
-assert.ok(!okItem.text.includes("999"));
+assert.ok(!okItem.text.includes(POISON));
 
 // 2. validateParams() === false (/guards/item/forbidden & /guards/item/bad$char)
 for (const badPath of ["/guards/item/forbidden", "/guards/item/bad$char"]) {
@@ -7357,14 +7360,14 @@ for (const badPath of ["/guards/item/forbidden", "/guards/item/bad$char"]) {
   assert.ok(ssr404.text.includes('id="g-l1-slot">100<'), "SSR 404 must reuse frozen L1 slot");
   assert.ok(ssr404.text.includes("l1h-201"), "SSR 404 must stream L1 PPR hole live");
   assert.ok(!ssr404.text.includes("g-item-l2"), "Blocked [id] layout must NEVER execute on " + badPath);
-  assert.ok(!ssr404.text.includes("999"), "Blocked route must never leak poisoned 999");
+  assert.ok(!ssr404.text.includes(POISON), "Blocked route must never leak poisoned sentinel");
 
   const rscLay404 = await req("/____rsc_layout____" + badPath);
   assert.equal(rscLay404.status, 404);
   assert.ok((rscLay404.headers.get("content-type") || "").includes("text/x-component"), "Blocked layout RSC must emit valid Flight text/x-component");
   assert.ok(rscLay404.text.includes("l1h-201"), "Blocked layout RSC must keep unblocked L1 PPR hole");
   assert.ok(!rscLay404.text.includes("g-item-l2"), "Blocked layout RSC must NOT render blocked [id] layout");
-  assert.ok(!rscLay404.text.includes("999"), "Blocked layout RSC must NOT re-execute poisoned L1");
+  assert.ok(!rscLay404.text.includes(POISON), "Blocked layout RSC must NOT re-execute poisoned L1");
 
   const rscPage404 = await req("/____rsc_page____" + badPath);
   assert.equal(rscPage404.status, 404);
@@ -7379,13 +7382,13 @@ const strictOk = await req("/guards/strict/known");
 assert.equal(strictOk.status, 200);
 assert.ok(strictOk.text.includes('id="g-strict-shell">100<'));
 assert.ok(strictOk.text.includes("known-203"));
-assert.ok(!strictOk.text.includes("999"));
+assert.ok(!strictOk.text.includes(POISON));
 
 const strictMissSsr = await req("/guards/strict/unknown-id");
 assert.equal(strictMissSsr.status, 404);
 assert.ok(strictMissSsr.text.includes("guards-404-page"));
 assert.ok(strictMissSsr.text.includes('id="g-l1-shell">100<'));
-assert.ok(!strictMissSsr.text.includes("999"));
+assert.ok(!strictMissSsr.text.includes(POISON));
 const strictMissRsc = await req("/____rsc_page____/guards/strict/unknown-id");
 assert.equal(strictMissRsc.status, 404);
 assert.ok((strictMissRsc.headers.get("content-type") || "").includes("text/x-component"));
@@ -7407,10 +7410,10 @@ assert.equal(bouncePageRsc.headers.get("x-rsc-redirect"), "/guards/landed");
 const bounceLayRsc = await req("/____rsc_layout____/guards/item/bounce");
 assert.equal(bounceLayRsc.status, 200);
 assert.ok(bounceLayRsc.text.includes("l1h-201"), "Soft-nav layout RSC on bounce must keep L1 PPR hole");
-assert.ok(!bounceLayRsc.text.includes('id":"g-l1-shell","children":999') && !bounceLayRsc.text.includes("999\\n"), "Soft-nav layout RSC on bounce must reuse cached L1 shell (not poisoned 999!)");
-// Note: bounce's uncached L2 renders live (999 for itemL2Shell), so verify L1 specifically stays 100!
+assert.ok(!bounceLayRsc.text.includes('"g-l1-shell","children":"POISON_999"'), "Soft-nav layout RSC on bounce must reuse cached L1 shell (not poisoned sentinel!)");
+// Note: bounce's uncached L2 renders live (POISON for itemL2Shell), so verify L1 specifically stays 100!
 assert.ok(bounceLayRsc.text.includes('"g-l1-shell","children":100') || bounceLayRsc.text.includes('100'), "Cached L1 shell must stay 100");
-assert.ok(!bounceLayRsc.text.includes('"g-l1-shell","children":999'), "Cached L1 shell must NEVER re-execute poisoned 999");
+assert.ok(!bounceLayRsc.text.includes('"g-l1-shell","children":"POISON_999"'), "Cached L1 shell must NEVER re-execute poisoned sentinel");
 
 // 5. Direct revalidatePage / revalidateLayout on blocked or redirected routes must bail cleanly with ZERO artifacts!
 await rscMod.revalidatePage("/guards/item/forbidden");
@@ -7429,7 +7432,7 @@ assert.ok(landedAfter.text.includes('id="g-l1-shell">100<'));
 assert.ok(landedAfter.text.includes('id="g-l1-slot">100<'));
 assert.ok(landedAfter.text.includes("l1h-201"));
 assert.ok(landedAfter.text.includes("landed-204"));
-assert.ok(!landedAfter.text.includes("999"));
+assert.ok(!landedAfter.text.includes(POISON));
 
 console.log("PHASE5_STAGE3_PERIMETER_GUARDS_OK");
 `
@@ -8080,21 +8083,22 @@ const origSubShell = fs.readFileSync(path.join(dist2, "err/throw-l2/sub/shell.pa
 const origL1Slot = fs.readFileSync(path.join(dist2, "slots/p5-err-l1-slot/slot.json"), "utf8");
 
 // Poison ALL static shells & L1 slot; bump live values & activate all transient faults
+const POISON = "POISON_999";
 Object.assign(getState(), {
-  l1Shell: 999, l1Slot: 999, healthyShell: 999, throwHoleShell: 999, subShell: 999,
+  l1Shell: POISON, l1Slot: POISON, healthyShell: POISON, throwHoleShell: POISON, subShell: POISON,
   l1Hole: 201, healthyHole: 202, throwPageSeq: 203, throwHoleSeq: 204, throwL2Seq: 205, subHole: 206,
   throwPage: true, throwHole: true, throwL2: true, throwSlot: true,
 });
 
-// 1. Throwing Page (/err/throw-page): Direct SSR & RSC 500 render error.tsx with reset wrapper inside FROZEN L1 (zero 999!), zero cache persisted!
+// 1. Throwing Page (/err/throw-page): Direct SSR & RSC 500 render error.tsx with reset wrapper inside FROZEN L1 (zero poison!), zero cache persisted!
 const tpSsr = await req("/err/throw-page");
 assert.equal(tpSsr.status, 500);
 assert.ok(tpSsr.text.includes('id="err-custom-boundary"'), "Direct SSR must render custom error.tsx");
 assert.ok(tpSsr.text.includes('data-has-reset="true"'), "error.tsx must receive reset() via DinouErrorResetWrapper");
-assert.ok(tpSsr.text.includes('id="el1-shell">100<'), "L1 static shell must stay frozen (not poisoned 999!) on Direct SSR page error");
+assert.ok(tpSsr.text.includes('id="el1-shell">100<'), "L1 static shell must stay frozen (not poisoned!) on Direct SSR page error");
 assert.ok(tpSsr.text.includes('id="el1-slot">100<'), "L1 cached slot must stay frozen on Direct SSR page error");
 assert.ok(tpSsr.text.includes("l1h-201"), "L1 PPR hole must stay live on Direct SSR page error");
-assert.ok(!tpSsr.text.includes("999"), "Poisoned shells must NEVER leak on page error");
+assert.ok(!tpSsr.text.includes(POISON), "Poisoned shells must NEVER leak on page error");
 assert.equal(fs.existsSync(path.join(dist2, "err/throw-page/index.html")), false, "500 page error must NEVER be cached");
 
 const tpRsc = await req("/____rsc_page____/err/throw-page");
@@ -8106,14 +8110,14 @@ getState().throwPage = false;
 const tpRecovered = await req("/err/throw-page");
 assert.equal(tpRecovered.status, 200);
 assert.ok(tpRecovered.text.includes('id="tp-seq">203<') && tpRecovered.text.includes('id="el1-shell">100<'));
-assert.ok(!tpRecovered.text.includes("999"));
+assert.ok(!tpRecovered.text.includes(POISON));
 
 // 2. Throwing PPR dynamic hole (/err/throw-hole): shell.page.json stays untouched, RSC marks x-dinou-has-error, clearing fault restores healthy hole!
 const thSsrErr = await req("/err/throw-hole");
 assert.equal(thSsrErr.status, 200);
 assert.ok(thSsrErr.text.includes('id="th-shell">100<'), "PPR page static shell must stay frozen when hole throws");
 assert.ok(thSsrErr.text.includes("[PPR Error:"), "PPR hole error must be isolated inside hole boundary");
-assert.ok(!thSsrErr.text.includes("999"));
+assert.ok(!thSsrErr.text.includes(POISON));
 assert.equal(
   fs.readFileSync(path.join(dist2, "err/throw-hole/shell.page.json"), "utf8"),
   origThrowHoleShell,
@@ -8127,7 +8131,7 @@ assert.ok(thRscErr.text.includes("[PPR Error:"));
 getState().throwHole = false;
 const thSsrOk = await req("/err/throw-hole");
 assert.equal(thSsrOk.status, 200);
-assert.ok(thSsrOk.text.includes("th-204") && thSsrOk.text.includes('id="th-shell">100<') && !thSsrOk.text.includes("999"));
+assert.ok(thSsrOk.text.includes("th-204") && thSsrOk.text.includes('id="th-shell">100<') && !thSsrOk.text.includes(POISON));
 
 // 3. Throwing Dynamic L2 (/err/throw-l2/sub): Direct SSR & /____rsc_layout____ emit 500 + error.tsx inside FROZEN L1; sub shell untouched!
 const tl2SsrErr = await req("/err/throw-l2/sub");
@@ -8137,7 +8141,7 @@ assert.ok(tl2SsrErr.text.includes('data-has-reset="true"'));
 assert.ok(tl2SsrErr.text.includes('id="el1-shell">100<'), "L1 static shell must stay frozen when Dynamic L2 throws on Direct SSR");
 assert.ok(tl2SsrErr.text.includes('id="el1-slot">100<'));
 assert.ok(tl2SsrErr.text.includes("l1h-201"));
-assert.ok(!tl2SsrErr.text.includes("999"), "Poisoned L1 must NEVER execute when Dynamic L2 throws");
+assert.ok(!tl2SsrErr.text.includes(POISON), "Poisoned L1 must NEVER execute when Dynamic L2 throws");
 assert.equal(
   fs.readFileSync(path.join(dist2, "err/throw-l2/sub/shell.page.json"), "utf8"),
   origSubShell,
@@ -8148,17 +8152,17 @@ const tl2LayoutRscErr = await req("/____rsc_layout____/err/throw-l2");
 assert.equal(tl2LayoutRscErr.status, 500);
 assert.equal(tl2LayoutRscErr.headers.get("x-dinou-has-error"), "true");
 assert.ok(tl2LayoutRscErr.text.includes("DinouErrorResetWrapper"));
-assert.ok(!tl2LayoutRscErr.text.includes('"el1-shell","children":999'), "L1 shell must NOT re-execute poisoned 999 on /____rsc_layout____ error");
+assert.ok(!tl2LayoutRscErr.text.includes('"el1-shell","children":"POISON_999"'), "L1 shell must NOT re-execute poisoned sentinel on /____rsc_layout____ error");
 
 getState().throwL2 = false;
 const tl2SsrOk = await req("/err/throw-l2/sub");
 assert.equal(tl2SsrOk.status, 200);
-assert.ok(tl2SsrOk.text.includes('id="tl2-seq">205<') && tl2SsrOk.text.includes('id="sub-shell">100<') && tl2SsrOk.text.includes("sh-206") && !tl2SsrOk.text.includes("999"));
+assert.ok(tl2SsrOk.text.includes('id="tl2-seq">205<') && tl2SsrOk.text.includes('id="sub-shell">100<') && tl2SsrOk.text.includes("sh-206") && !tl2SsrOk.text.includes(POISON));
 
 // 4. Throwing inside <DinouCacheSlot> during live /____rsc_slot____?fresh=true preserves last-known-good slot.json & recovers on next fresh call!
 const slotErrRes = await req("/____rsc_slot____/p5-err-l1-slot?fresh=true&currentPath=/err/healthy");
 assert.equal(slotErrRes.status, 200);
-assert.ok(slotErrRes.text.includes("100") && !slotErrRes.text.includes("999"), "Failing refreshSlot must fall back to last-known-good slot.json");
+assert.ok(slotErrRes.text.includes("100") && !slotErrRes.text.includes(POISON), "Failing refreshSlot must fall back to last-known-good slot.json");
 assert.equal(
   fs.readFileSync(path.join(dist2, "slots/p5-err-l1-slot/slot.json"), "utf8"),
   origL1Slot,
