@@ -1296,7 +1296,10 @@ const app = useStrictMode
   : routerElement;
 
 const onRecoverableError = (error) => {
-  if (isStaticExportUnloading() || isNavigationAbortError(error)) {
+  if (isStaticExportUnloading()) {
+    return;
+  }
+  if (isNavigationAbortError(error)) {
     return;
   }
   // 🛡️ Filter benign ViewTransition aborts when document is hidden (e.g. background tab or HMR while in IDE)
@@ -1318,7 +1321,10 @@ const onRecoverableError = (error) => {
 };
 
 const onUncaughtError = (error) => {
-  if (isStaticExportUnloading() || isNavigationAbortError(error)) {
+  if (isStaticExportUnloading()) {
+    return;
+  }
+  if (isNavigationAbortError(error)) {
     return;
   }
   if (typeof reportError === "function") {
@@ -1329,7 +1335,10 @@ const onUncaughtError = (error) => {
 };
 
 const onCaughtError = (error) => {
-  if (isStaticExportUnloading() || isNavigationAbortError(error)) {
+  if (isStaticExportUnloading()) {
+    return;
+  }
+  if (isNavigationAbortError(error)) {
     return;
   }
   console.error(error);
