@@ -1689,7 +1689,9 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
         (didSpliceOnlyLayoutSlots || didRecomposeOnly) && prevLayoutOwnLevelGenTime > 0
           ? prevLayoutOwnLevelGenTime
           : commitLayoutGenTime;
-      await storage.set(layoutMetaKey, JSON.stringify(currentMeta));
+      // Causal commit order: persist layout payload artifacts (shell.layout.own.json, shell.layout.json,
+      // and layout.rsc with inline currentMeta) BEFORE advancing layout.metadata.json so concurrent
+      // readers checking layoutGeneratedAt never observe T_new while layout.rsc is still T_old.
       if (pendingShellLayoutOwnJson) {
         try {
           await storage.set(shellLayoutOwnKey, pendingShellLayoutOwnJson);
@@ -1703,6 +1705,7 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
       if (newLayoutRsc) {
         await storage.set(layoutRscKey, newLayoutRsc, currentMeta);
       }
+      await storage.set(layoutMetaKey, JSON.stringify(currentMeta));
       console.log(`✅ [Edge Revalidate] Successfully revalidated layout ${targetPath} (generatedAt: ${commitLayoutGenTime})`);
       return true;
   });

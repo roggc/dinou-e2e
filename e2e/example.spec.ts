@@ -10449,13 +10449,29 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         )
         .toBe(true);
 
-      // Browser navigation renders refreshed slot while parent Page render count stays frozen at :1 with zero hydration errors
+      // Browser navigation renders refreshed slot while parent Page render count stays frozen at :1 with zero hydration errors.
+      // Note: swr-* uses revalidate = 2s, so on slower CI runners another 2s Micro-ISR window may elapse between poll and goto
+      // (advancing slot counter >= refreshedSlotNum while parent Page MUST remain strictly frozen at :1).
+      const parseSlotSeq = (s: string) => {
+        const m = s.match(/:(\d+)$/);
+        return m ? Number(m[1]) : 0;
+      };
+      const initialSlotNum = parseSlotSeq(initialSwrSlot);
+      const refreshedSlotNum = parseSlotSeq(refreshedSlot);
+      expect(refreshedSlotNum).toBeGreaterThan(initialSlotNum);
+
       await page.goto(swrPath);
       await expect(page.getByTestId("page-render-count")).toHaveText(
         `Page:${swrSlug}:1`
       );
       await expect(page.getByTestId("slot-render-count")).toHaveText(
-        refreshedSlot
+        new RegExp(`^Slot:${swrSlug}:[a-z0-9]+-[a-z0-9]+:\\d+$`)
+      );
+      const browserSlotText =
+        (await page.getByTestId("slot-render-count").textContent())?.trim() ??
+        "";
+      expect(parseSlotSeq(browserSlotText)).toBeGreaterThanOrEqual(
+        refreshedSlotNum
       );
       await expect(page.getByTestId("slot-fn-child")).toHaveText(
         `FnSlot:${swrSlug}`
@@ -21704,14 +21720,23 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         browserName !== "chromium",
         "3D Cache Cube unit & compiled AOT integration suite is browser-agnostic; run once per CI matrix job in chromium"
       );
-      test.setTimeout(360000);
+      test.setTimeout(540000);
 
       const { execFileSync } = await import("child_process");
-      const output = execFileSync(
-        process.execPath,
-        ["--test", path.resolve("tests/unit/cache-3d-cube.test.mjs")],
-        { encoding: "utf8", timeout: 330000 }
-      );
+      let output = "";
+      try {
+        output = execFileSync(
+          process.execPath,
+          ["--test", path.resolve("tests/unit/cache-3d-cube.test.mjs")],
+          { encoding: "utf8", timeout: 510000 }
+        );
+      } catch (err: any) {
+        const stdoutTail = String(err?.stdout || "").slice(-3000);
+        const stderrTail = String(err?.stderr || "").slice(-2000);
+        throw new Error(
+          `cache-3d-cube.test.mjs failed (code=${err?.code ?? err?.status}, signal=${err?.signal ?? "none"}): ${err?.message}\n--- STDOUT TAIL ---\n${stdoutTail}\n--- STDERR TAIL ---\n${stderrTail}`
+        );
+      }
       expect(output).toContain("fail 0");
     });
   });

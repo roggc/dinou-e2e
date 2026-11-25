@@ -1943,9 +1943,15 @@ for (let i = 0; i < bodies.length; i++) {
   }
 }
 
-await sleep(400);
+let postHtml = "";
+for (let attempt = 0; attempt < 40; attempt++) {
+  await sleep(100);
+  if (globalThis[Symbol.for("s3.stamp.exec")] >= 1) {
+    postHtml = await get("/stampede");
+    if (postHtml.includes('id="st-shell">741<')) break;
+  }
+}
 assert.equal(globalThis[Symbol.for("s3.stamp.exec")], 1, "Stampede dedup must run shell regen exactly once!");
-const postHtml = await get("/stampede");
 assert.ok(postHtml.includes('id="st-shell">741<'), "Post-SWR shell must be 741");
 
 // 2. Hole B error isolation + inline RSC preservation + recovery
@@ -2334,8 +2340,12 @@ await sleep(1250);
 const xzt1 = await get("/xz-ttl/l2");
 assert.equal(textById(xzt1, "xzt-l2-s"), "100");
 assert.equal(textById(xzt1, "xzt-p-s"), "100");
-await sleep(300);
-const xzt2 = await get("/xz-ttl/l2");
+let xzt2 = "";
+for (let attempt = 0; attempt < 40; attempt++) {
+  await sleep(100);
+  xzt2 = await get("/xz-ttl/l2");
+  if (textById(xzt2, "xzt-l1-s") === "801") break;
+}
 assert.equal(textById(xzt2, "xzt-l1-s"), "801", "L1 PPR 1s shell updated");
 assert.equal(textById(xzt2, "xzt-l2-s"), "100", "L2 PPR 3600s shell stayed frozen");
 assert.equal(textById(xzt2, "xzt-p-s"), "100", "Page PPR 3600s shell stayed frozen");
@@ -6025,8 +6035,8 @@ assert.ok(slowArrivedAt - fastArrivedAt >= 120, "Expected staggered delay betwee
 assert.ok(buf1.includes('id="stag-shell">100<'), "Static shell must stay frozen at 100");
 assert.ok(buf1.includes('id="stag-slow-sl">100<'), "Inner slow-hole slot must stay frozen at 100");
 
-// 2. Mid-flight abort: cancel reader RIGHT AFTER Fast Hole A arrives while Slow Hole B sleeps 320ms!
-const abortRes = await rscMod.handleRequest(new Request("http://localhost/stag?fastMs=15&slowMs=320"), opts);
+// 2. Mid-flight abort: cancel reader RIGHT AFTER Fast Hole A arrives while Slow Hole B sleeps 750ms!
+const abortRes = await rscMod.handleRequest(new Request("http://localhost/stag?fastMs=15&slowMs=750"), opts);
 assert.equal(abortRes.status, 200);
 const reader2 = abortRes.body.getReader();
 let buf2 = "";
@@ -6040,8 +6050,8 @@ while (true) {
     break;
   }
 }
-// Wait well past Slow Hole B's 320ms timer to confirm ZERO unhandled rejections & ZERO false PPR errors!
-await sleep(450);
+// Wait well past Slow Hole B's 750ms timer to confirm ZERO unhandled rejections & ZERO false PPR errors!
+await sleep(850);
 assert.equal(unhandled.length, 0, "Mid-flight PPR abort caused unhandledRejection: " + unhandled.join(" | "));
 const pprErrors = consoleErrors.filter((m) => m.includes("[Dinou PPR]"));
 assert.equal(pprErrors.length, 0, "Mid-flight PPR abort must NOT log false PPR hole/resume errors: " + pprErrors.join(" | "));
@@ -6049,7 +6059,7 @@ assert.equal(pprErrors.length, 0, "Mid-flight PPR abort must NOT log false PPR h
 // 3. Concurrent /____rsc_slot____ refresh while /____rsc_page____ is actively streaming Slow Hole B!
 writeS({ shellSlot: 301, holeA: 302, holeB: 303 });
 const rscPageRes = await rscMod.handleRequest(
-  new Request("http://localhost/____rsc_page____/stag?fastMs=15&slowMs=280"),
+  new Request("http://localhost/____rsc_page____/stag?fastMs=15&slowMs=600"),
   opts
 );
 assert.equal(rscPageRes.status, 200);

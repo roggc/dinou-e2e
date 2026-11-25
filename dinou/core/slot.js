@@ -159,19 +159,36 @@ export function DefaultDevError({ error }) {
   );
 }
 
+function isSlotNavigationAbortError(err) {
+  if (!err) return false;
+  const name = typeof err === "object" ? String(err.name || "") : "";
+  const msg = typeof err === "object" ? String(err.message || "") : String(err);
+  return (
+    name === "AbortError" ||
+    /^(?:Load failed|Failed to fetch|NetworkError|The operation was aborted|Error in input stream)/i.test(
+      msg.trim()
+    ) ||
+    /____rsc_payload_error____.*due to access control checks/i.test(msg)
+  );
+}
+
 function SlotErrorRenderer({ error, reset }) {
   const getErrorRSC = typeof globalThis !== "undefined" ? globalThis.__DINOU_GET_ERROR_RSC_PAYLOAD__ : null;
   const isStaticExport =
     typeof window !== "undefined" &&
     Boolean(window.__DINOU_STATIC_EXPORT__ || window.__DINOU_STATIC_EXPORT_UNLOADING__);
+  const isAbort = isSlotNavigationAbortError(error);
   const errorPromise = useMemo(() => {
-    if (!isStaticExport && typeof getErrorRSC === "function") {
+    if (!isStaticExport && !isAbort && typeof getErrorRSC === "function") {
       const route = typeof window !== "undefined" ? window.location.pathname + window.location.search : "";
       return getErrorRSC(route, error);
     }
     return null;
-  }, [error, isStaticExport]);
+  }, [error, isStaticExport, isAbort]);
 
+  if (isAbort && typeof window !== "undefined" && window.__DINOU_STATIC_EXPORT_UNLOADING__) {
+    return null;
+  }
   if (!errorPromise) {
     return createElement(DefaultDevError, { error });
   }

@@ -2514,6 +2514,22 @@ async function handleRequest(request, platformContext = {}) {
         const rscKey = cleanRel ? `${cleanRel}/${actualFileName}` : actualFileName;
         try {
           let cached = await storage.get(rscKey);
+          if (
+            isLayoutReq &&
+            !useOld &&
+            !internalRefreshVersion &&
+            internalBuildId &&
+            cached?.metadata?.generatedAt &&
+            Number(internalBuildId) < Number(cached.metadata.generatedAt)
+          ) {
+            const oldLayoutKey = cleanRel
+              ? `${cleanRel}/layout._old.rsc`
+              : "layout._old.rsc";
+            const oldCached = await storage.get(oldLayoutKey);
+            if (oldCached && oldCached.content) {
+              cached = oldCached;
+            }
+          }
           if (!cached && useOld) {
             const fallbackCurrKey = cleanRel
               ? `${cleanRel}/${resolvedTargetFileName}`

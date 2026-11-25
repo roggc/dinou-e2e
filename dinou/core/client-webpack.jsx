@@ -324,6 +324,19 @@ const consumeInlineRscResponse = (kind) => {
 const isStaticExportMode = () =>
   typeof window !== "undefined" && Boolean(window.__DINOU_STATIC_EXPORT__);
 
+const isNavigationAbortError = (err) => {
+  if (!err) return false;
+  const name = typeof err === "object" ? String(err.name || "") : "";
+  const msg = typeof err === "object" ? String(err.message || "") : String(err);
+  return (
+    name === "AbortError" ||
+    /^(?:Load failed|Failed to fetch|NetworkError|The operation was aborted|Error in input stream)/i.test(
+      msg.trim()
+    ) ||
+    /____rsc_payload_error____.*due to access control checks/i.test(msg)
+  );
+};
+
 if (typeof window !== "undefined") {
   const markDocumentUnloading = () => {
     window.__DINOU_STATIC_EXPORT_UNLOADING__ = true;
@@ -332,6 +345,23 @@ if (typeof window !== "undefined") {
   window.addEventListener("pagehide", markDocumentUnloading);
   window.addEventListener("pageshow", () => {
     window.__DINOU_STATIC_EXPORT_UNLOADING__ = false;
+  });
+  // Detect pre-hydration native <a href> hard navigations (before Router's useEffect
+  // attaches soft-navigation click handling) so WebKit does not abort in-flight PPR
+  // streams into spurious /____rsc_payload_error____ fetches before beforeunload fires.
+  window.addEventListener("click", (e) => {
+    if (e.defaultPrevented || window.__DINOU_ROUTER_NAVIGATE__) return;
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const target = e.target;
+    const anchor = target && typeof target.closest === "function" ? target.closest("a") : null;
+    if (!anchor || (anchor.target && anchor.target !== "_self") || anchor.hasAttribute("download")) {
+      return;
+    }
+    const href = anchor.getAttribute("href");
+    if (!href || /^(?:mailto:|tel:|javascript:|#)/i.test(href.trim())) return;
+    const finalPath = resolveUrl(href, window.location.pathname);
+    if (!isExternalUrl(finalPath) && isHashChangeOnly(finalPath)) return;
+    window.__DINOU_STATIC_EXPORT_UNLOADING__ = true;
   });
 }
 
@@ -683,7 +713,7 @@ const getErrorRSCPayload = (route, error) => {
         return res;
       },
       (err) => {
-        if (isStaticExportUnloading()) {
+        if (isStaticExportUnloading() || isNavigationAbortError(err)) {
           return new Promise(() => {});
         }
         throw err;
@@ -719,7 +749,7 @@ const fetchSlotRSC = (slotId, options = {}) => {
     }).then(
       (res) => (isStaticExportUnloading() ? new Promise(() => {}) : res),
       (err) => {
-        if (isStaticExportUnloading()) {
+        if (isStaticExportUnloading() || isNavigationAbortError(err)) {
           return new Promise(() => {});
         }
         throw err;
@@ -1265,7 +1295,7 @@ const app = useStrictMode
   : routerElement;
 
 const onRecoverableError = (error) => {
-  if (isStaticExportUnloading()) {
+  if (isStaticExportUnloading() || isNavigationAbortError(error)) {
     return;
   }
   if (
@@ -1286,7 +1316,7 @@ const onRecoverableError = (error) => {
 };
 
 const onUncaughtError = (error) => {
-  if (isStaticExportUnloading()) {
+  if (isStaticExportUnloading() || isNavigationAbortError(error)) {
     return;
   }
   if (typeof reportError === "function") {
@@ -1297,7 +1327,7 @@ const onUncaughtError = (error) => {
 };
 
 const onCaughtError = (error) => {
-  if (isStaticExportUnloading()) {
+  if (isStaticExportUnloading() || isNavigationAbortError(error)) {
     return;
   }
   console.error(error);
