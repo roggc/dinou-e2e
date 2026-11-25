@@ -408,6 +408,18 @@ async function walkMetadataFiles(dir, fileList = []) {
   return fileList;
 }
 
+function stripVirtualLayoutSegments(key) {
+  return String(key || "")
+    .split("/")
+    .filter(Boolean)
+    .filter(
+      (s) =>
+        !(s.startsWith("[[") && s.endsWith("]]")) &&
+        !(s.startsWith("(") && s.endsWith(")"))
+    )
+    .join("/");
+}
+
 function normalizeRevalidatePath(reqPath) {
   let targetPath = reqPath;
 
@@ -416,10 +428,17 @@ function normalizeRevalidatePath(reqPath) {
     let currentPathname = "/";
     if (ctx && ctx.req) {
       const rawReqHeaders = unwrapBailoutProxy(ctx.req.headers);
+      const readHeader = (name) => {
+        if (!rawReqHeaders) return undefined;
+        if (typeof rawReqHeaders.get === "function") {
+          return rawReqHeaders.get(name) ?? undefined;
+        }
+        return rawReqHeaders[name];
+      };
       const headerPath =
-        rawReqHeaders?.["x-dinou-current-path"] ||
-        rawReqHeaders?.["X-Dinou-Current-Path"];
-      const referer = rawReqHeaders?.referer;
+        readHeader("x-dinou-current-path") ||
+        readHeader("X-Dinou-Current-Path");
+      const referer = readHeader("referer") || readHeader("Referer");
       if (headerPath) {
         currentPathname = String(headerPath).split("?")[0].split("#")[0] || "/";
       } else if (referer) {
@@ -1106,36 +1125,92 @@ async function revalidatePath(reqPath, options) {
   const cleanPath = normalizeRevalidatePath(reqPath);
   const storage = getStorageAdapter();
   const cleanPathKey = cleanPath.replace(/^\/+/, "").replace(/\/+$/, "");
-  const layoutRscKey = cleanPathKey ? `${cleanPathKey}/layout.rsc` : "layout.rsc";
-  const layoutMetaKey = cleanPathKey ? `${cleanPathKey}/layout.metadata.json` : "layout.metadata.json";
+  const reqSegments = cleanPath.split("/").filter(Boolean);
+  const decodedCleanKey = reqSegments
+    .map((s) => {
+      try {
+        return decodeURIComponent(s);
+      } catch (e) {
+        return s;
+      }
+    })
+    .join("/");
+  const srcFolder = path.resolve(process.cwd(), "src");
 
-  // 1. Revalidate layout first if present for this segment (so revalidatePage composes with the fresh layout)
-  const cachedLayout = await readEdgeStorageOrAsset(storage, layoutRscKey);
-  const cachedLayoutMeta = await readEdgeStorageOrAsset(storage, layoutMetaKey);
+  // 1. Revalidate layout first if present for this exact segment (including `(group)` and
+  //    0-segment `[[...slug]]` / `[[param]]` co-located layouts whose canonical `cleanLayoutKey`
+  //    differs from the raw URL `cleanPathKey`), without revalidating shared parent layouts.
   let hasOwnLayoutFile = false;
-  if (!cachedLayout && !cachedLayoutMeta) {
+  let targetLayoutRoutePath = null;
+  let hasExplicitLayoutSegmentOnly = false;
+  let pagePath = null;
+  try {
+    const [resolvedPagePath] = getFilePathAndDynamicParams(reqSegments, {}, srcFolder);
+    pagePath = resolvedPagePath || null;
+  } catch (e) {}
+
+  let activeChain = [];
+  try {
+    activeChain = getActiveLayoutChain(reqSegments, {}, srcFolder);
+  } catch (e) {}
+
+  if (pagePath && activeChain.length > 0) {
+    const normPageDir = path.dirname(pagePath).replace(/\\/g, "/").replace(/\/+$/, "");
+    const leafLayout = activeChain[0];
+    const normLeafLayoutDir = leafLayout?.layoutPath
+      ? path.dirname(leafLayout.layoutPath).replace(/\\/g, "/").replace(/\/+$/, "")
+      : "";
+    if (
+      (normLeafLayoutDir && normLeafLayoutDir === normPageDir) ||
+      stripVirtualLayoutSegments(leafLayout?.cleanLayoutKey) === decodedCleanKey
+    ) {
+      hasOwnLayoutFile = true;
+      targetLayoutRoutePath = leafLayout.layoutRoutePath;
+    }
+  } else if (!pagePath) {
     try {
-      const reqSegments = cleanPath.split("/").filter(Boolean);
-      const srcFolder = path.resolve(process.cwd(), "src");
-      const [exactLayoutPath] = getFilePathAndDynamicParams(
-        reqSegments,
-        {},
-        srcFolder,
-        "layout",
-        true,
-        true,
-        undefined,
-        0
-      );
-      hasOwnLayoutFile = Boolean(exactLayoutPath);
+      const exactChain = getActiveLayoutChain(reqSegments, {}, srcFolder, {
+        ignoreNoLayout: true,
+        exactLayoutKey: true,
+      });
+      if (exactChain.length > 0) {
+        const leaf = exactChain[0];
+        if (
+          leaf.cleanLayoutKey === decodedCleanKey ||
+          stripVirtualLayoutSegments(leaf.cleanLayoutKey) === decodedCleanKey
+        ) {
+          hasOwnLayoutFile = true;
+          targetLayoutRoutePath = leaf.layoutRoutePath;
+          hasExplicitLayoutSegmentOnly = true;
+        }
+      }
     } catch (e) {}
-  }
-  if (cachedLayout || cachedLayoutMeta || hasOwnLayoutFile) {
-    await revalidateLayout(cleanPath);
+
+    if (!hasOwnLayoutFile) {
+      const candidateKeys = Array.from(new Set([cleanPathKey, decodedCleanKey]));
+      for (const candKey of candidateKeys) {
+        const layoutRscKey = candKey ? `${candKey}/layout.rsc` : "layout.rsc";
+        const layoutMetaKey = candKey
+          ? `${candKey}/layout.metadata.json`
+          : "layout.metadata.json";
+        const cachedLayout = await readEdgeStorageOrAsset(storage, layoutRscKey);
+        const cachedLayoutMeta = await readEdgeStorageOrAsset(storage, layoutMetaKey);
+        if (cachedLayout || cachedLayoutMeta) {
+          targetLayoutRoutePath = candKey ? "/" + candKey : "/";
+          break;
+        }
+      }
+    }
   }
 
-  // 2. Revalidate page
-  await revalidatePage(cleanPath);
+  if (targetLayoutRoutePath) {
+    await revalidateLayout(targetLayoutRoutePath);
+  }
+
+  // 2. Revalidate page (skip when caller targeted a layout-only segment such as "/grp/(alpha)")
+  if (!hasExplicitLayoutSegmentOnly) {
+    await revalidatePage(cleanPath);
+  }
 }
 
 async function revalidateLayout(reqPath, internalOptions = {}) {
@@ -1170,18 +1245,11 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
         });
       } catch (e) {}
 
-      const stripEmptyOptional = (k) =>
-        String(k || "")
-          .split("/")
-          .filter(Boolean)
-          .filter((s) => !(s.startsWith("[[") && s.endsWith("]]")))
-          .join("/");
-
       let cleanPathKey = rawCleanPathKey;
       if (
         activeChainPre.length > 0 &&
         (activeChainPre[0].cleanLayoutKey === rawCleanPathKey ||
-          stripEmptyOptional(activeChainPre[0].cleanLayoutKey) === rawCleanPathKey)
+          stripVirtualLayoutSegments(activeChainPre[0].cleanLayoutKey) === rawCleanPathKey)
       ) {
         cleanPathKey = activeChainPre[0].cleanLayoutKey || "";
       }
@@ -1656,6 +1724,9 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
       } catch (e) {}
 
       const commitLayoutGenTime = Math.max(newGenTime, Date.now());
+      if (commitLayoutGenTime > revalState.lastGenTime) {
+        revalState.lastGenTime = commitLayoutGenTime;
+      }
       currentMeta.generatedAt = commitLayoutGenTime;
       if (
         newLayoutRsc &&

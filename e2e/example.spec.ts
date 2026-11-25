@@ -21739,5 +21739,238 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       }
       expect(output).toContain("fail 0");
     });
+
+    test("40. [Phase 6 / Stage 1 / Check #79] revalidatePath() Live Browser Matrix: Sibling Route Groups (alpha)/(beta), Optional Catch-All [[...slug]] 0-seg vs 2-seg, Asymmetric L1(S)->L2(D)->L3(S)->Page(PPR) & Relative Path Resolution", async ({
+      page,
+    }) => {
+      test.skip(
+        !isProd,
+        "revalidatePath() 3D Caching Cube isolation checks require production mode"
+      );
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      // --- PART A: Optional Catch-All [[...slug]] 0-seg vs 2-seg revalidatePath() ---
+      await page.goto("/t-3d-cube/catchall-isg?q=p6init0");
+      await waitCubeReady(page);
+      const baseCaOuter = Number(await page.locator("#ca-outer-shell-seq").textContent());
+      const baseCaRootL = Number(await page.locator("#ca-l2-shell-seq").textContent());
+      const baseCaRootP = Number(await page.locator("#ca-page-shell-seq").textContent());
+
+      await page.goto("/t-3d-cube/catchall-isg/docs?q=p6init1");
+      await waitCubeReady(page);
+      const baseCaDocsL = Number(await page.locator("#ca-l2-shell-seq").textContent());
+      const baseCaDocsP = Number(await page.locator("#ca-page-shell-seq").textContent());
+
+      await page.goto("/t-3d-cube/catchall-isg/docs/v2?q=p6init2");
+      await waitCubeReady(page);
+      const baseCaV2L = Number(await page.locator("#ca-l2-shell-seq").textContent());
+      const baseCaV2P = Number(await page.locator("#ca-page-shell-seq").textContent());
+
+      const caPoison =
+        Math.max(baseCaOuter, baseCaRootL, baseCaRootP, baseCaDocsL, baseCaDocsP, baseCaV2L, baseCaV2P) +
+        899;
+      const nextCaRootL = caPoison + 11;
+      const nextCaRootP = caPoison + 12;
+
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          caOuterShellSeq: caPoison,
+          caRootLayoutShellSeq: nextCaRootL,
+          caRootPageShellSeq: nextCaRootP,
+          caDocsLayoutShellSeq: caPoison,
+          caDocsPageShellSeq: caPoison,
+          caDocsV2LayoutShellSeq: caPoison,
+          caDocsV2PageShellSeq: caPoison,
+        }
+      );
+
+      // 0-segment revalidatePath("/t-3d-cube/catchall-isg") refreshes BOTH [[...slug]] 0-seg layout AND page without touching outer, /docs, or /docs/v2!
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.revalPath("/t-3d-cube/catchall-isg")
+      );
+      await page.goto("/t-3d-cube/catchall-isg?q=p6after0");
+      await waitCubeReady(page);
+      await expect(page.locator("#ca-l2-shell-seq")).toHaveText(String(nextCaRootL));
+      await expect(page.locator("#ca-page-shell-seq")).toHaveText(String(nextCaRootP));
+      await expect(page.locator("#ca-outer-shell-seq")).toHaveText(String(baseCaOuter));
+
+      await page.goto("/t-3d-cube/catchall-isg/docs?q=p6check1");
+      await waitCubeReady(page);
+      await expect(page.locator("#ca-l2-shell-seq")).toHaveText(String(baseCaDocsL));
+      await expect(page.locator("#ca-page-shell-seq")).toHaveText(String(baseCaDocsP));
+      await expect(page.locator("#ca-outer-shell-seq")).toHaveText(String(baseCaOuter));
+
+      // 2-segment revalidatePath with trailing slash + query + hash refreshes ONLY /docs/v2 layout & page!
+      const nextCaV2L = caPoison + 21;
+      const nextCaV2P = caPoison + 22;
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          caOuterShellSeq: caPoison,
+          caRootLayoutShellSeq: caPoison,
+          caRootPageShellSeq: caPoison,
+          caDocsV2LayoutShellSeq: nextCaV2L,
+          caDocsV2PageShellSeq: nextCaV2P,
+        }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.revalPath("/t-3d-cube/catchall-isg/docs/v2/?foo=bar#hash")
+      );
+      await page.goto("/t-3d-cube/catchall-isg/docs/v2?q=p6after2");
+      await waitCubeReady(page);
+      await expect(page.locator("#ca-l2-shell-seq")).toHaveText(String(nextCaV2L));
+      await expect(page.locator("#ca-page-shell-seq")).toHaveText(String(nextCaV2P));
+      await expect(page.locator("#ca-outer-shell-seq")).toHaveText(String(baseCaOuter));
+
+      // --- PART B: Sibling Route Groups (alpha)/(beta) + Relative "../promo2" ---
+      await page.goto("/t-3d-cube/group-collision/promo?q=p6grpA");
+      await waitCubeReady(page);
+      const baseGrpOuter = Number(await page.locator("#grp-outer-shell-seq").textContent());
+      const baseGrpAlpha = Number(await page.locator("#grp-alpha-shell-seq").textContent());
+      const baseGrpPromo = Number(await page.locator("#grp-promo-shell-seq").textContent());
+
+      await page.goto("/t-3d-cube/group-collision/promo2?q=p6grpA2");
+      await waitCubeReady(page);
+      const baseGrpPromo2 = Number(await page.locator("#grp-promo2-shell-seq").textContent());
+
+      await page.goto("/t-3d-cube/group-collision/settings?q=p6grpB");
+      await waitCubeReady(page);
+      const baseGrpBeta = Number(await page.locator("#grp-beta-shell-seq").textContent());
+      const baseGrpSettings = Number(await page.locator("#grp-settings-shell-seq").textContent());
+
+      const grpPoison =
+        Math.max(baseGrpOuter, baseGrpAlpha, baseGrpPromo, baseGrpPromo2, baseGrpBeta, baseGrpSettings) +
+        899;
+      const nextPromoShell = grpPoison + 31;
+      const nextPromo2Shell = grpPoison + 32;
+      const nextAlphaShell = grpPoison + 33;
+
+      // Return to /promo so relative "../promo2" resolves cleanly from current page!
+      await page.goto("/t-3d-cube/group-collision/promo?q=p6grpRel");
+      await waitCubeReady(page);
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          grpOuterShellSeq: grpPoison,
+          grpAlphaShellSeq: grpPoison,
+          grpAlphaPromoShellSeq: nextPromoShell,
+          grpAlphaPromo2ShellSeq: nextPromo2Shell,
+          grpBetaShellSeq: grpPoison,
+          grpBetaSettingsShellSeq: grpPoison,
+        }
+      );
+
+      // Absolute leaf revalidatePath("/t-3d-cube/group-collision/promo") + relative "../promo2"
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.revalPath("/t-3d-cube/group-collision/promo")
+      );
+      await page.evaluate(() => (window as any).__CUBE_3D__.revalPath("../promo2"));
+
+      await page.goto("/t-3d-cube/group-collision/promo?q=p6afterPromo");
+      await waitCubeReady(page);
+      await expect(page.locator("#grp-promo-shell-seq")).toHaveText(String(nextPromoShell));
+      await expect(page.locator("#grp-alpha-shell-seq")).toHaveText(String(baseGrpAlpha));
+      await expect(page.locator("#grp-outer-shell-seq")).toHaveText(String(baseGrpOuter));
+
+      await page.goto("/t-3d-cube/group-collision/promo2?q=p6afterPromo2");
+      await waitCubeReady(page);
+      await expect(page.locator("#grp-promo2-shell-seq")).toHaveText(String(nextPromo2Shell));
+      await expect(page.locator("#grp-alpha-shell-seq")).toHaveText(String(baseGrpAlpha));
+
+      // Explicit group segment revalidatePath("/t-3d-cube/group-collision/(alpha)") updates (alpha) without touching (beta) or outer!
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          grpOuterShellSeq: grpPoison,
+          grpAlphaShellSeq: nextAlphaShell,
+          grpAlphaPromoShellSeq: grpPoison,
+          grpBetaShellSeq: grpPoison,
+          grpBetaSettingsShellSeq: grpPoison,
+        }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.revalPath("/t-3d-cube/group-collision/(alpha)")
+      );
+      await page.goto("/t-3d-cube/group-collision/promo?q=p6afterAlpha");
+      await waitCubeReady(page);
+      await expect(page.locator("#grp-alpha-shell-seq")).toHaveText(String(nextAlphaShell));
+      await expect(page.locator("#grp-promo-shell-seq")).toHaveText(String(nextPromoShell));
+      await expect(page.locator("#grp-outer-shell-seq")).toHaveText(String(baseGrpOuter));
+
+      await page.goto("/t-3d-cube/group-collision/settings?q=p6afterBeta");
+      await waitCubeReady(page);
+      await expect(page.locator("#grp-beta-shell-seq")).toHaveText(String(baseGrpBeta));
+      await expect(page.locator("#grp-settings-shell-seq")).toHaveText(String(baseGrpSettings));
+      await expect(page.locator("#grp-outer-shell-seq")).toHaveText(String(baseGrpOuter));
+
+      // --- PART C: Asymmetric Chain L1(S) -> L2(D) -> L3(S) -> Page(PPR) ---
+      await page.goto("/t-3d-cube/triple-asym/dyn-l2/l3?l3=p6a&pm=p6b");
+      await waitCubeReady(page);
+      const baseTaL1 = Number(await page.locator("#ta-l1-shell-seq").textContent());
+      const baseTaL3 = Number(await page.locator("#ta-l3-shell-seq").textContent());
+      const baseTaPage = Number(await page.locator("#ta-page-shell-seq").textContent());
+
+      const taPoison = Math.max(baseTaL1, baseTaL3, baseTaPage) + 899;
+      const nextTaL2 = taPoison + 41;
+      const nextTaL3 = taPoison + 42;
+      const nextTaPage = taPoison + 43;
+
+      await page.evaluate(
+        (patch) => (window as any).__CUBE_3D__.mutate(patch),
+        {
+          taL1ShellSeq: taPoison,
+          taL1SlotSeq: taPoison,
+          taDynL2HostSeq: nextTaL2,
+          taDynL2SlotSeq: taPoison,
+          taL3ShellSeq: nextTaL3,
+          taL3SlotSeq: taPoison,
+          taPageShellSeq: nextTaPage,
+          taPageShellSlotSeq: taPoison,
+          taHoleSlotSeq: taPoison,
+        }
+      );
+      await page.evaluate(() =>
+        (window as any).__CUBE_3D__.revalPath("/t-3d-cube/triple-asym/dyn-l2/l3")
+      );
+      await page.reload();
+      await waitCubeReady(page);
+      await expect(page.locator("#ta-l1-shell-seq")).toHaveText(String(baseTaL1));
+      await expect(page.locator("#ta-l2-host-seq")).toHaveText(String(nextTaL2));
+      await expect(page.locator("#ta-l3-shell-seq")).toHaveText(String(nextTaL3));
+      await expect(page.locator("#ta-page-shell-seq")).toHaveText(String(nextTaPage));
+
+      expect(hydrationErrors).toEqual([]);
+      expect(routerWarnings).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test("41. Standalone Phase 6 Revalidation Matrix Unit & Compiled Node AOT Integration Suite (tests/unit/cache-3d-revalidation-matrix.test.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "Phase 6 revalidation matrix unit & compiled AOT integration suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
+      test.setTimeout(540000);
+
+      const { execFileSync } = await import("child_process");
+      let output = "";
+      try {
+        output = execFileSync(
+          process.execPath,
+          ["--test", path.resolve("tests/unit/cache-3d-revalidation-matrix.test.mjs")],
+          { encoding: "utf8", timeout: 510000 }
+        );
+      } catch (err: any) {
+        const stdoutTail = String(err?.stdout || "").slice(-3000);
+        const stderrTail = String(err?.stderr || "").slice(-2000);
+        throw new Error(
+          `cache-3d-revalidation-matrix.test.mjs failed (code=${err?.code ?? err?.status}, signal=${err?.signal ?? "none"}): ${err?.message}\n--- STDOUT TAIL ---\n${stdoutTail}\n--- STDERR TAIL ---\n${stderrTail}`
+        );
+      }
+      expect(output).toContain("fail 0");
+    });
   });
 });

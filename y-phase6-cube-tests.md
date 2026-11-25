@@ -24,7 +24,7 @@ All 6 checks below are designed to be implemented and verified **incrementally (
 
 ## Master Checklist (Phase 6)
 
-- [ ] **Stage 1 — Check `#79`:** `revalidatePath()` Complete Matrix (Route Groups `(alpha)`/`(beta)`, `[[...slug]]`, Dynamic `L2` Ancestor, Relative Paths & Monotonic Timestamps)
+- [x] **Stage 1 — Check `#79`:** `revalidatePath()` Complete Matrix (Route Groups `(alpha)`/`(beta)`, `[[...slug]]`, Dynamic `L2` Ancestor, Relative Paths & Monotonic Timestamps)
 - [ ] **Stage 2 — Check `#80`:** `revalidateTag()` Complete Matrix (Raw Slot ID vs Tag, Shared Multi-Slot Tags, All 4 Placements, `(group)`/`[[...slug]]`/`[id]`, Error Backup Rollback & Cloudflare Workers Ancestor Ordering)
 - [ ] **Stage 3 — Check `#81`:** `revalidateLayout()` & `revalidatePage()` Surgical Contracts, No-Op Guards & Causal `_old` Hydration Snapshots Under Stampede
 - [ ] **Stage 4 — Check `#82`:** `refreshSlot(idOrTag, { fresh: false | true })` & `refreshSlot("*")` Complete Matrix (Shared Tags, Nested Slots, `<500ms` Fresh Race, `revalidate = 0` Stampede & Cross-Route Propagation)
