@@ -2715,9 +2715,25 @@ writeS({ bailTrigger: true, bailStdVal: 502, bailPprVal: 503 });
 // Trigger SWR regeneration after 1.15s expiry on BOTH bailout-std and bailout-ppr
 const trigStd = await req("/bailout-std", { "x-live-probe": "trig" });
 assert.equal(trigStd.status, 200);
+const trigStdVal = textById(trigStd.text, "bail-std-v");
+assert.ok(trigStdVal && trigStdVal.endsWith(":static"), "SWR HTML must still serve static snapshot before bailout, got: " + trigStdVal);
+const trigStdBuildId = trigStd.text.match(/window\\.__DINOU_BUILD_ID__\\s*=\\s*"(\\d+)"/)?.[1];
+assert.ok(trigStdBuildId, "SWR HTML must include causal __DINOU_BUILD_ID__");
 const trigPpr = await req("/bailout-ppr", { "x-live-probe": "trig", "x-hole-hdr": "h-trig" });
 assert.equal(trigPpr.status, 200);
 await flushBg();
+
+// Causal hydration check: an in-flight tab still hydrating trigStd with ?____build_id____=T_prev
+// MUST receive the preserved page._old.rsc snapshot matching trigStdVal instead of live dynamic 502 (zero React #418!)
+const causalOldBailoutRsc = await req(
+  "/____rsc_page_static____/bailout-std?____build_id____=" + trigStdBuildId,
+  { "x-live-probe": "should-not-leak" }
+);
+assert.equal(causalOldBailoutRsc.status, 200);
+assert.ok(
+  causalOldBailoutRsc.text.includes(trigStdVal) && !causalOldBailoutRsc.text.includes("502:"),
+  "Causal hydration fetch after mid-ISR bailout MUST serve preserved page._old.rsc (" + trigStdVal + "), got: " + causalOldBailoutRsc.text
+);
 
 // Stale index.html / shell.html / page.rsc MUST be evicted from storage AND metadata.json marked dynamic:true!
 assert.ok(!fs.existsSync(path.join(dist2, "bailout-std/index.html")), "bailout-std/index.html must be purged on mid-ISR bailout!");

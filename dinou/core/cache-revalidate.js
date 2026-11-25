@@ -1010,15 +1010,27 @@ async function revalidatePage(reqPath, internalOptions = {}) {
       }
       if (revalDynamicState.value) {
         markRouteDynamicInMap(reqPathWithSlash, cleanPath, true);
+        // Preserve causal _old snapshots BEFORE evicting current static artifacts so any
+        // in-flight browser tab still hydrating the SWR HTML (with ?____build_id____=T_prev)
+        // receives matching page._old.rsc / shell.page._old.json with zero React #418!
+        try {
+          if (cached && cached.content) {
+            await storage.set(oldHtmlKey, cached.content);
+          }
+          if (existingPageRsc && existingPageRsc.content) {
+            await storage.set(oldRscKey, existingPageRsc.content);
+          }
+          const prevShellPage = await readEdgeStorageOrAsset(storage, shellPageKey);
+          if (prevShellPage && prevShellPage.content) {
+            await storage.set(shellPageOldKey, prevShellPage.content);
+          }
+        } catch (e) {}
         const bailoutKeysToEvict = [
           htmlKey,
           shellHtmlKey,
-          oldHtmlKey,
           rscKey,
           shellRscKey,
           shellPageKey,
-          shellPageOldKey,
-          oldRscKey,
           legacyRscKey,
         ];
         if (cleanPathKey) {
@@ -1033,7 +1045,7 @@ async function revalidatePage(reqPath, internalOptions = {}) {
             JSON.stringify({
               ...currentMeta,
               dynamic: true,
-              generatedAt: Date.now(),
+              generatedAt: nextMonotonicGenTime(prevGenTime),
             })
           );
         } catch (e) {}
@@ -1742,13 +1754,22 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
         return false;
       }
       if (revalDynamicState.value) {
+        // Preserve causal layout _old snapshots BEFORE evicting current layout artifacts
+        // so in-flight tabs hydrating T_prev receive matching layout._old.rsc with zero #418!
+        try {
+          if (cached && cached.content) {
+            await storage.set(layoutOldRscKey, cached.content);
+          }
+          const prevShellLayout = await readEdgeStorageOrAsset(storage, shellLayoutKey);
+          if (prevShellLayout && prevShellLayout.content) {
+            await storage.set(shellLayoutOldKey, prevShellLayout.content);
+          }
+        } catch (e) {}
         await Promise.all(
           [
             layoutRscKey,
-            layoutOldRscKey,
             shellLayoutKey,
             shellLayoutOwnKey,
-            shellLayoutOldKey,
           ].map((k) => Promise.resolve(storage.delete(k)).catch(() => {}))
         );
         try {
@@ -1757,7 +1778,7 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
             JSON.stringify({
               ...currentMeta,
               dynamic: true,
-              generatedAt: Date.now(),
+              generatedAt: nextMonotonicGenTime(prevGenTime),
             })
           );
         } catch (e) {}

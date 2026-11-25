@@ -22385,10 +22385,17 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       context,
     }) => {
       test.setTimeout(90000);
-      const hydrationErrors: string[] = [];
-      const routerWarnings: string[] = [];
-      const pageErrors: string[] = [];
-      attachCubeGuards(page, hydrationErrors, routerWarnings, pageErrors);
+      test.skip(
+        !isProd,
+        "Clock-based TTL 3D Caching Cube matrix requires production mode"
+      );
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      const mutateState = (patch: Record<string, any>) =>
+        page.evaluate((p) => (window as any).__CUBE_3D__.mutate(p), patch);
+      const revalPath = (targetPath: string) =>
+        page.evaluate((p) => (window as any).__CUBE_3D__.revalPath(p), targetPath);
 
       try {
         // 1. Multi-Level Simultaneous Cascade: L1(1s) -> L2(1s) -> L3(3600s) -> Page(3600s)
@@ -22401,17 +22408,12 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         const nextCasL1 = baseCasL1 + 11;
         const nextCasL2 = baseCasL2 + 12;
 
-        await callCubeControl(
-          page,
-          "setState",
-          {},
-          {
-            ttlCasL1Seq: nextCasL1,
-            ttlCasL2Seq: nextCasL2,
-            ttlCasL3Seq: baseCasL3 + 899,
-            ttlCasPageSeq: baseCasPage + 899,
-          }
-        );
+        await mutateState({
+          ttlCasL1Seq: nextCasL1,
+          ttlCasL2Seq: nextCasL2,
+          ttlCasL3Seq: baseCasL3 + 899,
+          ttlCasPageSeq: baseCasPage + 899,
+        });
         await page.waitForTimeout(1200);
         await page.goto("/t-3d-cube/ttl-matrix/cascade/l2/l3");
         await waitCubeReady(page);
@@ -22438,21 +22440,16 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         const nextAsPageShellSlot = baseAsPageShellSlot + 24;
         const nextAsPageHoleSlot = baseAsPageHoleSlot + 25;
 
-        await callCubeControl(
-          page,
-          "setState",
-          {},
-          {
-            ttlAsymL1ShellSeq: baseAsL1Shell + 899,
-            ttlAsymL3ShellSeq: baseAsL3Shell + 899,
-            ttlAsymPageShellSeq: baseAsPageShell + 899,
-            ttlAsymL1SlotSeq: nextAsL1Slot,
-            ttlAsymL2HostSeq: nextAsL2Host,
-            ttlAsymL3SlotSeq: nextAsL3Slot,
-            ttlAsymPageShellSlotSeq: nextAsPageShellSlot,
-            ttlAsymPageHoleSlotSeq: nextAsPageHoleSlot,
-          }
-        );
+        await mutateState({
+          ttlAsymL1ShellSeq: baseAsL1Shell + 899,
+          ttlAsymL3ShellSeq: baseAsL3Shell + 899,
+          ttlAsymPageShellSeq: baseAsPageShell + 899,
+          ttlAsymL1SlotSeq: nextAsL1Slot,
+          ttlAsymL2HostSeq: nextAsL2Host,
+          ttlAsymL3SlotSeq: nextAsL3Slot,
+          ttlAsymPageShellSlotSeq: nextAsPageShellSlot,
+          ttlAsymPageHoleSlotSeq: nextAsPageHoleSlot,
+        });
         await page.waitForTimeout(1200);
         // Trigger SWR across all 4 expired 1s slots (HoleSlot refreshes synchronously; L1/L3/PageShell slots refresh in background SWR)
         await page.goto("/t-3d-cube/ttl-matrix/all-axes-slots/dyn/l3?probe=swr1");
@@ -22500,30 +22497,23 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         const liveVal2 = baseFastL + 42;
 
         // live (revalidate=0) updates immediately without waiting
-        await callCubeControl(
-          page,
-          "setState",
-          {},
-          {
-            ttlDynFnLiveLSeq: liveVal1,
-            ttlDynFnLivePSeq: liveVal1 + 1,
-            ttlDynFnFastLSeq: nextFastL,
-            ttlDynFnFastPSeq: nextFastP,
-            ttlDynFnSlowLSeq: baseSlowL + 899,
-            ttlDynFnSlowPSeq: baseSlowP + 899,
-          }
-        );
+        await mutateState({
+          ttlDynFnLiveLSeq: liveVal1,
+          ttlDynFnLivePSeq: liveVal1 + 1,
+          ttlDynFnFastLSeq: nextFastL,
+          ttlDynFnFastPSeq: nextFastP,
+          ttlDynFnSlowLSeq: baseSlowL + 899,
+          ttlDynFnSlowPSeq: baseSlowP + 899,
+        });
         await page.goto("/t-3d-cube/ttl-matrix/dynamic-fn/live");
         await waitCubeReady(page);
         await expect(page.locator("#ttl-dynfn-l-seq")).toHaveText(String(liveVal1));
         await expect(page.locator("#ttl-dynfn-p-seq")).toHaveText(String(liveVal1 + 1));
 
-        await callCubeControl(
-          page,
-          "setState",
-          {},
-          { ttlDynFnLiveLSeq: liveVal2, ttlDynFnLivePSeq: liveVal2 + 1 }
-        );
+        await mutateState({
+          ttlDynFnLiveLSeq: liveVal2,
+          ttlDynFnLivePSeq: liveVal2 + 1,
+        });
         await page.goto("/t-3d-cube/ttl-matrix/dynamic-fn/live");
         await waitCubeReady(page);
         await expect(page.locator("#ttl-dynfn-l-seq")).toHaveText(String(liveVal2));
@@ -22550,29 +22540,17 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         await expect(page.locator("#ttl-dynfn-p-seq")).toHaveText(String(baseSlowP));
 
         // 4. Mid-ISR Dynamic Bailout: revalidate=1 static page -> starts reading cookie mid-ISR
-        await callCubeControl(
-          page,
-          "setState",
-          {},
-          { ttlTriggerBailout: false, ttlBailoutSeq: 700 }
-        );
-        // Visit once while ttlTriggerBailout=false so the route is cached cleanly as static (idempotent across browsers!)
+        await mutateState({ ttlTriggerBailout: false, ttlBailoutSeq: 700 });
         await page.goto("/t-3d-cube/ttl-matrix/mid-isr-bailout");
         await waitCubeReady(page);
-        // Wait if previous browser had left stale 1s cache, then revalidatePath to guarantee fresh static baseline
-        await callCubeControl(page, "revalidatePath", { path: "/t-3d-cube/ttl-matrix/mid-isr-bailout" });
+        await revalPath("/t-3d-cube/ttl-matrix/mid-isr-bailout");
         await page.goto("/t-3d-cube/ttl-matrix/mid-isr-bailout");
         await waitCubeReady(page);
         await expect(page.locator("#ttl-bailout-mode")).toHaveText("static");
         await expect(page.locator("#ttl-bailout-val")).toHaveText("700:static");
 
         // Flip ttlTriggerBailout=true and wait >1.15s for 1s TTL to expire
-        await callCubeControl(
-          page,
-          "setState",
-          {},
-          { ttlTriggerBailout: true, ttlBailoutSeq: 701 }
-        );
+        await mutateState({ ttlTriggerBailout: true, ttlBailoutSeq: 701 });
         await page.waitForTimeout(1200);
         // Set cookie ttl_probe=alpha and trigger ISR bailout
         await context.addCookies([
@@ -22607,12 +22585,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         expect(pageErrors).toEqual([]);
       } finally {
         // Restore ttlTriggerBailout=false so next browser starts cleanly
-        await callCubeControl(
-          page,
-          "setState",
-          {},
-          { ttlTriggerBailout: false, ttlBailoutSeq: 100 }
-        ).catch(() => {});
+        await mutateState({ ttlTriggerBailout: false, ttlBailoutSeq: 100 }).catch(() => {});
       }
     });
   });
