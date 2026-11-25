@@ -70,22 +70,16 @@ function safeDecode(val) {
   }
 }
 
-async function isDynamicRoute(revalidate, params = {}) {
+async function isDynamicRoute(revalidate, params) {
   if (revalidate === undefined || revalidate === false) return false;
-  const val = typeof revalidate === "function" ? await revalidate(params) : revalidate;
-  return typeof val === "number" && val < 1;
-}
-
-async function isDynamicBeforeExpand(revalidate, getStaticPaths, params = {}) {
-  if (revalidate === undefined || revalidate === false) return false;
-  if (typeof revalidate === "number") return revalidate < 1;
   if (typeof revalidate === "function") {
-    // When getStaticPaths is defined on a dynamic segment, defer per-param evaluation
-    // of revalidate(params) until each concrete pathItem is expanded.
-    if (getStaticPaths) return false;
-    return await isDynamicRoute(revalidate, params);
+    // When called without concrete params before getStaticPaths expansion,
+    // defer per-param revalidate(params) evaluation until concrete pathItems are expanded.
+    if (params === undefined) return false;
+    const val = await revalidate(params);
+    return typeof val === "number" && val < 1;
   }
-  return false;
+  return typeof revalidate === "number" && revalidate < 1;
 }
 
 
@@ -217,7 +211,7 @@ async function buildStaticPages(onProgress = null) {
           );
           const hasLocalLayout =
             layoutPath && path.dirname(layoutPath) === dynamicPath;
-          if ((isLocalPage || hasLocalLayout) && !(await isDynamicBeforeExpand(revalidate, getStaticPaths, params))) {
+          if ((isLocalPage || hasLocalLayout) && !(await isDynamicRoute(revalidate))) {
             if (process.env.DINOU_DEBUG) {
               console.log(
                 `Found optional catch-all route: ${segments.join("/") ?? ""
@@ -388,7 +382,7 @@ async function buildStaticPages(onProgress = null) {
           );
           const hasLocalLayout =
             layoutPath && path.dirname(layoutPath) === dynamicPath;
-          if ((isLocalPage || hasLocalLayout) && !(await isDynamicBeforeExpand(revalidate, getStaticPaths, params))) {
+          if ((isLocalPage || hasLocalLayout) && !(await isDynamicRoute(revalidate))) {
             if (process.env.DINOU_DEBUG) {
               console.log(
                 `Found catch-all route: ${segments.join("/") ?? ""
@@ -525,7 +519,7 @@ async function buildStaticPages(onProgress = null) {
           );
           const hasLocalLayout =
             layoutPath && path.dirname(layoutPath) === dynamicPath;
-          if ((isLocalPage || hasLocalLayout) && !(await isDynamicBeforeExpand(revalidate, getStaticPaths, params))) {
+          if ((isLocalPage || hasLocalLayout) && !(await isDynamicRoute(revalidate))) {
             if (process.env.DINOU_DEBUG) {
               console.log(
                 `Found optional dynamic route: ${segments.join("/") ?? ""
@@ -678,7 +672,7 @@ async function buildStaticPages(onProgress = null) {
           );
           const hasLocalLayout =
             layoutPath && path.dirname(layoutPath) === dynamicPath;
-          if ((isLocalPage || hasLocalLayout) && !(await isDynamicBeforeExpand(revalidate, getStaticPaths, params))) {
+          if ((isLocalPage || hasLocalLayout) && !(await isDynamicRoute(revalidate))) {
             if (process.env.DINOU_DEBUG) {
               console.log(
                 `Found dynamic route: ${segments.join("/") ?? ""}/[${paramName}]`,
@@ -804,7 +798,7 @@ async function buildStaticPages(onProgress = null) {
             }
             const isLocalPage =
               pagePath && path.dirname(pagePath) === dynamicPath;
-            if (isLocalPage && !(await isDynamicBeforeExpand(revalidate, getStaticPaths, params))) {
+            if (isLocalPage && !(await isDynamicRoute(revalidate, getStaticPaths ? undefined : params))) {
               try {
                 if (getStaticPaths) {
                   const paths = await (typeof getStaticPaths === "function"

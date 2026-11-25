@@ -757,7 +757,6 @@ async function revalidatePage(reqPath, internalOptions = {}) {
         },
         env: activeEnv,
         platformContext: outerCtx?.platformContext || { env: activeEnv },
-        _markDynamic: markRevalDynamic,
         _isStaticHtmlRender: true,
         _hasRedirected: false,
       };
@@ -1010,9 +1009,11 @@ async function revalidatePage(reqPath, internalOptions = {}) {
       }
       if (revalDynamicState.value) {
         markRouteDynamicInMap(reqPathWithSlash, cleanPath, true);
-        // Preserve causal _old snapshots BEFORE evicting current static artifacts so any
-        // in-flight browser tab still hydrating the SWR HTML (with ?____build_id____=T_prev)
-        // receives matching page._old.rsc / shell.page._old.json with zero React #418!
+        // Preserve causal _old snapshots AND keep physical index.html intact for concurrency safety
+        // (in-flight file streams & Hybrid Static/Dynamic switching). Persisting metadata.json with
+        // dynamic: true immediately directs all pods (warm & cold) on Direct SSR, Step 2b PPR, and
+        // /____rsc_page____ to serve live dynamic SSR while in-flight tabs hydrating ?____build_id____=T_prev
+        // receive matching page._old.rsc / shell.page._old.json with zero React #418!
         try {
           if (cached && cached.content) {
             await storage.set(oldHtmlKey, cached.content);
@@ -1026,16 +1027,12 @@ async function revalidatePage(reqPath, internalOptions = {}) {
           }
         } catch (e) {}
         const bailoutKeysToEvict = [
-          htmlKey,
           shellHtmlKey,
           rscKey,
           shellRscKey,
           shellPageKey,
           legacyRscKey,
         ];
-        if (cleanPathKey) {
-          bailoutKeysToEvict.push(cleanPathKey);
-        }
         await Promise.all(
           bailoutKeysToEvict.map((k) => Promise.resolve(storage.delete(k)).catch(() => {}))
         );
@@ -1486,7 +1483,6 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
           },
           env: activeEnv,
           platformContext: outerCtx?.platformContext || { env: activeEnv },
-          _markDynamic: markRevalDynamic,
           _isStaticHtmlRender: true,
           _hasRedirected: false,
         };

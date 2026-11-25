@@ -2735,12 +2735,12 @@ assert.ok(
   "Causal hydration fetch after mid-ISR bailout MUST serve preserved page._old.rsc (" + trigStdVal + "), got: " + causalOldBailoutRsc.text
 );
 
-// Stale index.html / shell.html / page.rsc MUST be evicted from storage AND metadata.json marked dynamic:true!
-assert.ok(!fs.existsSync(path.join(dist2, "bailout-std/index.html")), "bailout-std/index.html must be purged on mid-ISR bailout!");
+// Physical index.html is preserved for concurrency safety while metadata.json is marked dynamic:true
+// and stale RSC/PPR shell artifacts are evicted so both warm and cold pods serve live dynamic SSR!
+assert.ok(fs.existsSync(path.join(dist2, "bailout-std/index.html")), "bailout-std/index.html must be preserved for concurrency safety!");
 assert.ok(!fs.existsSync(path.join(dist2, "bailout-std/page.rsc")), "bailout-std/page.rsc must be purged on mid-ISR bailout!");
 assert.equal(JSON.parse(fs.readFileSync(path.join(dist2, "bailout-std/metadata.json"), "utf8")).dynamic, true);
 
-assert.ok(!fs.existsSync(path.join(dist2, "bailout-ppr/index.html")), "bailout-ppr/index.html must be purged on mid-ISR bailout!");
 assert.ok(!fs.existsSync(path.join(dist2, "bailout-ppr/shell.html")), "bailout-ppr/shell.html must be purged on mid-ISR bailout!");
 assert.ok(!fs.existsSync(path.join(dist2, "bailout-ppr/shell.page.json")), "bailout-ppr/shell.page.json must be purged on mid-ISR bailout!");
 assert.equal(JSON.parse(fs.readFileSync(path.join(dist2, "bailout-ppr/metadata.json"), "utf8")).dynamic, true);
