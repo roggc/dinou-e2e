@@ -70,10 +70,22 @@ function safeDecode(val) {
   }
 }
 
-async function isDynamicRoute(revalidate) {
+async function isDynamicRoute(revalidate, params = {}) {
   if (revalidate === undefined || revalidate === false) return false;
-  const val = typeof revalidate === "function" ? await revalidate() : revalidate;
+  const val = typeof revalidate === "function" ? await revalidate(params) : revalidate;
   return typeof val === "number" && val < 1;
+}
+
+async function isDynamicBeforeExpand(revalidate, getStaticPaths, params = {}) {
+  if (revalidate === undefined || revalidate === false) return false;
+  if (typeof revalidate === "number") return revalidate < 1;
+  if (typeof revalidate === "function") {
+    // When getStaticPaths is defined on a dynamic segment, defer per-param evaluation
+    // of revalidate(params) until each concrete pathItem is expanded.
+    if (getStaticPaths) return false;
+    return await isDynamicRoute(revalidate, params);
+  }
+  return false;
 }
 
 
@@ -205,7 +217,7 @@ async function buildStaticPages(onProgress = null) {
           );
           const hasLocalLayout =
             layoutPath && path.dirname(layoutPath) === dynamicPath;
-          if ((isLocalPage || hasLocalLayout) && !(await isDynamicRoute(revalidate))) {
+          if ((isLocalPage || hasLocalLayout) && !(await isDynamicBeforeExpand(revalidate, getStaticPaths, params))) {
             if (process.env.DINOU_DEBUG) {
               console.log(
                 `Found optional catch-all route: ${segments.join("/") ?? ""
@@ -376,7 +388,7 @@ async function buildStaticPages(onProgress = null) {
           );
           const hasLocalLayout =
             layoutPath && path.dirname(layoutPath) === dynamicPath;
-          if ((isLocalPage || hasLocalLayout) && !(await isDynamicRoute(revalidate))) {
+          if ((isLocalPage || hasLocalLayout) && !(await isDynamicBeforeExpand(revalidate, getStaticPaths, params))) {
             if (process.env.DINOU_DEBUG) {
               console.log(
                 `Found catch-all route: ${segments.join("/") ?? ""
@@ -513,7 +525,7 @@ async function buildStaticPages(onProgress = null) {
           );
           const hasLocalLayout =
             layoutPath && path.dirname(layoutPath) === dynamicPath;
-          if ((isLocalPage || hasLocalLayout) && !(await isDynamicRoute(revalidate))) {
+          if ((isLocalPage || hasLocalLayout) && !(await isDynamicBeforeExpand(revalidate, getStaticPaths, params))) {
             if (process.env.DINOU_DEBUG) {
               console.log(
                 `Found optional dynamic route: ${segments.join("/") ?? ""
@@ -666,7 +678,7 @@ async function buildStaticPages(onProgress = null) {
           );
           const hasLocalLayout =
             layoutPath && path.dirname(layoutPath) === dynamicPath;
-          if ((isLocalPage || hasLocalLayout) && !(await isDynamicRoute(revalidate))) {
+          if ((isLocalPage || hasLocalLayout) && !(await isDynamicBeforeExpand(revalidate, getStaticPaths, params))) {
             if (process.env.DINOU_DEBUG) {
               console.log(
                 `Found dynamic route: ${segments.join("/") ?? ""}/[${paramName}]`,
@@ -792,7 +804,7 @@ async function buildStaticPages(onProgress = null) {
             }
             const isLocalPage =
               pagePath && path.dirname(pagePath) === dynamicPath;
-            if (isLocalPage && !(await isDynamicRoute(revalidate))) {
+            if (isLocalPage && !(await isDynamicBeforeExpand(revalidate, getStaticPaths, params))) {
               try {
                 if (getStaticPaths) {
                   const paths = await (typeof getStaticPaths === "function"
@@ -919,7 +931,8 @@ async function buildStaticPages(onProgress = null) {
     const { isRoutePpr: isPpr, pageEffectivePpr, layoutPprMap } =
       await resolveBuildPprForRoute(segments, pagePath, pageFunctionsPath, srcFolder);
 
-    if (pagePath && (!(await isDynamicRoute(revalidate)) || isPpr) && !doNotPushAtEnd) {
+    const isPageDynamicForParams = pagePath ? await isDynamicRoute(revalidate, dParams) : false;
+    if (pagePath && !doNotPushAtEnd) {
       try {
         const activeLayoutsForPage = getActiveLayoutChain(segments, {}, srcFolder);
         for (const entry of activeLayoutsForPage) {
@@ -940,6 +953,9 @@ async function buildStaticPages(onProgress = null) {
           }
         }
       } catch (e) {}
+    }
+
+    if (pagePath && !isPageDynamicForParams && !doNotPushAtEnd) {
       pages.push({
         path: currentPath,
         segments,
@@ -1352,7 +1368,7 @@ async function buildStaticPages(onProgress = null) {
           };
 
       const resolvedRevalidate =
-        typeof revalidate === "function" ? await revalidate() : revalidate;
+        typeof revalidate === "function" ? await revalidate(params) : revalidate;
       const effectiveIsPpr = layoutBailedOut
         ? Boolean(pageEffectivePpr)
         : Boolean(pageIsPpr);
@@ -1557,7 +1573,7 @@ async function buildStaticPage(reqPath, isDynamic = null) {
           const defMod = pageFunctionsModule.default?.default ? pageFunctionsModule.default.default : pageFunctionsModule.default;
           const getProps = pageFunctionsModule.getProps || defMod?.getProps;
           revalidate = pageFunctionsModule.revalidate ?? defMod?.revalidate;
-          if (await isDynamicRoute(revalidate)) {
+          if (await isDynamicRoute(revalidate, dParams)) {
             markAsDynamic();
             if (isDynamic) isDynamic.value = true;
             return null;
@@ -1747,7 +1763,7 @@ async function buildStaticPage(reqPath, isDynamic = null) {
     const holes = pageIsPpr ? capturedHoles : [];
     staticRoutes.add(reqPath);
     staticMetadata.set(reqPath, {
-      revalidate: typeof revalidate === "function" ? await revalidate() : revalidate,
+      revalidate: typeof revalidate === "function" ? await revalidate(dynamicParams) : revalidate,
       effects: sideEffects,
       tags: cacheTags,
       ppr: pageIsPpr,

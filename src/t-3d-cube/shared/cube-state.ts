@@ -409,6 +409,28 @@ export interface Cube3DState {
   rsmInnerSeq: number;
   rsmNoCacheSeq: number;
   rsmPageBShellSeq: number;
+
+  // Phase 6 — Stage 5 — Check #83: Clock-Based TTL (revalidate = N) Exhaustive Matrix
+  ttlCasL1Seq: number;
+  ttlCasL2Seq: number;
+  ttlCasL3Seq: number;
+  ttlCasPageSeq: number;
+  ttlAsymL1ShellSeq: number;
+  ttlAsymL1SlotSeq: number;
+  ttlAsymL2HostSeq: number;
+  ttlAsymL3ShellSeq: number;
+  ttlAsymL3SlotSeq: number;
+  ttlAsymPageShellSeq: number;
+  ttlAsymPageShellSlotSeq: number;
+  ttlAsymPageHoleSlotSeq: number;
+  ttlDynFnFastLSeq: number;
+  ttlDynFnFastPSeq: number;
+  ttlDynFnSlowLSeq: number;
+  ttlDynFnSlowPSeq: number;
+  ttlDynFnLiveLSeq: number;
+  ttlDynFnLivePSeq: number;
+  ttlBailoutSeq: number;
+  ttlTriggerBailout: boolean;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -784,6 +806,27 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   rsmInnerSeq: 100,
   rsmNoCacheSeq: 100,
   rsmPageBShellSeq: 100,
+
+  ttlCasL1Seq: 100,
+  ttlCasL2Seq: 100,
+  ttlCasL3Seq: 100,
+  ttlCasPageSeq: 100,
+  ttlAsymL1ShellSeq: 100,
+  ttlAsymL1SlotSeq: 100,
+  ttlAsymL2HostSeq: 100,
+  ttlAsymL3ShellSeq: 100,
+  ttlAsymL3SlotSeq: 100,
+  ttlAsymPageShellSeq: 100,
+  ttlAsymPageShellSlotSeq: 100,
+  ttlAsymPageHoleSlotSeq: 100,
+  ttlDynFnFastLSeq: 100,
+  ttlDynFnFastPSeq: 100,
+  ttlDynFnSlowLSeq: 100,
+  ttlDynFnSlowPSeq: 100,
+  ttlDynFnLiveLSeq: 100,
+  ttlDynFnLivePSeq: 100,
+  ttlBailoutSeq: 100,
+  ttlTriggerBailout: false,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {

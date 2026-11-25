@@ -358,7 +358,7 @@ async function resolveRouteConfigForRevalidate(
           : defaultExport?.revalidate;
       const pfRevalidate =
         typeof rawRevalidate === "function"
-          ? await rawRevalidate()
+          ? await rawRevalidate(dParams)
           : rawRevalidate;
       if (revalidate === undefined) {
         revalidate = pfRevalidate;
@@ -757,6 +757,7 @@ async function revalidatePage(reqPath, internalOptions = {}) {
         },
         env: activeEnv,
         platformContext: outerCtx?.platformContext || { env: activeEnv },
+        _markDynamic: markRevalDynamic,
         _isStaticHtmlRender: true,
         _hasRedirected: false,
       };
@@ -806,6 +807,10 @@ async function revalidatePage(reqPath, internalOptions = {}) {
                 );
                 pageHoles = isPagePpr ? getRegisteredHoles() : [];
               });
+              if (revalDynamicState.value) {
+                resolvedPageJsx = null;
+                return;
+              }
               if (resolvedPageJsx && !isNotFound.value) {
                 try {
                   pendingShellPageJson = serializeJSX(resolvedPageJsx);
@@ -1003,8 +1008,35 @@ async function revalidatePage(reqPath, internalOptions = {}) {
       if (revalContext._hasRedirected) {
         return;
       }
-      if (revalDynamicState.value && !isRoutePpr) {
+      if (revalDynamicState.value) {
         markRouteDynamicInMap(reqPathWithSlash, cleanPath, true);
+        const bailoutKeysToEvict = [
+          htmlKey,
+          shellHtmlKey,
+          oldHtmlKey,
+          rscKey,
+          shellRscKey,
+          shellPageKey,
+          shellPageOldKey,
+          oldRscKey,
+          legacyRscKey,
+        ];
+        if (cleanPathKey) {
+          bailoutKeysToEvict.push(cleanPathKey);
+        }
+        await Promise.all(
+          bailoutKeysToEvict.map((k) => Promise.resolve(storage.delete(k)).catch(() => {}))
+        );
+        try {
+          await storage.set(
+            metaKey,
+            JSON.stringify({
+              ...currentMeta,
+              dynamic: true,
+              generatedAt: Date.now(),
+            })
+          );
+        } catch (e) {}
         console.log(`[ISR] Bailout detected for ${cleanPath}. Switching to Dynamic.`);
         return;
       }
@@ -1442,6 +1474,7 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
           },
           env: activeEnv,
           platformContext: outerCtx?.platformContext || { env: activeEnv },
+          _markDynamic: markRevalDynamic,
           _isStaticHtmlRender: true,
           _hasRedirected: false,
         };
@@ -1709,17 +1742,25 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
         return false;
       }
       if (revalDynamicState.value) {
-        if (!hasCachedMeta) {
-          try {
-            await storage.set(
-              layoutMetaKey,
-              JSON.stringify({
-                ...currentMeta,
-                dynamic: true,
-              })
-            );
-          } catch (e) {}
-        }
+        await Promise.all(
+          [
+            layoutRscKey,
+            layoutOldRscKey,
+            shellLayoutKey,
+            shellLayoutOwnKey,
+            shellLayoutOldKey,
+          ].map((k) => Promise.resolve(storage.delete(k)).catch(() => {}))
+        );
+        try {
+          await storage.set(
+            layoutMetaKey,
+            JSON.stringify({
+              ...currentMeta,
+              dynamic: true,
+              generatedAt: Date.now(),
+            })
+          );
+        } catch (e) {}
         return false;
       }
 

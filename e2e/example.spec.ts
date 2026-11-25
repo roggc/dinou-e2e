@@ -22379,5 +22379,241 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(routerWarnings).toEqual([]);
       expect(pageErrors).toEqual([]);
     });
+
+    test("45. [Phase 6 / Stage 5 / Check #83] Clock-Based TTL (revalidate = N) Live Browser Matrix (Multi-Level Cascade, All-3-Axes 1s Slots Under Asymmetric PPR, Per-Param revalidate(params) & Mid-ISR Dynamic Bailout)", async ({
+      page,
+      context,
+    }) => {
+      test.setTimeout(90000);
+      const hydrationErrors: string[] = [];
+      const routerWarnings: string[] = [];
+      const pageErrors: string[] = [];
+      attachCubeGuards(page, hydrationErrors, routerWarnings, pageErrors);
+
+      try {
+        // 1. Multi-Level Simultaneous Cascade: L1(1s) -> L2(1s) -> L3(3600s) -> Page(3600s)
+        await page.goto("/t-3d-cube/ttl-matrix/cascade/l2/l3");
+        await waitCubeReady(page);
+        const baseCasL1 = Number(await page.locator("#ttl-cas-l1-seq").innerText());
+        const baseCasL2 = Number(await page.locator("#ttl-cas-l2-seq").innerText());
+        const baseCasL3 = Number(await page.locator("#ttl-cas-l3-seq").innerText());
+        const baseCasPage = Number(await page.locator("#ttl-cas-page-seq").innerText());
+        const nextCasL1 = baseCasL1 + 11;
+        const nextCasL2 = baseCasL2 + 12;
+
+        await callCubeControl(
+          page,
+          "setState",
+          {},
+          {
+            ttlCasL1Seq: nextCasL1,
+            ttlCasL2Seq: nextCasL2,
+            ttlCasL3Seq: baseCasL3 + 899,
+            ttlCasPageSeq: baseCasPage + 899,
+          }
+        );
+        await page.waitForTimeout(1200);
+        await page.goto("/t-3d-cube/ttl-matrix/cascade/l2/l3");
+        await waitCubeReady(page);
+        await expect(page.locator("#ttl-cas-l1-seq")).toHaveText(String(nextCasL1));
+        await expect(page.locator("#ttl-cas-l2-seq")).toHaveText(String(nextCasL2));
+        await expect(page.locator("#ttl-cas-l3-seq")).toHaveText(String(baseCasL3));
+        await expect(page.locator("#ttl-cas-page-seq")).toHaveText(String(baseCasPage));
+
+        // 2. All-3-Axes Simultaneous 1s Slots Under Asymmetric PPR
+        await page.goto("/t-3d-cube/ttl-matrix/all-axes-slots/dyn/l3?probe=warm");
+        await waitCubeReady(page);
+        const baseAsL1Shell = Number(await page.locator("#ttl-asym-l1-shell").innerText());
+        const baseAsL1Slot = Number(await page.locator("#ttl-asym-l1-slot").innerText());
+        const baseAsL2Host = Number(await page.locator("#ttl-asym-l2-host").innerText());
+        const baseAsL3Shell = Number(await page.locator("#ttl-asym-l3-shell").innerText());
+        const baseAsL3Slot = Number(await page.locator("#ttl-asym-l3-slot").innerText());
+        const baseAsPageShell = Number(await page.locator("#ttl-asym-page-shell").innerText());
+        const baseAsPageShellSlot = Number(await page.locator("#ttl-asym-page-shell-slot").innerText());
+        const baseAsPageHoleSlot = Number(await page.locator("#ttl-asym-page-hole-slot").innerText());
+
+        const nextAsL1Slot = baseAsL1Slot + 21;
+        const nextAsL2Host = baseAsL2Host + 22;
+        const nextAsL3Slot = baseAsL3Slot + 23;
+        const nextAsPageShellSlot = baseAsPageShellSlot + 24;
+        const nextAsPageHoleSlot = baseAsPageHoleSlot + 25;
+
+        await callCubeControl(
+          page,
+          "setState",
+          {},
+          {
+            ttlAsymL1ShellSeq: baseAsL1Shell + 899,
+            ttlAsymL3ShellSeq: baseAsL3Shell + 899,
+            ttlAsymPageShellSeq: baseAsPageShell + 899,
+            ttlAsymL1SlotSeq: nextAsL1Slot,
+            ttlAsymL2HostSeq: nextAsL2Host,
+            ttlAsymL3SlotSeq: nextAsL3Slot,
+            ttlAsymPageShellSlotSeq: nextAsPageShellSlot,
+            ttlAsymPageHoleSlotSeq: nextAsPageHoleSlot,
+          }
+        );
+        await page.waitForTimeout(1200);
+        // Trigger SWR across all 4 expired 1s slots (HoleSlot refreshes synchronously; L1/L3/PageShell slots refresh in background SWR)
+        await page.goto("/t-3d-cube/ttl-matrix/all-axes-slots/dyn/l3?probe=swr1");
+        await waitCubeReady(page);
+        await expect(page.locator("#ttl-asym-l2-host")).toHaveText(String(nextAsL2Host));
+        await expect(page.locator("#ttl-asym-page-hole-slot")).toHaveText(String(nextAsPageHoleSlot));
+        await expect(page.locator("#ttl-asym-l1-shell")).toHaveText(String(baseAsL1Shell));
+        await expect(page.locator("#ttl-asym-l3-shell")).toHaveText(String(baseAsL3Shell));
+        await expect(page.locator("#ttl-asym-page-shell")).toHaveText(String(baseAsPageShell));
+
+        // Poll second load until background SWR commits fresh L1/L3/PageShell 1s slots while shells stay 100% frozen!
+        await expect
+          .poll(
+            async () => {
+              await page.goto("/t-3d-cube/ttl-matrix/all-axes-slots/dyn/l3?probe=swr2");
+              await waitCubeReady(page);
+              return [
+                await page.locator("#ttl-asym-l1-slot").innerText(),
+                await page.locator("#ttl-asym-l3-slot").innerText(),
+                await page.locator("#ttl-asym-page-shell-slot").innerText(),
+                await page.locator("#ttl-asym-page-hole-slot").innerText(),
+              ].join(",");
+            },
+            { timeout: 10000, intervals: [300, 500, 800] }
+          )
+          .toBe(`${nextAsL1Slot},${nextAsL3Slot},${nextAsPageShellSlot},${nextAsPageHoleSlot}`);
+        await expect(page.locator("#ttl-asym-l1-shell")).toHaveText(String(baseAsL1Shell));
+        await expect(page.locator("#ttl-asym-l3-shell")).toHaveText(String(baseAsL3Shell));
+        await expect(page.locator("#ttl-asym-page-shell")).toHaveText(String(baseAsPageShell));
+
+        // 3. Per-Param Dynamic revalidate(params): fast (1s), slow (3600s), live (0)
+        await page.goto("/t-3d-cube/ttl-matrix/dynamic-fn/fast");
+        await waitCubeReady(page);
+        const baseFastL = Number(await page.locator("#ttl-dynfn-l-seq").innerText());
+        const baseFastP = Number(await page.locator("#ttl-dynfn-p-seq").innerText());
+
+        await page.goto("/t-3d-cube/ttl-matrix/dynamic-fn/slow");
+        await waitCubeReady(page);
+        const baseSlowL = Number(await page.locator("#ttl-dynfn-l-seq").innerText());
+        const baseSlowP = Number(await page.locator("#ttl-dynfn-p-seq").innerText());
+
+        const nextFastL = baseFastL + 31;
+        const nextFastP = baseFastP + 32;
+        const liveVal1 = baseFastL + 41;
+        const liveVal2 = baseFastL + 42;
+
+        // live (revalidate=0) updates immediately without waiting
+        await callCubeControl(
+          page,
+          "setState",
+          {},
+          {
+            ttlDynFnLiveLSeq: liveVal1,
+            ttlDynFnLivePSeq: liveVal1 + 1,
+            ttlDynFnFastLSeq: nextFastL,
+            ttlDynFnFastPSeq: nextFastP,
+            ttlDynFnSlowLSeq: baseSlowL + 899,
+            ttlDynFnSlowPSeq: baseSlowP + 899,
+          }
+        );
+        await page.goto("/t-3d-cube/ttl-matrix/dynamic-fn/live");
+        await waitCubeReady(page);
+        await expect(page.locator("#ttl-dynfn-l-seq")).toHaveText(String(liveVal1));
+        await expect(page.locator("#ttl-dynfn-p-seq")).toHaveText(String(liveVal1 + 1));
+
+        await callCubeControl(
+          page,
+          "setState",
+          {},
+          { ttlDynFnLiveLSeq: liveVal2, ttlDynFnLivePSeq: liveVal2 + 1 }
+        );
+        await page.goto("/t-3d-cube/ttl-matrix/dynamic-fn/live");
+        await waitCubeReady(page);
+        await expect(page.locator("#ttl-dynfn-l-seq")).toHaveText(String(liveVal2));
+        await expect(page.locator("#ttl-dynfn-p-seq")).toHaveText(String(liveVal2 + 1));
+
+        // After 1.2s, fast expires & refreshes while slow stays frozen!
+        await page.waitForTimeout(1200);
+        await page.goto("/t-3d-cube/ttl-matrix/dynamic-fn/fast");
+        await waitCubeReady(page);
+        await expect
+          .poll(
+            async () => {
+              await page.goto("/t-3d-cube/ttl-matrix/dynamic-fn/fast");
+              await waitCubeReady(page);
+              return `${await page.locator("#ttl-dynfn-l-seq").innerText()},${await page.locator("#ttl-dynfn-p-seq").innerText()}`;
+            },
+            { timeout: 10000, intervals: [300, 500, 800] }
+          )
+          .toBe(`${nextFastL},${nextFastP}`);
+
+        await page.goto("/t-3d-cube/ttl-matrix/dynamic-fn/slow");
+        await waitCubeReady(page);
+        await expect(page.locator("#ttl-dynfn-l-seq")).toHaveText(String(baseSlowL));
+        await expect(page.locator("#ttl-dynfn-p-seq")).toHaveText(String(baseSlowP));
+
+        // 4. Mid-ISR Dynamic Bailout: revalidate=1 static page -> starts reading cookie mid-ISR
+        await callCubeControl(
+          page,
+          "setState",
+          {},
+          { ttlTriggerBailout: false, ttlBailoutSeq: 700 }
+        );
+        // Visit once while ttlTriggerBailout=false so the route is cached cleanly as static (idempotent across browsers!)
+        await page.goto("/t-3d-cube/ttl-matrix/mid-isr-bailout");
+        await waitCubeReady(page);
+        // Wait if previous browser had left stale 1s cache, then revalidatePath to guarantee fresh static baseline
+        await callCubeControl(page, "revalidatePath", { path: "/t-3d-cube/ttl-matrix/mid-isr-bailout" });
+        await page.goto("/t-3d-cube/ttl-matrix/mid-isr-bailout");
+        await waitCubeReady(page);
+        await expect(page.locator("#ttl-bailout-mode")).toHaveText("static");
+        await expect(page.locator("#ttl-bailout-val")).toHaveText("700:static");
+
+        // Flip ttlTriggerBailout=true and wait >1.15s for 1s TTL to expire
+        await callCubeControl(
+          page,
+          "setState",
+          {},
+          { ttlTriggerBailout: true, ttlBailoutSeq: 701 }
+        );
+        await page.waitForTimeout(1200);
+        // Set cookie ttl_probe=alpha and trigger ISR bailout
+        await context.addCookies([
+          { name: "ttl_probe", value: "alpha", url: "http://localhost:3000" },
+        ]);
+        await page.goto("/t-3d-cube/ttl-matrix/mid-isr-bailout");
+        await waitCubeReady(page);
+
+        // Next load must serve live dynamic SSR with cookie=alpha!
+        await expect
+          .poll(
+            async () => {
+              await page.goto("/t-3d-cube/ttl-matrix/mid-isr-bailout");
+              await waitCubeReady(page);
+              return await page.locator("#ttl-bailout-val").innerText();
+            },
+            { timeout: 10000, intervals: [300, 500, 800] }
+          )
+          .toBe("701:alpha");
+        await expect(page.locator("#ttl-bailout-mode")).toHaveText("dynamic");
+
+        // Change cookie immediately to beta -> must reflect 701:beta immediately without caching!
+        await context.addCookies([
+          { name: "ttl_probe", value: "beta", url: "http://localhost:3000" },
+        ]);
+        await page.goto("/t-3d-cube/ttl-matrix/mid-isr-bailout");
+        await waitCubeReady(page);
+        await expect(page.locator("#ttl-bailout-val")).toHaveText("701:beta");
+
+        expect(hydrationErrors).toEqual([]);
+        expect(routerWarnings).toEqual([]);
+        expect(pageErrors).toEqual([]);
+      } finally {
+        // Restore ttlTriggerBailout=false so next browser starts cleanly
+        await callCubeControl(
+          page,
+          "setState",
+          {},
+          { ttlTriggerBailout: false, ttlBailoutSeq: 100 }
+        ).catch(() => {});
+      }
+    });
   });
 });

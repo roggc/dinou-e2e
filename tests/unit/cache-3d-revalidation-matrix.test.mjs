@@ -2162,3 +2162,620 @@ console.log("PHASE6_STAGE4_REFRESH_SLOT_MATRIX_OK");
     removeDirSafe(tmpApp);
   }
 });
+
+// ============================================================================
+// 5. [Phase 6 / Stage 5 / Check #83] Clock-Based TTL (revalidate = N) Exhaustive Matrix
+// ============================================================================
+test("5. [Phase 6 / Stage 5 / Check #83] Clock-Based TTL (revalidate = N) Exhaustive Matrix (Multi-Level Cascade, All-3-Axes 1s Slots Under Asymmetric PPR, Per-Param revalidate(params) Named + Default Export & Mid-ISR Dynamic Bailout)", async () => {
+  const tmpApp = createFixtureDir("p6-s5-ttl-matrix-");
+  try {
+    writeDinouShim(tmpApp);
+    const write = (rel, content) => {
+      const full = path.join(tmpApp, rel);
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, content, "utf8");
+    };
+
+    write("package.json", JSON.stringify({ name: "p6-s5-ttl-matrix", type: "module" }));
+    write(
+      "tsconfig.json",
+      JSON.stringify({
+        compilerOptions: {
+          target: "ES2022",
+          module: "ESNext",
+          moduleResolution: "bundler",
+          jsx: "react-jsx",
+        },
+      })
+    );
+    write(
+      "p6s5-state.json",
+      JSON.stringify({
+        casL1: 100,
+        casL2: 100,
+        casL3: 100,
+        casPage: 100,
+        asymL1Shell: 100,
+        asymL1Slot: 100,
+        asymL2Dyn: 100,
+        asymL3Shell: 100,
+        asymL3Slot: 100,
+        asymPageShell: 100,
+        asymPageShellSlot: 100,
+        asymPageHoleSlot: 100,
+        fnFastL: 100,
+        fnFastP: 100,
+        fnSlowL: 100,
+        fnSlowP: 100,
+        fnLiveL: 100,
+        fnLiveP: 100,
+        defFastL: 100,
+        defFastP: 100,
+        defSlowL: 100,
+        defSlowP: 100,
+        defLiveL: 100,
+        defLiveP: 100,
+        bailStdVal: 100,
+        bailPprVal: 100,
+        bailTrigger: false,
+      })
+    );
+    write("p6s5-events.log", "");
+    write(
+      "src/state.ts",
+      `export function readS() {
+  const fs = process.getBuiltinModule("node:fs");
+  const path = process.getBuiltinModule("node:path");
+  return JSON.parse(fs.readFileSync(path.resolve("p6s5-state.json"), "utf8"));
+}
+export function logEvent(ev: string) {
+  const fs = process.getBuiltinModule("node:fs");
+  const path = process.getBuiltinModule("node:path");
+  fs.appendFileSync(path.resolve("p6s5-events.log"), ev + "\\n", "utf8");
+}
+`
+    );
+    write(
+      "src/layout.tsx",
+      `export default function RootLayout({ children }: { children: any }) {
+  return (<html><head><title>P6S5</title></head><body>{children}</body></html>);
+}
+`
+    );
+    write("src/page.tsx", `export default function Home() { return <main>home</main>; }\n`);
+
+    // 1. Multi-Level Simultaneous Cascade: L1(1s) -> L2(1s) -> L3(3600s) -> Page(3600s)
+    write("src/cascade/layout_functions.ts", `export const revalidate = 1;\n`);
+    write(
+      "src/cascade/layout.tsx",
+      `import { readS, logEvent } from "../state";
+export default function CasL1({ children }: { children: any }) {
+  const v = readS().casL1;
+  logEvent("L1:" + v);
+  return <section id="cas-l1"><span id="cas-l1-v">{v}</span>{children}</section>;
+}
+`
+    );
+    write("src/cascade/l2/layout_functions.ts", `export const revalidate = 1;\n`);
+    write(
+      "src/cascade/l2/layout.tsx",
+      `import { readS, logEvent } from "../../state";
+export default function CasL2({ children }: { children: any }) {
+  const v = readS().casL2;
+  logEvent("L2:" + v);
+  return <section id="cas-l2"><span id="cas-l2-v">{v}</span>{children}</section>;
+}
+`
+    );
+    write("src/cascade/l2/l3/layout_functions.ts", `export const revalidate = 3600;\n`);
+    write(
+      "src/cascade/l2/l3/layout.tsx",
+      `import { readS, logEvent } from "../../../state";
+export default function CasL3({ children }: { children: any }) {
+  const v = readS().casL3;
+  logEvent("L3:" + v);
+  return <section id="cas-l3"><span id="cas-l3-v">{v}</span>{children}</section>;
+}
+`
+    );
+    write("src/cascade/l2/l3/page_functions.ts", `export const revalidate = 3600;\n`);
+    write(
+      "src/cascade/l2/l3/page.tsx",
+      `import { readS, logEvent } from "../../../state";
+export default function CasPage() {
+  const v = readS().casPage;
+  logEvent("PAGE:" + v);
+  return <article id="cas-p"><span id="cas-p-v">{v}</span></article>;
+}
+`
+    );
+
+    // 2. All-3-Axes Simultaneous 1s Slots Under Asymmetric PPR:
+    //    L1(3600s)+Slot(1s) -> L2(Dynamic 0) -> L3(3600s)+Slot(1s) -> Page PPR(3600s)+ShellSlot(1s)+HoleSlot(1s)
+    write("src/asym-slots/layout_functions.ts", `export const revalidate = 3600;\n`);
+    write(
+      "src/asym-slots/layout.tsx",
+      `import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../state";
+export default function AsymL1({ children }: { children: any }) {
+  return (
+    <section id="as-l1">
+      <span id="as-l1-shell">{readS().asymL1Shell}</span>
+      <DinouCacheSlot id="ttl-as-l1-slot" revalidate={1} tags={["ttl-as-l1-slot-tag"]}>
+        {async () => <span id="as-l1-slot">{readS().asymL1Slot}</span>}
+      </DinouCacheSlot>
+      {children}
+    </section>
+  );
+}
+`
+    );
+    write("src/asym-slots/dyn/layout_functions.ts", `export const revalidate = 0;\n`);
+    write(
+      "src/asym-slots/dyn/layout.tsx",
+      `import { readS } from "../../state";
+export default function AsymL2({ children }: { children: any }) {
+  return <section id="as-l2"><span id="as-l2-dyn">{readS().asymL2Dyn}</span>{children}</section>;
+}
+`
+    );
+    write("src/asym-slots/dyn/l3/layout_functions.ts", `export const revalidate = 3600;\n`);
+    write(
+      "src/asym-slots/dyn/l3/layout.tsx",
+      `import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../../../state";
+export default function AsymL3({ children }: { children: any }) {
+  return (
+    <section id="as-l3">
+      <span id="as-l3-shell">{readS().asymL3Shell}</span>
+      <DinouCacheSlot id="ttl-as-l3-slot" revalidate={1} tags={["ttl-as-l3-slot-tag"]}>
+        {async () => <span id="as-l3-slot">{readS().asymL3Slot}</span>}
+      </DinouCacheSlot>
+      {children}
+    </section>
+  );
+}
+`
+    );
+    write("src/asym-slots/dyn/l3/page_functions.ts", `export const ppr = true; export const revalidate = 3600;\n`);
+    write(
+      "src/asym-slots/dyn/l3/page.tsx",
+      `import { Suspense } from "react";
+import { DinouCacheSlot, getContext } from "dinou/server";
+import { readS } from "../../../state";
+
+async function HoleWithSlot() {
+  const probe = String(getContext()?.req?.headers?.["x-hole-probe"] || "h0");
+  return (
+    <div id="as-hole">
+      <span id="as-hole-probe">{probe}</span>
+      <DinouCacheSlot id="ttl-as-hole-slot" revalidate={1} tags={["ttl-as-hole-slot-tag"]}>
+        {async () => <span id="as-hole-slot">{readS().asymPageHoleSlot}</span>}
+      </DinouCacheSlot>
+    </div>
+  );
+}
+
+export default function AsymPage() {
+  return (
+    <article id="as-page">
+      <span id="as-p-shell">{readS().asymPageShell}</span>
+      <DinouCacheSlot id="ttl-as-p-shell-slot" revalidate={1} tags={["ttl-as-p-shell-slot-tag"]}>
+        {async () => <span id="as-p-shell-slot">{readS().asymPageShellSlot}</span>}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>fb-hole</span>}><HoleWithSlot /></Suspense>
+    </article>
+  );
+}
+`
+    );
+
+    // 3a. Per-Param Dynamic revalidate(params) — Named Export Form
+    write(
+      "src/dyn-fn/[id]/layout_functions.ts",
+      `export function getStaticPaths() { return ["fast", "slow", "live"]; }
+export async function revalidate(params?: { id?: string }) {
+  if (params?.id === "live") return 0;
+  if (params?.id === "fast") return 1;
+  return 3600;
+}
+export function getCacheTags(params?: { id?: string }) { return ["fn-l-" + (params?.id || "none")]; }
+`
+    );
+    write(
+      "src/dyn-fn/[id]/layout.tsx",
+      `import { readS } from "../../state";
+export default function FnLayout({ children, params }: { children: any; params?: { id?: string } }) {
+  const s = readS();
+  const id = params?.id || "";
+  const v = id === "fast" ? s.fnFastL : id === "slow" ? s.fnSlowL : s.fnLiveL;
+  return <section id="fn-l"><span id="fn-l-v">{v}</span>{children}</section>;
+}
+`
+    );
+    write(
+      "src/dyn-fn/[id]/page_functions.ts",
+      `export function getStaticPaths() { return ["fast", "slow", "live"]; }
+export async function revalidate(params?: { id?: string }) {
+  if (params?.id === "live") return 0;
+  if (params?.id === "fast") return 1;
+  return 3600;
+}
+export function getCacheTags(params?: { id?: string }) { return ["fn-p-" + (params?.id || "none")]; }
+`
+    );
+    write(
+      "src/dyn-fn/[id]/page.tsx",
+      `import { readS } from "../../state";
+export default function FnPage({ params }: { params?: { id?: string } }) {
+  const s = readS();
+  const id = params?.id || "";
+  const v = id === "fast" ? s.fnFastP : id === "slow" ? s.fnSlowP : s.fnLiveP;
+  return <article id="fn-p"><span id="fn-p-v">{v}</span></article>;
+}
+`
+    );
+
+    // 3b. Per-Param Dynamic revalidate(params) — export default { revalidate, getCacheTags, getStaticPaths } Form
+    write(
+      "src/dyn-def/[id]/layout_functions.ts",
+      `export default {
+  getStaticPaths() { return ["fast", "slow", "live"]; },
+  async revalidate(params?: { id?: string }) {
+    if (params?.id === "live") return 0;
+    if (params?.id === "fast") return 1;
+    return 3600;
+  },
+  getCacheTags(params?: { id?: string }) { return ["def-l-" + (params?.id || "none")]; },
+};
+`
+    );
+    write(
+      "src/dyn-def/[id]/layout.tsx",
+      `import { readS } from "../../state";
+export default function DefLayout({ children, params }: { children: any; params?: { id?: string } }) {
+  const s = readS();
+  const id = params?.id || "";
+  const v = id === "fast" ? s.defFastL : id === "slow" ? s.defSlowL : s.defLiveL;
+  return <section id="def-l"><span id="def-l-v">{v}</span>{children}</section>;
+}
+`
+    );
+    write(
+      "src/dyn-def/[id]/page_functions.ts",
+      `export default {
+  getStaticPaths() { return ["fast", "slow", "live"]; },
+  async revalidate(params?: { id?: string }) {
+    if (params?.id === "live") return 0;
+    if (params?.id === "fast") return 1;
+    return 3600;
+  },
+  getCacheTags(params?: { id?: string }) { return ["def-p-" + (params?.id || "none")]; },
+};
+`
+    );
+    write(
+      "src/dyn-def/[id]/page.tsx",
+      `import { readS } from "../../state";
+export default function DefPage({ params }: { params?: { id?: string } }) {
+  const s = readS();
+  const id = params?.id || "";
+  const v = id === "fast" ? s.defFastP : id === "slow" ? s.defSlowP : s.defLiveP;
+  return <article id="def-p"><span id="def-p-v">{v}</span></article>;
+}
+`
+    );
+
+    // 4. Mid-ISR Dynamic Bailout (Non-PPR & PPR Shell)
+    write("src/bailout-std/page_functions.ts", `export const revalidate = 1;\n`);
+    write(
+      "src/bailout-std/page.tsx",
+      `import { getContext } from "dinou/server";
+import { readS } from "../state";
+export default function BailoutStdPage() {
+  const s = readS();
+  if (s.bailTrigger) {
+    const h = String(getContext()?.req?.headers?.["x-live-probe"] || "none");
+    return <article id="bail-std"><span id="bail-std-v">{s.bailStdVal + ":" + h}</span></article>;
+  }
+  return <article id="bail-std"><span id="bail-std-v">{s.bailStdVal + ":static"}</span></article>;
+}
+`
+    );
+    write("src/bailout-ppr/page_functions.ts", `export const ppr = true; export const revalidate = 1;\n`);
+    write(
+      "src/bailout-ppr/page.tsx",
+      `import { Suspense } from "react";
+import { getContext } from "dinou/server";
+import { readS } from "../state";
+async function BailHole() {
+  const q = String(getContext()?.req?.headers?.["x-hole-hdr"] || "h");
+  return <span id="bail-ppr-hole">{q}</span>;
+}
+export default function BailoutPprPage() {
+  const s = readS();
+  if (s.bailTrigger) {
+    const h = String(getContext()?.req?.headers?.["x-live-probe"] || "none");
+    return (
+      <article id="bail-ppr">
+        <span id="bail-ppr-v">{s.bailPprVal + ":" + h}</span>
+        <Suspense fallback={<span>fb</span>}><BailHole /></Suspense>
+      </article>
+    );
+  }
+  return (
+    <article id="bail-ppr">
+      <span id="bail-ppr-v">{s.bailPprVal + ":static"}</span>
+      <Suspense fallback={<span>fb</span>}><BailHole /></Suspense>
+    </article>
+  );
+}
+`
+    );
+
+    const buildRes = spawnSync(process.execPath, [CLI_PATH, "build:node:esbuild"], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 120_000,
+    });
+    assert.equal(buildRes.status, 0, `Phase 6 Stage 5 build failed:\n${buildRes.stdout}\n${buildRes.stderr}`);
+
+    const verifyScript = path.join(tmpApp, "verify-p6-stage5.mjs");
+    fs.writeFileSync(
+      verifyScript,
+      `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const { FileSystemStorage, setStorageAdapter } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/storage-adapter.js")).href
+      )});
+const dist2 = path.resolve(".dinou/dist2");
+setStorageAdapter(new FileSystemStorage(dist2));
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+globalThis.__DINOU_RENDER_HTML_STREAM__ = ssrMod.renderHtml;
+
+const pendingBg = [];
+const opts = {
+  runtime: "node-bundle",
+  renderHtmlStream: ssrMod.renderHtml,
+  ctx: { waitUntil: (p) => { pendingBg.push(Promise.resolve(p)); } },
+};
+const flushBg = async () => {
+  while (pendingBg.length > 0) {
+    const batch = pendingBg.splice(0, pendingBg.length);
+    await Promise.all(batch);
+  }
+};
+const writeS = (patch) => {
+  const f = path.resolve("p6s5-state.json");
+  const cur = JSON.parse(fs.readFileSync(f, "utf8"));
+  fs.writeFileSync(f, JSON.stringify({ ...cur, ...patch }), "utf8");
+};
+const clearEvents = () => fs.writeFileSync(path.resolve("p6s5-events.log"), "", "utf8");
+const readEvents = () => fs.readFileSync(path.resolve("p6s5-events.log"), "utf8").split(/\\r?\\n/).filter(Boolean);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const req = async (u, headers = {}) => {
+  const r = await rscMod.handleRequest(new Request("http://localhost" + u, { headers }), opts);
+  return { status: r.status, headers: r.headers, text: await r.text() };
+};
+const textById = (html, id) => {
+  const m = html.match(new RegExp('id="' + id + '"[^>]*>([^<]*)<'));
+  return m ? m[1] : null;
+};
+const POISON = "POISON_999";
+
+// Verify SSG artifacts for per-param dynamic revalidate(params):
+// fast & slow MUST be pre-rendered, live (revalidate=0) MUST NOT be pre-rendered!
+assert.ok(fs.existsSync(path.join(dist2, "dyn-fn/fast/index.html")), "dyn-fn/fast must be pre-rendered");
+assert.ok(fs.existsSync(path.join(dist2, "dyn-fn/slow/index.html")), "dyn-fn/slow must be pre-rendered");
+assert.ok(!fs.existsSync(path.join(dist2, "dyn-fn/live/index.html")), "dyn-fn/live (revalidate=0) must NOT be pre-rendered!");
+assert.ok(fs.existsSync(path.join(dist2, "dyn-def/fast/index.html")), "dyn-def/fast must be pre-rendered");
+assert.ok(fs.existsSync(path.join(dist2, "dyn-def/slow/index.html")), "dyn-def/slow must be pre-rendered");
+assert.ok(!fs.existsSync(path.join(dist2, "dyn-def/live/index.html")), "dyn-def/live (revalidate=0) must NOT be pre-rendered!");
+
+// Warm all-3-axes asymmetric route so HoleSlot(1s) caches at T0
+const warmAsym = await req("/asym-slots/dyn/l3", { "x-hole-probe": "w0" });
+assert.equal(warmAsym.status, 200);
+assert.equal(textById(warmAsym.text, "as-l1-slot"), "100");
+assert.equal(textById(warmAsym.text, "as-l3-slot"), "100");
+assert.equal(textById(warmAsym.text, "as-p-shell-slot"), "100");
+assert.equal(textById(warmAsym.text, "as-hole-slot"), "100");
+
+// Verify live routes execute dynamically on EVERY request without waiting
+writeS({ fnLiveL: 301, fnLiveP: 302, defLiveL: 303, defLiveP: 304 });
+const fnLive1 = await req("/dyn-fn/live");
+assert.equal(textById(fnLive1.text, "fn-l-v"), "301");
+assert.equal(textById(fnLive1.text, "fn-p-v"), "302");
+writeS({ fnLiveL: 311, fnLiveP: 312, defLiveL: 313, defLiveP: 314 });
+const fnLive2 = await req("/dyn-fn/live");
+assert.equal(textById(fnLive2.text, "fn-l-v"), "311", "dyn-fn/live layout must NEVER cache!");
+assert.equal(textById(fnLive2.text, "fn-p-v"), "312", "dyn-fn/live page must NEVER cache!");
+const defLive1 = await req("/dyn-def/live");
+assert.equal(textById(defLive1.text, "def-l-v"), "313");
+assert.equal(textById(defLive1.text, "def-p-v"), "314");
+writeS({ defLiveL: 323, defLiveP: 324 });
+const defLive2 = await req("/dyn-def/live");
+assert.equal(textById(defLive2.text, "def-l-v"), "323", "dyn-def/live layout must NEVER cache!");
+assert.equal(textById(defLive2.text, "def-p-v"), "324", "dyn-def/live page must NEVER cache!");
+
+// Record initial timestamps for Cascade L3 & Page (must be preserved!)
+const initCasL3Meta = JSON.parse(fs.readFileSync(path.join(dist2, "cascade/l2/l3/layout.metadata.json"), "utf8"));
+const initCasPageMeta = JSON.parse(fs.readFileSync(path.join(dist2, "cascade/l2/l3/metadata.json"), "utf8"));
+
+// Verify bailout routes serve cached 100 BEFORE TTL expires even after state mutation
+writeS({ bailStdVal: 501, bailPprVal: 501 });
+const preBailStd = await req("/bailout-std");
+assert.equal(textById(preBailStd.text, "bail-std-v"), "100:static", "bailout-std must serve cached 100 before 1s TTL");
+const preBailPpr = await req("/bailout-ppr", { "x-hole-hdr": "h1" });
+assert.equal(textById(preBailPpr.text, "bail-ppr-v"), "100:static", "bailout-ppr must serve cached 100 before 1s TTL");
+
+// ============================================================================
+// Wait 1.15s so ALL 1s TTLs expire simultaneously!
+// ============================================================================
+await sleep(1150);
+
+// ----------------------------------------------------------------------------
+// 1. Multi-Level Simultaneous Cascade: L1(1s) -> L2(1s) -> L3(3600s) -> Page(3600s)
+// ----------------------------------------------------------------------------
+clearEvents();
+writeS({ casL1: 201, casL2: 202, casL3: POISON, casPage: POISON });
+const casHit = await req("/cascade/l2/l3");
+await flushBg();
+assert.equal(casHit.status, 200);
+assert.equal(textById(casHit.text, "cas-l1-v"), "201", "Cascade L1(1s) must refresh to 201");
+assert.equal(textById(casHit.text, "cas-l2-v"), "202", "Cascade L2(1s) must refresh to 202 with fresh L1");
+assert.equal(textById(casHit.text, "cas-l3-v"), "100", "Cascade L3(3600s) MUST stay 100% frozen!");
+assert.equal(textById(casHit.text, "cas-p-v"), "100", "Cascade Page(3600s) MUST stay 100% frozen!");
+assert.ok(!casHit.text.includes(POISON), "Cascade must never execute poisoned L3 or Page!");
+const casEvents = readEvents();
+const idxL1 = casEvents.indexOf("L1:201");
+const idxL2 = casEvents.indexOf("L2:202");
+assert.ok(idxL1 !== -1 && idxL2 !== -1 && idxL1 < idxL2, "L1 MUST regenerate strictly BEFORE L2! Events: " + JSON.stringify(casEvents));
+assert.ok(!casEvents.some((e) => e.startsWith("L3:") || e.startsWith("PAGE:")), "L3 & Page must NOT execute during cascade! Events: " + JSON.stringify(casEvents));
+
+const afterCasL3Meta = JSON.parse(fs.readFileSync(path.join(dist2, "cascade/l2/l3/layout.metadata.json"), "utf8"));
+const afterCasPageMeta = JSON.parse(fs.readFileSync(path.join(dist2, "cascade/l2/l3/metadata.json"), "utf8"));
+assert.equal(afterCasL3Meta.ownGeneratedAt, initCasL3Meta.ownGeneratedAt, "L3.ownGeneratedAt must be preserved on recomposeOnly!");
+assert.equal(afterCasPageMeta.pageGeneratedAt, initCasPageMeta.pageGeneratedAt, "Page.pageGeneratedAt must be preserved on lazy layout recompose!");
+
+// ----------------------------------------------------------------------------
+// 2. All-3-Axes Simultaneous 1s Slots Under Asymmetric PPR
+// ----------------------------------------------------------------------------
+writeS({
+  asymL1Shell: POISON,
+  asymL3Shell: POISON,
+  asymPageShell: POISON,
+  asymL1Slot: 211,
+  asymL2Dyn: 212,
+  asymL3Slot: 213,
+  asymPageShellSlot: 214,
+  asymPageHoleSlot: 215,
+});
+const asymHit1 = await req("/asym-slots/dyn/l3", { "x-hole-probe": "h2" });
+assert.equal(asymHit1.status, 200);
+assert.equal(textById(asymHit1.text, "as-l2-dyn"), "212", "Dynamic L2 must be live immediately");
+assert.equal(textById(asymHit1.text, "as-hole-slot"), "215", "HoleSlot(1s) (inStaticShell=false) must regenerate synchronously");
+assert.ok(!asymHit1.text.includes(POISON), "Asym Hit 1 must never execute poisoned static shells");
+await flushBg();
+
+writeS({ asymL2Dyn: 222 });
+const asymHit2 = await req("/asym-slots/dyn/l3", { "x-hole-probe": "h3" });
+assert.equal(asymHit2.status, 200);
+assert.equal(textById(asymHit2.text, "as-l1-shell"), "100", "L1 static shell must stay frozen at 100");
+assert.equal(textById(asymHit2.text, "as-l3-shell"), "100", "L3 static shell must stay frozen at 100");
+assert.equal(textById(asymHit2.text, "as-p-shell"), "100", "Page static shell must stay frozen at 100");
+assert.equal(textById(asymHit2.text, "as-l1-slot"), "211", "L1 Slot(1s) must refresh to 211");
+assert.equal(textById(asymHit2.text, "as-l2-dyn"), "222", "Dynamic L2 must be live at 222");
+assert.equal(textById(asymHit2.text, "as-l3-slot"), "213", "L3 Slot(1s) under Dynamic L2 must refresh to 213");
+assert.equal(textById(asymHit2.text, "as-p-shell-slot"), "214", "Page ShellSlot(1s) must refresh to 214");
+assert.equal(textById(asymHit2.text, "as-hole-slot"), "215", "Page HoleSlot(1s) must remain 215");
+assert.ok(!asymHit2.text.includes(POISON));
+
+// ----------------------------------------------------------------------------
+// 3. Per-Param Dynamic revalidate(params) — fast(1s) expires, slow(3600s) stays frozen!
+// ----------------------------------------------------------------------------
+writeS({
+  fnFastL: 401, fnFastP: 402, fnSlowL: POISON, fnSlowP: POISON,
+  defFastL: 403, defFastP: 404, defSlowL: POISON, defSlowP: POISON,
+});
+const fnFast1 = await req("/dyn-fn/fast");
+await flushBg();
+const fnFast2 = await req("/dyn-fn/fast");
+assert.equal(textById(fnFast2.text, "fn-l-v"), "401", "dyn-fn/fast layout(1s) must expire & refresh to 401");
+assert.equal(textById(fnFast2.text, "fn-p-v"), "402", "dyn-fn/fast page(1s) must expire & refresh to 402");
+
+const fnSlow = await req("/dyn-fn/slow");
+await flushBg();
+assert.equal(textById(fnSlow.text, "fn-l-v"), "100", "dyn-fn/slow layout(3600s) must stay frozen at 100");
+assert.equal(textById(fnSlow.text, "fn-p-v"), "100", "dyn-fn/slow page(3600s) must stay frozen at 100");
+assert.ok(!fnSlow.text.includes(POISON));
+
+const defFast1 = await req("/dyn-def/fast");
+await flushBg();
+const defFast2 = await req("/dyn-def/fast");
+assert.equal(textById(defFast2.text, "def-l-v"), "403", "dyn-def/fast default-export layout(1s) must expire & refresh to 403");
+assert.equal(textById(defFast2.text, "def-p-v"), "404", "dyn-def/fast default-export page(1s) must expire & refresh to 404");
+
+const defSlow = await req("/dyn-def/slow");
+await flushBg();
+assert.equal(textById(defSlow.text, "def-l-v"), "100", "dyn-def/slow default-export layout(3600s) must stay frozen at 100");
+assert.equal(textById(defSlow.text, "def-p-v"), "100", "dyn-def/slow default-export page(3600s) must stay frozen at 100");
+assert.ok(!defSlow.text.includes(POISON));
+
+// ----------------------------------------------------------------------------
+// 4. Mid-ISR Dynamic Bailout (Non-PPR & PPR Shell + Cold Pod B multi-pod check!)
+// ----------------------------------------------------------------------------
+writeS({ bailTrigger: true, bailStdVal: 502, bailPprVal: 503 });
+// Trigger SWR regeneration after 1.15s expiry on BOTH bailout-std and bailout-ppr
+const trigStd = await req("/bailout-std", { "x-live-probe": "trig" });
+assert.equal(trigStd.status, 200);
+const trigPpr = await req("/bailout-ppr", { "x-live-probe": "trig", "x-hole-hdr": "h-trig" });
+assert.equal(trigPpr.status, 200);
+await flushBg();
+
+// Stale index.html / shell.html / page.rsc MUST be evicted from storage AND metadata.json marked dynamic:true!
+assert.ok(!fs.existsSync(path.join(dist2, "bailout-std/index.html")), "bailout-std/index.html must be purged on mid-ISR bailout!");
+assert.ok(!fs.existsSync(path.join(dist2, "bailout-std/page.rsc")), "bailout-std/page.rsc must be purged on mid-ISR bailout!");
+assert.equal(JSON.parse(fs.readFileSync(path.join(dist2, "bailout-std/metadata.json"), "utf8")).dynamic, true);
+
+assert.ok(!fs.existsSync(path.join(dist2, "bailout-ppr/index.html")), "bailout-ppr/index.html must be purged on mid-ISR bailout!");
+assert.ok(!fs.existsSync(path.join(dist2, "bailout-ppr/shell.html")), "bailout-ppr/shell.html must be purged on mid-ISR bailout!");
+assert.ok(!fs.existsSync(path.join(dist2, "bailout-ppr/shell.page.json")), "bailout-ppr/shell.page.json must be purged on mid-ISR bailout!");
+assert.equal(JSON.parse(fs.readFileSync(path.join(dist2, "bailout-ppr/metadata.json"), "utf8")).dynamic, true);
+
+// Subsequent requests MUST render live per-request header values!
+const liveStdA = await req("/bailout-std", { "x-live-probe": "probe-ALPHA" });
+assert.equal(liveStdA.status, 200);
+assert.equal(textById(liveStdA.text, "bail-std-v"), "502:probe-ALPHA");
+const liveStdB = await req("/bailout-std", { "x-live-probe": "probe-BETA" });
+assert.equal(textById(liveStdB.text, "bail-std-v"), "502:probe-BETA");
+
+const livePprA = await req("/bailout-ppr", { "x-live-probe": "ppr-ALPHA", "x-hole-hdr": "ha" });
+assert.equal(livePprA.status, 200);
+assert.equal(textById(livePprA.text, "bail-ppr-v"), "503:ppr-ALPHA");
+const livePprB = await req("/bailout-ppr", { "x-live-probe": "ppr-BETA", "x-hole-hdr": "hb" });
+assert.equal(textById(livePprB.text, "bail-ppr-v"), "503:ppr-BETA");
+
+// Simulate Cold Pod B (clear in-memory isDynamic map!) -> MUST STILL serve live dynamic SSR via metadata.json.dynamic!
+globalThis[Symbol.for("dinou.isDynamic.map")]?.clear?.();
+const coldPodStd = await req("/bailout-std", { "x-live-probe": "COLD-POD-B" });
+assert.equal(textById(coldPodStd.text, "bail-std-v"), "502:COLD-POD-B", "Cold Pod B must honor bailout metadata.json.dynamic!");
+const coldPodPpr = await req("/bailout-ppr", { "x-live-probe": "COLD-PPR-B", "x-hole-hdr": "hc" });
+assert.equal(textById(coldPodPpr.text, "bail-ppr-v"), "503:COLD-PPR-B", "Cold Pod B PPR must honor bailout metadata.json.dynamic!");
+const coldPodRsc = await req("/____rsc_page____/bailout-std", { "x-live-probe": "COLD-RSC-B" });
+assert.equal(coldPodRsc.status, 200);
+assert.ok(coldPodRsc.text.includes("502:COLD-RSC-B"), "Cold Pod B soft-nav RSC must render live dynamic value!");
+
+// 5. Cascade soft-nav RSC (/____rsc_layout_static____/cascade/l2/l3) after second 1.15s expiry
+await sleep(1150);
+writeS({ casL1: 601, casL2: 602, casL3: POISON });
+const casRsc = await req("/____rsc_layout_static____/cascade/l2/l3");
+assert.equal(casRsc.status, 200);
+assert.ok(casRsc.text.includes("601") && casRsc.text.includes("602") && casRsc.text.includes("100") && !casRsc.text.includes(POISON), "Soft-nav layout RSC must refresh expired L1+L2 while keeping poisoned L3 frozen!");
+
+console.log("PHASE6_STAGE5_TTL_MATRIX_OK");
+`
+    );
+
+    const runRes = spawnSync(process.execPath, [verifyScript], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+      timeout: 60_000,
+    });
+    assert.equal(
+      runRes.status,
+      0,
+      `Phase 6 Stage 5 TTL matrix failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+    );
+    assert.ok(runRes.stdout.includes("PHASE6_STAGE5_TTL_MATRIX_OK"));
+  } finally {
+    removeDirSafe(tmpApp);
+  }
+});
