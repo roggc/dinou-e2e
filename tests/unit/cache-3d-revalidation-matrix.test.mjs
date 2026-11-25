@@ -2112,6 +2112,36 @@ assert.equal(textById(pbSsr.text, "rsm-cart-v"), "501", "Page B direct SSR must 
 assert.equal(textById(pbSsr.text, "rsm-pb-shell"), "100", "Page B static shell must stay 100% frozen at 100!");
 assert.ok(!pbSsr.text.includes(POISON));
 
+// ============================================================================
+// 6. Regression: refreshSlot("*") order where L1 layout slot refreshes AFTER Page A shared slot
+//    (L1.generatedAt > cart.generatedAt > page-b.generatedAt) MUST NOT mask Page B's shared slot on Direct SSR!
+// ============================================================================
+writeS({ l1Shell: POISON, pageAShell: POISON, pageBShell: POISON, sharedCart: 601, l1Shared: 602 });
+const starCartRes = await req("/____rsc_slot____/rsm-cart?fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
+assert.equal(starCartRes.status, 200);
+assert.ok(starCartRes.text.includes("601"));
+// Ensure L1 layout refreshes strictly AFTER rsm-cart (exact refreshSlot("*") order across Page A + L1)
+await sleep(20);
+const starL1Res = await req("/____rsc_slot____/rsm-l1-shared?fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
+assert.equal(starL1Res.status, 200);
+assert.ok(starL1Res.text.includes("602"));
+
+// Direct SSR on Page B: BOTH fresh L1 (602) AND fresh sharedCart (601) MUST render on the first hit,
+// with Page B shell and L1 shell still 100% frozen at 100!
+const pbAfterStar1 = await req("/rsm/page-b");
+assert.equal(pbAfterStar1.status, 200);
+assert.equal(textById(pbAfterStar1.text, "rsm-l1-shared-v"), "602", "Page B direct SSR must reflect fresh L1 slot 602");
+assert.equal(textById(pbAfterStar1.text, "rsm-cart-v"), "601", "Page B direct SSR must NEVER mask shared slot 601 behind newer L1.generatedAt!");
+assert.equal(textById(pbAfterStar1.text, "rsm-pb-shell"), "100", "Page B shell must stay frozen at 100");
+assert.equal(textById(pbAfterStar1.text, "rsm-l1-shell"), "100", "L1 shell must stay frozen at 100");
+assert.ok(!pbAfterStar1.text.includes(POISON));
+
+// Verify second Direct SSR hit remains persisted at 601 & 602
+const pbAfterStar2 = await req("/rsm/page-b");
+assert.equal(pbAfterStar2.status, 200);
+assert.equal(textById(pbAfterStar2.text, "rsm-cart-v"), "601");
+assert.equal(textById(pbAfterStar2.text, "rsm-l1-shared-v"), "602");
+
 console.log("PHASE6_STAGE4_REFRESH_SLOT_MATRIX_OK");
 `
     );

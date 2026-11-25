@@ -2569,7 +2569,7 @@ async function handleRequest(request, platformContext = {}) {
                 } else if (Array.isArray(pMeta.slotTags) && pMeta.slotTags.length > 0) {
                   const slotFreshness = await inspectSlotsFreshness(
                     pMeta.slotTags,
-                    pMeta.generatedAt || 0
+                    pMeta.pageSlotsGeneratedAt || pMeta.generatedAt || 0
                   );
                   isSlotNewer = slotFreshness.hasNewer;
                   isSlotOnlyExpired = !isSlotNewer && slotFreshness.hasExpired;
@@ -3756,8 +3756,7 @@ async function handleRequest(request, platformContext = {}) {
                 recomposeOnly: !isLayoutTtlExpired && !isLayoutSlotNewer && isAncestorOwnNewer,
                 onlyRefreshSlots:
                   !isLayoutTtlExpired &&
-                  !isAncestorOwnNewer &&
-                  (isLayoutSlotNewer || isAncestorSlotOnlyNewer),
+                  (isLayoutSlotNewer || (!isAncestorOwnNewer && isAncestorSlotOnlyNewer)),
                 onlyIfExpired: isLayoutTtlExpired && !isLayoutSlotNewer && !isAncestorNewer,
               });
               const refreshedMeta = await readMetaFromStorage(
@@ -3792,7 +3791,49 @@ async function handleRequest(request, platformContext = {}) {
               }
             }
           }
-          const leafLayout = activeLayoutChain[0];
+        }
+      } catch (lazyErr) {
+        console.warn(`⚠️ [Dinou] Error during lazy layout chain sync for ${reqPath}:`, lazyErr?.message || lazyErr);
+      }
+
+      // Synchronously splice any shared <DinouCacheSlot> already refreshed elsewhere
+      // (slot.generatedAt > pageSlotsGeneratedAt || page.generatedAt) BEFORE lazy layout-only
+      // HTML re-composition AND BEFORE snapshotting PPR shell JSONs so:
+      // 1. A newer layout.generatedAt (e.g. from refreshSlot("*") updating an L1 slot AFTER a
+      //    page shared slot) never bumps page metadata.generatedAt past the shared slot and masks it.
+      // 2. Cross-route shared slots reflect fresh cached JSX on the first Direct SSR hit with 0 #418.
+      let isPageSlotTtlExpired = false;
+      if (Array.isArray(cachedItem.metadata?.slotTags) && cachedItem.metadata.slotTags.length > 0) {
+        try {
+          const pageSlotBaseline = Number(
+            cachedItem.metadata?.pageSlotsGeneratedAt ||
+              cachedItem.metadata?.generatedAt ||
+              0
+          );
+          const pageSlotFreshness = await inspectSlotsFreshness(
+            cachedItem.metadata.slotTags,
+            pageSlotBaseline
+          );
+          if (pageSlotFreshness.hasNewer) {
+            const { revalidatePage } = await import("./cache-revalidate.js");
+            await revalidatePage(reqPath, { onlyRefreshSlots: true });
+            const refreshedHtml =
+              (await storage.get(htmlKey)) ||
+              (isPprConfig
+                ? await storage.get(cleanPath ? `${cleanPath}/shell.html` : "shell.html")
+                : null);
+            if (refreshedHtml && refreshedHtml.content) {
+              cachedItem = refreshedHtml;
+            }
+          } else {
+            isPageSlotTtlExpired = pageSlotFreshness.hasExpired;
+          }
+        } catch (slotSyncErr) {}
+      }
+
+      try {
+        if (cachedHitActiveLayoutChain.length > 0) {
+          const leafLayout = cachedHitActiveLayoutChain[0];
           const pageGeneratedAt = Number(cachedItem.metadata?.generatedAt || 0);
           if ((leafLayout.generatedAt || 0) > pageGeneratedAt && platformContext?.renderHtmlStream) {
             const leafRscKey = leafLayout.cleanLayoutKey
@@ -3856,6 +3897,10 @@ async function handleRequest(request, platformContext = {}) {
                   pageGeneratedAt:
                     cachedItem.metadata?.pageGeneratedAt ||
                     cachedItem.metadata?.generatedAt,
+                  pageSlotsGeneratedAt:
+                    cachedItem.metadata?.pageSlotsGeneratedAt ||
+                    cachedItem.metadata?.pageGeneratedAt ||
+                    cachedItem.metadata?.generatedAt,
                   generatedAt: leafLayout.generatedAt,
                 };
                 cachedItem = {
@@ -3877,32 +3922,6 @@ async function handleRequest(request, platformContext = {}) {
         }
       } catch (lazyErr) {
         console.warn(`⚠️ [Dinou] Error during lazy HTML re-composition for ${reqPath}:`, lazyErr?.message || lazyErr);
-      }
-
-      // Synchronously splice any shared <DinouCacheSlot> already refreshed elsewhere (slot.generatedAt > page.generatedAt)
-      // BEFORE snapshotting PPR shell JSONs so cross-route shared slots reflect fresh cached JSX on the first hit with 0 #418.
-      let isPageSlotTtlExpired = false;
-      if (Array.isArray(cachedItem.metadata?.slotTags) && cachedItem.metadata.slotTags.length > 0) {
-        try {
-          const pageSlotFreshness = await inspectSlotsFreshness(
-            cachedItem.metadata.slotTags,
-            cachedItem.metadata?.generatedAt || 0
-          );
-          if (pageSlotFreshness.hasNewer) {
-            const { revalidatePage } = await import("./cache-revalidate.js");
-            await revalidatePage(reqPath, { onlyRefreshSlots: true });
-            const refreshedHtml =
-              (await storage.get(htmlKey)) ||
-              (isPprConfig
-                ? await storage.get(cleanPath ? `${cleanPath}/shell.html` : "shell.html")
-                : null);
-            if (refreshedHtml && refreshedHtml.content) {
-              cachedItem = refreshedHtml;
-            }
-          } else {
-            isPageSlotTtlExpired = pageSlotFreshness.hasExpired;
-          }
-        } catch (slotSyncErr) {}
       }
 
       // Snapshot PPR shell JSONs causally matching `cachedItem.content` BEFORE launching ANY background SWR,

@@ -1064,6 +1064,7 @@ async function revalidatePage(reqPath, internalOptions = {}) {
       );
     }
     currentMeta.generatedAt = commitGenTime;
+    currentMeta.pageSlotsGeneratedAt = commitGenTime;
 
     if (newHtml && !renderedFullRsc && !composedFromCachedLayout) {
       newHtml = newHtml.replace(
