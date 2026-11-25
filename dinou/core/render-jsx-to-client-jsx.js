@@ -82,7 +82,7 @@ function useServerId() {
     holeStore.idCount = (holeStore.idCount || 0) + 1;
     const safeHole = sanitizeIdSegment(holeStore.holeId);
     if (pageStore && pageStore.active) {
-      return `_page_hole_${safeHole}_dS_${holeStore.idCount.toString(32)}_`;
+      return `_hole_${safeHole}_dS_${holeStore.idCount.toString(32)}_`;
     }
     if (layoutStore && layoutStore.active) {
       const prefix = layoutStore.scopePrefix

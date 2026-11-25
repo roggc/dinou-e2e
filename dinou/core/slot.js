@@ -266,7 +266,7 @@ class SlotErrorBoundary extends Component {
   }
 }
 
-export function DinouErrorResetWrapper({ children, reset: parentReset }) {
+export function DinouErrorResetWrapper({ children, reset: parentReset, error: parentError }) {
   const defaultReset = () => {
     if (typeof window !== "undefined") {
       if (typeof window.__DINOU_CLEAR_ERROR_CACHES__ === "function") {
@@ -280,12 +280,17 @@ export function DinouErrorResetWrapper({ children, reset: parentReset }) {
     }
   };
   const effectiveReset = typeof parentReset === "function" ? parentReset : defaultReset;
-  if (
-    React.isValidElement(children) &&
-    typeof children.type !== "string" &&
-    children.props?.reset === undefined
-  ) {
-    return React.cloneElement(children, { reset: effectiveReset });
+  if (React.isValidElement(children) && typeof children.type !== "string") {
+    const patch = {};
+    if (children.props?.reset === undefined) {
+      patch.reset = effectiveReset;
+    }
+    if (parentError !== undefined) {
+      patch.error = parentError;
+    }
+    if (Object.keys(patch).length > 0) {
+      return React.cloneElement(children, patch);
+    }
   }
   return children;
 }
