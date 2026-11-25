@@ -21972,5 +21972,169 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       }
       expect(output).toContain("fail 0");
     });
+
+    test("42. [Phase 6 / Stage 2 / Check #80] revalidateTag() Live Browser Matrix: Shared Multi-Slot Tag Across All 5 Placements, Raw Slot ID vs Tag, Nested Outer/Inner Slots & Partial-Failure slotBackups Rollback", async ({
+      page,
+    }) => {
+      test.skip(
+        !isProd,
+        "revalidateTag() 3D Caching Cube multi-slot fan-out & rollback checks require production mode"
+      );
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      try {
+        await page.goto("/t-3d-cube/reval-tag-matrix/dyn-l2/l3?q=init");
+        await waitCubeReady(page);
+        // Ensure tmThrowSlotB starts false and capture dynamic baselines
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.mutate({ tmThrowSlotB: false })
+        );
+
+        const baseL1Shell = Number(await page.locator("#tm-l1-shell-seq").textContent());
+        const baseL1Slot = Number(await page.locator("#tm-l1-slot-seq").textContent());
+        const baseL2Slot = Number(await page.locator("#tm-l2-slot-seq").textContent());
+        const baseL3Shell = Number(await page.locator("#tm-l3-shell-seq").textContent());
+        const baseL3Slot = Number(await page.locator("#tm-l3-slot-seq").textContent());
+        const basePageShell = Number(await page.locator("#tm-page-shell-seq").textContent());
+        const basePageSlot = Number(await page.locator("#tm-page-slot-seq").textContent());
+        const baseHoleSlot = Number(await page.locator("#tm-hole-slot-seq").textContent());
+        const baseOuterSlot = Number(await page.locator("#tm-outer-slot-seq").textContent());
+        const baseInnerSlot = Number(await page.locator("#tm-inner-slot-seq").textContent());
+        const basePfA = Number(await page.locator("#tm-pf-a-seq").textContent());
+        const basePfB = Number(await page.locator("#tm-pf-b-seq").textContent());
+
+        const poison =
+          Math.max(
+            baseL1Shell, baseL1Slot, baseL2Slot, baseL3Shell, baseL3Slot,
+            basePageShell, basePageSlot, baseHoleSlot, baseOuterSlot, baseInnerSlot,
+            basePfA, basePfB
+          ) + 899;
+
+        // 1. Shared Multi-Slot Tag ("cube-tm-shared-matrix") refreshes ALL 5 placements while ALL 3 static shells stay frozen!
+        const nextL1Slot = poison + 11;
+        const nextL2Slot = poison + 12;
+        const nextL3Slot = poison + 13;
+        const nextPageSlot = poison + 14;
+        const nextHoleSlot = poison + 15;
+        const nextL2Host = poison + 16;
+        const nextHoleHost = poison + 17;
+
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          {
+            tmL1ShellSeq: poison,
+            tmL3ShellSeq: poison,
+            tmPageShellSeq: poison,
+            tmOuterSlotSeq: poison,
+            tmInnerSlotSeq: poison,
+            tmPfASeq: poison,
+            tmPfBSeq: poison,
+            tmL1SlotSeq: nextL1Slot,
+            tmL2HostSeq: nextL2Host,
+            tmL2SlotSeq: nextL2Slot,
+            tmL3SlotSeq: nextL3Slot,
+            tmPageSlotSeq: nextPageSlot,
+            tmHoleHostSeq: nextHoleHost,
+            tmHoleSlotSeq: nextHoleSlot,
+            tmThrowSlotB: false,
+          }
+        );
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.revalTag("cube-tm-shared-matrix")
+        );
+        await page.goto("/t-3d-cube/reval-tag-matrix/dyn-l2/l3?q=shared");
+        await waitCubeReady(page);
+        await expect(page.locator("#tm-l1-slot-seq")).toHaveText(String(nextL1Slot));
+        await expect(page.locator("#tm-l2-slot-seq")).toHaveText(String(nextL2Slot));
+        await expect(page.locator("#tm-l3-slot-seq")).toHaveText(String(nextL3Slot));
+        await expect(page.locator("#tm-page-slot-seq")).toHaveText(String(nextPageSlot));
+        await expect(page.locator("#tm-hole-slot-seq")).toHaveText(String(nextHoleSlot));
+        await expect(page.locator("#tm-l1-shell-seq")).toHaveText(String(baseL1Shell));
+        await expect(page.locator("#tm-l3-shell-seq")).toHaveText(String(baseL3Shell));
+        await expect(page.locator("#tm-page-shell-seq")).toHaveText(String(basePageShell));
+        await expect(page.locator("#tm-outer-slot-seq")).toHaveText(String(baseOuterSlot));
+        await expect(page.locator("#tm-inner-slot-seq")).toHaveText(String(baseInnerSlot));
+
+        // 2. Raw Slot ID ("cube-tm-l1-slot") vs Nested Inner ("cube-tm-inner-tag")
+        const rawL1Slot = poison + 21;
+        const freshInner = poison + 22;
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          {
+            tmL1SlotSeq: rawL1Slot,
+            tmL2SlotSeq: poison,
+            tmL3SlotSeq: poison,
+            tmPageSlotSeq: poison,
+            tmHoleSlotSeq: poison,
+            tmOuterSlotSeq: poison,
+            tmInnerSlotSeq: freshInner,
+          }
+        );
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.revalTag("cube-tm-l1-slot")
+        );
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.revalTag("cube-tm-inner-tag")
+        );
+        await page.goto("/t-3d-cube/reval-tag-matrix/dyn-l2/l3?q=rawAndInner");
+        await waitCubeReady(page);
+        await expect(page.locator("#tm-l1-slot-seq")).toHaveText(String(rawL1Slot));
+        await expect(page.locator("#tm-l2-slot-seq")).toHaveText(String(nextL2Slot));
+        await expect(page.locator("#tm-l3-slot-seq")).toHaveText(String(nextL3Slot));
+        await expect(page.locator("#tm-page-slot-seq")).toHaveText(String(nextPageSlot));
+        await expect(page.locator("#tm-hole-slot-seq")).toHaveText(String(nextHoleSlot));
+        await expect(page.locator("#tm-outer-slot-seq")).toHaveText(String(baseOuterSlot));
+        await expect(page.locator("#tm-inner-slot-seq")).toHaveText(String(freshInner));
+
+        // 3. Partial-Failure Rollback: Slot A commits fresh while throwing Slot B keeps last-known-good, then recovers cleanly!
+        const nextPfA = poison + 31;
+        const nextPfB = poison + 32;
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          {
+            tmPfASeq: nextPfA,
+            tmPfBSeq: nextPfB,
+            tmThrowSlotB: true,
+          }
+        );
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.revalTag("cube-tm-partial-fail")
+        );
+        await page.goto("/t-3d-cube/reval-tag-matrix/dyn-l2/l3?q=partialFail");
+        await waitCubeReady(page);
+        await expect(page.locator("#tm-pf-a-seq")).toHaveText(String(nextPfA));
+        await expect(page.locator("#tm-pf-b-seq")).toHaveText(String(basePfB));
+        await expect(page.locator("#tm-page-shell-seq")).toHaveText(String(basePageShell));
+
+        // Clear fault & re-run revalidateTag -> Slot B updates cleanly!
+        const recoveredPfB = poison + 33;
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          {
+            tmPfBSeq: recoveredPfB,
+            tmThrowSlotB: false,
+          }
+        );
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.revalTag("cube-tm-partial-fail")
+        );
+        await page.goto("/t-3d-cube/reval-tag-matrix/dyn-l2/l3?q=recovered");
+        await waitCubeReady(page);
+        await expect(page.locator("#tm-pf-a-seq")).toHaveText(String(nextPfA));
+        await expect(page.locator("#tm-pf-b-seq")).toHaveText(String(recoveredPfB));
+        await expect(page.locator("#tm-page-shell-seq")).toHaveText(String(basePageShell));
+
+        expect(hydrationErrors).toEqual([]);
+        expect(routerWarnings).toEqual([]);
+        expect(pageErrors).toEqual([]);
+      } finally {
+        await page
+          .evaluate(() =>
+            (window as any).__CUBE_3D__?.mutate?.({ tmThrowSlotB: false })
+          )
+          .catch(() => {});
+      }
+    });
   });
 });

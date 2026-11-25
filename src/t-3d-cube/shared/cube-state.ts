@@ -380,6 +380,23 @@ export interface Cube3DState {
   errThrowHole: boolean;
   errThrowL2: boolean;
   errThrowL1Slot: boolean;
+
+  // Phase 6 — Stage 2 — Check #80: revalidateTag() Complete Matrix
+  tmL1ShellSeq: number;
+  tmL1SlotSeq: number;
+  tmL2HostSeq: number;
+  tmL2SlotSeq: number;
+  tmL3ShellSeq: number;
+  tmL3SlotSeq: number;
+  tmPageShellSeq: number;
+  tmPageSlotSeq: number;
+  tmHoleHostSeq: number;
+  tmHoleSlotSeq: number;
+  tmOuterSlotSeq: number;
+  tmInnerSlotSeq: number;
+  tmPfASeq: number;
+  tmPfBSeq: number;
+  tmThrowSlotB: boolean;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -728,6 +745,22 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   errThrowHole: false,
   errThrowL2: false,
   errThrowL1Slot: false,
+
+  tmL1ShellSeq: 100,
+  tmL1SlotSeq: 100,
+  tmL2HostSeq: 100,
+  tmL2SlotSeq: 100,
+  tmL3ShellSeq: 100,
+  tmL3SlotSeq: 100,
+  tmPageShellSeq: 100,
+  tmPageSlotSeq: 100,
+  tmHoleHostSeq: 100,
+  tmHoleSlotSeq: 100,
+  tmOuterSlotSeq: 100,
+  tmInnerSlotSeq: 100,
+  tmPfASeq: 100,
+  tmPfBSeq: 100,
+  tmThrowSlotB: false,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {

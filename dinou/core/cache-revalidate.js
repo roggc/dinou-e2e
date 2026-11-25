@@ -1884,7 +1884,11 @@ async function revalidateTag(tag, options) {
               } catch (e) {}
             }
             const hasRouteTag = Boolean(meta && Array.isArray(meta.tags) && meta.tags.includes(tag));
-            const hasSlotTag = Boolean(meta && Array.isArray(meta.slotTags) && meta.slotTags.includes(tag));
+            const hasSlotTag = Boolean(
+              meta &&
+                ((Array.isArray(meta.slotTags) && meta.slotTags.includes(tag)) ||
+                  (Array.isArray(meta.ownSlotTags) && meta.ownSlotTags.includes(tag)))
+            );
             if (hasRouteTag || hasSlotTag) {
               const cleanKey = key
                 .replace(/\/(?:layout\.metadata\.json|layout\.rsc)$/, "")
@@ -1906,7 +1910,11 @@ async function revalidateTag(tag, options) {
               } catch (e) {}
             }
             const hasRouteTag = Boolean(meta && Array.isArray(meta.tags) && meta.tags.includes(tag));
-            const hasSlotTag = Boolean(meta && Array.isArray(meta.slotTags) && meta.slotTags.includes(tag));
+            const hasSlotTag = Boolean(
+              meta &&
+                ((Array.isArray(meta.slotTags) && meta.slotTags.includes(tag)) ||
+                  (Array.isArray(meta.ownSlotTags) && meta.ownSlotTags.includes(tag)))
+            );
             if (hasRouteTag || hasSlotTag) {
               const cleanKey = key
                 .replace(/\/(?:metadata\.json|index\.html)$/, "")
@@ -1926,7 +1934,11 @@ async function revalidateTag(tag, options) {
             const item = await storage.get(key);
             const meta = item?.metadata;
             const hasRouteTag = Boolean(meta && Array.isArray(meta.tags) && meta.tags.includes(tag));
-            const hasSlotTag = Boolean(meta && Array.isArray(meta.slotTags) && meta.slotTags.includes(tag));
+            const hasSlotTag = Boolean(
+              meta &&
+                ((Array.isArray(meta.slotTags) && meta.slotTags.includes(tag)) ||
+                  (Array.isArray(meta.ownSlotTags) && meta.ownSlotTags.includes(tag)))
+            );
             if (hasRouteTag || hasSlotTag) {
               const cleanKey = key
                 .replace(/\/(?:metadata\.json|index\.html|shell\.html)$/, "")
@@ -1958,7 +1970,31 @@ async function revalidateTag(tag, options) {
         try {
           const prevJson = await readKeyOrFallback(`slots/${sid}/slot.json`);
           if (prevJson && prevJson.content) {
-            slotBackups.set(sid, prevJson);
+            let prevMeta =
+              prevJson.metadata && typeof prevJson.metadata === "object"
+                ? { ...prevJson.metadata }
+                : null;
+            if (!prevMeta || !Array.isArray(prevMeta.tags)) {
+              try {
+                const prevMetaItem = await readKeyOrFallback(`slots/${sid}/slot.metadata.json`);
+                let parsedMeta =
+                  prevMetaItem?.metadata && typeof prevMetaItem.metadata === "object"
+                    ? prevMetaItem.metadata
+                    : null;
+                if (!parsedMeta && prevMetaItem?.content) {
+                  parsedMeta = JSON.parse(prevMetaItem.content);
+                }
+                if (parsedMeta && typeof parsedMeta === "object") {
+                  prevMeta = { ...(prevMeta || {}), ...parsedMeta };
+                }
+              } catch (e) {}
+            }
+            if (!prevMeta) {
+              prevMeta = { slotId: sid };
+            } else if (!prevMeta.slotId) {
+              prevMeta.slotId = sid;
+            }
+            slotBackups.set(sid, { content: prevJson.content, metadata: prevMeta });
           }
         } catch (e) {}
       }
@@ -1966,27 +2002,34 @@ async function revalidateTag(tag, options) {
       // 1. Delete invalidated slot artifacts first so subsequent layout/page revalidations re-render the fresh slot
       await Promise.all(Array.from(targetSlotKeys).map((k) => storage.delete(k)));
 
-      // 2. Revalidate affected layouts ancestor-first so parent slots/timestamps settle before descendants
+      // 2. Revalidate affected layouts strictly ancestor-first (sequentially!) so parent shells,
+      //    slots, and timestamps always commit before descendants — including on Cloudflare Workers
+      //    where enqueueRevalidation does not serialize across concurrent Promise.all tasks.
       const sortedTargetLayouts = Array.from(targetLayoutPaths.entries()).sort(([a], [b]) =>
         compareLayoutPathsAncestorFirst(a, b)
       );
-      await Promise.all(
-        sortedTargetLayouts.map(([p, opts]) => revalidateLayout(p, opts))
-      );
+      for (const [p, opts] of sortedTargetLayouts) {
+        await revalidateLayout(p, opts);
+      }
 
-      // 3. Revalidate affected pages (without deleting metadata.json!)
-      await Promise.all(
-        Array.from(targetPaths.entries()).map(([p, opts]) => revalidatePage(p, opts))
-      );
+      // 3. Revalidate affected pages sequentially (without deleting metadata.json!)
+      for (const [p, opts] of targetPaths.entries()) {
+        await revalidatePage(p, opts);
+      }
 
-      // 4. Restore last-known-good slot cache ONLY for slots whose regeneration threw an error
+      // 4. Restore last-known-good slot cache (BOTH slot.json AND full slot.metadata.json)
+      //    ONLY for slots whose regeneration threw an error
       for (const [sid, backup] of slotBackups.entries()) {
         if (!failedSlotSet.has(sid)) continue;
         failedSlotSet.delete(sid);
         try {
           const existing = await storage.get(`slots/${sid}/slot.json`);
           if (!existing || !existing.content) {
-            await storage.set(`slots/${sid}/slot.json`, backup.content, backup.metadata || { slotId: sid });
+            const restoredMeta = backup.metadata || { slotId: sid };
+            await storage.set(`slots/${sid}/slot.json`, backup.content, restoredMeta);
+            try {
+              await storage.set(`slots/${sid}/slot.metadata.json`, JSON.stringify(restoredMeta));
+            } catch (e) {}
           }
         } catch (e) {}
       }
@@ -2020,7 +2063,11 @@ async function revalidateTag(tag, options) {
         isSlotMeta &&
         (metadata?.slotId === tag || path.basename(path.dirname(fileOfMeta)) === tag);
       const hasRouteTag = Boolean(metadata && Array.isArray(metadata.tags) && metadata.tags.includes(tag));
-      const hasSlotTag = Boolean(metadata && Array.isArray(metadata.slotTags) && metadata.slotTags.includes(tag));
+      const hasSlotTag = Boolean(
+        metadata &&
+          ((Array.isArray(metadata.slotTags) && metadata.slotTags.includes(tag)) ||
+            (Array.isArray(metadata.ownSlotTags) && metadata.ownSlotTags.includes(tag)))
+      );
       if (hasSlotIdMatch || hasRouteTag || hasSlotTag) {
         if (isSlotMeta) {
           const slotFolder = path.dirname(fileOfMeta);
@@ -2051,16 +2098,12 @@ async function revalidateTag(tag, options) {
 
   await Promise.all(slotPromises);
   targetLayoutPaths.sort((a, b) => compareLayoutPathsAncestorFirst(a.reqPath, b.reqPath));
-  await Promise.all(
-    targetLayoutPaths.map(({ reqPath, onlyRefreshSlots }) =>
-      revalidateLayout(reqPath, { onlyRefreshSlots })
-    )
-  );
-  await Promise.all(
-    targetPagePaths.map(({ reqPath, onlyRefreshSlots }) =>
-      revalidatePage(reqPath, { onlyRefreshSlots })
-    )
-  );
+  for (const { reqPath, onlyRefreshSlots } of targetLayoutPaths) {
+    await revalidateLayout(reqPath, { onlyRefreshSlots });
+  }
+  for (const { reqPath, onlyRefreshSlots } of targetPagePaths) {
+    await revalidatePage(reqPath, { onlyRefreshSlots });
+  }
 }
 
 export {

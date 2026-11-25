@@ -791,3 +791,621 @@ console.log("PHASE6_STAGE1_REVALIDATE_PATH_MATRIX_OK");
     removeDirSafe(tmpApp);
   }
 });
+
+test("2. [Phase 6 / Stage 2 / Check #80] revalidateTag() Complete Matrix (All 5 Placements Shared Tag, Raw Slot ID vs Tag, Nested Slots, Parameterized Tags, Partial-Failure slotBackups Metadata Rollback & Cloudflare Workers Ancestor Ordering)", async () => {
+  const tmpApp = createFixtureDir("p6-s2-reval-tag-");
+  try {
+    writeDinouShim(tmpApp);
+    fs.writeFileSync(
+      path.join(tmpApp, "package.json"),
+      JSON.stringify({ name: "p6-s2-reval-tag", private: true, type: "module" }, null, 2)
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "p6s2-state.json"),
+      JSON.stringify({
+        l1Shell: 100,
+        l1Slot: 100,
+        l2Host: 100,
+        l2Slot: 100,
+        l3Shell: 100,
+        l3Slot: 100,
+        pageShell: 100,
+        pageSlot: 100,
+        holeSlot: 100,
+        holeHost: 100,
+        outerSlot: 100,
+        innerSlot: 100,
+        pfSlotA: 100,
+        pfSlotB: 100,
+        throwSlotB: false,
+        cfL1: 100,
+        cfL1DelayMs: 0,
+        cfL2: 100,
+        cfPage: 100,
+        cfSlot: 100,
+        grpOuter: 100,
+        alphaL: 100,
+        betaL: 100,
+        caRootL: 100,
+        caDocsL: 100,
+        caV2L: 100,
+        item42: 100,
+        item99: 100,
+      })
+    );
+
+    const write = (rel, content) => {
+      const full = path.join(tmpApp, rel);
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, content, "utf8");
+    };
+
+    write(
+      "src/state.ts",
+      `import fs from "node:fs";
+import path from "node:path";
+export function readS() {
+  return JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "p6s2-state.json"), "utf8"));
+}
+export function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+`
+    );
+
+    write(
+      "src/layout.tsx",
+      `import type { ReactNode } from "react";
+export default function Root({ children }: { children: ReactNode }) {
+  return <html lang="en"><head><title>P6S2</title></head><body>{children}</body></html>;
+}
+`
+    );
+    write("src/page.tsx", `export default function Home() { return <main>home</main>; }\n`);
+
+    // 1. Asymmetric 3D PPR Matrix: L1(S PPR + slot) -> L2(Dyn + slot) -> L3(S PPR + slot) -> Page(S PPR + page slot + hole slot + nested outer->inner + partial-fail slots)
+    write("src/tm/layout_functions.ts", `export const ppr = true; export function revalidate() { return 3600; }\n`);
+    write(
+      "src/tm/layout.tsx",
+      `import type { ReactNode } from "react";
+import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../state";
+export default function TmL1({ children }: { children: ReactNode }) {
+  return (
+    <section id="tm-l1">
+      <span id="tm-l1-shell">{readS().l1Shell}</span>
+      <DinouCacheSlot id="tm-l1-slot" revalidate={3600} tags={["shared-matrix-tag", "tm-l1-only"]}>
+        {async () => <span id="tm-l1-slot-v">{readS().l1Slot}</span>}
+      </DinouCacheSlot>
+      {children}
+    </section>
+  );
+}
+`
+    );
+
+    write("src/tm/dyn/layout_functions.ts", `export function revalidate() { return 0; }\n`);
+    write(
+      "src/tm/dyn/layout.tsx",
+      `import type { ReactNode } from "react";
+import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../../state";
+export default function TmL2Dyn({ children }: { children: ReactNode }) {
+  return (
+    <div id="tm-l2">
+      <span id="tm-l2-host">{readS().l2Host}</span>
+      <DinouCacheSlot id="tm-l2-slot" revalidate={3600} tags={["shared-matrix-tag", "tm-l2-only"]}>
+        {async () => <span id="tm-l2-slot-v">{readS().l2Slot}</span>}
+      </DinouCacheSlot>
+      {children}
+    </div>
+  );
+}
+`
+    );
+
+    write("src/tm/dyn/l3/layout_functions.ts", `export const ppr = true; export function revalidate() { return 3600; }\n`);
+    write(
+      "src/tm/dyn/l3/layout.tsx",
+      `import type { ReactNode } from "react";
+import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../../../state";
+export default function TmL3({ children }: { children: ReactNode }) {
+  return (
+    <div id="tm-l3">
+      <span id="tm-l3-shell">{readS().l3Shell}</span>
+      <DinouCacheSlot id="tm-l3-slot" revalidate={3600} tags={["shared-matrix-tag", "tm-l3-only"]}>
+        {async () => <span id="tm-l3-slot-v">{readS().l3Slot}</span>}
+      </DinouCacheSlot>
+      {children}
+    </div>
+  );
+}
+`
+    );
+
+    write("src/tm/dyn/l3/page_functions.ts", `export const ppr = true; export function revalidate() { return 3600; }\n`);
+    write(
+      "src/tm/dyn/l3/page.tsx",
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../../../state";
+
+async function TmHole() {
+  void getContext()?.req?.headers?.["x-tm-hole"];
+  await Promise.resolve();
+  return (
+    <div id="tm-hole">
+      <span id="tm-hole-host">{readS().holeHost}</span>
+      <DinouCacheSlot id="tm-hole-slot" revalidate={3600} tags={["shared-matrix-tag", "tm-hole-only"]}>
+        {async () => <span id="tm-hole-slot-v">{readS().holeSlot}</span>}
+      </DinouCacheSlot>
+    </div>
+  );
+}
+
+export default function TmPage() {
+  return (
+    <article id="tm-page">
+      <span id="tm-page-shell">{readS().pageShell}</span>
+      <DinouCacheSlot id="tm-page-slot" revalidate={3600} tags={["shared-matrix-tag", "tm-page-only"]}>
+        {async () => <span id="tm-page-slot-v">{readS().pageSlot}</span>}
+      </DinouCacheSlot>
+      <DinouCacheSlot id="tm-outer-slot" revalidate={3600} tags={["tm-outer-tag"]}>
+        {async () => (
+          <div id="tm-outer-wrap">
+            <span id="tm-outer-v">{readS().outerSlot}</span>
+            <DinouCacheSlot id="tm-inner-slot" revalidate={3600} tags={["tm-inner-tag"]}>
+              {async () => <span id="tm-inner-v">{readS().innerSlot}</span>}
+            </DinouCacheSlot>
+          </div>
+        )}
+      </DinouCacheSlot>
+      <DinouCacheSlot id="tm-pf-a" revalidate={3600} tags={["partial-fail-tag", "tm-pf-a-only"]}>
+        {async () => <span id="tm-pf-a-v">{readS().pfSlotA}</span>}
+      </DinouCacheSlot>
+      <DinouCacheSlot id="tm-pf-b" revalidate={3600} tags={["partial-fail-tag", "tm-pf-b-only"]}>
+        {async () => {
+          const st = readS();
+          if (st.throwSlotB) throw new Error("Simulated Partial-Fail Slot B Crash");
+          return <span id="tm-pf-b-v">{st.pfSlotB}</span>;
+        }}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>fb-tm</span>}><TmHole /></Suspense>
+    </article>
+  );
+}
+`
+    );
+
+    // 2. Cloudflare Workers Ancestor-First Cascade Chain: /cf/child (L1 slow 120ms -> L2 fast 0ms -> Page + Slot, ALL tagged "cascade-all")
+    write(
+      "src/cf/layout_functions.ts",
+      `export function revalidate() { return 3600; }
+export function getCacheTags() { return ["cascade-all"]; }
+`
+    );
+    write(
+      "src/cf/layout.tsx",
+      `import type { ReactNode } from "react";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep } from "../state";
+export default async function CfL1({ children }: { children: ReactNode }) {
+  const s = readS();
+  if (s.cfL1DelayMs > 0) await sleep(s.cfL1DelayMs);
+  return (
+    <section id="cf-l1">
+      <span id="cf-l1-v">{readS().cfL1}</span>
+      <DinouCacheSlot id="cf-shared-slot" revalidate={3600} tags={["cascade-all"]}>
+        {async () => <span id="cf-slot-v">{readS().cfSlot}</span>}
+      </DinouCacheSlot>
+      {children}
+    </section>
+  );
+}
+`
+    );
+    write(
+      "src/cf/child/layout_functions.ts",
+      `export function revalidate() { return 3600; }
+export function getCacheTags() { return ["cascade-all"]; }
+`
+    );
+    write(
+      "src/cf/child/layout.tsx",
+      `import type { ReactNode } from "react";
+import { readS } from "../../state";
+export default function CfL2({ children }: { children: ReactNode }) {
+  return <div id="cf-l2"><span id="cf-l2-v">{readS().cfL2}</span>{children}</div>;
+}
+`
+    );
+    write(
+      "src/cf/child/page_functions.ts",
+      `export function revalidate() { return 3600; }
+export function getCacheTags() { return ["cascade-all"]; }
+`
+    );
+    write(
+      "src/cf/child/page.tsx",
+      `import { readS } from "../../state";
+export default function CfPage() {
+  return <article id="cf-p"><span id="cf-p-v">{readS().cfPage}</span></article>;
+}
+`
+    );
+
+    // 3. Parameterized getCacheTags(params) on (alpha)/(beta), [[...slug]], and [id]
+    write("src/pg/layout_functions.ts", `export function revalidate() { return 3600; }\n`);
+    write(
+      "src/pg/layout.tsx",
+      `import type { ReactNode } from "react";
+import { readS } from "../state";
+export default function PgOuter({ children }: { children: ReactNode }) {
+  return <section><span id="pg-outer">{readS().grpOuter}</span>{children}</section>;
+}
+`
+    );
+    write(
+      "src/pg/(alpha)/layout_functions.ts",
+      `export function revalidate() { return 3600; }
+export function getCacheTags() { return ["grp-alpha-only"]; }
+`
+    );
+    write(
+      "src/pg/(alpha)/layout.tsx",
+      `import type { ReactNode } from "react";
+import { readS } from "../../state";
+export default function PgAlpha({ children }: { children: ReactNode }) {
+  return <div><span id="pg-alpha">{readS().alphaL}</span>{children}</div>;
+}
+`
+    );
+    write("src/pg/(alpha)/a/page_functions.ts", `export function revalidate() { return 3600; }\n`);
+    write("src/pg/(alpha)/a/page.tsx", `export default function PgA() { return <p id="pg-a">a</p>; }\n`);
+
+    write(
+      "src/pg/(beta)/layout_functions.ts",
+      `export function revalidate() { return 3600; }
+export function getCacheTags() { return ["grp-beta-only"]; }
+`
+    );
+    write(
+      "src/pg/(beta)/layout.tsx",
+      `import type { ReactNode } from "react";
+import { readS } from "../../state";
+export default function PgBeta({ children }: { children: ReactNode }) {
+  return <div><span id="pg-beta">{readS().betaL}</span>{children}</div>;
+}
+`
+    );
+    write("src/pg/(beta)/b/page_functions.ts", `export function revalidate() { return 3600; }\n`);
+    write("src/pg/(beta)/b/page.tsx", `export default function PgB() { return <p id="pg-b">b</p>; }\n`);
+
+    write(
+      "src/slugs/[[...slug]]/layout_functions.ts",
+      `export function revalidate() { return 3600; }
+export function getStaticPaths() { return [[], ["docs"], ["docs", "v2"]]; }
+export function getCacheTags(params: { slug?: string[] }) {
+  const k = Array.isArray(params?.slug) && params.slug.length > 0 ? params.slug.join("-") : "root";
+  return ["slug-" + k];
+}
+`
+    );
+    write(
+      "src/slugs/[[...slug]]/layout.tsx",
+      `import type { ReactNode } from "react";
+import { readS } from "../../state";
+export default function SlugL({ children, params }: { children: ReactNode; params?: { slug?: string[] } }) {
+  const k = Array.isArray(params?.slug) && params.slug.length > 0 ? params.slug.join("-") : "root";
+  const s = readS();
+  const v = k === "docs" ? s.caDocsL : k === "docs-v2" ? s.caV2L : s.caRootL;
+  return <div><span id="slug-l">{v}</span>{children}</div>;
+}
+`
+    );
+    write(
+      "src/slugs/[[...slug]]/page_functions.ts",
+      `export function revalidate() { return 3600; }
+export function getStaticPaths() { return [[], ["docs"], ["docs", "v2"]]; }
+`
+    );
+    write("src/slugs/[[...slug]]/page.tsx", `export default function SlugP() { return <p id="slug-p">ok</p>; }\n`);
+
+    write(
+      "src/items/[id]/page_functions.ts",
+      `export function revalidate() { return 3600; }
+export function getStaticPaths() { return ["42", "99"]; }
+export function getCacheTags(params: { id?: string }) { return ["item-" + String(params?.id || "")]; }
+`
+    );
+    write(
+      "src/items/[id]/page.tsx",
+      `import { readS } from "../../state";
+export default function ItemP({ params }: { params?: { id?: string } }) {
+  const s = readS();
+  return <article><span id="item-v">{params?.id === "42" ? s.item42 : s.item99}</span></article>;
+}
+`
+    );
+
+    const buildRes = spawnSync(process.execPath, [CLI_PATH, "build:node:esbuild"], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 120_000,
+    });
+    assert.equal(
+      buildRes.status,
+      0,
+      `Phase 6 Stage 2 build failed:\n${buildRes.stdout}\n${buildRes.stderr}`
+    );
+
+    const verifyScript = path.join(tmpApp, "verify-p6-stage2.mjs");
+    fs.writeFileSync(
+      verifyScript,
+      `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const { FileSystemStorage, setStorageAdapter } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/storage-adapter.js")).href
+      )});
+const dist2 = path.resolve(".dinou/dist2");
+setStorageAdapter(new FileSystemStorage(dist2));
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+globalThis.__DINOU_RENDER_HTML_STREAM__ = ssrMod.renderHtml;
+const opts = { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml };
+
+const writeS = (patch) => {
+  const f = path.resolve("p6s2-state.json");
+  const cur = JSON.parse(fs.readFileSync(f, "utf8"));
+  fs.writeFileSync(f, JSON.stringify({ ...cur, ...patch }), "utf8");
+};
+const req = async (u) => {
+  const r = await rscMod.handleRequest(new Request("http://localhost" + u), opts);
+  return { status: r.status, headers: r.headers, text: await r.text() };
+};
+const textById = (html, id) => {
+  const m = html.match(new RegExp('id="' + id + '"[^>]*>([^<]*)<'));
+  return m ? m[1] : null;
+};
+const readJson = (rel) => JSON.parse(fs.readFileSync(path.join(dist2, rel), "utf8"));
+
+const POISON = "POISON_999";
+
+// Warm asymmetric /tm/dyn/l3 so L2 dynamic slot, L3 own fragment, Page shell, and Hole slot are all cached!
+const warmTm = await req("/tm/dyn/l3");
+assert.equal(warmTm.status, 200);
+assert.equal(textById(warmTm.text, "tm-l1-slot-v"), "100");
+assert.equal(textById(warmTm.text, "tm-l2-slot-v"), "100");
+assert.equal(textById(warmTm.text, "tm-l3-slot-v"), "100");
+assert.equal(textById(warmTm.text, "tm-page-slot-v"), "100");
+assert.equal(textById(warmTm.text, "tm-hole-slot-v"), "100");
+assert.equal(textById(warmTm.text, "tm-outer-v"), "100");
+assert.equal(textById(warmTm.text, "tm-inner-v"), "100");
+assert.equal(textById(warmTm.text, "tm-pf-a-v"), "100");
+assert.equal(textById(warmTm.text, "tm-pf-b-v"), "100");
+
+const l1OwnGenBefore = readJson("tm/layout.metadata.json").ownGeneratedAt || readJson("tm/layout.metadata.json").layoutGeneratedAt;
+const l3OwnGenBefore = readJson("tm/dyn/l3/layout.metadata.json").ownGeneratedAt || readJson("tm/dyn/l3/layout.metadata.json").layoutGeneratedAt;
+const pageOwnGenBefore = readJson("tm/dyn/l3/metadata.json").pageGeneratedAt || readJson("tm/dyn/l3/metadata.json").generatedAt;
+
+// ============================================================================
+// 1. Shared Multi-Slot Tag Fan-Out across ALL 5 placements (L1, Dyn L2, L3, Page shell, PPR hole)
+// ============================================================================
+writeS({
+  l1Shell: POISON,
+  l3Shell: POISON,
+  pageShell: POISON,
+  outerSlot: POISON,
+  innerSlot: POISON,
+  pfSlotA: POISON,
+  pfSlotB: POISON,
+  l2Host: 200,
+  holeHost: 200,
+  l1Slot: 201,
+  l2Slot: 202,
+  l3Slot: 203,
+  pageSlot: 204,
+  holeSlot: 205,
+});
+await rscMod.revalidateTag("shared-matrix-tag");
+const afterShared = await req("/tm/dyn/l3");
+assert.equal(afterShared.status, 200);
+assert.equal(textById(afterShared.text, "tm-l1-slot-v"), "201", "L1 shell slot must refresh on shared-matrix-tag");
+assert.equal(textById(afterShared.text, "tm-l2-slot-v"), "202", "Dynamic L2 slot must refresh on shared-matrix-tag");
+assert.equal(textById(afterShared.text, "tm-l3-slot-v"), "203", "Static L3 slot under Dynamic L2 must refresh on shared-matrix-tag");
+assert.equal(textById(afterShared.text, "tm-page-slot-v"), "204", "Page shell slot must refresh on shared-matrix-tag");
+assert.equal(textById(afterShared.text, "tm-hole-slot-v"), "205", "Page PPR hole slot must refresh on shared-matrix-tag");
+assert.equal(textById(afterShared.text, "tm-l1-shell"), "100", "L1 shell must stay 100% frozen");
+assert.equal(textById(afterShared.text, "tm-l3-shell"), "100", "L3 shell must stay 100% frozen");
+assert.equal(textById(afterShared.text, "tm-page-shell"), "100", "Page shell must stay 100% frozen");
+assert.equal(textById(afterShared.text, "tm-outer-v"), "100", "Unrelated outer slot must stay frozen");
+assert.equal(textById(afterShared.text, "tm-inner-v"), "100", "Unrelated inner slot must stay frozen");
+assert.ok(!afterShared.text.includes(POISON), "Shared multi-slot revalidateTag must never leak poisoned shells");
+
+assert.equal(
+  readJson("tm/layout.metadata.json").ownGeneratedAt || readJson("tm/layout.metadata.json").layoutGeneratedAt,
+  l1OwnGenBefore,
+  "L1 ownGeneratedAt must stay unchanged on slot-only revalidateTag"
+);
+assert.equal(
+  readJson("tm/dyn/l3/layout.metadata.json").ownGeneratedAt || readJson("tm/dyn/l3/layout.metadata.json").layoutGeneratedAt,
+  l3OwnGenBefore,
+  "L3 ownGeneratedAt must stay unchanged on slot-only revalidateTag"
+);
+assert.equal(
+  readJson("tm/dyn/l3/metadata.json").pageGeneratedAt,
+  pageOwnGenBefore,
+  "Page pageGeneratedAt must stay unchanged on slot-only revalidateTag"
+);
+
+// ============================================================================
+// 2. Raw Slot ID vs Declared Tag (surgical single-slot invalidation)
+// ============================================================================
+writeS({
+  l1Shell: POISON, l3Shell: POISON, pageShell: POISON,
+  l1Slot: 301, l2Slot: POISON, l3Slot: POISON, pageSlot: POISON, holeSlot: POISON,
+});
+await rscMod.revalidateTag("tm-l1-slot"); // RAW SLOT ID!
+const afterRawId = await req("/tm/dyn/l3");
+assert.equal(textById(afterRawId.text, "tm-l1-slot-v"), "301", "Raw slot ID revalidateTag('tm-l1-slot') must refresh L1 slot");
+assert.equal(textById(afterRawId.text, "tm-l2-slot-v"), "202", "Sibling L2 slot must stay frozen");
+assert.equal(textById(afterRawId.text, "tm-l3-slot-v"), "203", "Sibling L3 slot must stay frozen");
+assert.equal(textById(afterRawId.text, "tm-page-slot-v"), "204", "Sibling Page slot must stay frozen");
+assert.equal(textById(afterRawId.text, "tm-hole-slot-v"), "205", "Sibling Hole slot must stay frozen");
+assert.ok(!afterRawId.text.includes(POISON));
+
+writeS({ l1Slot: POISON, pageSlot: 302 });
+await rscMod.revalidateTag("tm-page-only"); // DECLARED TAG!
+const afterDeclTag = await req("/tm/dyn/l3");
+assert.equal(textById(afterDeclTag.text, "tm-page-slot-v"), "302", "Declared tag revalidateTag('tm-page-only') must refresh Page slot");
+assert.equal(textById(afterDeclTag.text, "tm-l1-slot-v"), "301", "L1 slot must stay at 301");
+assert.ok(!afterDeclTag.text.includes(POISON));
+
+// ============================================================================
+// 3. Nested Slots (Outer -> Inner): Inner-only vs Outer-only isolation
+// ============================================================================
+writeS({ pageShell: POISON, outerSlot: POISON, innerSlot: 401 });
+await rscMod.revalidateTag("tm-inner-tag");
+const afterInner = await req("/tm/dyn/l3");
+assert.equal(textById(afterInner.text, "tm-inner-v"), "401", "Inner slot must update to 401");
+assert.equal(textById(afterInner.text, "tm-outer-v"), "100", "Outer slot must stay frozen at 100");
+assert.ok(!afterInner.text.includes(POISON));
+
+writeS({ pageShell: POISON, outerSlot: 402, innerSlot: POISON });
+await rscMod.revalidateTag("tm-outer-tag");
+const afterOuter = await req("/tm/dyn/l3");
+assert.equal(textById(afterOuter.text, "tm-outer-v"), "402", "Outer slot must update to 402");
+assert.equal(textById(afterOuter.text, "tm-inner-v"), "401", "Inner slot must stay frozen at 401");
+assert.ok(!afterOuter.text.includes(POISON));
+
+// ============================================================================
+// 4. Partial-Failure Rollback (slotBackups) + Full slot.metadata.json Preservation + Cold Recovery
+// ============================================================================
+writeS({ pageShell: POISON, pfSlotA: 501, pfSlotB: 502, throwSlotB: true });
+await rscMod.revalidateTag("partial-fail-tag");
+const afterPartialFail = await req("/tm/dyn/l3");
+assert.equal(afterPartialFail.status, 200);
+assert.equal(textById(afterPartialFail.text, "tm-pf-a-v"), "501", "Healthy Slot A must commit 501 during partial failure");
+assert.equal(textById(afterPartialFail.text, "tm-pf-b-v"), "100", "Throwing Slot B must preserve last-known-good 100");
+assert.ok(!afterPartialFail.text.includes(POISON));
+
+// Verify slots/tm-pf-b/slot.json AND slots/tm-pf-b/slot.metadata.json were BOTH restored intact with full tags & revalidate!
+assert.ok(fs.existsSync(path.join(dist2, "slots/tm-pf-b/slot.json")), "Failed Slot B slot.json must be restored");
+const restoredSlotBMeta = readJson("slots/tm-pf-b/slot.metadata.json");
+assert.ok(
+  Array.isArray(restoredSlotBMeta.tags) && restoredSlotBMeta.tags.includes("partial-fail-tag"),
+  "Restored Slot B slot.metadata.json MUST preserve tags: ['partial-fail-tag'], got " + JSON.stringify(restoredSlotBMeta)
+);
+assert.equal(restoredSlotBMeta.revalidate, 3600, "Restored Slot B slot.metadata.json MUST preserve revalidate: 3600");
+
+// Now clear fault AND wipe slotRegistry (cold pod simulation!) -> re-running revalidateTag('partial-fail-tag') MUST still find & update Slot B!
+globalThis[Symbol.for("dinou.slot.registry")]?.clear?.();
+writeS({ pageShell: POISON, pfSlotA: 503, pfSlotB: 504, throwSlotB: false });
+await rscMod.revalidateTag("partial-fail-tag");
+const afterRecovery = await req("/tm/dyn/l3");
+assert.equal(afterRecovery.status, 200);
+assert.equal(textById(afterRecovery.text, "tm-pf-a-v"), "503", "Slot A must update to 503 after recovery");
+assert.equal(textById(afterRecovery.text, "tm-pf-b-v"), "504", "Slot B must recover & update to 504 even after cold slotRegistry clear!");
+assert.equal(textById(afterRecovery.text, "tm-page-shell"), "100", "Page shell must stay frozen at 100");
+assert.ok(!afterRecovery.text.includes(POISON));
+
+// ============================================================================
+// 5. Cloudflare Workers Ancestor-First Ordering (navigator.userAgent === "Cloudflare-Workers")
+//    L1 takes 140ms while L2 takes 0ms -> sequential loop guarantees L1 finishes BEFORE L2 starts!
+// ============================================================================
+const origNavDesc = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+Object.defineProperty(globalThis, "navigator", {
+  value: { userAgent: "Cloudflare-Workers" },
+  configurable: true,
+  writable: true,
+});
+try {
+  writeS({ cfL1: 601, cfL1DelayMs: 140, cfL2: 602, cfPage: 603, cfSlot: 604 });
+  await rscMod.revalidateTag("cascade-all");
+} finally {
+  if (origNavDesc) {
+    Object.defineProperty(globalThis, "navigator", origNavDesc);
+  } else {
+    delete globalThis.navigator;
+  }
+}
+const cfL1Meta = readJson("cf/layout.metadata.json");
+const cfL2Meta = readJson("cf/child/layout.metadata.json");
+const cfPageMeta = readJson("cf/child/metadata.json");
+assert.ok(
+  Number(cfL1Meta.generatedAt) < Number(cfL2Meta.generatedAt),
+  "Cloudflare Workers revalidateTag MUST commit L1 strictly before L2! L1=" + cfL1Meta.generatedAt + " L2=" + cfL2Meta.generatedAt
+);
+assert.ok(
+  Number(cfL2Meta.generatedAt) < Number(cfPageMeta.generatedAt),
+  "Cloudflare Workers revalidateTag MUST commit L2 strictly before Page! L2=" + cfL2Meta.generatedAt + " Page=" + cfPageMeta.generatedAt
+);
+const cfL2Rsc = fs.readFileSync(path.join(dist2, "cf/child/layout.rsc"), "utf8");
+assert.ok(cfL2Rsc.includes("601"), "L2 layout.rsc MUST compose FRESH L1 (601) under Cloudflare Workers mode!");
+assert.ok(cfL2Rsc.includes("602"), "L2 layout.rsc MUST contain fresh L2 (602)");
+assert.ok(cfL2Rsc.includes("604"), "L2 layout.rsc MUST contain fresh L1 slot (604)");
+const cfHtml = await req("/cf/child");
+assert.equal(textById(cfHtml.text, "cf-l1-v"), "601");
+assert.equal(textById(cfHtml.text, "cf-slot-v"), "604");
+assert.equal(textById(cfHtml.text, "cf-l2-v"), "602");
+assert.equal(textById(cfHtml.text, "cf-p-v"), "603");
+
+// ============================================================================
+// 6. Parameterized getCacheTags(params) on (alpha)/(beta), [[...slug]], and [id] + Deprecation Warning
+// ============================================================================
+writeS({ grpOuter: POISON, alphaL: 701, betaL: POISON });
+await rscMod.revalidateTag("grp-alpha-only");
+const pgA = await req("/pg/a");
+const pgB = await req("/pg/b");
+assert.equal(textById(pgA.text, "pg-alpha"), "701", "(alpha) layout must update on grp-alpha-only");
+assert.equal(textById(pgA.text, "pg-outer"), "100", "Outer layout must stay frozen");
+assert.equal(textById(pgB.text, "pg-beta"), "100", "(beta) layout must stay frozen");
+assert.ok(!pgA.text.includes(POISON) && !pgB.text.includes(POISON));
+
+writeS({ caRootL: POISON, caDocsL: POISON, caV2L: 711 });
+await rscMod.revalidateTag("slug-docs-v2");
+assert.equal(textById((await req("/slugs/docs/v2")).text, "slug-l"), "711", "2-seg [[...slug]] must update on slug-docs-v2");
+assert.equal(textById((await req("/slugs")).text, "slug-l"), "100", "0-seg [[...slug]] must stay frozen");
+assert.equal(textById((await req("/slugs/docs")).text, "slug-l"), "100", "1-seg [[...slug]] must stay frozen");
+
+const origWarn = console.warn;
+const warnLogs = [];
+console.warn = (...args) => warnLogs.push(args.join(" "));
+try {
+  writeS({ item42: 721, item99: POISON });
+  await rscMod.revalidateTag("item-42", { cascade: true });
+} finally {
+  console.warn = origWarn;
+}
+assert.equal(warnLogs.filter((w) => w.includes("deprecated") && w.includes("revalidateTag")).length, 1);
+assert.equal(textById((await req("/items/42")).text, "item-v"), "721", "[id] item-42 must update");
+assert.equal(textById((await req("/items/99")).text, "item-v"), "100", "[id] item-99 must stay frozen");
+
+console.log("PHASE6_STAGE2_REVALIDATE_TAG_MATRIX_OK");
+`
+    );
+
+    const runRes = spawnSync(process.execPath, [verifyScript], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+      timeout: 60_000,
+    });
+    assert.equal(
+      runRes.status,
+      0,
+      `Phase 6 Stage 2 revalidateTag matrix failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+    );
+    assert.ok(runRes.stdout.includes("PHASE6_STAGE2_REVALIDATE_TAG_MATRIX_OK"));
+  } finally {
+    removeDirSafe(tmpApp);
+  }
+});
