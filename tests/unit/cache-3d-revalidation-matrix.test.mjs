@@ -1409,3 +1409,394 @@ console.log("PHASE6_STAGE2_REVALIDATE_TAG_MATRIX_OK");
     removeDirSafe(tmpApp);
   }
 });
+
+test("3. [Phase 6 / Stage 3 / Check #81] revalidateLayout() & revalidatePage() Surgical Contracts, No-Op Guards, Concurrent Stampede Deduplication & Causal _old Hydration Snapshots", async () => {
+  const tmpApp = createFixtureDir("p6-s3-surgical-old-");
+  try {
+    writeDinouShim(tmpApp);
+    fs.writeFileSync(
+      path.join(tmpApp, "package.json"),
+      JSON.stringify({ name: "p6-s3-surgical-old", private: true, type: "module" }, null, 2)
+    );
+    fs.writeFileSync(
+      path.join(tmpApp, "p6s3-state.json"),
+      JSON.stringify({
+        rootShell: 100,
+        nestedL1: 100,
+        nestedSlot: 100,
+        nestedPage: 100,
+        nestedHole: 100,
+        nestedDelayMs: 0,
+        staticDocL: 100,
+        staticDocP: 100,
+        asymL1: 100,
+        asymDynL2: 100,
+        asymL3: 100,
+        asymPage: 100,
+        dynPageVal: 100,
+        alphaL: 100,
+        betaL: 100,
+        caRootL: 100,
+        caV2L: 100,
+      })
+    );
+
+    const write = (rel, content) => {
+      const full = path.join(tmpApp, rel);
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, content, "utf8");
+    };
+
+    write(
+      "src/state.ts",
+      `import fs from "node:fs";
+import path from "node:path";
+const EXEC_KEY = Symbol.for("dinou.p6s3.execs");
+export function readS() {
+  return JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "p6s3-state.json"), "utf8"));
+}
+export function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+export function bumpExec(name: string) {
+  const m = ((globalThis as any)[EXEC_KEY] ||= {});
+  m[name] = (m[name] || 0) + 1;
+}
+`
+    );
+
+    // Root static layout (3600s)
+    write("src/layout_functions.ts", `export function revalidate() { return 3600; }\n`);
+    write(
+      "src/layout.tsx",
+      `import type { ReactNode } from "react";
+import { readS } from "./state";
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <head><title>P6S3</title></head>
+      <body>
+        <span id="s3-root">{readS().rootShell}</span>
+        {children}
+      </body>
+    </html>
+  );
+}
+`
+    );
+    write("src/page.tsx", `export default function Home() { return <main>home</main>; }\n`);
+
+    // 1. Nested 3D PPR route: /nested/ppr (L1 PPR + Slot -> Page PPR + Hole; NO own layout on /nested/ppr!)
+    write("src/nested/layout_functions.ts", `export const ppr = true; export function revalidate() { return 3600; }\n`);
+    write(
+      "src/nested/layout.tsx",
+      `import type { ReactNode } from "react";
+import { DinouCacheSlot } from "dinou/server";
+import { readS, sleep, bumpExec } from "../state";
+export default async function NestedL1({ children }: { children: ReactNode }) {
+  bumpExec("nestedL1");
+  const s = readS();
+  if (s.nestedDelayMs > 0) await sleep(s.nestedDelayMs);
+  return (
+    <section id="s3-l1">
+      <span id="s3-l1-v">{readS().nestedL1}</span>
+      <DinouCacheSlot id="s3-nested-slot" revalidate={3600} tags={["s3-nested-slot-tag"]}>
+        {async () => <span id="s3-slot-v">{readS().nestedSlot}</span>}
+      </DinouCacheSlot>
+      {children}
+    </section>
+  );
+}
+`
+    );
+    write("src/nested/ppr/page_functions.ts", `export const ppr = true; export function revalidate() { return 3600; }\n`);
+    write(
+      "src/nested/ppr/page.tsx",
+      `import { Suspense } from "react";
+import { getContext } from "dinou";
+import { readS, sleep, bumpExec } from "../../state";
+async function NestedHole() {
+  void getContext()?.req?.headers?.["x-s3-h"];
+  await Promise.resolve();
+  return <span id="s3-hole-v">{readS().nestedHole}</span>;
+}
+export default async function NestedPprPage() {
+  bumpExec("nestedPage");
+  const s = readS();
+  if (s.nestedDelayMs > 0) await sleep(s.nestedDelayMs);
+  return (
+    <article id="s3-page">
+      <span id="s3-page-v">{readS().nestedPage}</span>
+      <Suspense fallback={<span>fb-s3</span>}><NestedHole /></Suspense>
+    </article>
+  );
+}
+`
+    );
+
+    // 2. Non-PPR static route for causal _old RSC verification: /static-doc
+    write("src/static-doc/layout_functions.ts", `export function revalidate() { return 3600; }\n`);
+    write(
+      "src/static-doc/layout.tsx",
+      `import type { ReactNode } from "react";
+import { readS } from "../state";
+export default function StaticDocL({ children }: { children: ReactNode }) {
+  return <section><span id="sd-l">{readS().staticDocL}</span>{children}</section>;
+}
+`
+    );
+    write("src/static-doc/page_functions.ts", `export function revalidate() { return 3600; }\n`);
+    write(
+      "src/static-doc/page.tsx",
+      `import { readS } from "../state";
+export default function StaticDocP() {
+  return <article><span id="sd-p">{readS().staticDocP}</span></article>;
+}
+`
+    );
+
+    // 3. Asymmetric S -> D -> S + Dynamic page
+    write("src/asym/layout_functions.ts", `export function revalidate() { return 3600; }\n`);
+    write("src/asym/layout.tsx", `import type { ReactNode } from "react"; import { readS } from "../state"; export default function AL1({ children }: { children: ReactNode }) { return <div><span id="a-l1">{readS().asymL1}</span>{children}</div>; }\n`);
+    write("src/asym/dyn/layout_functions.ts", `export function revalidate() { return 0; }\n`);
+    write("src/asym/dyn/layout.tsx", `import type { ReactNode } from "react"; import { readS } from "../../state"; export default function AL2({ children }: { children: ReactNode }) { return <div><span id="a-l2">{readS().asymDynL2}</span>{children}</div>; }\n`);
+    write("src/asym/dyn/l3/layout_functions.ts", `export function revalidate() { return 3600; }\n`);
+    write("src/asym/dyn/l3/layout.tsx", `import type { ReactNode } from "react"; import { readS } from "../../../state"; export default function AL3({ children }: { children: ReactNode }) { return <div><span id="a-l3">{readS().asymL3}</span>{children}</div>; }\n`);
+    write("src/asym/dyn/l3/page_functions.ts", `export function revalidate() { return 3600; }\n`);
+    write("src/asym/dyn/l3/page.tsx", `import { readS } from "../../../state"; export default function AP() { return <p id="a-p">{readS().asymPage}</p>; }\n`);
+
+    write("src/dyn-page/page_functions.ts", `export function revalidate() { return 0; }\n`);
+    write("src/dyn-page/page.tsx", `import { readS } from "../state"; export default function DynP() { return <p id="dp-v">{readS().dynPageVal}</p>; }\n`);
+
+    // 4. Route groups & optional catch-all
+    write("src/grp/(alpha)/layout_functions.ts", `export function revalidate() { return 3600; }\n`);
+    write("src/grp/(alpha)/layout.tsx", `import type { ReactNode } from "react"; import { readS } from "../../state"; export default function GA({ children }: { children: ReactNode }) { return <div><span id="ga-l">{readS().alphaL}</span>{children}</div>; }\n`);
+    write("src/grp/(alpha)/a/page_functions.ts", `export function revalidate() { return 3600; }\n`);
+    write("src/grp/(alpha)/a/page.tsx", `export default function GAP() { return <p>a</p>; }\n`);
+    write("src/grp/(beta)/layout_functions.ts", `export function revalidate() { return 3600; }\n`);
+    write("src/grp/(beta)/layout.tsx", `import type { ReactNode } from "react"; import { readS } from "../../state"; export default function GB({ children }: { children: ReactNode }) { return <div><span id="gb-l">{readS().betaL}</span>{children}</div>; }\n`);
+    write("src/grp/(beta)/b/page_functions.ts", `export function revalidate() { return 3600; }\n`);
+    write("src/grp/(beta)/b/page.tsx", `export default function GBP() { return <p>b</p>; }\n`);
+
+    write("src/ca/[[...slug]]/layout_functions.ts", `export function revalidate() { return 3600; } export function getStaticPaths() { return [[], ["docs", "v2"]]; }\n`);
+    write("src/ca/[[...slug]]/layout.tsx", `import type { ReactNode } from "react"; import { readS } from "../../state"; export default function CAL({ children, params }: { children: ReactNode; params?: { slug?: string[] } }) { const k = Array.isArray(params?.slug) && params.slug.length > 0 ? params.slug.join("/") : "root"; return <div><span id="ca-l">{k === "docs/v2" ? readS().caV2L : readS().caRootL}</span>{children}</div>; }\n`);
+    write("src/ca/[[...slug]]/page_functions.ts", `export function revalidate() { return 3600; } export function getStaticPaths() { return [[], ["docs", "v2"]]; }\n`);
+    write("src/ca/[[...slug]]/page.tsx", `export default function CAP() { return <p>ca</p>; }\n`);
+
+    const buildRes = spawnSync(process.execPath, [CLI_PATH, "build:node:esbuild"], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 120_000,
+    });
+    assert.equal(buildRes.status, 0, `Phase 6 Stage 3 build failed:\n${buildRes.stdout}\n${buildRes.stderr}`);
+
+    const verifyScript = path.join(tmpApp, "verify-p6-stage3.mjs");
+    fs.writeFileSync(
+      verifyScript,
+      `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const { FileSystemStorage, setStorageAdapter } = await import(${JSON.stringify(
+        pathToFileURL(path.join(DINOU_ROOT, "core/storage-adapter.js")).href
+      )});
+const dist2 = path.resolve(".dinou/dist2");
+setStorageAdapter(new FileSystemStorage(dist2));
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+globalThis.__DINOU_RENDER_HTML_STREAM__ = ssrMod.renderHtml;
+const opts = { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml };
+
+const writeS = (patch) => {
+  const f = path.resolve("p6s3-state.json");
+  const cur = JSON.parse(fs.readFileSync(f, "utf8"));
+  fs.writeFileSync(f, JSON.stringify({ ...cur, ...patch }), "utf8");
+};
+const req = async (u) => {
+  const r = await rscMod.handleRequest(new Request("http://localhost" + u), opts);
+  return { status: r.status, headers: r.headers, text: await r.text() };
+};
+const textById = (html, id) => {
+  const m = html.match(new RegExp('id="' + id + '"[^>]*>([^<]*)<'));
+  return m ? m[1] : null;
+};
+const readJson = (rel) => JSON.parse(fs.readFileSync(path.join(dist2, rel), "utf8"));
+const getBuildId = (html) => {
+  const m = html.match(/window\\.__DINOU_BUILD_ID__\\s*=\\s*"(\\d+)"/);
+  return m ? m[1] : null;
+};
+const POISON = "POISON_999";
+
+// Warm asymmetric route so L3 own fragment is materialized
+const warmAsym = await req("/asym/dyn/l3");
+assert.equal(warmAsym.status, 200);
+assert.equal(textById(warmAsym.text, "a-l3"), "100");
+
+// ============================================================================
+// 1. revalidateLayout("/") cascades recomposeOnly to nested 3D PPR pages without executing poisoned child layouts/pages!
+// ============================================================================
+writeS({ rootShell: 201, nestedL1: POISON, nestedSlot: POISON, nestedPage: POISON, nestedHole: 202 });
+const rootRevalOk = await rscMod.revalidateLayout("/");
+assert.equal(rootRevalOk, true, "revalidateLayout('/') must return true");
+const nestedAfterRoot = await req("/nested/ppr");
+assert.equal(nestedAfterRoot.status, 200);
+assert.equal(textById(nestedAfterRoot.text, "s3-root"), "201", "Root layout must update to 201 on /nested/ppr");
+assert.equal(textById(nestedAfterRoot.text, "s3-l1-v"), "100", "Child L1 must stay frozen via recomposeOnly");
+assert.equal(textById(nestedAfterRoot.text, "s3-slot-v"), "100", "Child L1 slot must stay frozen");
+assert.equal(textById(nestedAfterRoot.text, "s3-page-v"), "100", "Nested PPR page shell must stay frozen");
+assert.equal(textById(nestedAfterRoot.text, "s3-hole-v"), "202", "Nested PPR hole must stream live 202");
+assert.ok(!nestedAfterRoot.text.includes(POISON), "revalidateLayout('/') cascade must NEVER execute poisoned children");
+
+// ============================================================================
+// 2. Surgical targeting: (alpha) vs (beta), [[...slug]] 0-seg vs 2-seg, Static L3 under Dynamic L2
+// ============================================================================
+writeS({ alphaL: 301, betaL: POISON });
+assert.equal(await rscMod.revalidateLayout("/grp/(alpha)"), true);
+assert.equal(textById((await req("/grp/a")).text, "ga-l"), "301");
+assert.equal(textById((await req("/grp/b")).text, "gb-l"), "100");
+
+writeS({ caRootL: 311, caV2L: POISON });
+assert.equal(await rscMod.revalidateLayout("/ca/[[...slug]]"), true);
+assert.equal(textById((await req("/ca")).text, "ca-l"), "311");
+assert.equal(textById((await req("/ca/docs/v2")).text, "ca-l"), "100");
+
+writeS({ caRootL: POISON, caV2L: 312 });
+assert.equal(await rscMod.revalidateLayout("/ca/docs/v2"), true);
+assert.equal(textById((await req("/ca/docs/v2")).text, "ca-l"), "312");
+assert.equal(textById((await req("/ca")).text, "ca-l"), "311");
+
+writeS({ asymL1: POISON, asymDynL2: 321, asymL3: 322, asymPage: POISON });
+assert.equal(await rscMod.revalidateLayout("/asym/dyn/l3"), true);
+const asymAfterL3 = await req("/asym/dyn/l3");
+assert.equal(textById(asymAfterL3.text, "a-l1"), "100", "L1 must stay frozen");
+assert.equal(textById(asymAfterL3.text, "a-l2"), "321", "Dynamic L2 stays live");
+assert.equal(textById(asymAfterL3.text, "a-l3"), "322", "Static L3 under Dynamic L2 updates to 322");
+assert.equal(textById(asymAfterL3.text, "a-p"), "100", "Page stays frozen");
+assert.ok(!asymAfterL3.text.includes(POISON));
+
+// ============================================================================
+// 3. No-Op & Dynamic Guards (ZERO phantom files written to .dinou/dist2!)
+// ============================================================================
+assert.equal(await rscMod.revalidateLayout("/asym/dyn"), false, "Dynamic L2 revalidateLayout must safely return false");
+assert.equal(fs.existsSync(path.join(dist2, "asym/dyn/layout.rsc")), false, "Dynamic L2 must NEVER cache layout.rsc");
+
+await rscMod.revalidatePage("/dyn-page");
+assert.equal(fs.existsSync(path.join(dist2, "dyn-page/index.html")), false, "Dynamic revalidate=0 page must NEVER cache index.html");
+assert.equal(fs.existsSync(path.join(dist2, "dyn-page/page.rsc")), false, "Dynamic revalidate=0 page must NEVER cache page.rsc");
+
+assert.equal(await rscMod.revalidateLayout("/does-not-exist"), false, "Non-existent revalidateLayout must return false");
+assert.equal(fs.existsSync(path.join(dist2, "does-not-exist")), false, "Non-existent revalidateLayout must write ZERO phantom files!");
+
+await rscMod.revalidatePage("/does-not-exist");
+assert.equal(fs.existsSync(path.join(dist2, "does-not-exist")), false, "Non-existent revalidatePage must write ZERO phantom files!");
+
+assert.equal(await rscMod.revalidateLayout("/nested/ppr"), false, "Leaf page without own layout must return false");
+assert.equal(fs.existsSync(path.join(dist2, "nested/ppr/layout.rsc")), false, "Leaf without own layout must NOT write phantom layout.rsc");
+
+// ============================================================================
+// 4. Causal _old Hydration Snapshots (____build_id____=T1) on BOTH PPR & Non-PPR Static Routes!
+// ============================================================================
+// Capture T1 HTML snapshots BEFORE advancing server to T2
+const pprHtmlT1 = await req("/nested/ppr");
+const pprT1 = getBuildId(pprHtmlT1.text);
+assert.ok(pprT1, "Expected __DINOU_BUILD_ID__ on PPR HTML");
+assert.equal(textById(pprHtmlT1.text, "s3-l1-v"), "100");
+assert.equal(textById(pprHtmlT1.text, "s3-slot-v"), "100");
+assert.equal(textById(pprHtmlT1.text, "s3-page-v"), "100");
+
+const sdHtmlT1 = await req("/static-doc");
+const sdT1 = getBuildId(sdHtmlT1.text);
+assert.ok(sdT1, "Expected __DINOU_BUILD_ID__ on Static Doc HTML");
+assert.equal(textById(sdHtmlT1.text, "sd-l"), "100");
+assert.equal(textById(sdHtmlT1.text, "sd-p"), "100");
+
+// Advance both routes to V2 (T2 > T1)
+writeS({ nestedL1: 501, nestedSlot: 502, nestedPage: 503, staticDocL: 511, staticDocP: 512 });
+await rscMod.revalidateLayout("/nested");
+await rscMod.revalidatePage("/nested/ppr");
+await rscMod.revalidateLayout("/static-doc");
+await rscMod.revalidatePage("/static-doc");
+
+// Browser A hydrating with stale T1 MUST receive V1 causal _old snapshots (zero #418 mismatch!)
+const pprOldLayRsc = await req("/____rsc_layout____/nested?____build_id____=" + pprT1);
+assert.equal(pprOldLayRsc.status, 200);
+assert.ok(pprOldLayRsc.text.includes('"s3-l1-v","children":100'), "PPR T1 layout RSC must serve V1 (100) from shell.layout._old.json, got: " + pprOldLayRsc.text.slice(0, 400));
+assert.ok(!pprOldLayRsc.text.includes("501"), "PPR T1 layout RSC must NOT leak V2 (501)");
+
+const pprOldPageRsc = await req("/____rsc_page____/nested/ppr?____build_id____=" + pprT1);
+assert.equal(pprOldPageRsc.status, 200);
+assert.ok(pprOldPageRsc.text.includes('"s3-page-v","children":100'), "PPR T1 page RSC must serve V1 (100) from shell.page._old.json, got: " + pprOldPageRsc.text.slice(0, 400));
+assert.ok(!pprOldPageRsc.text.includes("503"), "PPR T1 page RSC must NOT leak V2 (503)");
+
+const sdOldLayRsc = await req("/____rsc_layout____/static-doc?____build_id____=" + sdT1);
+assert.ok(sdOldLayRsc.text.includes('"sd-l","children":100') && !sdOldLayRsc.text.includes("511"), "Non-PPR T1 layout RSC must serve V1 from layout._old.rsc");
+const sdOldPageRsc = await req("/____rsc_page____/static-doc?____build_id____=" + sdT1);
+assert.ok(sdOldPageRsc.text.includes('"sd-p","children":100') && !sdOldPageRsc.text.includes("512"), "Non-PPR T1 page RSC must serve V1 from page._old.rsc");
+
+// Browser B arriving fresh at T2 receives V2 immediately!
+const pprHtmlT2 = await req("/nested/ppr");
+assert.equal(textById(pprHtmlT2.text, "s3-l1-v"), "501");
+assert.equal(textById(pprHtmlT2.text, "s3-page-v"), "503");
+const pprT2 = getBuildId(pprHtmlT2.text);
+assert.ok(Number(pprT2) > Number(pprT1), "T2 buildId must be > T1");
+const pprFreshLayRsc = await req("/____rsc_layout____/nested?____build_id____=" + pprT2);
+assert.ok(pprFreshLayRsc.text.includes('"s3-l1-v","children":501'), "Fresh T2 layout RSC must serve V2 (501)");
+
+// ============================================================================
+// 5. Concurrent Stampede Deduplication (inflightLayoutRevalidations & inflightPageRevalidations)
+// ============================================================================
+const execMap = (globalThis[Symbol.for("dinou.p6s3.execs")] ||= {});
+execMap.nestedL1 = 0;
+execMap.nestedPage = 0;
+writeS({ nestedL1: 601, nestedSlot: 602, nestedPage: 603, nestedDelayMs: 60 });
+const genBeforeStampede = Number(readJson("nested/ppr/metadata.json").generatedAt);
+
+await Promise.all([
+  rscMod.revalidateLayout("/nested"),
+  rscMod.revalidateLayout("/nested"),
+  rscMod.revalidateLayout("/nested"),
+  rscMod.revalidatePage("/nested/ppr"),
+  rscMod.revalidatePage("/nested/ppr"),
+  rscMod.revalidateTag("s3-nested-slot-tag"),
+]);
+
+assert.equal(execMap.nestedL1, 1, "3 concurrent revalidateLayout('/nested') must deduplicate to 1 execution! got " + execMap.nestedL1);
+assert.equal(execMap.nestedPage, 1, "2 concurrent revalidatePage('/nested/ppr') must deduplicate to 1 execution! got " + execMap.nestedPage);
+
+// Verify zero torn JSON & monotonic generatedAt after stampede!
+const lMetaAfter = readJson("nested/layout.metadata.json");
+const pMetaAfter = readJson("nested/ppr/metadata.json");
+assert.ok(readJson("nested/shell.layout.json"), "shell.layout.json must be valid JSON");
+assert.ok(readJson("nested/ppr/shell.page.json"), "shell.page.json must be valid JSON");
+assert.ok(Number(pMetaAfter.generatedAt) > genBeforeStampede, "Page generatedAt must advance monotonically after stampede");
+assert.ok(Number(lMetaAfter.generatedAt) > 0);
+
+const afterStampedeHtml = await req("/nested/ppr");
+assert.equal(textById(afterStampedeHtml.text, "s3-l1-v"), "601");
+assert.equal(textById(afterStampedeHtml.text, "s3-slot-v"), "602");
+assert.equal(textById(afterStampedeHtml.text, "s3-page-v"), "603");
+
+console.log("PHASE6_STAGE3_SURGICAL_OLD_STAMPEDE_OK");
+`
+    );
+
+    const runRes = spawnSync(process.execPath, [verifyScript], {
+      cwd: tmpApp,
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+      timeout: 60_000,
+    });
+    assert.equal(
+      runRes.status,
+      0,
+      `Phase 6 Stage 3 surgical/causal _old/stampede failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+    );
+    assert.ok(runRes.stdout.includes("PHASE6_STAGE3_SURGICAL_OLD_STAMPEDE_OK"));
+  } finally {
+    removeDirSafe(tmpApp);
+  }
+});

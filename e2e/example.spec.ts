@@ -22136,5 +22136,103 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           .catch(() => {});
       }
     });
+
+    test("43. [Phase 6 / Stage 3 / Check #81] Live Browser Causal _old Hydration Snapshots Under Mid-Hydration Revalidation Stampede (Zero #418 on Stale Tab A, Instant V2 on Fresh Tab B)", async ({
+      page,
+      context,
+    }) => {
+      test.skip(
+        !isProd,
+        "Causal _old hydration snapshots under mid-hydration revalidation require production mode"
+      );
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      const tabB = await context.newPage();
+      const tabBWatchers = attachStrictWatchers(tabB);
+
+      try {
+        // 1. Capture V1 baselines via Tab B on static cached route /t-3d-cube/hs (fetches /____rsc_layout____ & /____rsc_page____ with ____build_id____)
+        await tabB.goto("/t-3d-cube/hs");
+        await waitCubeReady(tabB);
+        const baseL1 = Number(await tabB.locator("#hs-l1-seq").textContent());
+        const basePage = Number(await tabB.locator("#hs-index-seq").textContent());
+        const nextL1 = Math.max(baseL1, basePage) + 121;
+        const nextPage = Math.max(baseL1, basePage) + 122;
+
+        // 2. Intercept & pause Tab A's initial hydration /____rsc_layout____ & /____rsc_page____ fetches!
+        let sawLayoutRsc = false;
+        let sawPageRsc = false;
+        let resolveBothIntercepted!: () => void;
+        const bothIntercepted = new Promise<void>((resolve) => {
+          resolveBothIntercepted = resolve;
+        });
+        let releaseGate!: () => void;
+        const gatePromise = new Promise<void>((resolve) => {
+          releaseGate = resolve;
+        });
+
+        const rscInterceptPattern = /\/____rsc_(layout|page)(?:_old)?(?:_static)?____/;
+        await page.route(rscInterceptPattern, async (route) => {
+          const url = route.request().url();
+          if (url.includes("____build_id____")) {
+            if (url.includes("____rsc_layout")) sawLayoutRsc = true;
+            if (url.includes("____rsc_page")) sawPageRsc = true;
+            if (sawLayoutRsc && sawPageRsc) {
+              resolveBothIntercepted();
+            }
+            await gatePromise;
+          }
+          await route.continue();
+        });
+
+        // 3. Navigate Tab A to receive T1 (V1) SSR HTML and pause mid-hydration
+        const navAPromise = page.goto("/t-3d-cube/hs", {
+          waitUntil: "domcontentloaded",
+        });
+        await Promise.race([
+          bothIntercepted,
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Timed out waiting for Tab A initial RSC fetches")), 15000)
+          ),
+        ]);
+
+        // 4. While Tab A is paused at T1, advance the server to T2 (V2) via Tab B!
+        await tabB.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          {
+            hsL1LayoutSeq: nextL1,
+            hsIndexPageSeq: nextPage,
+          }
+        );
+        await tabB.evaluate(async () => {
+          await (window as any).__CUBE_3D__.revalLayout("/t-3d-cube/hs");
+          await (window as any).__CUBE_3D__.revalPage("/t-3d-cube/hs");
+        });
+
+        // 5. Release Tab A's paused T1 hydration requests -> MUST hydrate V1 cleanly with ZERO #418!
+        releaseGate();
+        await navAPromise;
+        await waitCubeReady(page);
+        await expect(page.locator("#hs-l1-seq")).toHaveText(String(baseL1));
+        await expect(page.locator("#hs-index-seq")).toHaveText(String(basePage));
+
+        // 6. Fresh Tab B reload immediately receives & hydrates V2 cleanly!
+        await tabB.reload();
+        await waitCubeReady(tabB);
+        await expect(tabB.locator("#hs-l1-seq")).toHaveText(String(nextL1));
+        await expect(tabB.locator("#hs-index-seq")).toHaveText(String(nextPage));
+
+        expect(hydrationErrors).toEqual([]);
+        expect(routerWarnings).toEqual([]);
+        expect(pageErrors).toEqual([]);
+        expect(tabBWatchers.hydrationErrors).toEqual([]);
+        expect(tabBWatchers.routerWarnings).toEqual([]);
+        expect(tabBWatchers.pageErrors).toEqual([]);
+      } finally {
+        await page.unroute(/\/____rsc_(layout|page)(?:_old)?(?:_static)?____/).catch(() => {});
+        await tabB.close().catch(() => {});
+      }
+    });
   });
 });

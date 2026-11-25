@@ -2915,14 +2915,40 @@ async function handleRequest(request, platformContext = {}) {
             : cleanRel
             ? `${cleanRel}/shell.page.json`
             : "shell.page.json";
-          // Snapshot shellJson BEFORE launching any background slot SWR so this response stays consistent.
-          const shellJson = await readRscFromStorage(
-            storage,
-            shellKey,
-            platformContext,
-            request.url
+          const shellOldKey = isLayoutReq
+            ? cleanRel
+              ? `${cleanRel}/shell.layout._old.json`
+              : "shell.layout._old.json"
+            : cleanRel
+            ? `${cleanRel}/shell.page._old.json`
+            : "shell.page._old.json";
+          const useOldPprShell = Boolean(
+            isOld ||
+              (!internalRefreshVersion &&
+                internalBuildId &&
+                currentGeneratedAt &&
+                Number(internalBuildId) < Number(currentGeneratedAt))
           );
-          if (isPageReq) {
+          // Snapshot causal shellJson BEFORE launching any background slot SWR so initial T1
+          // hydration matches the T1 SSR HTML (using shell.*._old.json when server advanced to T2).
+          let shellJson = null;
+          if (useOldPprShell) {
+            shellJson = await readRscFromStorage(
+              storage,
+              shellOldKey,
+              platformContext,
+              request.url
+            );
+          }
+          if (!shellJson) {
+            shellJson = await readRscFromStorage(
+              storage,
+              shellKey,
+              platformContext,
+              request.url
+            );
+          }
+          if (isPageReq && !useOldPprShell) {
             try {
               const pMetaKey = cleanRel ? `${cleanRel}/metadata.json` : "metadata.json";
               const pRscBaseKey = cleanRel ? `${cleanRel}/page.rsc` : "page.rsc";
@@ -2956,13 +2982,18 @@ async function handleRequest(request, platformContext = {}) {
               let cachedShellTree = deserializeJSX(shellJson);
               const runSeg = isLayoutReq ? runInLayoutSegment : runInPageSegment;
               const slotScope = isLayoutReq ? "__layout_shell__" : "__ppr_shell__";
-              cachedShellTree = await runSeg(() =>
-                refreshNestedSlotsInTree(
-                  cachedShellTree,
-                  slotScope,
-                  { currentPath: reqPath }
-                )
+              const isInitialCausalHydration = Boolean(
+                useOldPprShell || (internalBuildId && !internalRefreshVersion)
               );
+              if (!isInitialCausalHydration) {
+                cachedShellTree = await runSeg(() =>
+                  refreshNestedSlotsInTree(
+                    cachedShellTree,
+                    slotScope,
+                    { currentPath: reqPath }
+                  )
+                );
+              }
               jsx = await spliceDynamicHolesIntoShell(
                 cachedShellTree,
                 () =>

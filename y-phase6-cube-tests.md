@@ -26,7 +26,7 @@ All 6 checks below are designed to be implemented and verified **incrementally (
 
 - [x] **Stage 1 — Check `#79`:** `revalidatePath()` Complete Matrix (Route Groups `(alpha)`/`(beta)`, `[[...slug]]`, Dynamic `L2` Ancestor, Relative Paths & Monotonic Timestamps)
 - [x] **Stage 2 — Check `#80`:** `revalidateTag()` Complete Matrix (Raw Slot ID vs Tag, Shared Multi-Slot Tags, All 4 Placements, `(group)`/`[[...slug]]`/`[id]`, Error Backup Rollback & Cloudflare Workers Ancestor Ordering)
-- [ ] **Stage 3 — Check `#81`:** `revalidateLayout()` & `revalidatePage()` Surgical Contracts, No-Op Guards & Causal `_old` Hydration Snapshots Under Stampede
+- [x] **Stage 3 — Check `#81`:** `revalidateLayout()` & `revalidatePage()` Surgical Contracts, No-Op Guards & Causal `_old` Hydration Snapshots Under Stampede
 - [ ] **Stage 4 — Check `#82`:** `refreshSlot(idOrTag, { fresh: false | true })` & `refreshSlot("*")` Complete Matrix (Shared Tags, Nested Slots, `<500ms` Fresh Race, `revalidate = 0` Stampede & Cross-Route Propagation)
 - [ ] **Stage 5 — Check `#83`:** Clock-Based TTL (`revalidate = N`) Exhaustive Matrix (Multi-Level Simultaneous Expiration, All-3-Axes 1s Slots, Per-Param Dynamic `revalidate(params)` Function & Mid-ISR Dynamic Bailout)
 - [ ] **Stage 6 — Check `#84`:** Revalidation Trigger Surfaces (Server Functions, Plugins/Webhooks, Standalone Workers) × Distributed Multi-Pod / Edge Runtimes (`Redis`, `Deno KV`, `Cloudflare KV + waitUntil`)

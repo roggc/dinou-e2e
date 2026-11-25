@@ -41,6 +41,12 @@ if (!globalThis[INFLIGHT_LAYOUT_REVAL_KEY]) {
 }
 const inflightLayoutRevalidations = globalThis[INFLIGHT_LAYOUT_REVAL_KEY];
 
+const INFLIGHT_PAGE_REVAL_KEY = Symbol.for("dinou.page.inflight.revalidations");
+if (!globalThis[INFLIGHT_PAGE_REVAL_KEY]) {
+  globalThis[INFLIGHT_PAGE_REVAL_KEY] = new Map();
+}
+const inflightPageRevalidations = globalThis[INFLIGHT_PAGE_REVAL_KEY];
+
 const REVAL_QUEUE_STORAGE_KEY = Symbol.for("dinou.reval.queue.storage");
 if (!globalThis[REVAL_QUEUE_STORAGE_KEY]) {
   globalThis[REVAL_QUEUE_STORAGE_KEY] = new AsyncLocalStorage();
@@ -469,7 +475,14 @@ async function revalidatePage(reqPath, internalOptions = {}) {
   const cleanPath = normalizeRevalidatePath(reqPath);
   const onlyRefreshSlots = Boolean(internalOptions?.onlyRefreshSlots);
   const onlyIfExpired = Boolean(internalOptions?.onlyIfExpired);
-  return enqueueRevalidation(async () => {
+  const inFlightKey = `${cleanPath}:${onlyRefreshSlots ? "slots" : "full"}:${onlyIfExpired ? "ttl" : "force"}`;
+  const useInflightDedup = !isCloudflareWorkersRuntime();
+
+  if (useInflightDedup && inflightPageRevalidations.has(inFlightKey)) {
+    return inflightPageRevalidations.get(inFlightKey);
+  }
+
+  const revalPromise = enqueueRevalidation(async () => {
     const storage = getStorageAdapter();
     const cleanPathKey = cleanPath.replace(/^\/+/, "").replace(/\/+$/, "");
     const htmlKey = cleanPathKey ? `${cleanPathKey}/index.html` : "index.html";
@@ -511,6 +524,10 @@ async function revalidatePage(reqPath, internalOptions = {}) {
     const srcFolder = path.resolve(process.cwd(), "src");
     const [pagePath] = getFilePathAndDynamicParams(reqSegments, {}, srcFolder);
 
+    if (!pagePath && !cached && !existingPageRsc) {
+      return;
+    }
+
     const activeChainCheck = getActiveLayoutChain(reqSegments, {}, srcFolder);
     if (await isLayoutChainBlockedForRevalidate(activeChainCheck, storage)) {
       return;
@@ -526,6 +543,13 @@ async function revalidatePage(reqPath, internalOptions = {}) {
       hasExistingPageArtifact
     );
     if (routeCfg.isBlocked) {
+      return;
+    }
+    const effectivePageReval =
+      routeCfg.pageRevalidate !== undefined && routeCfg.pageRevalidate !== null
+        ? routeCfg.pageRevalidate
+        : routeCfg.revalidate;
+    if (typeof effectivePageReval === "number" && effectivePageReval < 1) {
       return;
     }
     const isRoutePpr = routeCfg.isRoutePpr;
@@ -1114,6 +1138,17 @@ async function revalidatePage(reqPath, internalOptions = {}) {
 
     console.log(`✅ [Edge Revalidate] Successfully revalidated page ${cleanPath} (generatedAt: ${commitGenTime})`);
   });
+
+  if (useInflightDedup) {
+    inflightPageRevalidations.set(inFlightKey, revalPromise);
+  }
+  try {
+    return await revalPromise;
+  } finally {
+    if (useInflightDedup) {
+      inflightPageRevalidations.delete(inFlightKey);
+    }
+  }
 }
 
 async function revalidatePath(reqPath, options) {
@@ -1285,22 +1320,11 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
           activeChainPre.length > 0 && activeChainPre[0].cleanLayoutKey === cleanPathKey
             ? activeChainPre[0]
             : null;
-        let layoutPath = leafEntryPre?.layoutPath || null;
-        let layoutParams = leafEntryPre?.dParams || {};
-        if (!layoutPath) {
-          const fallbackMatch = getFilePathAndDynamicParams(
-            reqSegments,
-            {},
-            srcFolder,
-            "layout",
-            true,
-            false,
-            undefined,
-            0
-          );
-          layoutPath = fallbackMatch[0] || null;
-          layoutParams = fallbackMatch[1] || {};
+        if (!leafEntryPre && !cached && !hasCachedMeta) {
+          return false;
         }
+        const layoutPath = leafEntryPre?.layoutPath || null;
+        const layoutParams = leafEntryPre?.dParams || {};
         resolvedLayoutFilePath = layoutPath || null;
         if (layoutPath) {
           const layoutCfg = await resolveLayoutFunctionsConfig(layoutPath, layoutParams || {});
