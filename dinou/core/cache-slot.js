@@ -211,6 +211,29 @@ function getRegisterServerReference() {
   return null;
 }
 
+function resolveCacheSlotFileUrlFromManifest(exportName) {
+  const manifest =
+    typeof globalThis !== "undefined" ? globalThis.__DINOU_CLIENT_MANIFEST__ : null;
+  if (manifest && typeof manifest === "object") {
+    const suffix = `#${exportName}`;
+    const preferredSuffix = `/slot.js${suffix}`;
+    let fallbackKey = null;
+    for (const key of Object.keys(manifest)) {
+      if (key.endsWith(preferredSuffix)) {
+        return key.slice(0, -suffix.length);
+      }
+      if (!fallbackKey && key.endsWith(suffix)) {
+        fallbackKey = key;
+      }
+    }
+    if (fallbackKey) {
+      return fallbackKey.slice(0, -suffix.length);
+    }
+  }
+  const slotPath = path.resolve(currentDir, "slot.js");
+  return pathToFileURL(slotPath).href;
+}
+
 let _DinouCacheSlotBoundary = null;
 function getCacheSlotBoundary() {
   if (!_DinouCacheSlotBoundary) {
@@ -219,8 +242,7 @@ function getCacheSlotBoundary() {
       typeof DinouCacheSlotBoundary === "function" &&
       DinouCacheSlotBoundary.$$typeof !== Symbol.for("react.client.reference")
     ) {
-      const slotPath = path.resolve(currentDir, "slot.js");
-      const fileUrl = pathToFileURL(slotPath).href;
+      const fileUrl = resolveCacheSlotFileUrlFromManifest("DinouCacheSlotBoundary");
       let regFn = null;
       if (
         typeof globalThis !== "undefined" &&

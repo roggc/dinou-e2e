@@ -22647,15 +22647,15 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("#hs-l1-seq")).toHaveText(String(whL1Both));
       await expect(page.locator("#hs-index-seq")).toHaveText(String(whPageBoth));
 
-      // 2. Surface B Webhook revalidateTag + Surface A Server Function revalidateTag + redirect() on 3D PPR /t-3d-cube/reval-tag-matrix/dyn/l3
-      await page.goto("/t-3d-cube/reval-tag-matrix/dyn/l3");
+      // 2. Surface B Webhook revalidateTag + Surface A Server Function revalidateTag + redirect() on 3D PPR /t-3d-cube/reval-tag-matrix/dyn-l2/l3
+      await page.goto("/t-3d-cube/reval-tag-matrix/dyn-l2/l3");
       await waitCubeReady(page);
       const baseTmL1Shell = Number(await page.locator("#tm-l1-shell-seq").innerText());
       const baseTmL1Slot = Number(await page.locator("#tm-l1-slot-seq").innerText());
       const baseTmPageShell = Number(await page.locator("#tm-page-shell-seq").innerText());
       const baseTmPageSlot = Number(await page.locator("#tm-page-slot-seq").innerText());
 
-      // 2a. Surface B Webhook revalidateTag("tm-l1-only") -> updates ONLY L1 slot; shells stay frozen!
+      // 2a. Surface B Webhook revalidateTag("cube-tm-l1-only") -> updates ONLY L1 slot; shells stay frozen!
       const nextTmL1Slot = baseTmL1Slot + 21;
       await mutateState({
         tmL1ShellSeq: baseTmL1Shell + 899,
@@ -22663,10 +22663,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         tmL1SlotSeq: nextTmL1Slot,
       });
       const whTagRes = await page.request.post("/api/cube-webhook", {
-        data: { op: "tag", target: "tm-l1-only" },
+        data: { op: "tag", target: "cube-tm-l1-only" },
       });
       expect(whTagRes.ok()).toBe(true);
-      await page.goto("/t-3d-cube/reval-tag-matrix/dyn/l3");
+      await page.goto("/t-3d-cube/reval-tag-matrix/dyn-l2/l3");
       await waitCubeReady(page);
       await expect(page.locator("#tm-l1-slot-seq")).toHaveText(String(nextTmL1Slot));
       await expect(page.locator("#tm-l1-shell-seq")).toHaveText(String(baseTmL1Shell));
@@ -22683,7 +22683,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         page.waitForURL(/\/t-3d-cube\/hs(?:\/)?$/, { timeout: 15000 }),
         page.evaluate(() =>
           (window as any).__CUBE_3D__.revalTagAndRedirect(
-            "tm-page-only",
+            "cube-tm-page-only",
             "/t-3d-cube/hs"
           )
         ),
@@ -22692,7 +22692,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       await expect(page.locator("#hs-l1-seq")).toHaveText(String(whL1Both));
 
       // Navigate back to verify Surface A's revalidateTag persisted across the redirect (F5 reload!)
-      await page.goto("/t-3d-cube/reval-tag-matrix/dyn/l3");
+      await page.goto("/t-3d-cube/reval-tag-matrix/dyn-l2/l3");
       await waitCubeReady(page);
       await expect(page.locator("#tm-page-slot-seq")).toHaveText(String(nextTmPageSlot));
       await expect(page.locator("#tm-l1-slot-seq")).toHaveText(String(nextTmL1Slot));

@@ -3440,6 +3440,84 @@ console.log("PHASE6_STAGE6_SURFACES_DISTRIBUTED_OK");
       `Phase 6 Stage 6 surfaces/distributed failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
     );
     assert.ok(runRes.stdout.includes("PHASE6_STAGE6_SURFACES_DISTRIBUTED_OK"));
+
+    // SURFACE B (Pass C Regression): Verify REAL Pass C bundles (.dinou/node/server.mjs fetch()
+    // and .dinou/dist1/server/handler.js handleRequest()) do NOT overwrite Pass A's RSC-compiled
+    // dinou.config or fail with "Could not find .../.dinou/node/slot.js#DinouPageSlot in the React Client Manifest"
+    // when a plugin onRequest webhook invokes revalidateLayout / revalidatePage / revalidateTag / revalidatePath!
+    const passCVerifyScript = path.join(tmpApp, "verify-p6-stage6-passc.mjs");
+    fs.writeFileSync(
+      passCVerifyScript,
+      `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const mode = process.argv[2];
+const writeS = (patch) => {
+  const f = path.resolve("p6s6-state.json");
+  const cur = JSON.parse(fs.readFileSync(f, "utf8"));
+  fs.writeFileSync(f, JSON.stringify({ ...cur, ...patch }), "utf8");
+};
+const textById = (html, id) => {
+  const m = html.match(new RegExp('id="' + id + '"[^>]*>([^<]*)<'));
+  return m ? m[1] : null;
+};
+
+let dispatch;
+if (mode === "node-server") {
+  const mod = await import(pathToFileURL(path.resolve(".dinou/node/server.mjs")).href);
+  dispatch = (req) => mod.fetch(req);
+} else {
+  const mod = await import(pathToFileURL(path.resolve(".dinou/dist1/server/handler.js")).href);
+  dispatch = (req) => mod.handleRequest(req);
+}
+
+const req = async (u, init = {}) => {
+  const r = await dispatch(new Request("http://localhost" + u, init));
+  return { status: r.status, text: await r.text() };
+};
+
+const val = mode === "node-server" ? 811 : 821;
+writeS({ l1Shell: val, pageShell: "POISON_PASSC" });
+const hookRes = await req("/api/cube-webhook", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ op: "layout", target: "/cube" }),
+});
+assert.equal(hookRes.status, 200, mode + " Pass C webhook revalidateLayout failed: " + hookRes.text);
+const ssrRes = await req("/cube", { headers: { "x-hole": mode } });
+assert.equal(ssrRes.status, 200);
+assert.equal(textById(ssrRes.text, "s6-l1-shell"), String(val), mode + " Pass C must render fresh L1 " + val);
+assert.ok(!ssrRes.text.includes("POISON_PASSC"), mode + " Pass C must keep Page shell frozen!");
+
+// Also verify external import("dinou/server") inside same process delegates to Pass A RSC API!
+const srvApi = await import(pathToFileURL(path.resolve("node_modules/dinou/server.js")).href);
+writeS({ l1Shell: val + 1, pageShell: "POISON_PASSC_2" });
+await srvApi.revalidateLayout("/cube");
+const ssrRes2 = await req("/cube", { headers: { "x-hole": mode + "-ext" } });
+assert.equal(textById(ssrRes2.text, "s6-l1-shell"), String(val + 1));
+assert.ok(!ssrRes2.text.includes("POISON_PASSC_2"));
+
+console.log("PASSC_WEBHOOK_OK:" + mode);
+`,
+      "utf8"
+    );
+
+    for (const passCMode of ["node-server", "dist1-handler"]) {
+      const pRes = spawnSync(process.execPath, [passCVerifyScript, passCMode], {
+        cwd: tmpApp,
+        encoding: "utf8",
+        env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+        timeout: 60_000,
+      });
+      assert.equal(
+        pRes.status,
+        0,
+        `Phase 6 Stage 6 Pass C (${passCMode}) failed:\nSTDOUT:\n${pRes.stdout}\nSTDERR:\n${pRes.stderr}`
+      );
+      assert.ok(pRes.stdout.includes("PASSC_WEBHOOK_OK:" + passCMode));
+    }
   } finally {
     removeDirSafe(tmpApp);
   }
