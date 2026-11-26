@@ -1158,7 +1158,7 @@ async function getSlotJSX(slotId, options = {}) {
   const reqUrlEarly = String(options.req?.url || "");
   const qIdxEarly = reqUrlEarly.indexOf("?");
   const queryKeyEarly = qIdxEarly !== -1 ? reqUrlEarly.slice(qIdxEarly) : "";
-  const hasRequestNonceEarly = /[?&]t=[^&]+/.test(queryKeyEarly);
+  const hasHttpRequestEarly = Boolean(reqUrlEarly);
   const earlyStampedeKey = `${storageKey}::${queryKeyEarly}`;
   const earlyInflightKey = options.fresh ? earlyStampedeKey : storageKey;
   const regEntryEarly = slotRegistry.get(targetId);
@@ -1175,7 +1175,7 @@ async function getSlotJSX(slotId, options = {}) {
   if (
     !isEarlyNoCache &&
     options.fresh &&
-    hasRequestNonceEarly &&
+    hasHttpRequestEarly &&
     recentFreshSlotRenders.has(earlyStampedeKey)
   ) {
     const recent = recentFreshSlotRenders.get(earlyStampedeKey);
@@ -1376,7 +1376,7 @@ async function getSlotJSX(slotId, options = {}) {
     const reqUrl = String(options.req?.url || "");
     const qIdx = reqUrl.indexOf("?");
     const queryKey = qIdx !== -1 ? reqUrl.slice(qIdx) : "";
-    const hasRequestNonce = /[?&]t=[^&]+/.test(queryKey);
+    const hasHttpRequest = Boolean(reqUrl);
     const stampedeKey = `${storageKey}::${queryKey}`;
     const inflightKey = options.fresh ? stampedeKey : storageKey;
     try {
@@ -1388,7 +1388,7 @@ async function getSlotJSX(slotId, options = {}) {
       if (
         !isEntryNoCache &&
         options.fresh &&
-        hasRequestNonce &&
+        hasHttpRequest &&
         recentFreshSlotRenders.has(stampedeKey)
       ) {
         const recent = recentFreshSlotRenders.get(stampedeKey);
@@ -1407,7 +1407,7 @@ async function getSlotJSX(slotId, options = {}) {
       const renderPromise = (async () => {
         const resolved = await entry.render();
         const serialized = serializeJSX(resolved);
-        if (!isEntryNoCache && options.fresh && hasRequestNonce && isLatestGen()) {
+        if (!isEntryNoCache && options.fresh && hasHttpRequest && isLatestGen()) {
           recentFreshSlotRenders.set(stampedeKey, {
             timestamp: Date.now(),
             serialized,
@@ -1441,7 +1441,7 @@ async function getSlotJSX(slotId, options = {}) {
             } catch (metaErr) {}
           }
         }
-        if (!isEntryNoCache && options.fresh && hasRequestNonce && isLatestGen()) {
+        if (!isEntryNoCache && options.fresh && hasHttpRequest && isLatestGen()) {
           recentFreshSlotRenders.set(stampedeKey, {
             timestamp: Date.now(),
             serialized,

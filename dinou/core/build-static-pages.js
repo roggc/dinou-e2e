@@ -70,13 +70,25 @@ function safeDecode(val) {
   }
 }
 
+function hasZeroParameters(fn) {
+  if (typeof fn !== "function") return false;
+  if (fn.length > 0) return false;
+  try {
+    const src = Function.prototype.toString.call(fn).trim();
+    return /^(?:async\s+)?(?:function(?:\s+[\w$]+)?\s*)?\(\s*\)/.test(src);
+  } catch (e) {
+    return fn.length === 0;
+  }
+}
+
 async function isDynamicRoute(revalidate, params) {
   if (revalidate === undefined || revalidate === false) return false;
   if (typeof revalidate === "function") {
     // When called without concrete params before getStaticPaths expansion,
-    // defer per-param revalidate(params) evaluation until concrete pathItems are expanded.
-    if (params === undefined) return false;
-    const val = await revalidate(params);
+    // defer parameterized revalidate(params) functions until concrete pathItems are expanded,
+    // while still evaluating 0-arg functions (e.g. `() => 0`, `async () => 0`) immediately.
+    if (params === undefined && !hasZeroParameters(revalidate)) return false;
+    const val = await revalidate(params || {});
     return typeof val === "number" && val < 1;
   }
   return typeof revalidate === "number" && revalidate < 1;

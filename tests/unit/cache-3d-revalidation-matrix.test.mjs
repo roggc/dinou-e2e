@@ -2029,30 +2029,38 @@ assert.equal(afterTtlF0.status, 200);
 assert.ok(afterTtlF0.text.includes("202"), "After 1s TTL expiry, ?fresh=false must regenerate & return 202, got: " + afterTtlF0.text);
 
 // ============================================================================
-// 2. Rapid <500ms sequential { fresh: true } calls WITHOUT ?t= nonce MUST NOT return stale recentFreshSlotRenders!
+// 2. Rapid <500ms sequential { fresh: true } calls (unique ?t= nonces as sent by client refreshSlot)
+//    vs identical-URL stampede deduplication within 500ms (Deno/Cloudflare Happy Eyeballs 300ms stagger)
 // ============================================================================
 writeS({ sharedCart: 301 });
-const rapid1 = await req("/____rsc_slot____/rsm-cart?fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
-assert.ok(rapid1.text.includes("301"), "First rapid ?fresh=1 must return 301");
+const rapid1 = await req("/____rsc_slot____/rsm-cart?t=rapid-1&fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
+assert.ok(rapid1.text.includes("301"), "First rapid ?t=rapid-1&fresh=1 must return 301");
 
-// Mutate 2ms later (well inside 500ms window!) and call ?fresh=1 again WITHOUT distinct ?t= param!
+// Mutate 2ms later (well inside 500ms window!) and call refreshSlot({ fresh: true }) with next ?t= nonce!
 writeS({ sharedCart: 302 });
-const rapid2 = await req("/____rsc_slot____/rsm-cart?fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
-assert.ok(rapid2.text.includes("302") && !rapid2.text.includes("301"), "Second rapid (<500ms) ?fresh=1 MUST return fresh 302 (zero stale recentFreshSlotRenders leak!), got: " + rapid2.text);
+const rapid2 = await req("/____rsc_slot____/rsm-cart?t=rapid-2&fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
+assert.ok(rapid2.text.includes("302") && !rapid2.text.includes("301"), "Second rapid (<500ms) ?t=rapid-2&fresh=1 MUST return fresh 302, got: " + rapid2.text);
 
 writeS({ sharedCart: 303 });
-const rapid3 = await req("/____rsc_slot____/rsm-cart?fresh=true", { "x-dinou-current-path": "/rsm/page-a" });
-assert.ok(rapid3.text.includes("303"), "Third rapid (<500ms) ?fresh=true MUST return fresh 303");
+const rapid3 = await req("/____rsc_slot____/rsm-cart?t=rapid-3&fresh=true", { "x-dinou-current-path": "/rsm/page-a" });
+assert.ok(rapid3.text.includes("303"), "Third rapid (<500ms) ?t=rapid-3&fresh=true MUST return fresh 303");
 
-// Verify identical ?t=nonce duplicate read within 500ms STILL deduplicates cleanly!
+// Identical-URL stampede within 500ms (both bare ?fresh=1 and same ?t=nonce) MUST coalesce cleanly
+// (protects concurrent stampedes across Happy Eyeballs 300ms stagger on Deno/Cloudflare & React StrictMode)!
 writeS({ sharedCart: 304 });
-const nonce1 = await req("/____rsc_slot____/rsm-cart?t=same-nonce-1&fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
-assert.ok(nonce1.text.includes("304"));
+const bareStampede1 = await req("/____rsc_slot____/rsm-cart?fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
+assert.ok(bareStampede1.text.includes("304"));
 writeS({ sharedCart: 305 });
+const bareStampede2 = await req("/____rsc_slot____/rsm-cart?fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
+assert.ok(bareStampede2.text.includes("304"), "Identical bare ?fresh=1 within 500ms stampede window must coalesce to 304");
+
+const nonce1 = await req("/____rsc_slot____/rsm-cart?t=same-nonce-1&fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
+assert.ok(nonce1.text.includes("305"));
+writeS({ sharedCart: 306 });
 const nonceDup = await req("/____rsc_slot____/rsm-cart?t=same-nonce-1&fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
-assert.ok(nonceDup.text.includes("304"), "Duplicate read with identical ?t=nonce within 500ms should coalesce cleanly");
+assert.ok(nonceDup.text.includes("305"), "Duplicate read with identical ?t=nonce within 500ms should coalesce cleanly");
 const nonceNew = await req("/____rsc_slot____/rsm-cart?t=new-nonce-2&fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
-assert.ok(nonceNew.text.includes("305"), "Distinct ?t=nonce must render fresh 305");
+assert.ok(nonceNew.text.includes("306"), "Distinct ?t=nonce must render fresh 306");
 
 // ============================================================================
 // 3. Concurrent revalidate=0 (isNoCache) slot refreshes under 2 distinct tenants MUST NEVER coalesce!
@@ -2098,7 +2106,7 @@ assert.ok(!paAfterOuter.text.includes(POISON));
 // 5. Cross-Route Shared Slot Propagation (Page A -> Page B, direct SSR & soft-nav RSC, Page B shell frozen!)
 // ============================================================================
 writeS({ pageBShell: POISON, sharedCart: 501 });
-const cartOnA = await req("/____rsc_slot____/rsm-cart?fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
+const cartOnA = await req("/____rsc_slot____/rsm-cart?t=cross-1&fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
 assert.equal(cartOnA.status, 200);
 assert.ok(cartOnA.text.includes("501"));
 
@@ -2117,12 +2125,12 @@ assert.ok(!pbSsr.text.includes(POISON));
 //    (L1.generatedAt > cart.generatedAt > page-b.generatedAt) MUST NOT mask Page B's shared slot on Direct SSR!
 // ============================================================================
 writeS({ l1Shell: POISON, pageAShell: POISON, pageBShell: POISON, sharedCart: 601, l1Shared: 602 });
-const starCartRes = await req("/____rsc_slot____/rsm-cart?fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
+const starCartRes = await req("/____rsc_slot____/rsm-cart?t=star-1&fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
 assert.equal(starCartRes.status, 200);
 assert.ok(starCartRes.text.includes("601"));
 // Ensure L1 layout refreshes strictly AFTER rsm-cart (exact refreshSlot("*") order across Page A + L1)
 await sleep(20);
-const starL1Res = await req("/____rsc_slot____/rsm-l1-shared?fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
+const starL1Res = await req("/____rsc_slot____/rsm-l1-shared?t=star-2&fresh=1", { "x-dinou-current-path": "/rsm/page-a" });
 assert.equal(starL1Res.status, 200);
 assert.ok(starL1Res.text.includes("602"));
 
