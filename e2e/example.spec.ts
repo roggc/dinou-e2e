@@ -24177,5 +24177,215 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         );
       }
     });
+
+    test("52. [Phase 8 / Stage 4 / Check #90] Multi-Slot Shared Tag Refresh, <DinouCacheSlot revalidate={false}> & not_found.tsx Slot, and React.cache() Deduplication + Multi-Tenant Isolation", async ({
+      page,
+    }) => {
+      test.skip(!isProd, "3D Caching Cube Stage 4 requires production mode");
+
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      const waitErReady = async () => {
+        await page.waitForFunction(
+          () => Boolean((window as any).__CUBE_3D__),
+          null,
+          { timeout: 15000 }
+        );
+      };
+
+      const readSeq = async (p: typeof page, selector: string) => {
+        const raw = (await p.locator(selector).textContent())?.trim() || "0";
+        return Number(raw);
+      };
+
+      await page.goto("/t-3d-cube/edge-races-cache/multi-slot", {
+        waitUntil: "networkidle",
+      });
+      await waitErReady();
+      await expect(page.locator("#er-multi-slot-page")).toBeVisible();
+
+      const baseHost = await readSeq(page, "#er-multi-host-seq");
+      const baseA = await readSeq(page, "#er-slot-a-seq");
+      const baseB = await readSeq(page, "#er-slot-b-seq");
+      const basePerm = await readSeq(page, "#er-perm-slot-seq");
+      const base = Math.max(baseHost, baseA, baseB, basePerm) + 10;
+      const POISON = base + 899;
+
+      try {
+        // -----------------------------------------------------------------
+        // PHASE A: Multi-Slot Shared Tag refreshSlot("er-shared-tag", true)
+        //          updates BOTH mounted slots simultaneously & persists F5!
+        // -----------------------------------------------------------------
+        const nextA = base + 1;
+        const nextB = base + 2;
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          {
+            erSlotASeq: nextA,
+            erSlotBSeq: nextB,
+            erMultiHostSeq: POISON,
+            erPermSlotSeq: POISON,
+          }
+        );
+
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.refreshSlot("er-shared-tag", true)
+        );
+        await expect(page.locator("#er-slot-a-seq")).toHaveText(String(nextA));
+        await expect(page.locator("#er-slot-b-seq")).toHaveText(String(nextB));
+        await expect(page.locator("#er-multi-host-seq")).toHaveText(
+          String(baseHost)
+        );
+        await expect(page.locator("#er-perm-slot-seq")).toHaveText(
+          String(basePerm)
+        );
+
+        // Hard F5 reload persists BOTH updated slots while host & revalidate={false} slot stay frozen!
+        await page.reload({ waitUntil: "networkidle" });
+        await waitErReady();
+        await expect(page.locator("#er-slot-a-seq")).toHaveText(String(nextA));
+        await expect(page.locator("#er-slot-b-seq")).toHaveText(String(nextB));
+        await expect(page.locator("#er-multi-host-seq")).toHaveText(
+          String(baseHost)
+        );
+        await expect(page.locator("#er-perm-slot-seq")).toHaveText(
+          String(basePerm)
+        );
+
+        // -----------------------------------------------------------------
+        // PHASE B: <DinouCacheSlot revalidate={false}> permanent cache
+        //          only updates on explicit revalidateTag("er-perm-tag")!
+        // -----------------------------------------------------------------
+        const nextPerm = base + 10;
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          { erPermSlotSeq: nextPerm, erMultiHostSeq: POISON }
+        );
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.revalTag("er-perm-tag")
+        );
+        await page.reload({ waitUntil: "networkidle" });
+        await waitErReady();
+        await expect(page.locator("#er-perm-slot-seq")).toHaveText(
+          String(nextPerm)
+        );
+        await expect(page.locator("#er-multi-host-seq")).toHaveText(
+          String(baseHost)
+        );
+
+        // -----------------------------------------------------------------
+        // PHASE C: <DinouCacheSlot> inside not_found.tsx renders & refreshes
+        // -----------------------------------------------------------------
+        const nextNf1 = base + 20;
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          { erNfSlotSeq: nextNf1 }
+        );
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.revalTag("er-nf-slot-tag")
+        );
+        const nfResp = await page.goto(
+          "/t-3d-cube/edge-races-cache/does-not-exist-404",
+          { waitUntil: "networkidle" }
+        );
+        expect(nfResp?.status()).toBe(404);
+        await waitErReady();
+        await expect(page.locator("#er-not-found-page")).toBeVisible();
+        await expect(page.locator("#er-nf-slot-seq")).toHaveText(
+          String(nextNf1)
+        );
+
+        const nextNf2 = base + 21;
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          { erNfSlotSeq: nextNf2 }
+        );
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.refreshSlot("er-nf-slot", true)
+        );
+        await expect(page.locator("#er-nf-slot-seq")).toHaveText(
+          String(nextNf2)
+        );
+
+        // -----------------------------------------------------------------
+        // PHASE D: React.cache() Deduplication Across Pure PPR & Asymmetric
+        //          3D PPR + Concurrent Multi-Tenant Isolation!
+        // -----------------------------------------------------------------
+        await page.goto(
+          "/t-3d-cube/edge-races-cache/react-cache-ppr?tenant=alice",
+          { waitUntil: "networkidle" }
+        );
+        await waitErReady();
+        await expect(page.locator("#er-ppr-hole-a")).toBeVisible();
+        await expect(page.locator("#er-ppr-hole-b")).toBeVisible();
+        const pprTokA = (
+          await page.locator("#er-ppr-hole-a-token").textContent()
+        )?.trim();
+        const pprTokB = (
+          await page.locator("#er-ppr-hole-b-token").textContent()
+        )?.trim();
+        expect(pprTokA).toMatch(/^alice:\d+$/);
+        expect(pprTokB).toBe(pprTokA);
+
+        await page.goto(
+          "/t-3d-cube/edge-races-cache/react-cache-asym?tenant=bob",
+          { waitUntil: "networkidle" }
+        );
+        await waitErReady();
+        await expect(page.locator("#er-asym-hole-a")).toBeVisible();
+        await expect(page.locator("#er-asym-hole-b")).toBeVisible();
+        const asymL2Tok = (
+          await page.locator("#er-rc-asym-l2-token").textContent()
+        )?.trim();
+        const asymTokA = (
+          await page.locator("#er-asym-hole-a-token").textContent()
+        )?.trim();
+        const asymTokB = (
+          await page.locator("#er-asym-hole-b-token").textContent()
+        )?.trim();
+        expect(asymL2Tok).toMatch(/^bob:\d+$/);
+        expect(asymTokA).toBe(asymL2Tok);
+        expect(asymTokB).toBe(asymL2Tok);
+
+        // Concurrent multi-tenant HTTP isolation check!
+        const [reqAlice, reqBob] = await Promise.all([
+          page.request.get(
+            "/t-3d-cube/edge-races-cache/react-cache-asym?tenant=tenant-alpha",
+            { headers: { "x-tenant": "tenant-alpha" } }
+          ),
+          page.request.get(
+            "/t-3d-cube/edge-races-cache/react-cache-asym?tenant=tenant-beta",
+            { headers: { "x-tenant": "tenant-beta" } }
+          ),
+        ]);
+        const htmlAlpha = await reqAlice.text();
+        const htmlBeta = await reqBob.text();
+        const extract = (html: string, id: string) =>
+          html.match(new RegExp(`id="${id}"[^>]*>([^<]*)<`))?.[1] || "";
+        const alphaL2 = extract(htmlAlpha, "er-rc-asym-l2-token");
+        const alphaA = extract(htmlAlpha, "er-asym-hole-a-token");
+        const alphaB = extract(htmlAlpha, "er-asym-hole-b-token");
+        const betaL2 = extract(htmlBeta, "er-rc-asym-l2-token");
+        const betaA = extract(htmlBeta, "er-asym-hole-a-token");
+        const betaB = extract(htmlBeta, "er-asym-hole-b-token");
+        expect(alphaL2).toMatch(/^tenant-alpha:\d+$/);
+        expect(alphaA).toBe(alphaL2);
+        expect(alphaB).toBe(alphaL2);
+        expect(betaL2).toMatch(/^tenant-beta:\d+$/);
+        expect(betaA).toBe(betaL2);
+        expect(betaB).toBe(betaL2);
+        expect(alphaL2).not.toBe(betaL2);
+
+        expect(hydrationErrors).toEqual([]);
+        expect(routerWarnings).toEqual([]);
+        expect(pageErrors).toEqual([]);
+      } finally {
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          { erShouldThrowError: false }
+        );
+      }
+    });
   });
 });

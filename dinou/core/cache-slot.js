@@ -19,6 +19,7 @@ import {
 } from "./request-context.js";
 import { createBailoutProxy, unwrapBailoutProxy } from "./bailout-proxy.js";
 import { getJSX } from "./get-jsx.js";
+import { getErrorJSX } from "./get-error-jsx.js";
 import { getActiveLayoutChain } from "./layout-functions.js";
 import {
   isPprBuildActive,
@@ -1104,6 +1105,66 @@ async function DinouCacheSlot(props) {
 DinouCacheSlot.$$dinouCacheSlot = true;
 
 /**
+ * Resolves a slot ID or tag to ALL matching canonical slotIds using slotRegistry and storage metadata.
+ * Prevents multi-slot shared tags from being masked by the first matching slot.
+ */
+async function resolveAllCanonicalSlotIds(slotIdOrTag, storage) {
+  const matched = new Set();
+  if (!slotIdOrTag) return [];
+  if (slotRegistry.has(slotIdOrTag)) {
+    matched.add(slotIdOrTag);
+  }
+  for (const [regId, entry] of slotRegistry.entries()) {
+    if (Array.isArray(entry.tags) && entry.tags.includes(slotIdOrTag)) {
+      matched.add(regId);
+    }
+  }
+  if (storage) {
+    try {
+      const direct = await getSlotFromStorage(storage, `slots/${slotIdOrTag}/slot.json`);
+      if (direct && direct.content) {
+        matched.add(slotIdOrTag);
+      }
+      const candidateKeySet = new Set();
+      if (typeof storage.keys === "function") {
+        const keys = await storage.keys("slots/");
+        for (const k of keys) candidateKeySet.add(String(k || "").replace(/\\/g, "/"));
+      }
+      if (!storage.baseDir && storage.hydrateFromDisk !== false) {
+        try {
+          const dist2SlotsFs = new FileSystemStorage();
+          const diskSlotKeys = await dist2SlotsFs.keys("slots/");
+          for (const k of diskSlotKeys) {
+            candidateKeySet.add(String(k || "").replace(/\\/g, "/"));
+          }
+        } catch (e) {}
+      }
+      for (const key of candidateKeySet) {
+        if (key.endsWith("/slot.json") || key.endsWith("/slot.metadata.json")) {
+          const item =
+            (await storage.get(key)) || (await readDist2Fallback(storage, key));
+          let meta = item?.metadata;
+          if (!meta && key.endsWith("/slot.metadata.json") && item?.content) {
+            try {
+              meta = JSON.parse(item.content);
+            } catch (e) {}
+          }
+          if (meta && Array.isArray(meta.tags) && meta.tags.includes(slotIdOrTag)) {
+            if (meta.slotId) {
+              matched.add(meta.slotId);
+            } else {
+              const match = key.match(/^slots\/([^/]+)\//);
+              if (match) matched.add(match[1]);
+            }
+          }
+        }
+      }
+    } catch (e) {}
+  }
+  return matched.size > 0 ? Array.from(matched) : [slotIdOrTag];
+}
+
+/**
  * Resolves a slot ID or tag to its canonical slotId using slotRegistry or storage metadata.
  */
 async function resolveCanonicalSlotId(slotIdOrTag, storage) {
@@ -1315,35 +1376,55 @@ async function getSlotJSX(slotId, options = {}) {
             async () => {
               await runWithPprContext({ isPpr: true }, async () => {
                 await runInSlotDiscovery(async () => {
-                  const pageJsx = await getJSX(
-                    options.currentPath,
-                    {},
-                    isNotFound,
-                    false,
-                    false,
-                    {
-                      segment: "page",
-                    }
-                  );
-                  if (pageJsx) {
-                    await asyncRenderJSXToClientJSX(pageJsx);
-                  }
-                  const resolvedId = await resolveCanonicalSlotId(
-                    slotId,
-                    storage
-                  );
-
-                  if (!slotRegistry.has(resolvedId)) {
-                    const fullJsx = await getJSX(
+                  try {
+                    const pageJsx = await getJSX(
                       options.currentPath,
                       {},
                       isNotFound,
                       false,
-                      false
+                      false,
+                      {
+                        segment: "page",
+                      }
                     );
-                    if (fullJsx) {
-                      await asyncRenderJSXToClientJSX(fullJsx);
+                    if (pageJsx) {
+                      await asyncRenderJSXToClientJSX(pageJsx);
                     }
+                    const resolvedId = await resolveCanonicalSlotId(
+                      slotId,
+                      storage
+                    );
+
+                    if (!slotRegistry.has(resolvedId)) {
+                      const fullJsx = await getJSX(
+                        options.currentPath,
+                        {},
+                        isNotFound,
+                        false,
+                        false
+                      );
+                      if (fullJsx) {
+                        await asyncRenderJSXToClientJSX(fullJsx);
+                      }
+                    }
+                  } catch (routeErr) {
+                    // If the route itself throws an error (rendering error.tsx), discover
+                    // any <DinouCacheSlot> mounted inside the route's error.tsx boundary!
+                    try {
+                      const errJsx = await getErrorJSX(
+                        options.currentPath,
+                        {},
+                        {
+                          message: routeErr?.message || "Error",
+                          name: routeErr?.name || "Error",
+                        },
+                        false,
+                        {}
+                      );
+                      if (errJsx) {
+                        await asyncRenderJSXToClientJSX(errJsx);
+                      }
+                    } catch (_) {}
                   }
                 });
               });
@@ -1579,55 +1660,57 @@ async function inspectSlotsFreshness(slotTags, hostGeneratedAt = 0) {
   const checkedIds = new Set();
   for (const rawTagOrId of slotTags) {
     if (!rawTagOrId) continue;
-    const targetId = await resolveCanonicalSlotId(rawTagOrId, storage);
-    if (checkedIds.has(targetId)) continue;
-    checkedIds.add(targetId);
-    const storageKey = `slots/${targetId}/slot.json`;
-    const cached = await getSlotFromStorage(storage, storageKey, [targetId, rawTagOrId]);
-    if (!cached || !cached.content) {
-      const isDeleted =
-        typeof storage.isKeyDeleted === "function"
-          ? await storage.isKeyDeleted(storageKey)
-          : typeof storage.isDeleted === "function" && storage.isDeleted(storageKey);
-      let isTagInvalidated = false;
-      if (!isDeleted && hostGen > 0) {
-        for (const t of new Set([rawTagOrId, targetId])) {
-          if (!t) continue;
-          const invAt =
-            typeof storage.getTagInvalidatedAtAsync === "function"
-              ? await storage.getTagInvalidatedAtAsync(t)
-              : typeof storage.getTagInvalidatedAt === "function"
-              ? storage.getTagInvalidatedAt(t)
-              : 0;
-          if (invAt > 0 && invAt >= hostGen) {
-            isTagInvalidated = true;
-            break;
+    const targetIds = await resolveAllCanonicalSlotIds(rawTagOrId, storage);
+    for (const targetId of targetIds) {
+      if (!targetId || checkedIds.has(targetId)) continue;
+      checkedIds.add(targetId);
+      const storageKey = `slots/${targetId}/slot.json`;
+      const cached = await getSlotFromStorage(storage, storageKey, [targetId, rawTagOrId]);
+      if (!cached || !cached.content) {
+        const isDeleted =
+          typeof storage.isKeyDeleted === "function"
+            ? await storage.isKeyDeleted(storageKey)
+            : typeof storage.isDeleted === "function" && storage.isDeleted(storageKey);
+        let isTagInvalidated = false;
+        if (!isDeleted && hostGen > 0) {
+          for (const t of new Set([rawTagOrId, targetId])) {
+            if (!t) continue;
+            const invAt =
+              typeof storage.getTagInvalidatedAtAsync === "function"
+                ? await storage.getTagInvalidatedAtAsync(t)
+                : typeof storage.getTagInvalidatedAt === "function"
+                ? storage.getTagInvalidatedAt(t)
+                : 0;
+            if (invAt > 0 && invAt >= hostGen) {
+              isTagInvalidated = true;
+              break;
+            }
           }
         }
+        if (isDeleted || isTagInvalidated) {
+          result.hasNewer = true;
+        }
+        continue;
       }
-      if (isDeleted || isTagInvalidated) {
+      const meta = cached.metadata || {};
+      const slotGen = Number(meta.generatedAt || 0);
+      if (hostGen > 0 && slotGen > hostGen) {
         result.hasNewer = true;
       }
-      continue;
-    }
-    const meta = cached.metadata || {};
-    const slotGen = Number(meta.generatedAt || 0);
-    if (hostGen > 0 && slotGen > hostGen) {
-      result.hasNewer = true;
-    }
-    const regEntry = slotRegistry.get(targetId);
-    const revalidateSeconds =
-      typeof regEntry?.revalidate === "number"
-        ? regEntry.revalidate
-        : typeof meta.revalidate === "number"
-        ? meta.revalidate
-        : undefined;
-    if (
-      typeof revalidateSeconds === "number" &&
-      revalidateSeconds >= 1 &&
-      now > slotGen + revalidateSeconds * 1000
-    ) {
-      result.hasExpired = true;
+      const regEntry = slotRegistry.get(targetId);
+      const revalidateSeconds =
+        typeof regEntry?.revalidate === "number"
+          ? regEntry.revalidate
+          : typeof meta.revalidate === "number"
+          ? meta.revalidate
+          : undefined;
+      if (
+        typeof revalidateSeconds === "number" &&
+        revalidateSeconds >= 1 &&
+        now > slotGen + revalidateSeconds * 1000
+      ) {
+        result.hasExpired = true;
+      }
     }
   }
   return result;

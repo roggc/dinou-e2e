@@ -1770,3 +1770,793 @@ console.log(\`PHASE8_STAGE3_HEAD_HEADERS_\${BUNDLER.toUpperCase()}_OK\`);
     }
   }
 });
+
+test("4. [Phase 8 / Stage 4 / Check #90] Cross-Primitive Cloudflare Workers Races, Multi-Slot Shared Tag Resolution, <DinouCacheSlot> Edge Placements (revalidate=false/0.5/-1, not_found, error) & React.cache() Isolation (Esbuild, Rollup, Webpack)", async () => {
+  const bundlers = ["esbuild", "rollup", "webpack"];
+  for (const bundler of bundlers) {
+    const tmpApp = createFixtureDir(`p8-s4-edge-races-${bundler}-`);
+    try {
+      writeDinouShim(tmpApp);
+      fs.writeFileSync(
+        path.join(tmpApp, "package.json"),
+        JSON.stringify(
+          { name: `p8-s4-edge-races-${bundler}`, private: true, type: "module" },
+          null,
+          2
+        )
+      );
+      fs.writeFileSync(
+        path.join(tmpApp, "p8s4-state.json"),
+        JSON.stringify({
+          cfL1: 100,
+          cfL2: 100,
+          cfPage: 100,
+          cfSlot: 100,
+          cfHole: 100,
+          multiHost: 100,
+          slotA: 100,
+          slotB: 100,
+          permSlot: 100,
+          sub1Slot: 100,
+          neg1Slot: 100,
+          nfSlot: 100,
+          errSlot: 100,
+          shouldThrow: false,
+          rcPprShell: 100,
+          rcAsymL2: 100,
+          rcAsymShell: 100,
+          rcSlotSeq: 100,
+        })
+      );
+
+      const write = (rel, content) => {
+        const full = path.join(tmpApp, rel);
+        fs.mkdirSync(path.dirname(full), { recursive: true });
+        fs.writeFileSync(full, content, "utf8");
+      };
+
+      write(
+        "src/state.ts",
+        `import fs from "node:fs";
+import path from "node:path";
+const STATE_PATH = path.resolve(process.cwd(), "p8s4-state.json");
+export function readS() {
+  return JSON.parse(fs.readFileSync(STATE_PATH, "utf8"));
+}
+`
+      );
+
+      write(
+        "src/rc-helper.ts",
+        `import { cache } from "react";
+import { getContext } from "dinou/server";
+
+const EXEC_KEY = Symbol.for("dinou.p8s4.react.cache.exec.counter");
+const CALLS_BY_TENANT_KEY = Symbol.for("dinou.p8s4.react.cache.calls.by.tenant");
+
+export function resetRcMetrics() {
+  (globalThis as any)[EXEC_KEY] = 0;
+  (globalThis as any)[CALLS_BY_TENANT_KEY] = {};
+}
+
+export function getRcMetrics() {
+  return {
+    total: Number((globalThis as any)[EXEC_KEY] || 0),
+    byTenant: { ...((globalThis as any)[CALLS_BY_TENANT_KEY] || {}) },
+  };
+}
+
+export const getCachedViewer = cache(async (scopeKey: string) => {
+  const ctx = getContext();
+  const qT = ctx?.req?.query?.tenant;
+  const hT = ctx?.req?.headers?.["x-tenant"];
+  const tenant = String(Array.isArray(qT) ? qT[0] : qT || hT || "anon");
+  const next = Number((globalThis as any)[EXEC_KEY] || 0) + 1;
+  (globalThis as any)[EXEC_KEY] = next;
+  const map = ((globalThis as any)[CALLS_BY_TENANT_KEY] ||= {});
+  map[tenant] = Number(map[tenant] || 0) + 1;
+  await new Promise((r) => setTimeout(r, 15));
+  return { scopeKey, tenant, id: next, token: \`\${tenant}:\${next}\` };
+});
+`
+      );
+
+      write(
+        "src/layout.tsx",
+        `export default function RootLayout({ children }: { children: any }) {
+  return (
+    <html lang="en">
+      <head><title>P8S4 Edge Races &amp; React.cache</title></head>
+      <body>{children}</body>
+    </html>
+  );
+}
+`
+      );
+      write("src/page.tsx", `export default function Home() { return <main id="home">home</main>; }\n`);
+
+      // Pillar 1: 3-Layer PPR + Slot hierarchy for Cloudflare Workers concurrent races
+      write(
+        "src/cf/layout_functions.ts",
+        `import type { LayoutFunctions } from "dinou";
+const config: LayoutFunctions = { ppr: true, revalidate: 3600, getCacheTags: () => ["cf-l1"] };
+export default config;
+`
+      );
+      write(
+        "src/cf/layout.tsx",
+        `import { readS } from "../state";
+export default function CfL1({ children }: any) {
+  const s = readS();
+  return <section id="cf-l1"><span id="cf-l1-seq">{s.cfL1}</span>{children}</section>;
+}
+`
+      );
+      write(
+        "src/cf/sub/layout_functions.ts",
+        `import type { LayoutFunctions } from "dinou";
+const config: LayoutFunctions = { ppr: true, revalidate: 3600, getCacheTags: () => ["cf-l2"] };
+export default config;
+`
+      );
+      write(
+        "src/cf/sub/layout.tsx",
+        `import { readS } from "../../state";
+export default function CfL2({ children }: any) {
+  const s = readS();
+  return <div id="cf-l2"><span id="cf-l2-seq">{s.cfL2}</span>{children}</div>;
+}
+`
+      );
+      write(
+        "src/cf/sub/page_functions.ts",
+        `import type { PageFunctions } from "dinou";
+const config: PageFunctions = { ppr: true, revalidate: 3600, getCacheTags: () => ["cf-page"] };
+export default config;
+`
+      );
+      write(
+        "src/cf/sub/page.tsx",
+        `import { Suspense } from "react";
+import { DinouCacheSlot, getContext } from "dinou/server";
+import { readS } from "../../state";
+
+async function CfHole() {
+  void getContext()?.req?.headers?.["user-agent"];
+  return <span id="cf-hole-seq">{readS().cfHole}</span>;
+}
+
+export default function CfPage() {
+  const s = readS();
+  return (
+    <article id="cf-page">
+      <span id="cf-page-seq">{s.cfPage}</span>
+      <DinouCacheSlot id="cf-slot" tags={["cf-slot-tag"]} revalidate={3600}>
+        {async () => <span id="cf-slot-seq">{readS().cfSlot}</span>}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>fb</span>}><CfHole /></Suspense>
+    </article>
+  );
+}
+`
+      );
+
+      // Pillar 2 & 3: Multi-slot shared tag + revalidate={false}/0.5/-1 + not_found.tsx & error.tsx slots
+      write(
+        "src/slots-edge/not_found.tsx",
+        `import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../state";
+export default function EdgeNotFound() {
+  return (
+    <div id="se-not-found">
+      <DinouCacheSlot id="nf-slot" tags={["nf-slot-tag"]} revalidate={3600}>
+        {async () => <span id="nf-slot-seq">{readS().nfSlot}</span>}
+      </DinouCacheSlot>
+    </div>
+  );
+}
+`
+      );
+      write(
+        "src/slots-edge/error.tsx",
+        `import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../state";
+export default function EdgeError({ error }: any) {
+  return (
+    <div id="se-error">
+      <span id="se-err-msg">{error?.message || "err"}</span>
+      <DinouCacheSlot id="err-slot" tags={["err-slot-tag"]} revalidate={3600}>
+        {async () => <span id="err-slot-seq">{readS().errSlot}</span>}
+      </DinouCacheSlot>
+    </div>
+  );
+}
+`
+      );
+      write(
+        "src/slots-edge/multi/page_functions.ts",
+        `import type { PageFunctions } from "dinou";
+const config: PageFunctions = { ppr: false, revalidate: 3600, getCacheTags: () => ["se-multi"] };
+export default config;
+`
+      );
+      write(
+        "src/slots-edge/multi/page.tsx",
+        `import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../../state";
+export default function MultiPage() {
+  const s = readS();
+  return (
+    <article id="se-multi">
+      <span id="se-multi-host">{s.multiHost}</span>
+      <DinouCacheSlot id="slot-a" tag="multi-shared" revalidate={3600}>
+        {async () => <span id="slot-a-seq">{readS().slotA}</span>}
+      </DinouCacheSlot>
+      <DinouCacheSlot id="slot-b" tag="multi-shared" revalidate={1}>
+        {async () => <span id="slot-b-seq">{readS().slotB}</span>}
+      </DinouCacheSlot>
+      <DinouCacheSlot id="perm-slot" tags={["perm-tag"]} revalidate={false}>
+        {async () => <span id="perm-slot-seq">{readS().permSlot}</span>}
+      </DinouCacheSlot>
+    </article>
+  );
+}
+`
+      );
+      write(
+        "src/slots-edge/sub1/page_functions.ts",
+        `import type { PageFunctions } from "dinou";
+const config: PageFunctions = { ppr: false, revalidate: 3600 };
+export default config;
+`
+      );
+      write(
+        "src/slots-edge/sub1/page.tsx",
+        `import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../../state";
+export default function Sub1Page() {
+  return (
+    <article id="se-sub1">
+      <DinouCacheSlot id="sub1-slot" revalidate={0.5}>
+        {async () => <span id="sub1-slot-seq">{readS().sub1Slot}</span>}
+      </DinouCacheSlot>
+      <DinouCacheSlot id="neg1-slot" revalidate={-1}>
+        {async () => <span id="neg1-slot-seq">{readS().neg1Slot}</span>}
+      </DinouCacheSlot>
+    </article>
+  );
+}
+`
+      );
+      write(
+        "src/slots-edge/broken/page_functions.ts",
+        `import type { PageFunctions } from "dinou";
+const config: PageFunctions = { revalidate: 0 };
+export default config;
+`
+      );
+      write(
+        "src/slots-edge/broken/page.tsx",
+        `import { readS } from "../../state";
+export default function BrokenPage() {
+  if (readS().shouldThrow) throw new Error("SE_BROKEN_BOOM");
+  return <div id="se-broken-ok">ok</div>;
+}
+`
+      );
+
+      // Pillar 4: React.cache() across Pure PPR holes, Asymmetric Dynamic L2 + PPR holes, and Cached Slot isolation
+      write(
+        "src/rc-ppr/page_functions.ts",
+        `import type { PageFunctions } from "dinou";
+const config: PageFunctions = { ppr: true, revalidate: 3600 };
+export default config;
+`
+      );
+      write(
+        "src/rc-ppr/page.tsx",
+        `import { Suspense } from "react";
+import { getContext } from "dinou/server";
+import { readS } from "../state";
+import { getCachedViewer } from "../rc-helper";
+
+async function HoleA() {
+  void getContext()?.req?.headers?.["x-tenant"];
+  const v = await getCachedViewer("viewer");
+  return <span id="rc-ppr-a">{v.token}</span>;
+}
+
+async function HoleB() {
+  void getContext()?.req?.headers?.["x-tenant"];
+  await new Promise((r) => setTimeout(r, 5));
+  const v = await getCachedViewer("viewer");
+  return <span id="rc-ppr-b">{v.token}</span>;
+}
+
+export default function RcPprPage() {
+  return (
+    <article id="rc-ppr">
+      <span id="rc-ppr-shell">{readS().rcPprShell}</span>
+      <Suspense fallback={<span>a</span>}><HoleA /></Suspense>
+      <Suspense fallback={<span>b</span>}><HoleB /></Suspense>
+    </article>
+  );
+}
+`
+      );
+
+      write(
+        "src/rc-asym/layout_functions.ts",
+        `import type { LayoutFunctions } from "dinou";
+const config: LayoutFunctions = { revalidate: 0 };
+export default config;
+`
+      );
+      write(
+        "src/rc-asym/layout.tsx",
+        `import { readS } from "../state";
+import { getCachedViewer } from "../rc-helper";
+export default async function RcAsymL2({ children }: any) {
+  const v = await getCachedViewer("viewer");
+  return (
+    <section id="rc-asym-l2">
+      <span id="rc-asym-l2-seq">{readS().rcAsymL2}</span>
+      <span id="rc-asym-l2-token">{v.token}</span>
+      {children}
+    </section>
+  );
+}
+`
+      );
+      write(
+        "src/rc-asym/page_functions.ts",
+        `import type { PageFunctions } from "dinou";
+const config: PageFunctions = { ppr: true, revalidate: 3600 };
+export default config;
+`
+      );
+      write(
+        "src/rc-asym/page.tsx",
+        `import { Suspense } from "react";
+import { DinouCacheSlot, getContext } from "dinou/server";
+import { readS } from "../state";
+import { getCachedViewer } from "../rc-helper";
+
+async function AsymHoleA() {
+  void getContext()?.req?.headers?.["x-tenant"];
+  const v = await getCachedViewer("viewer");
+  return <span id="rc-asym-a">{v.token}</span>;
+}
+
+async function AsymHoleB() {
+  void getContext()?.req?.headers?.["x-tenant"];
+  await new Promise((r) => setTimeout(r, 5));
+  const v = await getCachedViewer("viewer");
+  return <span id="rc-asym-b">{v.token}</span>;
+}
+
+export default function RcAsymPage() {
+  return (
+    <article id="rc-asym-page">
+      <span id="rc-asym-shell">{readS().rcAsymShell}</span>
+      <DinouCacheSlot id="rc-iso-slot" tags={["rc-iso-slot-tag"]} revalidate={3600}>
+        {async () => {
+          const sv = await getCachedViewer("viewer");
+          return <span id="rc-iso-slot-token">{sv.token}</span>;
+        }}
+      </DinouCacheSlot>
+      <Suspense fallback={<span>a</span>}><AsymHoleA /></Suspense>
+      <Suspense fallback={<span>b</span>}><AsymHoleB /></Suspense>
+    </article>
+  );
+}
+`
+      );
+
+      // Dynamic page with a cold cached <DinouCacheSlot> calling the SAME React.cache() key ("viewer")!
+      write(
+        "src/rc-slot-iso/page_functions.ts",
+        `import type { PageFunctions } from "dinou";
+const config: PageFunctions = { revalidate: 0 };
+export default config;
+`
+      );
+      write(
+        "src/rc-slot-iso/page.tsx",
+        `import { DinouCacheSlot } from "dinou/server";
+import { getCachedViewer } from "../rc-helper";
+
+export default async function RcSlotIsoPage() {
+  const outer = await getCachedViewer("viewer");
+  return (
+    <article id="rc-slot-iso">
+      <span id="rc-iso-outer">{outer.token}</span>
+      <DinouCacheSlot id="rc-dyn-iso-slot" tags={["rc-dyn-iso-slot-tag"]} revalidate={3600}>
+        {async () => {
+          const inner = await getCachedViewer("viewer");
+          return <span id="rc-iso-inner">{inner.token}</span>;
+        }}
+      </DinouCacheSlot>
+    </article>
+  );
+}
+`
+      );
+
+      const buildRes = spawnSync(
+        process.execPath,
+        [CLI_PATH, `build:node:${bundler}`],
+        {
+          cwd: tmpApp,
+          encoding: "utf8",
+          env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+          timeout: 120_000,
+        }
+      );
+      assert.equal(
+        buildRes.status,
+        0,
+        `[${bundler}] Phase 8 Stage 4 build failed:\nSTDOUT:\n${buildRes.stdout}\nSTDERR:\n${buildRes.stderr}`
+      );
+
+      const verifyScript = path.join(tmpApp, "verify-p8s4.mjs");
+      fs.writeFileSync(
+        verifyScript,
+        `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const BUNDLER = ${JSON.stringify(bundler)};
+const DINOU_ROOT = ${JSON.stringify(DINOU_ROOT)};
+const STATE_PATH = path.resolve(process.cwd(), "p8s4-state.json");
+const readS = () => JSON.parse(fs.readFileSync(STATE_PATH, "utf8"));
+const writeS = (patch) => {
+  const next = { ...readS(), ...patch };
+  fs.writeFileSync(STATE_PATH, JSON.stringify(next), "utf8");
+  return next;
+};
+const textById = (html, id) => {
+  const m = String(html).match(new RegExp(\`id="\${id}"[^>]*>([^<]*)<\`));
+  return m ? m[1] : null;
+};
+
+const storageMod = await import(pathToFileURL(path.join(DINOU_ROOT, "core/storage-adapter.js")).href);
+const { FileSystemStorage, CloudflareKVStorage, setStorageAdapter, getStorageAdapter } = storageMod;
+const cacheSlotMod = await import(pathToFileURL(path.join(DINOU_ROOT, "core/cache-slot.js")).href);
+const reqCtxMod = await import(pathToFileURL(path.join(DINOU_ROOT, "core/request-context.js")).href);
+
+setStorageAdapter(new FileSystemStorage(path.resolve(".dinou/dist2")));
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+globalThis.__DINOU_RENDER_HTML_STREAM__ = ssrMod.renderHtml;
+const platformContext = { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml };
+
+const POISON = 999777;
+
+async function req(urlPath, { method = "GET", headers = {} } = {}) {
+  const res = await rscMod.handleRequest(
+    new Request(\`http://localhost:3000\${urlPath}\`, { method, headers }),
+    platformContext
+  );
+  return { status: res.status, headers: res.headers, text: await res.text() };
+}
+
+// =========================================================================
+// PILLAR 4: React.cache() Request-Scoped Memoization & Multi-Tenant Isolation
+// =========================================================================
+const EXEC_KEY = Symbol.for("dinou.p8s4.react.cache.exec.counter");
+const CALLS_BY_TENANT_KEY = Symbol.for("dinou.p8s4.react.cache.calls.by.tenant");
+const resetRc = () => { globalThis[EXEC_KEY] = 0; globalThis[CALLS_BY_TENANT_KEY] = {}; };
+const getRc = () => ({ total: Number(globalThis[EXEC_KEY] || 0), byTenant: { ...(globalThis[CALLS_BY_TENANT_KEY] || {}) } });
+
+// 4A. Pure PPR: two sibling PPR dynamic holes deduplicate to 1 React.cache() call!
+resetRc();
+const pprAlice = await req("/rc-ppr?tenant=alice", { headers: { "x-tenant": "alice" } });
+assert.equal(pprAlice.status, 200);
+const pprTokA = textById(pprAlice.text, "rc-ppr-a");
+const pprTokB = textById(pprAlice.text, "rc-ppr-b");
+assert.ok(pprTokA && pprTokA.startsWith("alice:"), \`[\${BUNDLER}] Expected alice token in HoleA, got \${pprTokA}\`);
+assert.equal(pprTokB, pprTokA, \`[\${BUNDLER}] Pure PPR sibling holes MUST share React.cache() result (HoleA=\${pprTokA}, HoleB=\${pprTokB})\`);
+assert.equal(getRc().byTenant.alice, 1, \`[\${BUNDLER}] Pure PPR sibling holes MUST invoke React.cache() fn exactly once, got \${getRc().byTenant.alice}\`);
+
+// 4B. Asymmetric 3D PPR: Dynamic L2 + two sibling PPR dynamic holes share 1 React.cache() call!
+resetRc();
+const asymBob = await req("/rc-asym?tenant=bob", { headers: { "x-tenant": "bob" } });
+assert.equal(asymBob.status, 200);
+const asymL2Tok = textById(asymBob.text, "rc-asym-l2-token");
+const asymATok = textById(asymBob.text, "rc-asym-a");
+const asymBTok = textById(asymBob.text, "rc-asym-b");
+assert.ok(asymL2Tok && asymL2Tok.startsWith("bob:"), \`[\${BUNDLER}] Expected bob token in Dynamic L2, got \${asymL2Tok}\`);
+assert.equal(asymATok, asymL2Tok, \`[\${BUNDLER}] Asymmetric L2 & HoleA MUST share React.cache() result (L2=\${asymL2Tok}, HoleA=\${asymATok})\`);
+assert.equal(asymBTok, asymL2Tok, \`[\${BUNDLER}] Asymmetric L2 & HoleB MUST share React.cache() result (L2=\${asymL2Tok}, HoleB=\${asymBTok})\`);
+assert.equal(getRc().byTenant.bob, 1, \`[\${BUNDLER}] Asymmetric L2 + 2 PPR holes MUST invoke React.cache() fn once, got \${getRc().byTenant.bob}\`);
+
+// 4C. Concurrent Multi-Tenant Isolation (4 interleaved requests -> ZERO cross-tenant leak!)
+resetRc();
+const [cAlice, cBob, cCarol, cDave] = await Promise.all([
+  req("/rc-ppr?tenant=alice", { headers: { "x-tenant": "alice" } }),
+  req("/rc-ppr?tenant=bob", { headers: { "x-tenant": "bob" } }),
+  req("/rc-asym?tenant=carol", { headers: { "x-tenant": "carol" } }),
+  req("/rc-asym?tenant=dave", { headers: { "x-tenant": "dave" } }),
+]);
+assert.equal(textById(cAlice.text, "rc-ppr-a"), textById(cAlice.text, "rc-ppr-b"));
+assert.ok(textById(cAlice.text, "rc-ppr-a")?.startsWith("alice:"));
+assert.equal(textById(cBob.text, "rc-ppr-a"), textById(cBob.text, "rc-ppr-b"));
+assert.ok(textById(cBob.text, "rc-ppr-a")?.startsWith("bob:"));
+assert.equal(textById(cCarol.text, "rc-asym-l2-token"), textById(cCarol.text, "rc-asym-a"));
+assert.equal(textById(cCarol.text, "rc-asym-a"), textById(cCarol.text, "rc-asym-b"));
+assert.ok(textById(cCarol.text, "rc-asym-l2-token")?.startsWith("carol:"));
+assert.equal(textById(cDave.text, "rc-asym-l2-token"), textById(cDave.text, "rc-asym-a"));
+assert.equal(textById(cDave.text, "rc-asym-a"), textById(cDave.text, "rc-asym-b"));
+assert.ok(textById(cDave.text, "rc-asym-l2-token")?.startsWith("dave:"));
+assert.equal(getRc().byTenant.alice, 1);
+assert.equal(getRc().byTenant.bob, 1);
+assert.equal(getRc().byTenant.carol, 1);
+assert.equal(getRc().byTenant.dave, 1);
+
+// 4D. Cached <DinouCacheSlot> isolation from dynamic tenant's React.cache()!
+resetRc();
+await getStorageAdapter().delete("slots/rc-dyn-iso-slot/slot.json");
+const isoRes = await req("/rc-slot-iso?tenant=secret-alice", { headers: { "x-tenant": "secret-alice" } });
+assert.equal(isoRes.status, 200);
+const isoOuter = textById(isoRes.text, "rc-iso-outer");
+const isoInner = textById(isoRes.text, "rc-iso-inner");
+assert.ok(isoOuter?.startsWith("secret-alice:"), \`Expected outer dynamic to see secret-alice, got \${isoOuter}\`);
+assert.notEqual(
+  isoInner,
+  isoOuter,
+  \`[\${BUNDLER}] Cached <DinouCacheSlot> MUST NOT inherit outer tenant's React.cache() entry (outer=\${isoOuter}, inner=\${isoInner})\`
+);
+
+// =========================================================================
+// PILLAR 2: Multi-Slot Shared Tag Resolution in inspectSlotsFreshness & revalidateTag
+// =========================================================================
+const multiInitial = await req("/slots-edge/multi");
+assert.equal(multiInitial.status, 200);
+assert.equal(textById(multiInitial.text, "slot-a-seq"), "100");
+assert.equal(textById(multiInitial.text, "slot-b-seq"), "100");
+assert.equal(textById(multiInitial.text, "perm-slot-seq"), "100");
+
+const multiMetaRaw = await getStorageAdapter().get("slots-edge/multi/metadata.json");
+const multiHostGen = Number(JSON.parse(multiMetaRaw.content).generatedAt || 0);
+
+// Wait >1.1s so slot-b (revalidate=1) expires while slot-a (revalidate=3600) is still fresh!
+await new Promise((r) => setTimeout(r, 1150));
+const freshnessExpired = await cacheSlotMod.inspectSlotsFreshness(["multi-shared"], multiHostGen);
+assert.equal(
+  freshnessExpired.hasExpired,
+  true,
+  \`[\${BUNDLER}] inspectSlotsFreshness(['multi-shared']) MUST detect slot-b TTL expiry (must NOT be masked by slot-a!)\`
+);
+
+// Refresh ONLY slot-b independently -> inspectSlotsFreshness(['multi-shared'], multiHostGen) must report hasNewer=true!
+writeS({ slotB: 201, slotA: POISON, multiHost: POISON });
+const slotBRefresh = await req("/____rsc_slot____/slot-b?fresh=1", {
+  headers: { "x-dinou-current-path": "/slots-edge/multi" },
+});
+assert.equal(slotBRefresh.status, 200);
+assert.ok(slotBRefresh.text.includes("201"));
+const freshnessNewer = await cacheSlotMod.inspectSlotsFreshness(["multi-shared"], multiHostGen);
+assert.equal(
+  freshnessNewer.hasNewer,
+  true,
+  \`[\${BUNDLER}] inspectSlotsFreshness(['multi-shared']) MUST detect slot-b newer timestamp (not masked by slot-a!)\`
+);
+
+// revalidateTag("multi-shared") must update BOTH slot-a AND slot-b while keeping poisoned host & perm-slot frozen!
+writeS({ slotA: 301, slotB: 302, multiHost: POISON, permSlot: POISON });
+await rscMod.revalidateTag("multi-shared");
+const multiAfterTag = await req("/slots-edge/multi");
+assert.equal(textById(multiAfterTag.text, "slot-a-seq"), "301");
+assert.equal(textById(multiAfterTag.text, "slot-b-seq"), "302");
+assert.equal(textById(multiAfterTag.text, "se-multi-host"), "100");
+assert.equal(textById(multiAfterTag.text, "perm-slot-seq"), "100");
+
+// =========================================================================
+// PILLAR 3: <DinouCacheSlot> Edge Placements (revalidate=false, 0.5/-1, not_found, error)
+// =========================================================================
+// 3A. revalidate={false}: never expires, stays frozen until revalidateTag("perm-tag")
+const permFreshness = await cacheSlotMod.inspectSlotsFreshness(["perm-slot"], multiHostGen);
+assert.equal(permFreshness.hasExpired, false, \`[\${BUNDLER}] revalidate=false slot must never expire\`);
+writeS({ permSlot: 401, multiHost: POISON });
+await rscMod.revalidateTag("perm-tag");
+const multiAfterPerm = await req("/slots-edge/multi");
+assert.equal(textById(multiAfterPerm.text, "perm-slot-seq"), "401");
+assert.equal(textById(multiAfterPerm.text, "se-multi-host"), "100");
+
+// 3B. revalidate={0.5} & revalidate={-1}: never cached to storage, always live!
+writeS({ sub1Slot: 501, neg1Slot: 502 });
+const sub1Res1 = await req("/slots-edge/sub1");
+assert.equal(textById(sub1Res1.text, "sub1-slot-seq"), "501");
+assert.equal(textById(sub1Res1.text, "neg1-slot-seq"), "502");
+assert.equal(await getStorageAdapter().get("slots/sub1-slot/slot.json"), null, \`[\${BUNDLER}] revalidate=0.5 must NOT cache to storage\`);
+assert.equal(await getStorageAdapter().get("slots/neg1-slot/slot.json"), null, \`[\${BUNDLER}] revalidate=-1 must NOT cache to storage\`);
+writeS({ sub1Slot: 503, neg1Slot: 504 });
+const sub1Res2 = await req("/slots-edge/sub1");
+assert.equal(textById(sub1Res2.text, "sub1-slot-seq"), "503");
+assert.equal(textById(sub1Res2.text, "neg1-slot-seq"), "504");
+
+// 3C. <DinouCacheSlot> inside not_found.tsx & error.tsx (including COLD server discovery!)
+writeS({ nfSlot: 601, errSlot: 701, shouldThrow: true });
+const nfRes1 = await req("/slots-edge/does-not-exist");
+assert.equal(nfRes1.status, 404);
+assert.equal(textById(nfRes1.text, "nf-slot-seq"), "601");
+
+const errRes1 = await req("/slots-edge/broken");
+assert.equal(errRes1.status, 500);
+assert.equal(textById(errRes1.text, "err-slot-seq"), "701");
+
+// Simulate COLD server restart by clearing slotRegistry!
+const slotRegistry = globalThis[Symbol.for("dinou.slot.registry")];
+assert.ok(slotRegistry instanceof Map);
+slotRegistry.clear();
+
+writeS({ nfSlot: 602, errSlot: 702 });
+const nfColdRefresh = await req("/____rsc_slot____/nf-slot?fresh=1", {
+  headers: { "x-dinou-current-path": "/slots-edge/does-not-exist" },
+});
+assert.equal(nfColdRefresh.status, 200, \`[\${BUNDLER}] Cold refreshSlot on not_found.tsx slot must return 200, got \${nfColdRefresh.status}\`);
+assert.ok(nfColdRefresh.text.includes("602"));
+
+slotRegistry.clear();
+const errColdRefresh = await req("/____rsc_slot____/err-slot?fresh=1", {
+  headers: { "x-dinou-current-path": "/slots-edge/broken" },
+});
+assert.equal(errColdRefresh.status, 200, \`[\${BUNDLER}] Cold refreshSlot on error.tsx slot must return 200 (via getErrorJSX fallback!), got \${errColdRefresh.status}\`);
+assert.ok(errColdRefresh.text.includes("702"));
+
+// Verify nf-slot / err-slot tags NEVER leaked into healthy 200 page metadata.json!
+const healthyMeta = JSON.parse((await getStorageAdapter().get("slots-edge/multi/metadata.json")).content);
+assert.ok(!(healthyMeta.slotTags || []).includes("nf-slot"));
+assert.ok(!(healthyMeta.slotTags || []).includes("err-slot"));
+
+// =========================================================================
+// PILLAR 1: Cross-Primitive Concurrent Revalidation Races on Cloudflare Workers!
+// =========================================================================
+if (BUNDLER === "esbuild" || BUNDLER === "rollup" || BUNDLER === "webpack") {
+  const origNavDesc = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  const prevStorage = getStorageAdapter();
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      value: { userAgent: "Cloudflare-Workers" },
+      configurable: true,
+    });
+
+    const kvData = new Map();
+    const kvMeta = new Map();
+    let delayHook = null;
+    const mockKv = {
+      async getWithMetadata(k) {
+        if (delayHook) await delayHook("get", k);
+        if (!kvData.has(k)) return { value: null, metadata: null };
+        return { value: kvData.get(k), metadata: kvMeta.get(k) || null };
+      },
+      async get(k) {
+        if (delayHook) await delayHook("get", k);
+        return kvData.has(k) ? kvData.get(k) : null;
+      },
+      async put(k, v, opts) {
+        if (delayHook) await delayHook("put", k);
+        kvData.set(k, v);
+        if (opts && opts.metadata) kvMeta.set(k, opts.metadata);
+        else kvMeta.delete(k);
+      },
+      async delete(k) {
+        if (delayHook) await delayHook("delete", k);
+        kvData.delete(k);
+        kvMeta.delete(k);
+      },
+      async list({ prefix = "" } = {}) {
+        if (delayHook) await delayHook("list", prefix);
+        const keys = Array.from(kvData.keys())
+          .filter((k) => k.startsWith(prefix))
+          .map((name) => ({ name }));
+        return { keys, list_complete: true };
+      },
+    };
+    const cfStorage = new CloudflareKVStorage(mockKv);
+    cfStorage.hydrateFromDisk = false;
+    setStorageAdapter(cfStorage);
+
+    // Seed V100 into CloudflareKVStorage
+    writeS({ cfL1: 100, cfL2: 100, cfPage: 100, cfSlot: 100, cfHole: 100 });
+    await rscMod.revalidateLayout("/cf");
+    await rscMod.revalidateLayout("/cf/sub");
+    await rscMod.revalidatePage("/cf/sub");
+
+    // 1A. Same-request webhook Promise.all burst (with async KV jitter)
+    writeS({ cfL1: 200, cfL2: 201, cfPage: 202, cfSlot: 203, cfHole: 204 });
+    delayHook = async () => new Promise((r) => setTimeout(r, 3));
+    const fakeReqCtx = { req: { path: "/api/webhook" }, res: {}, env: {}, platformContext };
+    await reqCtxMod.requestStorage.run(fakeReqCtx, async () => {
+      await Promise.all([
+        rscMod.revalidateLayout("/cf"),
+        rscMod.revalidateLayout("/cf/sub"),
+        rscMod.revalidatePage("/cf/sub"),
+        rscMod.revalidateTag("cf-slot-tag"),
+      ]);
+    });
+    delayHook = null;
+
+    const afterBurst = await req("/cf/sub");
+    assert.equal(afterBurst.status, 200);
+    assert.equal(textById(afterBurst.text, "cf-l1-seq"), "200", \`[\${BUNDLER}] CF same-request burst lost L1 update\`);
+    assert.equal(textById(afterBurst.text, "cf-l2-seq"), "201", \`[\${BUNDLER}] CF same-request burst lost L2 update\`);
+    assert.equal(textById(afterBurst.text, "cf-page-seq"), "202", \`[\${BUNDLER}] CF same-request burst lost Page update\`);
+    assert.equal(textById(afterBurst.text, "cf-slot-seq"), "203", \`[\${BUNDLER}] CF same-request burst lost Slot update\`);
+    assert.equal(textById(afterBurst.text, "cf-hole-seq"), "204");
+
+    // 1B. Cross-Isolate Concurrent Race (NO shared requestStorage!):
+    //     Isolate A starts revalidatePage("/cf/sub") slowly (reading old L2=201 & old slot=203),
+    //     while Isolate B concurrently runs revalidateLayout("/cf/sub") -> 301 AND revalidateTag("cf-slot-tag") -> 303!
+    //     Final state MUST NOT let Isolate A clobber L2=301 or Slot=303 with stale V201/V203!
+    writeS({ cfL1: 200, cfL2: 301, cfPage: 302, cfSlot: 303, cfHole: 304 });
+    let slowedFirstPageWrite = false;
+    delayHook = async (op, key) => {
+      if (op === "put" && key === "cf/sub/metadata.json" && !slowedFirstPageWrite) {
+        slowedFirstPageWrite = true;
+        await new Promise((r) => setTimeout(r, 45));
+      } else {
+        await new Promise((r) => setTimeout(r, 2));
+      }
+    };
+
+    const isoA = reqCtxMod.requestStorage.run({ req: { path: "/iso-a" }, res: {}, env: {}, platformContext }, () =>
+      rscMod.revalidatePage("/cf/sub")
+    );
+    await new Promise((r) => setTimeout(r, 5));
+    const isoB = reqCtxMod.requestStorage.run({ req: { path: "/iso-b" }, res: {}, env: {}, platformContext }, async () => {
+      await rscMod.revalidateLayout("/cf/sub");
+      await rscMod.revalidateTag("cf-slot-tag");
+    });
+    await Promise.all([isoA, isoB]);
+    delayHook = null;
+
+    // Verify zero stale overwrite & zero layout/page version skew on KV!
+    const afterCrossIso = await req("/cf/sub");
+    const l2RscAfter = await req("/____rsc_layout____/cf/sub");
+    const pageRscAfter = await req("/____rsc_page____/cf/sub");
+    assert.equal(textById(afterCrossIso.text, "cf-l2-seq"), "301", \`[\${BUNDLER}] CF cross-isolate race baked stale L2 into index.html!\`);
+    assert.equal(textById(afterCrossIso.text, "cf-page-seq"), "302", \`[\${BUNDLER}] CF cross-isolate race lost Page update!\`);
+    assert.equal(textById(afterCrossIso.text, "cf-slot-seq"), "303", \`[\${BUNDLER}] CF cross-isolate race clobbered Slot update!\`);
+    assert.ok(l2RscAfter.text.includes("301"), \`[\${BUNDLER}] layout.rsc must match L2=301\`);
+    assert.ok(pageRscAfter.text.includes("302") && pageRscAfter.text.includes("303"), \`[\${BUNDLER}] page.rsc must match Page=302 & Slot=303\`);
+  } finally {
+    setStorageAdapter(prevStorage);
+    if (origNavDesc) {
+      Object.defineProperty(globalThis, "navigator", origNavDesc);
+    } else {
+      delete globalThis.navigator;
+    }
+  }
+}
+
+console.log(\`PHASE8_STAGE4_EDGE_RACES_CACHE_\${BUNDLER.toUpperCase()}_OK\`);
+`,
+        "utf8"
+      );
+
+      const runRes = spawnSync(process.execPath, [verifyScript], {
+        cwd: tmpApp,
+        encoding: "utf8",
+        env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+        timeout: 90_000,
+      });
+      assert.equal(
+        runRes.status,
+        0,
+        `[${bundler}] Phase 8 Stage 4 verification failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+      );
+      assert.ok(
+        runRes.stdout.includes(
+          `PHASE8_STAGE4_EDGE_RACES_CACHE_${bundler.toUpperCase()}_OK`
+        )
+      );
+    } finally {
+      removeDirSafe(tmpApp);
+    }
+  }
+});

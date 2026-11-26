@@ -27,6 +27,7 @@ import {
   serializeJSX,
   deserializeJSX,
   refreshNestedSlotsInTree,
+  inspectSlotsFreshness,
 } from "./cache-slot.js";
 import {
   renderSingleLayoutLevel,
@@ -118,6 +119,14 @@ function enqueueRevalidation(fn) {
     return fn();
   }
   if (isCloudflareWorkersRuntime()) {
+    const reqCtx = requestStorage?.getStore?.();
+    if (reqCtx && typeof reqCtx === "object") {
+      const prevQueue = reqCtx._cfRevalQueue || Promise.resolve();
+      const run = () => revalQueueStorage.run(true, fn);
+      const nextPromise = prevQueue.then(run, run);
+      reqCtx._cfRevalQueue = nextPromise.catch(() => {});
+      return nextPromise;
+    }
     return revalQueueStorage.run(true, fn);
   }
   const run = () => revalQueueStorage.run(true, fn);
@@ -513,6 +522,7 @@ async function revalidatePage(reqPath, internalOptions = {}) {
   const cleanPath = normalizeRevalidatePath(reqPath);
   const onlyRefreshSlots = Boolean(internalOptions?.onlyRefreshSlots);
   const onlyIfExpired = Boolean(internalOptions?.onlyIfExpired);
+  const retryDepth = Number(internalOptions?._retryDepth || 0);
   if (!onlyIfExpired) {
     recordClientRevalidationHint("page", cleanPath);
   }
@@ -712,6 +722,8 @@ async function revalidatePage(reqPath, internalOptions = {}) {
     let leafSuspenseCount = 0;
     let leafHoles = [];
     let hasActiveLayoutChain = false;
+    let composedLeafLayoutMetaKey = null;
+    let composedLeafLayoutGen = 0;
     let hasDynamicLayoutInChain = false;
     try {
       const activeChain = getActiveLayoutChain(reqSegments, {}, srcFolder);
@@ -814,6 +826,10 @@ async function revalidatePage(reqPath, internalOptions = {}) {
           leafHoles = Array.isArray(leafLayout.holes) ? leafLayout.holes : [];
           if (hasValidLeafRsc) {
             activeLayoutRscText = leafRscItem.content;
+            composedLeafLayoutMetaKey = leafLayout.cleanLayoutKey
+              ? `${leafLayout.cleanLayoutKey}/layout.metadata.json`
+              : "layout.metadata.json";
+            composedLeafLayoutGen = Number(leafLayout.generatedAt || 0);
           }
         }
       }
@@ -822,6 +838,27 @@ async function revalidatePage(reqPath, internalOptions = {}) {
     const prevGenTime = Math.max((currentMeta && currentMeta.generatedAt) || 0, maxActiveLayoutGenTime);
     const prevPageOwnGenTime =
       (currentMeta && (currentMeta.pageGeneratedAt || currentMeta.generatedAt)) || 0;
+    const initialTagInvMap = new Map();
+    if (isCloudflareWorkersRuntime() && retryDepth < 2) {
+      const initTags = Array.from(
+        new Set([
+          ...(Array.isArray(currentMeta?.slotTags) ? currentMeta.slotTags : []),
+          ...(Array.isArray(currentMeta?.tags) ? currentMeta.tags : []),
+        ])
+      );
+      for (const t of initTags) {
+        if (!t) continue;
+        try {
+          const invAt =
+            typeof storage.getTagInvalidatedAtAsync === "function"
+              ? await storage.getTagInvalidatedAtAsync(t)
+              : typeof storage.getTagInvalidatedAt === "function"
+              ? storage.getTagInvalidatedAt(t)
+              : 0;
+          initialTagInvMap.set(t, Number(invAt || 0));
+        } catch (e) {}
+      }
+    }
     const now = Date.now();
     const newGenTime = nextMonotonicGenTime(prevGenTime);
     currentMeta.generatedAt = newGenTime;
@@ -1273,6 +1310,73 @@ async function revalidatePage(reqPath, internalOptions = {}) {
       } catch (e) {}
     }
 
+    // Cross-isolate optimistic consistency check (Cloudflare Workers / distributed KV):
+    // Prevent a slower isolate from clobbering newer layout/page/slot commits with stale artifacts.
+    const checkCloudflarePageRace = async (committedGen = 0) => {
+      if (!isCloudflareWorkersRuntime() || retryDepth >= 2) return false;
+      try {
+        const latestMetaItem = await storage.get(metaKey);
+        const latestMetaObj =
+          latestMetaItem?.metadata ||
+          (latestMetaItem?.content && latestMetaItem.content.trim().startsWith("{")
+            ? JSON.parse(latestMetaItem.content)
+            : null);
+        const latestMetaGen = Number(latestMetaObj?.generatedAt || 0);
+        if (committedGen > 0) {
+          if (latestMetaGen > committedGen) return true;
+        } else if (latestMetaGen > prevGenTime) {
+          return true;
+        }
+        if (composedLeafLayoutMetaKey) {
+          const latestLeafItem = await storage.get(composedLeafLayoutMetaKey);
+          const latestLeafObj =
+            latestLeafItem?.metadata ||
+            (latestLeafItem?.content && latestLeafItem.content.trim().startsWith("{")
+              ? JSON.parse(latestLeafItem.content)
+              : null);
+          if (Number(latestLeafObj?.generatedAt || 0) > composedLeafLayoutGen) {
+            return true;
+          }
+        }
+        const tagsToCheck = Array.from(
+          new Set([
+            ...(Array.isArray(currentMeta.slotTags) ? currentMeta.slotTags : []),
+            ...(Array.isArray(currentMeta.tags) ? currentMeta.tags : []),
+          ])
+        );
+        for (const t of tagsToCheck) {
+          if (!t) continue;
+          const invAt =
+            typeof storage.getTagInvalidatedAtAsync === "function"
+              ? await storage.getTagInvalidatedAtAsync(t)
+              : typeof storage.getTagInvalidatedAt === "function"
+              ? storage.getTagInvalidatedAt(t)
+              : 0;
+          if (Number(invAt || 0) > (initialTagInvMap.get(t) || 0)) {
+            return true;
+          }
+        }
+        if (Array.isArray(currentMeta.slotTags) && currentMeta.slotTags.length > 0) {
+          const slotCheck = await inspectSlotsFreshness(
+            currentMeta.slotTags,
+            committedGen > 0 ? committedGen : now
+          );
+          if (slotCheck.hasNewer) {
+            return true;
+          }
+        }
+      } catch (e) {}
+      return false;
+    };
+
+    if (await checkCloudflarePageRace(0)) {
+      return await revalidatePage(reqPath, {
+        ...internalOptions,
+        onlyRefreshSlots: false,
+        _retryDepth: retryDepth + 1,
+      });
+    }
+
     // Causal commit order to guarantee zero hydration mismatch (#418) under concurrent ISR reads:
     // 1. _old snapshot already committed above (so buildId < currentGeneratedAt resolves T_prev)
     // 2. metadata.json advances currentGeneratedAt to commitGenTime (routing T_prev clients to _old)
@@ -1306,6 +1410,14 @@ async function revalidatePage(reqPath, internalOptions = {}) {
       if (cleanPathKey) {
         await storage.set(cleanPathKey, newHtml, currentMeta);
       }
+    }
+
+    if (await checkCloudflarePageRace(commitGenTime)) {
+      return await revalidatePage(reqPath, {
+        ...internalOptions,
+        onlyRefreshSlots: false,
+        _retryDepth: retryDepth + 1,
+      });
     }
 
     console.log(`✅ [Edge Revalidate] Successfully revalidated page ${cleanPath} (generatedAt: ${commitGenTime})`);
@@ -1425,6 +1537,7 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
   const onlyRefreshSlots = Boolean(internalOptions?.onlyRefreshSlots);
   const onlyIfExpired = Boolean(internalOptions?.onlyIfExpired);
   const recomposeOnly = Boolean(internalOptions?.recomposeOnly);
+  const retryDepth = Number(internalOptions?._retryDepth || 0);
   if (!onlyIfExpired) {
     recordClientRevalidationHint("layout", targetPath);
   }
@@ -2046,6 +2159,47 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
         (didSpliceOnlyLayoutSlots || didRecomposeOnly) && prevLayoutOwnLevelGenTime > 0
           ? prevLayoutOwnLevelGenTime
           : commitLayoutGenTime;
+      const checkCloudflareLayoutRace = async (committedGen = 0) => {
+        if (!isCloudflareWorkersRuntime() || retryDepth >= 2) return false;
+        try {
+          const latestItem = await storage.get(layoutMetaKey);
+          const latestObj =
+            latestItem?.metadata ||
+            (latestItem?.content && latestItem.content.trim().startsWith("{")
+              ? JSON.parse(latestItem.content)
+              : null);
+          const latestGen = Number(latestObj?.generatedAt || 0);
+          if (committedGen > 0) {
+            if (latestGen > committedGen) return true;
+          } else if (latestGen > prevGenTime) {
+            return true;
+          }
+          const lSlotTags = Array.from(
+            new Set([
+              ...(Array.isArray(currentMeta.ownSlotTags) ? currentMeta.ownSlotTags : []),
+              ...(Array.isArray(currentMeta.slotTags) ? currentMeta.slotTags : []),
+            ])
+          );
+          if (lSlotTags.length > 0) {
+            const slotCheck = await inspectSlotsFreshness(
+              lSlotTags,
+              committedGen > 0 ? committedGen : now
+            );
+            if (slotCheck.hasNewer) return true;
+          }
+        } catch (e) {}
+        return false;
+      };
+
+      if (await checkCloudflareLayoutRace(0)) {
+        return await revalidateLayout(reqPath, {
+          ...internalOptions,
+          onlyRefreshSlots: false,
+          recomposeOnly: false,
+          _retryDepth: retryDepth + 1,
+        });
+      }
+
       // Causal commit order: persist layout payload artifacts (shell.layout.own.json, shell.layout.json,
       // and layout.rsc with inline currentMeta) BEFORE advancing layout.metadata.json so concurrent
       // readers checking layoutGeneratedAt never observe T_new while layout.rsc is still T_old.
@@ -2063,6 +2217,16 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
         await storage.set(layoutRscKey, newLayoutRsc, currentMeta);
       }
       await storage.set(layoutMetaKey, JSON.stringify(currentMeta));
+
+      if (await checkCloudflareLayoutRace(commitLayoutGenTime)) {
+        return await revalidateLayout(reqPath, {
+          ...internalOptions,
+          onlyRefreshSlots: false,
+          recomposeOnly: false,
+          _retryDepth: retryDepth + 1,
+        });
+      }
+
       console.log(`✅ [Edge Revalidate] Successfully revalidated layout ${targetPath} (generatedAt: ${commitLayoutGenTime})`);
       return true;
   });

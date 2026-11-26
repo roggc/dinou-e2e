@@ -503,6 +503,22 @@ export interface Cube3DState {
   hhTombstoneSeq: number;
   hhTombstoneMode: "none" | "404" | "410" | "302";
   hhColdIsgSeq: number;
+
+  // Phase 8 — Stage 4 — Check #90: CF Workers Cross-Primitive Races, Multi-Slot Tags, Slot Edge Placements & React.cache()
+  erL1ShellSeq: number;
+  erMultiHostSeq: number;
+  erSlotASeq: number;
+  erSlotBSeq: number;
+  erPermSlotSeq: number;
+  erSub1SlotSeq: number;
+  erNeg1SlotSeq: number;
+  erNfSlotSeq: number;
+  erErrSlotSeq: number;
+  erShouldThrowError: boolean;
+  erPurePprShellSeq: number;
+  erAsymL2Seq: number;
+  erAsymShellSeq: number;
+  erRcSlotSeq: number;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -966,6 +982,21 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   hhTombstoneSeq: 100,
   hhTombstoneMode: "none",
   hhColdIsgSeq: 100,
+
+  erL1ShellSeq: 100,
+  erMultiHostSeq: 100,
+  erSlotASeq: 100,
+  erSlotBSeq: 100,
+  erPermSlotSeq: 100,
+  erSub1SlotSeq: 100,
+  erNeg1SlotSeq: 100,
+  erNfSlotSeq: 100,
+  erErrSlotSeq: 100,
+  erShouldThrowError: false,
+  erPurePprShellSeq: 100,
+  erAsymL2Seq: 100,
+  erAsymShellSeq: 100,
+  erRcSlotSeq: 100,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {
