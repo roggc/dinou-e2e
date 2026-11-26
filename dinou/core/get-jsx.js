@@ -456,6 +456,9 @@ async function getJSX(
               ? elementToRender
               : resolvedSlot;
         } catch (e) {
+          if (e && e.$$type === "dinou-internal-redirect") {
+            throw e;
+          }
           layoutSegmentStore.idCount = prevSlotIdCount;
           layoutSegmentStore.holeCount = prevSlotHoleCount;
           if (slotFilePath) {
@@ -538,6 +541,9 @@ async function getJSX(
           );
           layoutOnlyJsx = null;
         } catch (layoutErr) {
+          if (layoutErr && layoutErr.$$type === "dinou-internal-redirect") {
+            throw layoutErr;
+          }
           layoutRenderFailed = true;
           layoutOnlyJsx = null;
           console.warn(
@@ -579,6 +585,9 @@ async function getJSX(
             layoutOnlyJsx = replaceLayoutChildrenPlaceholder(resolvedLayout, layoutOnlyJsx, placeholder);
           }
         } catch (layoutErr) {
+          if (layoutErr && layoutErr.$$type === "dinou-internal-redirect") {
+            throw layoutErr;
+          }
           layoutRenderFailed = true;
           layoutOnlyJsx = null;
           layoutSegmentStore.idCount = prevLayoutIdCount;

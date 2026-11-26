@@ -537,6 +537,74 @@ async function revalidatePage(reqPath, internalOptions = {}) {
       return;
     }
 
+    const transitionPageToDynamicTombstone = async ({
+      prevGen = 0,
+      notFound = false,
+      logMessage = null,
+    } = {}) => {
+      markRouteDynamicInMap(reqPathWithSlash, cleanPath, true);
+      const prevGenForTombstone = Math.max(
+        Number((currentMeta && currentMeta.generatedAt) || 0),
+        Number(prevGen || 0)
+      );
+      // Preserve causal _old snapshots BEFORE advancing metadata.json and evicting current artifacts
+      // so in-flight tabs hydrating ?____build_id____=T_prev receive matching page._old.rsc /
+      // shell.page._old.json with zero React #418!
+      try {
+        if (cached && cached.content) {
+          await storage.set(oldHtmlKey, cached.content);
+        }
+        if (existingPageRsc && existingPageRsc.content) {
+          await storage.set(oldRscKey, existingPageRsc.content);
+        }
+        const prevShellPage = await readEdgeStorageOrAsset(storage, shellPageKey);
+        if (prevShellPage && prevShellPage.content) {
+          await storage.set(shellPageOldKey, prevShellPage.content);
+        }
+      } catch (e) {}
+      const tombstoneMeta = {
+        ...currentMeta,
+        dynamic: true,
+        generatedAt: nextMonotonicGenTime(prevGenForTombstone),
+      };
+      if (notFound) {
+        tombstoneMeta.notFound = true;
+        tombstoneMeta.status = 404;
+      } else {
+        delete tombstoneMeta.notFound;
+      }
+      // Commit metadata.json BEFORE evicting current RSC/PPR/HTML artifacts so concurrent readers
+      // never observe evicted artifacts with a stale generatedAt timestamp.
+      try {
+        await storage.set(metaKey, JSON.stringify(tombstoneMeta));
+      } catch (e) {}
+      // Keep physical index.html intact on FileSystemStorage (storage.baseDir) for concurrency safety
+      // (in-flight file streams & Hybrid Static/Dynamic switching; FileSystemStorage.get() reads
+      // companion metadata.json so cachedItem.metadata.dynamic === true is immediately visible).
+      // On non-FS distributed/Edge adapters (Redis, Deno KV, Cloudflare KV, Memory), storage.get(htmlKey)
+      // returns inline metadata stored on htmlKey itself — so we MUST delete htmlKey & cleanPathKey
+      // (writing KV/Redis tombstones that suppress stale .dinou/dist2 and env.ASSETS fallback).
+      const bailoutKeysToEvict = [
+        shellHtmlKey,
+        rscKey,
+        shellRscKey,
+        shellPageKey,
+        legacyRscKey,
+      ];
+      if (!storage.baseDir) {
+        bailoutKeysToEvict.push(htmlKey);
+        if (cleanPathKey) {
+          bailoutKeysToEvict.push(cleanPathKey);
+        }
+      }
+      await Promise.all(
+        bailoutKeysToEvict.map((k) => Promise.resolve(storage.delete(k)).catch(() => {}))
+      );
+      if (logMessage) {
+        console.log(logMessage);
+      }
+    };
+
     const hasExistingPageArtifact = Boolean(
       (cached && cached.content) || (existingPageRsc && existingPageRsc.content)
     );
@@ -547,6 +615,15 @@ async function revalidatePage(reqPath, internalOptions = {}) {
       hasExistingPageArtifact
     );
     if (routeCfg.isBlocked) {
+      if (
+        hasExistingPageArtifact ||
+        (currentMeta && Object.keys(currentMeta).length > 0)
+      ) {
+        await transitionPageToDynamicTombstone({
+          notFound: true,
+          logMessage: `[ISR] Perimeter block / notFound detected for ${cleanPath}. Switching to Dynamic 404.`,
+        });
+      }
       return;
     }
     const effectivePageReval =
@@ -744,7 +821,16 @@ async function revalidatePage(reqPath, internalOptions = {}) {
           env: activeEnv,
         },
         res: {
-          status() {},
+          status(code) {
+            const numericCode = Number(code);
+            if (!Number.isNaN(numericCode)) {
+              revalContext._statusCode = numericCode;
+            }
+            if (Number.isNaN(numericCode) || numericCode !== 200) {
+              markRevalDynamic();
+            }
+            return revalContext.res;
+          },
           setHeader() {
             markRevalDynamic();
           },
@@ -754,8 +840,15 @@ async function revalidatePage(reqPath, internalOptions = {}) {
           clearCookie() {
             markRevalDynamic();
           },
-          redirect() {
+          redirect(urlOrStatus, targetUrl) {
             revalContext._hasRedirected = true;
+            if (typeof urlOrStatus === "number") {
+              revalContext._statusCode = urlOrStatus;
+              revalContext._redirectLocation = targetUrl;
+            } else {
+              revalContext._statusCode = 302;
+              revalContext._redirectLocation = urlOrStatus;
+            }
             markRevalDynamic();
           },
         },
@@ -763,13 +856,14 @@ async function revalidatePage(reqPath, internalOptions = {}) {
         platformContext: outerCtx?.platformContext || { env: activeEnv },
         _isStaticHtmlRender: true,
         _hasRedirected: false,
+        _statusCode: 200,
       };
       const clientManifest =
         (typeof globalThis !== "undefined" && globalThis.__DINOU_CLIENT_MANIFEST__) || {};
+      const isNotFound = { value: false };
 
       try {
         await requestStorage.run(revalContext, async () => {
-          const isNotFound = {};
           let resolvedPageJsx = null;
 
           if (onlyRefreshSlots) {
@@ -1004,53 +1098,34 @@ async function revalidatePage(reqPath, internalOptions = {}) {
           }
         });
       } catch (e) {
-        if (isEdgeRuntime() || process.env.DINOU_DEBUG) {
+        if (e && e.$$type === "dinou-internal-redirect") {
+          revalContext._hasRedirected = true;
+          revalDynamicState.value = true;
+        } else if (isEdgeRuntime() || process.env.DINOU_DEBUG) {
           console.warn(`⚠️ [Edge Revalidate] Render fallback for ${cleanPath}:`, e?.message || e);
         }
       }
-      if (revalContext._hasRedirected) {
+      const hasNon200Status = Boolean(
+        revalContext._statusCode && Number(revalContext._statusCode) !== 200
+      );
+      if (revalDynamicState.value || revalContext._hasRedirected || hasNon200Status) {
+        await transitionPageToDynamicTombstone({
+          prevGen: prevGenTime,
+          notFound: Number(revalContext._statusCode) === 404,
+          logMessage: revalContext._hasRedirected
+            ? `[ISR] Redirect detected for ${cleanPath}. Switching to Dynamic.`
+            : hasNon200Status
+            ? `[ISR] Non-200 status (${revalContext._statusCode}) detected for ${cleanPath}. Switching to Dynamic.`
+            : `[ISR] Bailout detected for ${cleanPath}. Switching to Dynamic.`,
+        });
         return;
       }
-      if (revalDynamicState.value) {
-        markRouteDynamicInMap(reqPathWithSlash, cleanPath, true);
-        // Preserve causal _old snapshots AND keep physical index.html intact for concurrency safety
-        // (in-flight file streams & Hybrid Static/Dynamic switching). Persisting metadata.json with
-        // dynamic: true immediately directs all pods (warm & cold) on Direct SSR, Step 2b PPR, and
-        // /____rsc_page____ to serve live dynamic SSR while in-flight tabs hydrating ?____build_id____=T_prev
-        // receive matching page._old.rsc / shell.page._old.json with zero React #418!
-        try {
-          if (cached && cached.content) {
-            await storage.set(oldHtmlKey, cached.content);
-          }
-          if (existingPageRsc && existingPageRsc.content) {
-            await storage.set(oldRscKey, existingPageRsc.content);
-          }
-          const prevShellPage = await readEdgeStorageOrAsset(storage, shellPageKey);
-          if (prevShellPage && prevShellPage.content) {
-            await storage.set(shellPageOldKey, prevShellPage.content);
-          }
-        } catch (e) {}
-        try {
-          await storage.set(
-            metaKey,
-            JSON.stringify({
-              ...currentMeta,
-              dynamic: true,
-              generatedAt: nextMonotonicGenTime(prevGenTime),
-            })
-          );
-        } catch (e) {}
-        const bailoutKeysToEvict = [
-          shellHtmlKey,
-          rscKey,
-          shellRscKey,
-          shellPageKey,
-          legacyRscKey,
-        ];
-        await Promise.all(
-          bailoutKeysToEvict.map((k) => Promise.resolve(storage.delete(k)).catch(() => {}))
-        );
-        console.log(`[ISR] Bailout detected for ${cleanPath}. Switching to Dynamic.`);
+      if (isNotFound.value) {
+        await transitionPageToDynamicTombstone({
+          prevGen: prevGenTime,
+          notFound: true,
+          logMessage: `[ISR] NotFound detected for ${cleanPath}. Switching to Dynamic 404.`,
+        });
         return;
       }
       markRouteDynamicInMap(reqPathWithSlash, cleanPath, false);
@@ -1060,25 +1135,32 @@ async function revalidatePage(reqPath, internalOptions = {}) {
       renderedRsc || renderedFullRsc || composedFromCachedLayout
     );
 
-    if (!didRenderFreshPage && !isEdgeRuntime()) {
-      const keysToEvict = [
-        htmlKey,
-        shellHtmlKey,
-        oldHtmlKey,
-        rscKey,
-        shellRscKey,
-        shellPageKey,
-        shellPageOldKey,
-        oldRscKey,
-        legacyRscKey,
-        metaKey,
-      ];
-      if (cleanPathKey) {
-        keysToEvict.push(cleanPathKey);
+    if (!didRenderFreshPage) {
+      if (!pagePath) {
+        await transitionPageToDynamicTombstone({
+          prevGen: prevGenTime,
+          notFound: true,
+          logMessage: `[ISR] Removed route detected for ${cleanPath}. Switching to Dynamic 404.`,
+        });
+        return;
       }
-      await Promise.all(
-        keysToEvict.map((k) => Promise.resolve(storage.delete(k)).catch(() => {}))
-      );
+      if (!isEdgeRuntime()) {
+        const keysToEvict = [
+          htmlKey,
+          shellHtmlKey,
+          rscKey,
+          shellRscKey,
+          shellPageKey,
+          legacyRscKey,
+          metaKey,
+        ];
+        if (cleanPathKey) {
+          keysToEvict.push(cleanPathKey);
+        }
+        await Promise.all(
+          keysToEvict.map((k) => Promise.resolve(storage.delete(k)).catch(() => {}))
+        );
+      }
       return;
     }
 
@@ -1108,6 +1190,9 @@ async function revalidatePage(reqPath, internalOptions = {}) {
         `window.__DINOU_BUILD_ID__ = "${commitGenTime}"`
       );
     }
+    delete currentMeta.dynamic;
+    delete currentMeta.notFound;
+    currentMeta.status = 200;
     currentMeta.generatedAt = commitGenTime;
     currentMeta.pageSlotsGeneratedAt = commitGenTime;
 
@@ -1463,6 +1548,7 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
           outerCtx?.req?.env ||
           (typeof globalThis !== "undefined" ? globalThis.__DINOU_ENV__ : undefined) ||
           {};
+        let layoutStatusCode = 200;
         const revalContext = {
           req: {
             query: createBailoutProxy({}, "req.query", markRevalDynamic),
@@ -1473,7 +1559,17 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
             env: activeEnv,
           },
           res: {
-            status() {},
+            status(code) {
+              const numericCode = Number(code);
+              if (!Number.isNaN(numericCode)) {
+                layoutStatusCode = numericCode;
+                revalContext._statusCode = numericCode;
+              }
+              if (Number.isNaN(numericCode) || numericCode !== 200) {
+                markRevalDynamic();
+              }
+              return revalContext.res;
+            },
             setHeader() {
               markRevalDynamic();
             },
@@ -1483,9 +1579,18 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
             clearCookie() {
               markRevalDynamic();
             },
-            redirect() {
+            redirect(urlOrStatus, targetUrl) {
               layoutHasRedirected = true;
               revalContext._hasRedirected = true;
+              if (typeof urlOrStatus === "number") {
+                layoutStatusCode = urlOrStatus;
+                revalContext._statusCode = urlOrStatus;
+                revalContext._redirectLocation = targetUrl;
+              } else {
+                layoutStatusCode = 302;
+                revalContext._statusCode = 302;
+                revalContext._redirectLocation = urlOrStatus;
+              }
               markRevalDynamic();
             },
           },
@@ -1493,6 +1598,7 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
           platformContext: outerCtx?.platformContext || { env: activeEnv },
           _isStaticHtmlRender: true,
           _hasRedirected: false,
+          _statusCode: 200,
         };
         const clientManifest =
           (typeof globalThis !== "undefined" && globalThis.__DINOU_CLIENT_MANIFEST__) || {};
@@ -1533,6 +1639,9 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
                 }
               }
             } catch (e) {
+              if (e && e.$$type === "dinou-internal-redirect") {
+                throw e;
+              }
               resolvedLayoutJsx = null;
             }
           }
@@ -1620,6 +1729,9 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
                 }
               }
             } catch (e) {
+              if (e && e.$$type === "dinou-internal-redirect") {
+                throw e;
+              }
               resolvedLayoutJsx = null;
             }
           }
@@ -1697,6 +1809,9 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
                 }
               }
             } catch (e) {
+              if (e && e.$$type === "dinou-internal-redirect") {
+                throw e;
+              }
               resolvedLayoutJsx = null;
             }
           }
@@ -1749,17 +1864,18 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
           }
         });
       } catch (e) {
-        if (isEdgeRuntime() || process.env.DINOU_DEBUG) {
+        if (e && e.$$type === "dinou-internal-redirect") {
+          layoutHasRedirected = true;
+          revalDynamicState.value = true;
+        } else if (isEdgeRuntime() || process.env.DINOU_DEBUG) {
           console.warn(`⚠️ [Edge Revalidate] Layout render fallback for ${targetPath}:`, e?.message || e);
         }
       }
 
-      if (layoutHasRedirected) {
-        return false;
-      }
-      if (revalDynamicState.value) {
-        // Preserve causal layout _old snapshots BEFORE evicting current layout artifacts
-        // so in-flight tabs hydrating T_prev receive matching layout._old.rsc with zero #418!
+      if (revalDynamicState.value || layoutHasRedirected) {
+        // Preserve causal layout _old snapshots BEFORE advancing layout.metadata.json and
+        // evicting current layout artifacts so in-flight tabs hydrating T_prev receive
+        // matching layout._old.rsc / shell.layout._old.json with zero #418!
         try {
           if (cached && cached.content) {
             await storage.set(layoutOldRscKey, cached.content);
@@ -1769,13 +1885,6 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
             await storage.set(shellLayoutOldKey, prevShellLayout.content);
           }
         } catch (e) {}
-        await Promise.all(
-          [
-            layoutRscKey,
-            shellLayoutKey,
-            shellLayoutOwnKey,
-          ].map((k) => Promise.resolve(storage.delete(k)).catch(() => {}))
-        );
         try {
           await storage.set(
             layoutMetaKey,
@@ -1786,16 +1895,52 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
             })
           );
         } catch (e) {}
+        await Promise.all(
+          [
+            layoutRscKey,
+            shellLayoutKey,
+            shellLayoutOwnKey,
+          ].map((k) => Promise.resolve(storage.delete(k)).catch(() => {}))
+        );
         return false;
       }
 
-      if (!didRenderFreshLayout && !isEdgeRuntime()) {
-        await Promise.all(
-          [layoutRscKey, layoutOldRscKey, layoutMetaKey, shellLayoutKey, shellLayoutOwnKey, shellLayoutOldKey].map((k) =>
-            Promise.resolve(storage.delete(k)).catch(() => {})
-          )
-        );
-        return Boolean(cached || hasCachedMeta || resolvedLayoutFilePath);
+      if (!didRenderFreshLayout) {
+        if (!resolvedLayoutFilePath) {
+          try {
+            if (cached && cached.content) {
+              await storage.set(layoutOldRscKey, cached.content);
+            }
+            const prevShellLayout = await readEdgeStorageOrAsset(storage, shellLayoutKey);
+            if (prevShellLayout && prevShellLayout.content) {
+              await storage.set(shellLayoutOldKey, prevShellLayout.content);
+            }
+            await storage.set(
+              layoutMetaKey,
+              JSON.stringify({
+                ...currentMeta,
+                dynamic: true,
+                notFound: true,
+                generatedAt: nextMonotonicGenTime(prevGenTime),
+              })
+            );
+          } catch (e) {}
+          await Promise.all(
+            [layoutRscKey, shellLayoutKey, shellLayoutOwnKey].map((k) =>
+              Promise.resolve(storage.delete(k)).catch(() => {})
+            )
+          );
+          return false;
+        }
+        if (!isEdgeRuntime()) {
+          await Promise.all(
+            [layoutRscKey, layoutMetaKey, shellLayoutKey, shellLayoutOwnKey].map((k) =>
+              Promise.resolve(storage.delete(k)).catch(() => {})
+            )
+          );
+          return Boolean(cached || hasCachedMeta || resolvedLayoutFilePath);
+        }
+        return false;
       }
 
       if (!resolvedLayoutFilePath && !cached && !hasCachedMeta) {
@@ -1818,6 +1963,9 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
       if (commitLayoutGenTime > revalState.lastGenTime) {
         revalState.lastGenTime = commitLayoutGenTime;
       }
+      delete currentMeta.dynamic;
+      delete currentMeta.notFound;
+      currentMeta.status = 200;
       currentMeta.generatedAt = commitLayoutGenTime;
       if (
         newLayoutRsc &&

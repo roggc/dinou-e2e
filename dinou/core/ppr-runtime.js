@@ -198,6 +198,10 @@ async function PprDynamicHoleBoundary({ holeId, children }) {
       holeId
     );
   } catch (holeErr) {
+    if (holeErr && holeErr.$$type === "dinou-internal-redirect") {
+      getContext()?.res?.redirect?.(holeErr.url || "/");
+      return null;
+    }
     console.error(`[Dinou PPR] Error resolving dynamic hole ${holeId}:`, holeErr);
     try {
       getContext()?.res?.setHeader?.("x-dinou-has-error", "true");
@@ -834,6 +838,10 @@ async function streamDynamicHoles(
             chunkToWrite = `\n<template id="ppr-content-${currentHoleId}"><!--$-->${html}<!--/$--></template>\n<script>(function(){var c=document.getElementById("ppr-content-${currentHoleId}");if(!c)return;var b=document.getElementById("B:${currentBoundaryIndex}");var t=document.querySelector('[data-ppr-hole="${currentHoleId}"]')||(b?b.nextElementSibling:null);try{if(t){if(c.content){t.replaceWith(c.content);}else{t.replaceWith.apply(t,Array.from(c.childNodes));}}}finally{c.remove();}})();</script>\n`;
           } catch (holeErr) {
             if (isAborted()) return;
+            if (holeErr && holeErr.$$type === "dinou-internal-redirect") {
+              getContext()?.res?.redirect?.(holeErr.url || "/");
+              return;
+            }
             console.error(`[Dinou PPR] Error resolving dynamic hole ${currentHoleId}:`, holeErr);
             const errElement = createPprHoleErrorElement(holeErr, isDevelopment);
             if (resolvedHolesOut && typeof resolvedHolesOut.set === "function") {

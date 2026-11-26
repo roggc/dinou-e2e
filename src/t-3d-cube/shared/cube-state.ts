@@ -431,6 +431,23 @@ export interface Cube3DState {
   ttlDynFnLivePSeq: number;
   ttlBailoutSeq: number;
   ttlTriggerBailout: boolean;
+
+  // Phase 7 — Stage 1 — Check #85: Mid-ISR Non-200 Outcome Transitions (200 -> 404/410/3xx/ClientRedirect)
+  misL1ShellSeq: number;
+  misL1SlotSeq: number;
+  misL1HoleSeq: number;
+  misNotFoundPageSeq: number;
+  misNotFoundHoleSeq: number;
+  misNotFoundFlag: boolean;
+  misGone410PageSeq: number;
+  misGone410HoleSeq: number;
+  misGone410Flag: boolean;
+  misRedirectPageSeq: number;
+  misRedirectHoleSeq: number;
+  misRedirectMode: "none" | "redirect" | "res-redirect-307" | "throw-internal" | "client-redirect";
+  misCausalSeq: number;
+  misCausalMode: "none" | "gone410" | "redirect";
+  misTargetPageSeq: number;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -827,6 +844,22 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   ttlDynFnLivePSeq: 100,
   ttlBailoutSeq: 100,
   ttlTriggerBailout: false,
+
+  misL1ShellSeq: 100,
+  misL1SlotSeq: 100,
+  misL1HoleSeq: 100,
+  misNotFoundPageSeq: 100,
+  misNotFoundHoleSeq: 100,
+  misNotFoundFlag: false,
+  misGone410PageSeq: 100,
+  misGone410HoleSeq: 100,
+  misGone410Flag: false,
+  misRedirectPageSeq: 100,
+  misRedirectHoleSeq: 100,
+  misRedirectMode: "none",
+  misCausalSeq: 100,
+  misCausalMode: "none",
+  misTargetPageSeq: 100,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {

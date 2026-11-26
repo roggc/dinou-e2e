@@ -1510,6 +1510,15 @@ function createServerFunctionContext(simReq, resBridge, platformContext = {}) {
   return context;
 }
 
+function resolveInternalRedirectTarget(rawUrl, currentPath) {
+  const resolvedUrl = resolveRelativeUrl(rawUrl || "/", currentPath || "/");
+  const isAllowed =
+    typeof resolvedUrl === "string" &&
+    ((resolvedUrl.startsWith("/") && !resolvedUrl.startsWith("//")) ||
+      /^https?:\/\//i.test(resolvedUrl));
+  return isAllowed ? resolvedUrl : "/";
+}
+
 function normalizeLogicalRequestPathname(pathname, headersObj = {}) {
   if (typeof pathname !== "string" || !pathname) {
     return "/";
@@ -2121,6 +2130,69 @@ async function handleRequest(request, platformContext = {}) {
     });
 
     if (isPathBlocked) {
+      // Causal _old hydration protection: if an in-flight tab received 200 HTML at buildId=T1
+      // just before validateParams() transitioned the cached route mid-ISR to 404 at T2 > T1,
+      // serve the preserved causal _old RSC/PPR snapshot so Tab A hydrates V1 with zero #418
+      // while all fresh requests (no internalBuildId) immediately receive 404 not_found.tsx!
+      if (
+        !isDevelopment &&
+        !platformContext?.isSSG &&
+        !isLayoutReq &&
+        !internalRefreshVersion &&
+        internalBuildId
+      ) {
+        try {
+          const storage = getStorageAdapter();
+          const cleanRel = cleanPath.replace(/^\/+/, "").replace(/\/+$/, "");
+          const metaKey = cleanRel ? `${cleanRel}/metadata.json` : "metadata.json";
+          const rscBaseKey = cleanRel ? `${cleanRel}/page.rsc` : "page.rsc";
+          const blockedMeta = await readMetaFromStorage(
+            storage,
+            metaKey,
+            rscBaseKey,
+            platformContext,
+            request.url
+          );
+          if (
+            blockedMeta?.generatedAt &&
+            Number(internalBuildId) < Number(blockedMeta.generatedAt)
+          ) {
+            const oldRscKey = cleanRel ? `${cleanRel}/page._old.rsc` : "page._old.rsc";
+            const oldRscContent = await readRscFromStorage(
+              storage,
+              oldRscKey,
+              platformContext,
+              request.url
+            );
+            if (oldRscContent) {
+              bridge.setHeader("Content-Type", "text/x-component");
+              if (!bridge.headers.has("Cache-Control")) {
+                bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+              }
+              bridge.end(oldRscContent);
+              return bridge.toResponse();
+            }
+            const shellPageOldKey = cleanRel
+              ? `${cleanRel}/shell.page._old.json`
+              : "shell.page._old.json";
+            const oldShellJson = await readRscFromStorage(
+              storage,
+              shellPageOldKey,
+              platformContext,
+              request.url
+            );
+            if (oldShellJson) {
+              const oldTree = deserializeJSX(oldShellJson);
+              bridge.setHeader("Content-Type", "text/x-component");
+              if (!bridge.headers.has("Cache-Control")) {
+                bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+              }
+              pipeRSC(oldTree, bridge, getClientManifest(), platformContext);
+              return bridge.toResponse();
+            }
+          }
+        } catch (e) {}
+      }
       // Emit a valid React Flight 404 payload so soft <Link> navigations render not_found.tsx
       // inside unblocked cached ancestor layouts without crashing Flight deserialization or
       // executing the blocked layout/page.
@@ -2415,7 +2487,7 @@ async function handleRequest(request, platformContext = {}) {
         if (edgeMeta) {
           currentGeneratedAt = edgeMeta.generatedAt || null;
           if (isLayoutReq) {
-            if (edgeMeta.dynamic || edgeMeta.hasDynamicAncestor) {
+            if (edgeMeta.dynamic || edgeMeta.notFound || edgeMeta.hasDynamicAncestor) {
               dynamicState.value = true;
             }
             if (edgeMeta.ppr !== undefined) {
@@ -2427,7 +2499,7 @@ async function handleRequest(request, platformContext = {}) {
               hasDetectedSegmentPpr = true;
             }
           } else {
-            if (edgeMeta.dynamic) {
+            if (edgeMeta.dynamic || edgeMeta.notFound) {
               dynamicState.value = true;
             }
             if (edgeMeta.pagePpr !== undefined) {
@@ -2441,7 +2513,7 @@ async function handleRequest(request, platformContext = {}) {
         }
       }
     }
-    if (!currentGeneratedAt && !platformContext?.isSSG && !isEdgeRuntime(platformContext)) {
+    if (!currentGeneratedAt && !dynamicState.value && !platformContext?.isSSG && !isEdgeRuntime(platformContext)) {
       try {
         const metaFileName = isLayoutReq ? "layout.metadata.json" : "metadata.json";
         const metadataPath = path.join(".dinou/dist2", cleanPath, metaFileName);
@@ -2449,7 +2521,7 @@ async function handleRequest(request, platformContext = {}) {
           const metaObj = JSON.parse(readFileSync(metadataPath, "utf8"));
           currentGeneratedAt = metaObj.generatedAt || null;
           if (isLayoutReq) {
-            if (metaObj.dynamic || metaObj.hasDynamicAncestor) {
+            if (metaObj.dynamic || metaObj.notFound || metaObj.hasDynamicAncestor) {
               dynamicState.value = true;
             }
             if (metaObj.ppr !== undefined) {
@@ -2461,7 +2533,7 @@ async function handleRequest(request, platformContext = {}) {
               hasDetectedSegmentPpr = true;
             }
           } else {
-            if (metaObj.dynamic) {
+            if (metaObj.dynamic || metaObj.notFound) {
               dynamicState.value = true;
             }
             if (metaObj.pagePpr !== undefined) {
@@ -2956,7 +3028,18 @@ async function handleRequest(request, platformContext = {}) {
               return rendered;
             });
           }
-        } else if (!isDevelopment && !dynamicState.value && (isPageReq || isLayoutReq) && isRoutePpr) {
+        } else if (
+          !isDevelopment &&
+          (!dynamicState.value ||
+            Boolean(
+              !internalRefreshVersion &&
+                internalBuildId &&
+                currentGeneratedAt &&
+                Number(internalBuildId) < Number(currentGeneratedAt)
+            )) &&
+          (isPageReq || isLayoutReq) &&
+          isRoutePpr
+        ) {
           const storage = getStorageAdapter();
           const cleanRel = cleanPath.replace(/^\/+/, "").replace(/\/+$/, "");
           const shellKey = isLayoutReq
@@ -2991,7 +3074,7 @@ async function handleRequest(request, platformContext = {}) {
               request.url
             );
           }
-          if (!shellJson) {
+          if (!shellJson && !dynamicState.value) {
             shellJson = await readRscFromStorage(
               storage,
               shellKey,
@@ -2999,7 +3082,7 @@ async function handleRequest(request, platformContext = {}) {
               request.url
             );
           }
-          if (isPageReq && !useOldPprShell) {
+          if (isPageReq && !useOldPprShell && !dynamicState.value) {
             try {
               const pMetaKey = cleanRel ? `${cleanRel}/metadata.json` : "metadata.json";
               const pRscBaseKey = cleanRel ? `${cleanRel}/page.rsc` : "page.rsc";
@@ -3045,16 +3128,78 @@ async function handleRequest(request, platformContext = {}) {
                   )
                 );
               }
-              jsx = await spliceDynamicHolesIntoShell(
-                cachedShellTree,
-                () =>
-                  getJSX(reqPath, queryObj, isNotFound, isDevelopment, isPathBlocked, { skipLayoutProbe: true,
-                    segment,
-                  }),
-                isLayoutReq ? 0 : leafLayoutSuspenseCount
-              );
+              if (useOldPprShell && dynamicState.value) {
+                // Route transitioned mid-ISR to dynamic/redirect/410/404 while Tab A is hydrating T1.
+                // Splice holes inside an isolated sandbox context so top-level redirect()/status(410)
+                // on the new route state NEVER mutates Tab A's response bridge!
+                const sandboxBridge = new WebResponseBridge(platformContext);
+                const sandboxCtx = createRequestContext(
+                  simReq,
+                  sandboxBridge,
+                  platformContext,
+                  { value: true }
+                );
+                copyCustomContextProperties(rootContext, sandboxCtx);
+                sandboxCtx._isPprRuntimeResume = true;
+                const sandboxNotFound = { value: false };
+                try {
+                  const spliced = await requestStorage.run(sandboxCtx, () =>
+                    spliceDynamicHolesIntoShell(
+                      cachedShellTree,
+                      () =>
+                        getJSX(reqPath, queryObj, sandboxNotFound, isDevelopment, isPathBlocked, {
+                          skipLayoutProbe: true,
+                          segment,
+                        }),
+                      isLayoutReq ? 0 : leafLayoutSuspenseCount
+                    )
+                  );
+                  if (
+                    !sandboxCtx._hasRedirected &&
+                    !sandboxNotFound.value &&
+                    (!sandboxBridge._explicitStatusSet || sandboxBridge.statusCode === 200)
+                  ) {
+                    jsx = spliced;
+                  } else {
+                    jsx = cachedShellTree;
+                  }
+                } catch (_) {
+                  jsx = cachedShellTree;
+                }
+              } else {
+                jsx = await spliceDynamicHolesIntoShell(
+                  cachedShellTree,
+                  () =>
+                    getJSX(reqPath, queryObj, isNotFound, isDevelopment, isPathBlocked, { skipLayoutProbe: true,
+                      segment,
+                    }),
+                  isLayoutReq ? 0 : leafLayoutSuspenseCount
+                );
+              }
             } catch (spliceErr) {
               console.warn(`[Dinou PPR] Error splicing dynamic holes for ${reqPath}:`, spliceErr);
+            }
+          } else if (useOldPprShell && dynamicState.value) {
+            const oldRscFallbackKey = isLayoutReq
+              ? cleanRel
+                ? `${cleanRel}/layout._old.rsc`
+                : "layout._old.rsc"
+              : cleanRel
+              ? `${cleanRel}/page._old.rsc`
+              : "page._old.rsc";
+            const oldRscFallback = await readRscFromStorage(
+              storage,
+              oldRscFallbackKey,
+              platformContext,
+              request.url
+            );
+            if (oldRscFallback) {
+              bridge.setHeader("Content-Type", "text/x-component");
+              if (!bridge.headers.has("Cache-Control")) {
+                bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+              }
+              bridge.end(oldRscFallback);
+              return;
             }
           }
           if (!jsx && isLayoutReq && !isDevelopment && !platformContext?.isSSG) {
@@ -3369,6 +3514,12 @@ async function handleRequest(request, platformContext = {}) {
         const manifest = getClientManifest();
         pipeRSC(jsx, bridge, manifest, platformContext);
       } catch (err) {
+        if (err && err.$$type === "dinou-internal-redirect") {
+          const finalUrl = resolveInternalRedirectTarget(err.url, simReq.path);
+          bridge.setHeader("x-rsc-redirect", finalUrl);
+          bridge.status(200).end();
+          return;
+        }
         if (bridge.headers.has("x-rsc-redirect") || bridge.headers.has("Location")) {
           return;
         }
@@ -3580,12 +3731,38 @@ async function handleRequest(request, platformContext = {}) {
       }
     }
 
+    // 1b. Honor authoritative metadata.json dynamic / notFound tombstones BEFORE falling back
+    // to bundled env.ASSETS or .dinou/dist2 (protecting Cold Pods & Edge isolates across all adapters!).
+    let hasMetadataDynamicTombstone = Boolean(
+      cachedItem?.metadata?.dynamic || cachedItem?.metadata?.notFound
+    );
+    if (hasMetadataDynamicTombstone) {
+      dynamicState.value = true;
+      cachedItem = null;
+    } else if (!isDevelopment && !cachedItem && !platformContext?.isSSG) {
+      try {
+        const rawMetaItem = await storage.get(metaKey);
+        const parsedStorageMeta =
+          rawMetaItem?.metadata && typeof rawMetaItem.metadata === "object"
+            ? rawMetaItem.metadata
+            : typeof rawMetaItem?.content === "string" &&
+              rawMetaItem.content.trim().startsWith("{")
+            ? JSON.parse(rawMetaItem.content)
+            : null;
+        if (parsedStorageMeta?.dynamic || parsedStorageMeta?.notFound) {
+          hasMetadataDynamicTombstone = true;
+          dynamicState.value = true;
+        }
+      } catch (e) {}
+    }
+
     // 2. If not in storageAdapter, check env.ASSETS or local .dinou/dist2 for pre-rendered build static page
     const checkDeleted = async (k) =>
       typeof storage.isKeyDeleted === "function"
         ? await storage.isKeyDeleted(k)
         : typeof storage.isDeleted === "function" && storage.isDeleted(k);
     const isRouteDeletedInStorage =
+      hasMetadataDynamicTombstone ||
       (await checkDeleted(htmlKey)) ||
       (await checkDeleted(metaKey)) ||
       (cleanPath ? await checkDeleted(cleanPath) : false);
@@ -3686,7 +3863,8 @@ async function handleRequest(request, platformContext = {}) {
           platformContext,
           request.url
         );
-        if (existingPageMeta?.dynamic) {
+        if (existingPageMeta?.dynamic || existingPageMeta?.notFound) {
+          hasMetadataDynamicTombstone = true;
           dynamicState.value = true;
         }
       } catch (e) {}
@@ -4498,11 +4676,16 @@ async function handleRequest(request, platformContext = {}) {
             } else if (
               ((!isDevelopment &&
                 !platformContext?.isSSG &&
-                (hasDynamicLayoutConfig || isDynamicConfig || dynamicState.value || !cachedItem) &&
+                (hasDynamicLayoutConfig ||
+                  isDynamicConfig ||
+                  dynamicState.value ||
+                  hasMetadataDynamicTombstone ||
+                  !cachedItem) &&
                 (!isPprConfig ||
                   hasDynamicLayoutConfig ||
                   isDynamicConfig ||
                   dynamicState.value ||
+                  hasMetadataDynamicTombstone ||
                   !pagePath ||
                   isPathBlocked)) ||
                 isPathBlocked) &&
@@ -4971,9 +5154,15 @@ async function handleRequest(request, platformContext = {}) {
             }
           }
         } catch (err) {
-          isError = true;
-          caughtError = err;
-          console.error("[Edge ISG getJSX Error]:", err);
+          if (err && err.$$type === "dinou-internal-redirect") {
+            const finalUrl = resolveInternalRedirectTarget(err.url, simReq.path);
+            const status = typeof err.status === "number" ? err.status : 302;
+            bridge.redirect(status, finalUrl);
+          } else {
+            isError = true;
+            caughtError = err;
+            console.error("[Edge ISG getJSX Error]:", err);
+          }
         }
 
         if (bridge.headers.has("Location") || (bridge.statusCode >= 300 && bridge.statusCode < 400)) {
@@ -5161,6 +5350,7 @@ async function handleRequest(request, platformContext = {}) {
             !isNotFound.value &&
             !isPathBlocked &&
             !dynamicState.value &&
+            !(hasMetadataDynamicTombstone && isPprConfig) &&
             allowISGValue !== false &&
             Object.keys(queryObj).length === 0) ||
           (platformContext.isSSG === true &&

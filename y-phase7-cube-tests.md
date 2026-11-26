@@ -24,7 +24,7 @@ Both checks below are designed to be implemented and verified **incrementally (o
 
 ## Master Checklist (Phase 7)
 
-- [ ] **Stage 1 — Check `#85`:** Mid-ISR Non-200 Outcome Transitions (`200` Static/PPR → `notFound()` `404`, `res.status(410)`, Imperative & Declarative `redirect()`) Across Direct SSR, Soft-Nav RSC, Causal `_old` Hydration & Edge/Multi-Pod Storage
+- [x] **Stage 1 — Check `#85`:** Mid-ISR Non-200 Outcome Transitions (`200` Static/PPR → `notFound()` `404`, `res.status(410)`, Imperative & Declarative `redirect()`) Across Direct SSR, Soft-Nav RSC, Causal `_old` Hydration & Edge/Multi-Pod Storage
 - [ ] **Stage 2 — Check `#86`:** React 19 Document Metadata Hoisting (`<title>`, `<meta>`, `<link>`) & Scoped CSS Modules Across Asymmetric 3D PPR Chains, `<DinouCacheSlot>` Refreshes & Soft Navigation (`Back`/`Forward`)
 
 ---

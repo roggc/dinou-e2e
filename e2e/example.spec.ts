@@ -22735,5 +22735,299 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(routerWarnings).toEqual([]);
       expect(pageErrors).toEqual([]);
     });
+
+    test("47. [Phase 7 / Stage 1 / Check #85] Mid-ISR Non-200 Outcome Transitions (200 -> 404 not_found.tsx, res.status(410), Imperative redirect()/res.redirect(307)/throw-internal, Declarative <ClientRedirect>, Causal _old Hydration & Recovery)", async ({
+      page,
+      context,
+    }) => {
+      test.setTimeout(120000);
+      test.skip(
+        !isProd,
+        "Phase 7 Stage 1 Mid-ISR non-200 transitions require production mode"
+      );
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      const mutateState = (patch: Record<string, any>) =>
+        page.evaluate((p) => (window as any).__CUBE_3D__.mutate(p), patch);
+      const revalPage = (targetPath: string) =>
+        page.evaluate((p) => (window as any).__CUBE_3D__.revalPage(p), targetPath);
+      const revalTag = (tag: string) =>
+        page.evaluate((t) => (window as any).__CUBE_3D__.revalTag(t), tag);
+
+      const tabB = await context.newPage();
+      const tabBWatchers = attachStrictWatchers(tabB);
+
+      try {
+        // 0. Ensure clean 200 baseline on all mid-isr-status routes & capture live L1/Page baselines
+        await page.goto("/t-3d-cube/mid-isr-status/target");
+        await waitCubeReady(page);
+        await mutateState({
+          misNotFoundFlag: false,
+          misGone410Flag: false,
+          misRedirectMode: "none",
+          misCausalMode: "none",
+        });
+
+        await page.goto("/t-3d-cube/mid-isr-status/to-not-found/promo");
+        await waitCubeReady(page);
+        const baseL1Shell = Number(await page.locator("#mis-l1-shell-seq").innerText());
+        const baseL1Slot = Number(await page.locator("#mis-l1-slot-seq").innerText());
+        const baseNfSeq = Number(await page.locator("#mis-nf-page-seq").innerText());
+
+        await page.goto("/t-3d-cube/mid-isr-status/to-gone-410");
+        await waitCubeReady(page);
+        const base410Seq = Number(await page.locator("#mis-410-seq").innerText());
+
+        await page.goto("/t-3d-cube/mid-isr-status/to-redirect");
+        await waitCubeReady(page);
+        const baseRedirSeq = Number(await page.locator("#mis-redir-seq").innerText());
+
+        const poison =
+          Math.max(baseL1Shell, baseL1Slot, baseNfSeq, base410Seq, baseRedirSeq) + 899;
+
+        // 1. 200 PPR -> 404 (not_found.tsx via validateParams) Mid-ISR
+        await mutateState({
+          misL1ShellSeq: poison,
+          misL1SlotSeq: poison,
+          misNotFoundFlag: true,
+        });
+        await revalPage("/t-3d-cube/mid-isr-status/to-not-found/promo");
+
+        // 1a. Direct SSR returns HTTP 404 with custom not_found.tsx & poisoned L1 frozen!
+        const nfRes = await page.goto("/t-3d-cube/mid-isr-status/to-not-found/promo");
+        expect(nfRes?.status()).toBe(404);
+        await waitCubeReady(page);
+        await expect(page.locator("#mis-not-found-boundary")).toBeVisible();
+        await expect(page.locator("#mis-l1-shell-seq")).toHaveText(String(baseL1Shell));
+        await expect(page.locator("#mis-l1-slot-seq")).toHaveText(String(baseL1Slot));
+
+        // 1b. Soft navigation from sibling (/target -> /to-not-found/promo) renders not_found.tsx inside frozen L1!
+        await page.click("#link-mis-target");
+        await expect(page.locator("#mis-target-page")).toBeVisible({ timeout: 15000 });
+        const mountBeforeSoft = await page.locator("#probe-mount-mis-l1").innerText();
+        await page.click("#link-mis-not-found");
+        await expect(page.locator("#mis-not-found-boundary")).toBeVisible({ timeout: 15000 });
+        await expect(page.locator("#probe-mount-mis-l1")).toHaveText(mountBeforeSoft);
+        await expect(page.locator("#mis-l1-shell-seq")).toHaveText(String(baseL1Shell));
+
+        // 1c. Recovery: flip flag back to false + revalidatePage -> cached 200 OK V2!
+        const nfV2 = poison + 11;
+        await mutateState({ misNotFoundFlag: false, misNotFoundPageSeq: nfV2 });
+        await revalPage("/t-3d-cube/mid-isr-status/to-not-found/promo");
+        await mutateState({ misNotFoundPageSeq: poison }); // prove cached V2!
+        const nfRecRes = await page.goto("/t-3d-cube/mid-isr-status/to-not-found/promo");
+        expect(nfRecRes?.status()).toBe(200);
+        await waitCubeReady(page);
+        await expect(page.locator("#mis-nf-page-seq")).toHaveText(String(nfV2));
+        await expect(page.locator("#mis-l1-shell-seq")).toHaveText(String(baseL1Shell));
+
+        // 2. 200 PPR -> res.status(410) Mid-ISR
+        const goneSeqVal = poison + 21;
+        await mutateState({
+          misL1ShellSeq: poison,
+          misL1SlotSeq: poison,
+          misGone410Flag: true,
+          misGone410PageSeq: goneSeqVal,
+        });
+        await revalPage("/t-3d-cube/mid-isr-status/to-gone-410");
+
+        // 2a. Direct SSR returns HTTP 410 with "Product Retired (410 Gone)" body (NEVER cached as 200!)
+        const gone410ApiRes = await page.request.get("/t-3d-cube/mid-isr-status/to-gone-410");
+        expect(gone410ApiRes.status()).toBe(410);
+        const gone410Res = await page.goto("/t-3d-cube/mid-isr-status/to-gone-410");
+        expect(gone410Res?.status()).toBe(410);
+        await waitCubeReady(page);
+        await expect(page.locator("#mis-410-retired")).toBeVisible();
+        await expect(page.locator("#mis-410-msg")).toHaveText("Product Retired (410 Gone)");
+        await expect(page.locator("#mis-l1-shell-seq")).toHaveText(String(baseL1Shell));
+
+        // 2b. Soft navigation from /target -> /to-gone-410 renders 410 UI inside frozen L1!
+        await page.click("#link-mis-target");
+        await expect(page.locator("#mis-target-page")).toBeVisible({ timeout: 15000 });
+        await page.click("#link-mis-gone-410");
+        await expect(page.locator("#mis-410-retired")).toBeVisible({ timeout: 15000 });
+        await expect(page.locator("#mis-l1-shell-seq")).toHaveText(String(baseL1Shell));
+
+        // 2c. Recovery via revalidateTag("cube-mis-410") -> cached 200 OK V2!
+        const goneV2 = poison + 22;
+        await mutateState({ misGone410Flag: false, misGone410PageSeq: goneV2 });
+        await revalTag("cube-mis-410");
+        await mutateState({ misGone410PageSeq: poison }); // prove cached V2!
+        const goneRecRes = await page.goto("/t-3d-cube/mid-isr-status/to-gone-410");
+        expect(goneRecRes?.status()).toBe(200);
+        await waitCubeReady(page);
+        await expect(page.locator("#mis-410-active")).toBeVisible();
+        await expect(page.locator("#mis-410-seq")).toHaveText(String(goneV2));
+        await expect(page.locator("#mis-l1-shell-seq")).toHaveText(String(baseL1Shell));
+
+        // 3. 200 PPR -> Imperative redirect() (302), res.redirect(307), throw-internal & Declarative <ClientRedirect>
+        for (const variant of [
+          { mode: "redirect", expectedStatus: 302 },
+          { mode: "res-redirect-307", expectedStatus: 307 },
+          { mode: "throw-internal", expectedStatus: 302 },
+        ] as const) {
+          await page.goto("/t-3d-cube/mid-isr-status/target");
+          await waitCubeReady(page);
+          await mutateState({
+            misL1ShellSeq: poison,
+            misL1SlotSeq: poison,
+            misRedirectMode: variant.mode,
+          });
+          await revalPage("/t-3d-cube/mid-isr-status/to-redirect");
+
+          // Direct SSR raw HTTP status check (maxRedirects: 0)
+          const rawRes = await page.request.get("/t-3d-cube/mid-isr-status/to-redirect", {
+            maxRedirects: 0,
+          });
+          expect(rawRes.status()).toBe(variant.expectedStatus);
+          expect(rawRes.headers()["location"]).toBe("/t-3d-cube/mid-isr-status/target");
+
+          // Direct browser navigation follows redirect cleanly to /target!
+          await page.goto("/t-3d-cube/mid-isr-status/to-redirect");
+          await page.waitForURL(/\/t-3d-cube\/mid-isr-status\/target(?:\/)?$/, { timeout: 15000 });
+          await waitCubeReady(page);
+          await expect(page.locator("#mis-target-page")).toBeVisible();
+          await expect(page.locator("#mis-l1-shell-seq")).toHaveText(String(baseL1Shell));
+
+          // Soft navigation (<Link>) triggers x-rsc-redirect and lands on /target with frozen L1!
+          await page.click("#link-mis-gone-410");
+          await expect(page.locator("#mis-410-active")).toBeVisible({ timeout: 15000 });
+          const mountBeforeRedir = await page.locator("#probe-mount-mis-l1").innerText();
+          await Promise.all([
+            page.waitForURL(/\/t-3d-cube\/mid-isr-status\/target(?:\/)?$/, { timeout: 15000 }),
+            page.click("#link-mis-redirect"),
+          ]);
+          await expect(page.locator("#mis-target-page")).toBeVisible({ timeout: 15000 });
+          await expect(page.locator("#probe-mount-mis-l1")).toHaveText(mountBeforeRedir);
+          await expect(page.locator("#mis-l1-shell-seq")).toHaveText(String(baseL1Shell));
+        }
+
+        // 3b. Declarative <ClientRedirect> variant on both Direct SSR & soft-nav!
+        await mutateState({ misRedirectMode: "client-redirect" });
+        await revalPage("/t-3d-cube/mid-isr-status/to-redirect");
+        await page.goto("/t-3d-cube/mid-isr-status/to-redirect");
+        await page.waitForURL(/\/t-3d-cube\/mid-isr-status\/target(?:\/)?$/, { timeout: 15000 });
+        await waitCubeReady(page);
+        await expect(page.locator("#mis-target-page")).toBeVisible();
+
+        await page.click("#link-mis-gone-410");
+        await expect(page.locator("#mis-410-active")).toBeVisible({ timeout: 15000 });
+        await Promise.all([
+          page.waitForURL(/\/t-3d-cube\/mid-isr-status\/target(?:\/)?$/, { timeout: 15000 }),
+          page.click("#link-mis-redirect"),
+        ]);
+        await expect(page.locator("#mis-target-page")).toBeVisible({ timeout: 15000 });
+
+        // 3c. Recover /to-redirect back to cached 200 OK V2!
+        const redirV2 = poison + 33;
+        await mutateState({ misRedirectMode: "none", misRedirectPageSeq: redirV2 });
+        await revalPage("/t-3d-cube/mid-isr-status/to-redirect");
+        await mutateState({ misRedirectPageSeq: poison });
+        const redirRecRes = await page.goto("/t-3d-cube/mid-isr-status/to-redirect");
+        expect(redirRecRes?.status()).toBe(200);
+        await waitCubeReady(page);
+        await expect(page.locator("#mis-redir-seq")).toHaveText(String(redirV2));
+
+        // 4. Causal _old Hydration Protection During Mid-ISR Transition (Tab A paused at T1 while server transitions to redirect!)
+        await tabB.goto("/t-3d-cube/mid-isr-status-causal");
+        await waitCubeReady(tabB);
+        await tabB.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          { misCausalMode: "none", misCausalSeq: 500 }
+        );
+        await tabB.evaluate(() =>
+          (window as any).__CUBE_3D__.revalPage("/t-3d-cube/mid-isr-status-causal")
+        );
+        await tabB.reload();
+        await waitCubeReady(tabB);
+        await expect(tabB.locator("#mis-causal-seq")).toHaveText("500");
+
+        let resolveIntercepted!: () => void;
+        const interceptedPromise = new Promise<void>((resolve) => {
+          resolveIntercepted = resolve;
+        });
+        let releaseGate!: () => void;
+        const gatePromise = new Promise<void>((resolve) => {
+          releaseGate = resolve;
+        });
+
+        await page.route(/\/____rsc_page(?:_old)?(?:_static)?____/, async (route) => {
+          const url = route.request().url();
+          if (url.includes("mid-isr-status-causal") && url.includes("____build_id____")) {
+            resolveIntercepted();
+            await gatePromise;
+          }
+          await route.continue();
+        });
+
+        // Tab A receives 200 HTML at T1 (500) and pauses its hydration RSC fetch
+        const navAPromise = page.goto("/t-3d-cube/mid-isr-status-causal", {
+          waitUntil: "domcontentloaded",
+        });
+        await Promise.race([
+          interceptedPromise,
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Timed out waiting for Tab A causal-static RSC fetch")), 15000)
+          ),
+        ]);
+
+        // While Tab A is paused at T1, Tab B transitions /mid-isr-status-causal mid-ISR to redirect!
+        await tabB.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          { misCausalMode: "redirect", misCausalSeq: 501 }
+        );
+        await tabB.evaluate(() =>
+          (window as any).__CUBE_3D__.revalPage("/t-3d-cube/mid-isr-status-causal")
+        );
+
+        // Release Tab A -> MUST hydrate V1 (500) cleanly from page._old.rsc with ZERO #418!
+        releaseGate();
+        await navAPromise;
+        await waitCubeReady(page);
+        await expect(page.locator("#mis-causal-seq")).toHaveText("500");
+
+        // Tab B immediately gets 302 redirect -> lands on /target!
+        const tabBCheck = await tabB.request.get("/t-3d-cube/mid-isr-status-causal", {
+          maxRedirects: 0,
+        });
+        expect(tabBCheck.status()).toBe(302);
+        expect(tabBCheck.headers()["location"]).toBe("/t-3d-cube/mid-isr-status/target");
+
+        expect(hydrationErrors).toEqual([]);
+        expect(routerWarnings).toEqual([]);
+        expect(pageErrors).toEqual([]);
+        expect(tabBWatchers.hydrationErrors).toEqual([]);
+        expect(tabBWatchers.routerWarnings).toEqual([]);
+        expect(tabBWatchers.pageErrors).toEqual([]);
+      } finally {
+        await page.unroute(/\/____rsc_page(?:_old)?(?:_static)?____/).catch(() => {});
+        await tabB
+          .evaluate(async () => {
+            if ((window as any).__CUBE_3D__) {
+              await (window as any).__CUBE_3D__.mutate({
+                misNotFoundFlag: false,
+                misGone410Flag: false,
+                misRedirectMode: "none",
+                misCausalMode: "none",
+              });
+              await (window as any).__CUBE_3D__.revalPage(
+                "/t-3d-cube/mid-isr-status/to-not-found/promo"
+              );
+              await (window as any).__CUBE_3D__.revalPage(
+                "/t-3d-cube/mid-isr-status/to-gone-410"
+              );
+              await (window as any).__CUBE_3D__.revalPage(
+                "/t-3d-cube/mid-isr-status/to-redirect"
+              );
+              await (window as any).__CUBE_3D__.revalPage(
+                "/t-3d-cube/mid-isr-status-causal"
+              );
+            }
+          })
+          .catch(() => {});
+        await tabB.close().catch(() => {});
+      }
+    });
   });
 });
