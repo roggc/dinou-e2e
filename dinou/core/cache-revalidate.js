@@ -1907,29 +1907,32 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
 
       if (!didRenderFreshLayout) {
         if (!resolvedLayoutFilePath) {
-          try {
-            if (cached && cached.content) {
-              await storage.set(layoutOldRscKey, cached.content);
-            }
-            const prevShellLayout = await readEdgeStorageOrAsset(storage, shellLayoutKey);
-            if (prevShellLayout && prevShellLayout.content) {
-              await storage.set(shellLayoutOldKey, prevShellLayout.content);
-            }
-            await storage.set(
-              layoutMetaKey,
-              JSON.stringify({
-                ...currentMeta,
-                dynamic: true,
-                notFound: true,
-                generatedAt: nextMonotonicGenTime(prevGenTime),
-              })
+          if (cached || hasCachedMeta) {
+            try {
+              if (cached && cached.content) {
+                await storage.set(layoutOldRscKey, cached.content);
+              }
+              const prevShellLayout = await readEdgeStorageOrAsset(storage, shellLayoutKey);
+              if (prevShellLayout && prevShellLayout.content) {
+                await storage.set(shellLayoutOldKey, prevShellLayout.content);
+              }
+              await storage.set(
+                layoutMetaKey,
+                JSON.stringify({
+                  ...currentMeta,
+                  dynamic: true,
+                  notFound: true,
+                  generatedAt: nextMonotonicGenTime(prevGenTime),
+                })
+              );
+            } catch (e) {}
+            await Promise.all(
+              [layoutRscKey, shellLayoutKey, shellLayoutOwnKey].map((k) =>
+                Promise.resolve(storage.delete(k)).catch(() => {})
+              )
             );
-          } catch (e) {}
-          await Promise.all(
-            [layoutRscKey, shellLayoutKey, shellLayoutOwnKey].map((k) =>
-              Promise.resolve(storage.delete(k)).catch(() => {})
-            )
-          );
+            return true;
+          }
           return false;
         }
         if (!isEdgeRuntime()) {

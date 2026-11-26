@@ -3514,13 +3514,13 @@ async function handleRequest(request, platformContext = {}) {
         const manifest = getClientManifest();
         pipeRSC(jsx, bridge, manifest, platformContext);
       } catch (err) {
+        if (bridge.headers.has("x-rsc-redirect") || bridge.headers.has("Location")) {
+          return;
+        }
         if (err && err.$$type === "dinou-internal-redirect") {
           const finalUrl = resolveInternalRedirectTarget(err.url, simReq.path);
           bridge.setHeader("x-rsc-redirect", finalUrl);
           bridge.status(200).end();
-          return;
-        }
-        if (bridge.headers.has("x-rsc-redirect") || bridge.headers.has("Location")) {
           return;
         }
         console.error(`[Dinou] Error rendering RSC ${segment}:`, err);
