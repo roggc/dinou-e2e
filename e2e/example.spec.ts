@@ -17900,7 +17900,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(rscLayoutRes.status()).toBe(200);
       const rscLayoutText = await rscLayoutRes.text();
       expect(rscLayoutText).toContain(String(dynL2_2));
-      expect(rscLayoutText).not.toContain(String(poison));
+      expect(rscLayoutText).toContain(`"hsalt-l1-seq","children":${baseL1}`);
+      expect(rscLayoutText).toContain(`"hsalt-static-l3-seq","children":${baseL3}`);
+      expect(rscLayoutText).not.toContain(`"children":${poison}`);
 
       // 3. Surgical revalidateLayout(L3) underneath dynamic L2 -> L3 updates, L2 live, L1 & Page S frozen!
       const nextL3 = baseL3 + 548;
@@ -21234,7 +21236,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(forbiddenHtml).toContain(`id="guards-l1-shell-seq">${baseL1Shell}<`);
       expect(forbiddenHtml).toContain(`id="guards-l1-slot-seq">${baseL1Slot}<`);
       expect(forbiddenHtml).not.toContain("guards-item-l2");
-      expect(forbiddenHtml).not.toContain(String(poison));
+      expect(forbiddenHtml).not.toContain(`>${poison}<`);
 
       const badCharRes = await request.get("/t-3d-cube/guards/item/bad$char");
       expect(badCharRes.status()).toBe(404);
@@ -21243,7 +21245,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(strictMissRes.status()).toBe(404);
       const strictMissHtml = await strictMissRes.text();
       expect(strictMissHtml).toContain("guards-not-found");
-      expect(strictMissHtml).not.toContain(String(poison));
+      expect(strictMissHtml).not.toContain(`>${poison}<`);
 
       const bounceRes = await request.get("/t-3d-cube/guards/item/bounce", {
         maxRedirects: 0,

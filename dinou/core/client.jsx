@@ -346,6 +346,19 @@ if (typeof window !== "undefined") {
   window.addEventListener("pageshow", () => {
     window.__DINOU_STATIC_EXPORT_UNLOADING__ = false;
   });
+  window.addEventListener("unhandledrejection", (event) => {
+    if (isStaticExportUnloading() || isNavigationAbortError(event?.reason)) {
+      event.preventDefault();
+    }
+  });
+  window.addEventListener("error", (event) => {
+    if (
+      isStaticExportUnloading() ||
+      isNavigationAbortError(event?.error || event?.message)
+    ) {
+      event.preventDefault();
+    }
+  });
   // Detect pre-hydration native <a href> hard navigations (before Router's useEffect
   // attaches soft-navigation click handling) so WebKit does not abort in-flight PPR
   // streams into spurious /____rsc_payload_error____ fetches before beforeunload fires.
@@ -413,6 +426,43 @@ const buildStaticExportRscUrl = (rawRouteOrKey, fileName) => {
       ? `/${encodedSegments.join("/")}/${fileName}`
       : `/${fileName}`;
   return existingQuery ? `${baseRscPath}?${existingQuery}` : baseRscPath;
+};
+
+const wrapAbortSafeResponse = (res) => {
+  if (
+    !res ||
+    !res.body ||
+    typeof res.body.getReader !== "function" ||
+    typeof ReadableStream === "undefined"
+  ) {
+    return res;
+  }
+  const reader = res.body.getReader();
+  const safeBody = new ReadableStream({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          controller.close();
+        } else {
+          controller.enqueue(value);
+        }
+      } catch (err) {
+        if (isStaticExportUnloading() || isNavigationAbortError(err)) {
+          return new Promise(() => {});
+        }
+        controller.error(err);
+      }
+    },
+    cancel(reason) {
+      return reader.cancel(reason).catch(() => {});
+    },
+  });
+  return new Response(safeBody, {
+    status: res.status,
+    statusText: res.statusText,
+    headers: res.headers,
+  });
 };
 
 const executeRscRedirect = (redirectUrl) => {
@@ -544,7 +594,7 @@ const getPagePayload = (route, isPrefetch = false, version = 0) => {
         if (res.status >= 500 || res.headers.get("x-dinou-has-error") === "true") {
           erroredPageCacheKeys.add(url);
         }
-        return res;
+        return wrapAbortSafeResponse(res);
       }, (err) => {
         if (isStaticExportUnloading() || isNavigationAbortError(err)) {
           return new Promise(() => {});
@@ -646,7 +696,7 @@ const getLayoutPayload = (layoutKey, searchPart = "", version = 0) => {
           if (res.status >= 500 || res.headers.get("x-dinou-has-error") === "true") {
             erroredLayoutCacheKeys.add(cacheKey);
           }
-          return res;
+          return wrapAbortSafeResponse(res);
         },
         (err) => {
           if (isStaticExportUnloading() || isNavigationAbortError(err)) {
