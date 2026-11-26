@@ -13,6 +13,8 @@ import {
   resetCubeState,
   getStampedeShellExecs,
   resetStampedeShellExecs,
+  getHhPprHoleExecs,
+  resetHhPprHoleExecs,
   type Cube3DState,
 } from "./cube-state";
 
@@ -63,4 +65,12 @@ export async function cubeGetStampedeExecs() {
 
 export async function cubeResetStampedeExecs() {
   return resetStampedeShellExecs();
+}
+
+export async function cubeGetHhPprHoleExecs() {
+  return getHhPprHoleExecs();
+}
+
+export async function cubeResetHhPprHoleExecs() {
+  return resetHhPprHoleExecs();
 }

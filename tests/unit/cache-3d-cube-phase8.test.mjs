@@ -1037,3 +1037,736 @@ console.log(\`PHASE8_STAGE2_ENCODED_PARAMS_\${BUNDLER.toUpperCase()}_OK\`);
     }
   }
 });
+
+test("3. [Phase 8 / Stage 3 / Check #89] HTTP HEAD Method Semantics (RFC 9110) & Custom HTTP Headers (Cache-Control, Vary, X-*) Preservation Across 3D Cube (Esbuild, Rollup, Webpack)", async () => {
+  const bundlers = ["esbuild", "rollup", "webpack"];
+  for (const bundler of bundlers) {
+    const tmpApp = createFixtureDir(`p8-s3-head-headers-${bundler}-`);
+    try {
+      writeDinouShim(tmpApp);
+      fs.writeFileSync(
+        path.join(tmpApp, "package.json"),
+        JSON.stringify(
+          { name: `p8-s3-head-headers-${bundler}`, private: true, type: "module" },
+          null,
+          2
+        )
+      );
+      fs.writeFileSync(
+        path.join(tmpApp, "p8s3-state.json"),
+        JSON.stringify({
+          l1Shell: 100,
+          staticSeq: 100,
+          staticSlot: 100,
+          pprShell: 100,
+          pprHole: 100,
+          pprHoleExecs: 0,
+          asymL2: 100,
+          asymShell: 100,
+          asymHole: 100,
+          dynSeq: 100,
+          tombSeq: 100,
+          tombMode: "none",
+          coldStaticSeq: 100,
+          coldPprSeq: 100,
+          coldPprRedirect: false,
+        })
+      );
+
+      const write = (rel, content) => {
+        const full = path.join(tmpApp, rel);
+        fs.mkdirSync(path.dirname(full), { recursive: true });
+        fs.writeFileSync(full, content, "utf8");
+      };
+
+      write(
+        "dinou.config.mjs",
+        `import { defineConfig } from "dinou/config";
+export default defineConfig({
+  plugins: [
+    {
+      name: "p8s3-headers-plugin",
+      async onRequest(request, context) {
+        const url = new URL(request.url);
+        if (url.pathname === "/api/hh-webhook") {
+          context.res.setHeader("X-Cube-Plugin", "plugin-ok");
+          return Response.json(
+            { ok: true, method: request.method },
+            { headers: { "X-Cube-Webhook": "webhook-ok" } }
+          );
+        }
+        context.res.setHeader("X-Cube-Plugin", "plugin-ok");
+        if (url.pathname === "/hh/static-page" || url.pathname === "/hh/static-page/") {
+          context.res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+          context.res.setHeader("Vary", "Accept-Encoding");
+        } else if (url.pathname === "/hh/pure-ppr" || url.pathname === "/hh/pure-ppr/") {
+          context.res.setHeader("Cache-Control", "public, max-age=45, stale-while-revalidate=120");
+          context.res.setHeader("X-Cube-Ppr-Plugin", "ppr-plugin-ok");
+        }
+      },
+    },
+  ],
+});
+`
+      );
+
+      write(
+        "src/state.ts",
+        `import fs from "node:fs";
+import path from "node:path";
+const STATE_PATH = path.resolve(process.cwd(), "p8s3-state.json");
+export function readS() {
+  return JSON.parse(fs.readFileSync(STATE_PATH, "utf8"));
+}
+export function bumpPprHoleExecs() {
+  const s = readS();
+  s.pprHoleExecs = Number(s.pprHoleExecs || 0) + 1;
+  fs.writeFileSync(STATE_PATH, JSON.stringify(s), "utf8");
+  return s.pprHoleExecs;
+}
+`
+      );
+
+      write(
+        "src/layout.tsx",
+        `export default function RootLayout({ children }: { children: any }) {
+  return (
+    <html lang="en">
+      <head><title>P8S3 HEAD &amp; Headers</title></head>
+      <body>{children}</body>
+    </html>
+  );
+}
+`
+      );
+      write(
+        "src/page.tsx",
+        `export default function Home() { return <main id="home">home</main>; }\n`
+      );
+      write(
+        "src/not_found.tsx",
+        `export default function NotFound() { return <div id="hh-not-found">Custom 404</div>; }\n`
+      );
+
+      // L1: Static layout (so static-page tests true non-PPR static cache hit while pure-ppr tests handlePprResume)
+      write(
+        "src/hh/layout_functions.ts",
+        `export const ppr = false;
+export const revalidate = 3600;
+export function getCacheTags() { return ["hh-l1"]; }
+`
+      );
+      write(
+        "src/hh/layout.tsx",
+        `import { readS } from "../state";
+export default function HhLayout({ children }: { children: any }) {
+  const s = readS();
+  return (
+    <section id="hh-l1">
+      <span id="hh-l1-seq">{s.l1Shell}</span>
+      {children}
+    </section>
+  );
+}
+`
+      );
+
+      // 1. Static SSG page + CacheSlot
+      write(
+        "src/hh/static-page/page_functions.ts",
+        `export const ppr = false;
+export const revalidate = 3600;
+export function getCacheTags() { return ["hh-static"]; }
+`
+      );
+      write(
+        "src/hh/static-page/page.tsx",
+        `import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../../state";
+export default function StaticPage() {
+  const s = readS();
+  return (
+    <article id="hh-static">
+      <span id="hh-static-seq">{s.staticSeq}</span>
+      <DinouCacheSlot id="hh-static-slot" tags={["hh-static-slot-tag"]} revalidate={3600}>
+        {async () => {
+          const live = readS();
+          return <span id="hh-static-slot-seq">{live.staticSlot}</span>;
+        }}
+      </DinouCacheSlot>
+    </article>
+  );
+}
+`
+      );
+
+      // 2. Pure PPR page with dynamic hole counter
+      write(
+        "src/hh/pure-ppr/page_functions.ts",
+        `export const ppr = true;
+export const revalidate = 3600;
+export function getCacheTags() { return ["hh-pure-ppr"]; }
+`
+      );
+      write(
+        "src/hh/pure-ppr/page.tsx",
+        `import { Suspense } from "react";
+import { getContext } from "dinou/server";
+import { readS, bumpPprHoleExecs } from "../../state";
+
+async function PprHole() {
+  const ctx = getContext();
+  const _ua = ctx?.req?.headers?.["user-agent"] || "none";
+  const execs = bumpPprHoleExecs();
+  const s = readS();
+  return (
+    <div id="hh-ppr-hole" data-ua={_ua ? "1" : "0"}>
+      <span id="hh-ppr-hole-seq">{s.pprHole}</span>
+      <span id="hh-ppr-hole-execs">{execs}</span>
+    </div>
+  );
+}
+
+export default function PurePprPage() {
+  const s = readS();
+  return (
+    <article id="hh-pure-ppr">
+      <span id="hh-ppr-shell-seq">{s.pprShell}</span>
+      <Suspense fallback={<div id="hh-ppr-fb">loading</div>}>
+        <PprHole />
+      </Suspense>
+    </article>
+  );
+}
+`
+      );
+
+      // 3. Asymmetric 3D PPR: L1(S PPR) -> L2(D) -> Page(S PPR)
+      write(
+        "src/hh/asym-l2/layout_functions.ts",
+        `import { getContext } from "dinou/server";
+import { readS } from "../../state";
+export const revalidate = 0;
+export async function getProps() {
+  const s = readS();
+  const ctx = getContext();
+  ctx?.res?.setHeader("Vary", "Accept-Language");
+  ctx?.res?.setHeader("X-Cube-Asym-L2", \`asym-l2-v\${s.asymL2}\`);
+  return { l2Seq: s.asymL2 };
+}
+`
+      );
+      write(
+        "src/hh/asym-l2/layout.tsx",
+        `export default function AsymL2({ children, l2Seq }: any) {
+  return <div id="hh-asym-l2"><span id="hh-asym-l2-seq">{l2Seq}</span>{children}</div>;
+}
+`
+      );
+      write(
+        "src/hh/asym-l2/page_functions.ts",
+        `export const ppr = true;
+export const revalidate = 3600;
+export function getCacheTags() { return ["hh-asym-page"]; }
+`
+      );
+      write(
+        "src/hh/asym-l2/page.tsx",
+        `import { Suspense } from "react";
+import { getContext } from "dinou/server";
+import { readS } from "../../state";
+
+async function AsymHole() {
+  const ctx = getContext();
+  const _lang = ctx?.req?.headers?.["accept-language"] || "en";
+  const s = readS();
+  ctx?.res?.setHeader("X-Cube-Asym-Hole", \`asym-hole-v\${s.asymHole}\`);
+  return <div id="hh-asym-hole" data-lang={_lang}><span id="hh-asym-hole-seq">{s.asymHole}</span></div>;
+}
+
+export default function AsymPage() {
+  const s = readS();
+  return (
+    <article id="hh-asym-page">
+      <span id="hh-asym-shell-seq">{s.asymShell}</span>
+      <Suspense fallback={<div>fb</div>}>
+        <AsymHole />
+      </Suspense>
+    </article>
+  );
+}
+`
+      );
+
+      // 4. Dynamic page (revalidate = 0)
+      write(
+        "src/hh/dyn-page/page_functions.ts",
+        `import { getContext } from "dinou/server";
+import { readS } from "../../state";
+export const revalidate = 0;
+export async function getProps() {
+  const s = readS();
+  const ctx = getContext();
+  ctx?.res?.setHeader("Vary", "Accept-Language");
+  ctx?.res?.setHeader("X-Cube-Dyn", \`dyn-v\${s.dynSeq}\`);
+  ctx?.res?.setHeader("Cache-Control", "private, max-age=30");
+  return { dynSeq: s.dynSeq };
+}
+`
+      );
+      write(
+        "src/hh/dyn-page/page.tsx",
+        `export default function DynPage({ dynSeq }: any) {
+  return <article id="hh-dyn"><span id="hh-dyn-seq">{dynSeq}</span></article>;
+}
+`
+      );
+
+      // 5. Mid-ISR Tombstone page (200 -> 404 -> 410 -> 302 -> 200)
+      write(
+        "src/hh/tombstone/page_functions.ts",
+        `export const ppr = false;
+export const revalidate = 3600;
+export function getCacheTags() { return ["hh-tomb"]; }
+`
+      );
+      write(
+        "src/hh/tombstone/page.tsx",
+        `import { getContext } from "dinou/server";
+import { readS } from "../../state";
+export default function TombstonePage() {
+  const s = readS();
+  const ctx = getContext();
+  if (s.tombMode === "404") {
+    ctx?.res?.status(404);
+    ctx?.res?.setHeader("X-Cube-NotFound", "nf-404");
+    return <article id="hh-tomb" data-mode="404"><span id="hh-tomb-seq">{s.tombSeq}</span></article>;
+  }
+  if (s.tombMode === "410") {
+    ctx?.res?.status(410);
+    ctx?.res?.setHeader("X-Cube-Gone", "gone-410");
+    return <article id="hh-tomb" data-mode="410"><span id="hh-tomb-seq">{s.tombSeq}</span></article>;
+  }
+  if (s.tombMode === "302") {
+    ctx?.res?.redirect(302, "/hh/static-page");
+    return null;
+  }
+  return <article id="hh-tomb" data-mode="none"><span id="hh-tomb-seq">{s.tombSeq}</span></article>;
+}
+`
+      );
+
+      // 6. Cold On-Demand Static ISG + Cold On-Demand PPR ISG (including redirect on cold PPR)
+      write(
+        "src/hh/cold-isg/[slug]/page_functions.ts",
+        `export const ppr = false;
+export const revalidate = 3600;
+export function getStaticPaths() { return ["warm"]; }
+`
+      );
+      write(
+        "src/hh/cold-isg/[slug]/page.tsx",
+        `import { readS } from "../../../state";
+export default function ColdIsg({ params }: any) {
+  const s = readS();
+  return <article id="hh-cold-isg"><span id="hh-cold-slug">{params?.slug}</span><span id="hh-cold-seq">{s.coldStaticSeq}</span></article>;
+}
+`
+      );
+      write(
+        "src/hh/cold-ppr/[slug]/page_functions.ts",
+        `import { getContext } from "dinou/server";
+import { readS } from "../../../state";
+export const ppr = true;
+export const revalidate = 3600;
+export function getStaticPaths() { return ["warm"]; }
+export async function getProps(params: any) {
+  const s = readS();
+  if (params?.slug === "redir" && s.coldPprRedirect) {
+    getContext()?.res?.redirect(302, "/hh/static-page");
+  }
+  return { slug: params?.slug, seq: s.coldPprSeq };
+}
+`
+      );
+      write(
+        "src/hh/cold-ppr/[slug]/page.tsx",
+        `import { Suspense } from "react";
+import { getContext } from "dinou/server";
+async function ColdHole() {
+  const ua = getContext()?.req?.headers?.["user-agent"] || "";
+  return <span id="hh-cold-ppr-hole" data-ua={ua ? "1" : "0"}>hole</span>;
+}
+export default function ColdPpr({ slug, seq }: any) {
+  return (
+    <article id="hh-cold-ppr">
+      <span id="hh-cold-ppr-slug">{slug}</span>
+      <span id="hh-cold-ppr-seq">{seq}</span>
+      <Suspense fallback={<span>fb</span>}><ColdHole /></Suspense>
+    </article>
+  );
+}
+`
+      );
+
+      const buildRes = spawnSync(
+        process.execPath,
+        [CLI_PATH, `build:node:${bundler}`],
+        {
+          cwd: tmpApp,
+          encoding: "utf8",
+          env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+          timeout: 120_000,
+        }
+      );
+      assert.equal(
+        buildRes.status,
+        0,
+        `[${bundler}] Phase 8 Stage 3 build failed:\nSTDOUT:\n${buildRes.stdout}\nSTDERR:\n${buildRes.stderr}`
+      );
+
+      const verifyScript = path.join(tmpApp, "verify-p8s3.mjs");
+      fs.writeFileSync(
+        verifyScript,
+        `import assert from "node:assert/strict";
+import fs from "node:fs";
+import http from "node:http";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const BUNDLER = ${JSON.stringify(bundler)};
+const DINOU_ROOT = ${JSON.stringify(DINOU_ROOT)};
+const STATE_PATH = path.resolve(process.cwd(), "p8s3-state.json");
+const readS = () => JSON.parse(fs.readFileSync(STATE_PATH, "utf8"));
+const writeS = (patch) => {
+  const next = { ...readS(), ...patch };
+  fs.writeFileSync(STATE_PATH, JSON.stringify(next), "utf8");
+  return next;
+};
+const textById = (html, id) => {
+  const m = String(html).match(new RegExp(\`id="\${id}"[^>]*>([^<]*)<\`));
+  return m ? m[1] : null;
+};
+
+const { FileSystemStorage, setStorageAdapter, getStorageAdapter } = await import(
+  pathToFileURL(path.join(DINOU_ROOT, "core/storage-adapter.js")).href
+);
+setStorageAdapter(new FileSystemStorage(path.resolve(".dinou/dist2")));
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+
+const rscMod = await import(pathToFileURL(path.resolve(".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(".dinou/node/ssr-engine.mjs")).href);
+const httpAdapter = await import(pathToFileURL(path.join(DINOU_ROOT, "core/http-adapter.js")).href);
+globalThis.__DINOU_RENDER_HTML_STREAM__ = ssrMod.renderHtml;
+const platformContext = { runtime: "node-bundle", renderHtmlStream: ssrMod.renderHtml };
+
+const unhandled = [];
+process.on("unhandledRejection", (e) => unhandled.push(String(e)));
+
+async function req(urlPath, { method = "GET", headers = {} } = {}) {
+  const res = await rscMod.handleRequest(
+    new Request(\`http://localhost:3000\${urlPath}\`, { method, headers }),
+    platformContext
+  );
+  const buf = await res.arrayBuffer();
+  const text = new TextDecoder().decode(buf);
+  return { status: res.status, headers: res.headers, text, byteLength: buf.byteLength, hasBodyStream: res.body !== null };
+}
+
+const POISON = 999777;
+
+// 1. Warm Static SSG Route: GET vs HEAD parity + custom Cache-Control, Vary, X-Cube-Plugin
+const staticGet = await req("/hh/static-page");
+assert.equal(staticGet.status, 200);
+assert.equal(textById(staticGet.text, "hh-static-seq"), "100");
+assert.equal(staticGet.headers.get("x-cube-plugin"), "plugin-ok");
+assert.equal(staticGet.headers.get("cache-control"), "public, max-age=60, stale-while-revalidate=300");
+assert.equal(staticGet.headers.get("vary"), "Accept-Encoding");
+assert.ok((staticGet.headers.get("content-type") || "").includes("text/html"));
+
+const staticHead = await req("/hh/static-page", { method: "HEAD" });
+assert.equal(staticHead.status, 200, \`[\${BUNDLER}] HEAD /hh/static-page must return 200\`);
+assert.equal(staticHead.byteLength, 0, \`[\${BUNDLER}] HEAD /hh/static-page MUST have empty body, got \${staticHead.byteLength} bytes\`);
+assert.equal(staticHead.headers.get("x-cube-plugin"), "plugin-ok");
+assert.equal(staticHead.headers.get("cache-control"), "public, max-age=60, stale-while-revalidate=300");
+assert.equal(staticHead.headers.get("vary"), "Accept-Encoding");
+assert.ok((staticHead.headers.get("content-type") || "").includes("text/html"));
+
+// 2. Warm Pure PPR Route: GET vs HEAD parity + custom Cache-Control (+ no-transform) + ZERO hole executions on HEAD!
+const pprGet1 = await req("/hh/pure-ppr");
+assert.equal(pprGet1.status, 200);
+assert.equal(textById(pprGet1.text, "hh-ppr-shell-seq"), "100");
+assert.equal(textById(pprGet1.text, "hh-ppr-hole-seq"), "100");
+assert.equal(pprGet1.headers.get("x-cube-plugin"), "plugin-ok");
+assert.equal(pprGet1.headers.get("x-cube-ppr-plugin"), "ppr-plugin-ok");
+assert.ok(
+  (pprGet1.headers.get("cache-control") || "").includes("public, max-age=45, stale-while-revalidate=120"),
+  \`[\${BUNDLER}] Pure PPR must preserve plugin Cache-Control directives, got: \${pprGet1.headers.get("cache-control")}\`
+);
+assert.ok(
+  /\\bno-transform\\b/i.test(pprGet1.headers.get("cache-control") || ""),
+  \`[\${BUNDLER}] Pure PPR must append no-transform to Cache-Control, got: \${pprGet1.headers.get("cache-control")}\`
+);
+
+const execsBeforeHead = readS().pprHoleExecs;
+const pprHead = await req("/hh/pure-ppr", { method: "HEAD" });
+await new Promise((r) => setTimeout(r, 80));
+const execsAfterHead = readS().pprHoleExecs;
+assert.equal(pprHead.status, 200);
+assert.equal(pprHead.byteLength, 0, \`[\${BUNDLER}] HEAD /hh/pure-ppr MUST have empty body, got \${pprHead.byteLength} bytes\`);
+assert.equal(execsAfterHead, execsBeforeHead, \`[\${BUNDLER}] HEAD on warm Pure PPR MUST NOT execute dynamic PPR holes (before=\${execsBeforeHead}, after=\${execsAfterHead})\`);
+assert.equal(pprHead.headers.get("x-cube-plugin"), "plugin-ok");
+assert.equal(pprHead.headers.get("x-cube-ppr-plugin"), "ppr-plugin-ok");
+assert.equal(pprHead.headers.get("cache-control"), pprGet1.headers.get("cache-control"));
+assert.ok((pprHead.headers.get("content-type") || "").includes("text/html"));
+
+// 3. Asymmetric 3D PPR (L1 Static PPR -> L2 Dynamic -> Page Static PPR): Custom headers from Plugin + Dynamic L2 + PPR Hole!
+writeS({ asymL2: 201, asymHole: 202, l1Shell: POISON, asymShell: POISON });
+const asymGet = await req("/hh/asym-l2");
+assert.equal(asymGet.status, 200);
+assert.equal(textById(asymGet.text, "hh-l1-seq"), "100");
+assert.equal(textById(asymGet.text, "hh-asym-l2-seq"), "201");
+assert.equal(textById(asymGet.text, "hh-asym-shell-seq"), "100");
+assert.equal(textById(asymGet.text, "hh-asym-hole-seq"), "202");
+assert.equal(asymGet.headers.get("x-cube-plugin"), "plugin-ok");
+assert.equal(asymGet.headers.get("vary"), "Accept-Language");
+assert.equal(asymGet.headers.get("x-cube-asym-l2"), "asym-l2-v201");
+assert.equal(asymGet.headers.get("x-cube-asym-hole"), "asym-hole-v202");
+
+const asymHead = await req("/hh/asym-l2", { method: "HEAD" });
+assert.equal(asymHead.status, 200);
+assert.equal(asymHead.byteLength, 0, \`[\${BUNDLER}] HEAD /hh/asym-l2 MUST have empty body, got \${asymHead.byteLength} bytes\`);
+assert.equal(asymHead.headers.get("x-cube-plugin"), "plugin-ok");
+assert.equal(asymHead.headers.get("vary"), "Accept-Language");
+assert.equal(asymHead.headers.get("x-cube-asym-l2"), "asym-l2-v201");
+assert.equal(asymHead.headers.get("x-cube-asym-hole"), "asym-hole-v202");
+
+// 4. Dynamic Route (revalidate = 0): Custom Vary, X-Cube-Dyn, Cache-Control on GET & HEAD!
+writeS({ dynSeq: 301 });
+const dynGet = await req("/hh/dyn-page");
+assert.equal(dynGet.status, 200);
+assert.equal(textById(dynGet.text, "hh-dyn-seq"), "301");
+assert.equal(dynGet.headers.get("x-cube-plugin"), "plugin-ok");
+assert.equal(dynGet.headers.get("vary"), "Accept-Language");
+assert.equal(dynGet.headers.get("x-cube-dyn"), "dyn-v301");
+assert.ok((dynGet.headers.get("cache-control") || "").includes("private, max-age=30"));
+
+const dynHead = await req("/hh/dyn-page", { method: "HEAD" });
+assert.equal(dynHead.status, 200);
+assert.equal(dynHead.byteLength, 0, \`[\${BUNDLER}] HEAD /hh/dyn-page MUST have empty body, got \${dynHead.byteLength} bytes\`);
+assert.equal(dynHead.headers.get("x-cube-plugin"), "plugin-ok");
+assert.equal(dynHead.headers.get("vary"), "Accept-Language");
+assert.equal(dynHead.headers.get("x-cube-dyn"), "dyn-v301");
+assert.equal(dynHead.headers.get("cache-control"), dynGet.headers.get("cache-control"));
+
+// 5. Cold On-Demand ISG Routes (Static & PPR): HEAD returns 200 + headers + empty body & MUST NOT pollute disk cache!
+writeS({ coldStaticSeq: 401, coldPprSeq: 402 });
+const coldStaticHead = await req("/hh/cold-isg/probe-head", { method: "HEAD" });
+assert.equal(coldStaticHead.status, 200);
+assert.equal(coldStaticHead.byteLength, 0, \`[\${BUNDLER}] HEAD on cold static ISG must return empty body\`);
+assert.equal(coldStaticHead.headers.get("x-cube-plugin"), "plugin-ok");
+const coldDiskItem = await getStorageAdapter().get("hh/cold-isg/probe-head/index.html");
+assert.equal(coldDiskItem, null, \`[\${BUNDLER}] HEAD probe on cold static ISG MUST NOT write cache artifact\`);
+
+const coldPprHead = await req("/hh/cold-ppr/probe-head", { method: "HEAD" });
+assert.equal(coldPprHead.status, 200);
+assert.equal(coldPprHead.byteLength, 0, \`[\${BUNDLER}] HEAD on cold PPR ISG must return empty body\`);
+assert.equal(coldPprHead.headers.get("x-cube-plugin"), "plugin-ok");
+const coldPprDiskItem = await getStorageAdapter().get("hh/cold-ppr/probe-head/index.html");
+assert.equal(coldPprDiskItem, null, \`[\${BUNDLER}] HEAD probe on cold PPR ISG MUST NOT trigger SSG shell write\`);
+
+// Cold PPR Redirect (ssgRes redirect path): MUST preserve plugin.onRequest X-Cube-Plugin on GET & HEAD!
+writeS({ coldPprRedirect: true });
+const coldPprRedirGet = await req("/hh/cold-ppr/redir");
+assert.equal(coldPprRedirGet.status, 302);
+assert.equal(coldPprRedirGet.headers.get("location"), "/hh/static-page");
+assert.equal(
+  coldPprRedirGet.headers.get("x-cube-plugin"),
+  "plugin-ok",
+  \`[\${BUNDLER}] Cold PPR redirect MUST preserve plugin.onRequest X-Cube-Plugin header\`
+);
+const coldPprRedirHead = await req("/hh/cold-ppr/redir", { method: "HEAD" });
+assert.equal(coldPprRedirHead.status, 302);
+assert.equal(coldPprRedirHead.byteLength, 0);
+assert.equal(coldPprRedirHead.headers.get("location"), "/hh/static-page");
+assert.equal(coldPprRedirHead.headers.get("x-cube-plugin"), "plugin-ok");
+
+// 6. Mid-ISR Tombstoned Routes (404, 410, 302): HEAD matches GET status + headers with empty body!
+writeS({ tombMode: "404" });
+await rscMod.revalidatePage("/hh/tombstone");
+const t404Get = await req("/hh/tombstone");
+const t404Head = await req("/hh/tombstone", { method: "HEAD" });
+assert.equal(t404Get.status, 404);
+assert.equal(t404Head.status, 404);
+assert.equal(t404Head.byteLength, 0, \`[\${BUNDLER}] HEAD tombstoned 404 MUST have empty body\`);
+assert.equal(t404Get.headers.get("x-cube-plugin"), "plugin-ok");
+assert.equal(t404Head.headers.get("x-cube-plugin"), "plugin-ok");
+assert.equal(t404Head.headers.get("x-cube-notfound"), "nf-404");
+
+// Also verify missing-route not_found.tsx 404 under HEAD!
+const miss404Head = await req("/hh/does-not-exist-404", { method: "HEAD" });
+assert.equal(miss404Head.status, 404);
+assert.equal(miss404Head.byteLength, 0);
+assert.equal(miss404Head.headers.get("x-cube-plugin"), "plugin-ok");
+
+writeS({ tombMode: "410" });
+await rscMod.revalidatePage("/hh/tombstone");
+const t410Get = await req("/hh/tombstone");
+const t410Head = await req("/hh/tombstone", { method: "HEAD" });
+assert.equal(t410Get.status, 410);
+assert.equal(t410Head.status, 410);
+assert.equal(t410Head.byteLength, 0, \`[\${BUNDLER}] HEAD tombstoned 410 MUST have empty body\`);
+assert.equal(t410Get.headers.get("x-cube-gone"), "gone-410");
+assert.equal(t410Head.headers.get("x-cube-gone"), "gone-410");
+assert.equal(t410Head.headers.get("x-cube-plugin"), "plugin-ok");
+
+writeS({ tombMode: "302" });
+await rscMod.revalidatePage("/hh/tombstone");
+const t302Get = await req("/hh/tombstone");
+const t302Head = await req("/hh/tombstone", { method: "HEAD" });
+assert.equal(t302Get.status, 302);
+assert.equal(t302Head.status, 302);
+assert.equal(t302Head.byteLength, 0, \`[\${BUNDLER}] HEAD tombstoned 302 MUST have empty body\`);
+assert.equal(t302Get.headers.get("location"), "/hh/static-page");
+assert.equal(t302Head.headers.get("location"), "/hh/static-page");
+assert.equal(t302Head.headers.get("x-cube-plugin"), "plugin-ok");
+
+// 7. RSC Wire Endpoints & Plugin Direct Response: Custom plugin headers + empty body on HEAD!
+for (const rscPath of ["/____rsc_page____/hh/static-page", "/____rsc_layout____/hh", "/____rsc_slot____/hh-static-slot"]) {
+  const rGet = await req(rscPath, { headers: { "x-dinou-current-path": "/hh/static-page" } });
+  const rHead = await req(rscPath, { method: "HEAD", headers: { "x-dinou-current-path": "/hh/static-page" } });
+  assert.equal(rGet.status, 200, \`Expected 200 GET \${rscPath}\`);
+  assert.equal(rHead.status, 200, \`Expected 200 HEAD \${rscPath}\`);
+  assert.equal(rHead.byteLength, 0, \`[\${BUNDLER}] HEAD \${rscPath} MUST have empty body\`);
+  assert.equal(rGet.headers.get("x-cube-plugin"), "plugin-ok");
+  assert.equal(rHead.headers.get("x-cube-plugin"), "plugin-ok");
+}
+const whHead = await req("/api/hh-webhook", { method: "HEAD" });
+assert.equal(whHead.status, 200);
+assert.equal(whHead.byteLength, 0, \`[\${BUNDLER}] HEAD on plugin direct Response MUST have empty body\`);
+assert.equal(whHead.headers.get("x-cube-plugin"), "plugin-ok");
+assert.equal(whHead.headers.get("x-cube-webhook"), "webhook-ok");
+
+// 8. Post-revalidatePage() Header Preservation on Static & Pure PPR!
+writeS({ staticSeq: 501, pprShell: 502, pprHole: 503 });
+await rscMod.revalidatePage("/hh/static-page");
+await rscMod.revalidatePage("/hh/pure-ppr");
+
+const staticAfterRevalGet = await req("/hh/static-page");
+const staticAfterRevalHead = await req("/hh/static-page", { method: "HEAD" });
+assert.equal(textById(staticAfterRevalGet.text, "hh-static-seq"), "501");
+assert.equal(staticAfterRevalHead.byteLength, 0);
+assert.equal(staticAfterRevalHead.headers.get("x-cube-plugin"), "plugin-ok");
+assert.equal(staticAfterRevalHead.headers.get("cache-control"), "public, max-age=60, stale-while-revalidate=300");
+assert.equal(staticAfterRevalHead.headers.get("vary"), "Accept-Encoding");
+
+const execsBeforeRevalHead = readS().pprHoleExecs;
+const pprAfterRevalHead = await req("/hh/pure-ppr", { method: "HEAD" });
+await new Promise((r) => setTimeout(r, 80));
+assert.equal(pprAfterRevalHead.status, 200);
+assert.equal(pprAfterRevalHead.byteLength, 0);
+assert.equal(readS().pprHoleExecs, execsBeforeRevalHead, \`[\${BUNDLER}] Post-revalidatePage HEAD on Pure PPR MUST NOT run holes\`);
+assert.equal(pprAfterRevalHead.headers.get("x-cube-ppr-plugin"), "ppr-plugin-ok");
+assert.ok((pprAfterRevalHead.headers.get("cache-control") || "").includes("public, max-age=45, stale-while-revalidate=120"));
+
+// 9. Node HTTP Adapter (nodeToWebRequest + sendWebResponseToNode) HEAD & Stream Cancellation Parity!
+const { PassThrough } = await import("node:stream");
+async function runViaNodeAdapter(method, urlPath, overrideWebRes = null) {
+  const mockReq = {
+    method,
+    url: urlPath,
+    headers: { host: "localhost:3000" },
+    socket: { encrypted: false },
+  };
+  const webReq = httpAdapter.nodeToWebRequest(mockReq);
+  assert.equal(webReq.method, method);
+  const webRes =
+    overrideWebRes ||
+    (await rscMod.handleRequest(webReq, platformContext));
+  const outChunks = [];
+  const outHeaders = new Map();
+  const mockRes = new PassThrough();
+  mockRes.req = mockReq;
+  mockRes.statusCode = 200;
+  mockRes.statusMessage = "";
+  mockRes.headersSent = false;
+  mockRes.setHeader = (k, v) => outHeaders.set(String(k).toLowerCase(), v);
+  const origWrite = mockRes.write.bind(mockRes);
+  const origEnd = mockRes.end.bind(mockRes);
+  mockRes.write = (chunk, ...rest) => {
+    mockRes.headersSent = true;
+    if (chunk) outChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    return origWrite(chunk, ...rest);
+  };
+  const ended = new Promise((resolve) => mockRes.once("finish", resolve));
+  mockRes.end = (chunk, ...rest) => {
+    mockRes.headersSent = true;
+    if (chunk) outChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    return origEnd(chunk, ...rest);
+  };
+  await httpAdapter.sendWebResponseToNode(webRes, mockRes);
+  await ended;
+  const buf = Buffer.concat(outChunks);
+  return { status: mockRes.statusCode, headers: outHeaders, byteLength: buf.length, text: buf.toString("utf8") };
+}
+
+for (const [p, expectedStatus] of [
+  ["/hh/static-page", 200],
+  ["/hh/pure-ppr", 200],
+  ["/hh/asym-l2", 200],
+  ["/hh/dyn-page", 200],
+  ["/hh/tombstone", 302],
+]) {
+  const h = await runViaNodeAdapter("HEAD", p);
+  assert.equal(h.status, expectedStatus, \`[Node Adapter \${BUNDLER}] HEAD \${p} status\`);
+  assert.equal(h.byteLength, 0, \`[Node Adapter \${BUNDLER}] HEAD \${p} must write 0 bytes\`);
+  assert.equal(h.headers.get("x-cube-plugin"), "plugin-ok");
+}
+const adapterGet = await runViaNodeAdapter("GET", "/hh/static-page");
+assert.equal(adapterGet.status, 200);
+assert.equal(textById(adapterGet.text, "hh-static-seq"), "501");
+
+// Verify sendWebResponseToNode cancels a streaming body cleanly if a raw Response with body reaches a HEAD request!
+let streamCancelled = false;
+const rawStreamRes = new Response(
+  new ReadableStream({
+    start(controller) { controller.enqueue(new TextEncoder().encode("should-not-write")); },
+    cancel() { streamCancelled = true; },
+  }),
+  { status: 200, headers: { "Content-Type": "text/plain", "X-Raw-Head": "ok" } }
+);
+const rawHeadOut = await runViaNodeAdapter("HEAD", "/raw-stream", rawStreamRes);
+assert.equal(rawHeadOut.status, 200);
+assert.equal(rawHeadOut.byteLength, 0);
+assert.equal(rawHeadOut.headers.get("x-raw-head"), "ok");
+assert.equal(streamCancelled, true, \`[Node Adapter \${BUNDLER}] sendWebResponseToNode MUST cancel streaming body on HEAD\`);
+
+await new Promise((r) => setTimeout(r, 80));
+assert.deepEqual(unhandled, [], \`[\${BUNDLER}] Unexpected unhandledRejection during HEAD tests: \${unhandled.join("; ")}\`);
+
+console.log(\`PHASE8_STAGE3_HEAD_HEADERS_\${BUNDLER.toUpperCase()}_OK\`);
+`,
+        "utf8"
+      );
+
+      const runRes = spawnSync(process.execPath, [verifyScript], {
+        cwd: tmpApp,
+        encoding: "utf8",
+        env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+        timeout: 90_000,
+      });
+      assert.equal(
+        runRes.status,
+        0,
+        `[${bundler}] Phase 8 Stage 3 verification failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+      );
+      assert.ok(
+        runRes.stdout.includes(
+          `PHASE8_STAGE3_HEAD_HEADERS_${bundler.toUpperCase()}_OK`
+        )
+      );
+    } finally {
+      removeDirSafe(tmpApp);
+    }
+  }
+});

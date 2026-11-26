@@ -1649,6 +1649,28 @@ function finalizePluginResponse(result, bridge, request, isRscWireRequest) {
   return finalRes;
 }
 
+function finalizeHeadResponse(request, response) {
+  if (
+    String(request?.method || "").toUpperCase() !== "HEAD" ||
+    !(response instanceof Response)
+  ) {
+    return response;
+  }
+  if (response.body) {
+    try {
+      const cancelResult = response.body.cancel();
+      if (cancelResult && typeof cancelResult.catch === "function") {
+        cancelResult.catch(() => {});
+      }
+    } catch (_) {}
+  }
+  return new Response(null, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
 /**
  * Universal request handler: (Request, platformContext?) => Promise<Response>
  * @param {Request} request 
@@ -1656,6 +1678,12 @@ function finalizePluginResponse(result, bridge, request, isRscWireRequest) {
  * @returns {Promise<Response>}
  */
 async function handleRequest(request, platformContext = {}) {
+  const response = await handleRequestInner(request, platformContext);
+  return finalizeHeadResponse(request, response);
+}
+
+async function handleRequestInner(request, platformContext = {}) {
+  const isHeadRequest = String(request?.method || "").toUpperCase() === "HEAD";
   if (typeof globalThis !== "undefined") {
     if (platformContext?.renderHtmlStream) {
       globalThis.__DINOU_RENDER_HTML_STREAM__ = platformContext.renderHtmlStream;
@@ -2913,7 +2941,8 @@ async function handleRequest(request, platformContext = {}) {
 
     // Perimeter checks (root-to-child layouts + page) already ran authoritatively above before cache lookup.
     if (isPathBlocked) {
-      return new Response("Not Found", { status: 404 });
+      bridge.status(404).send("Not Found");
+      return bridge.toResponse();
     }
 
     const rscDynamicState = isLayoutReq ? dynamicState : (isRoutePpr ? { value: false } : dynamicState);
@@ -3965,6 +3994,7 @@ async function handleRequest(request, platformContext = {}) {
     }
     if (
       !isDevelopment &&
+      !isHeadRequest &&
       Boolean(pagePath) &&
       !cachedItem &&
       !dynamicState.value &&
@@ -4030,7 +4060,7 @@ async function handleRequest(request, platformContext = {}) {
           ssgRes.status < 400 &&
           ssgRes.headers.has("location")
         ) {
-          return ssgRes;
+          return finalizePluginResponse(ssgRes, bridge, request, false);
         }
         cachedItem = await storage.get(htmlKey);
         if (!cachedItem) {
@@ -4377,7 +4407,7 @@ async function handleRequest(request, platformContext = {}) {
       }
 
       // Now safe to launch deferred layout-slot background SWR revalidations sequentially (ancestor-first)
-      if (pendingLayoutSlotRevalPaths.length > 0) {
+      if (!isHeadRequest && pendingLayoutSlotRevalPaths.length > 0) {
         const layoutSlotsChainPromise = (async () => {
           const { revalidateLayout } = await import("./cache-revalidate.js");
           for (const layoutRoutePath of pendingLayoutSlotRevalPaths) {
@@ -4397,7 +4427,7 @@ async function handleRequest(request, platformContext = {}) {
           platformContext.ctx.waitUntil(layoutSlotsChainPromise);
         }
       }
-      if (isPageSlotTtlExpired) {
+      if (!isHeadRequest && isPageSlotTtlExpired) {
         try {
           const slotRevalKey = `slot:${reqPath}`;
           const slotRevalPromise = (async () => {
@@ -4429,7 +4459,7 @@ async function handleRequest(request, platformContext = {}) {
         pageOwnRevalidate >= 1 &&
         Date.now() > (pageOwnGeneratedAt || 0) + pageOwnRevalidate * 1000;
 
-      if (isExpired && !regenerating.has(reqPath)) {
+      if (!isHeadRequest && isExpired && !regenerating.has(reqPath)) {
         // Trigger background revalidation on Edge!
         regenerating.add(reqPath);
         const revalPromise = (async () => {
@@ -4615,12 +4645,14 @@ async function handleRequest(request, platformContext = {}) {
 
       bridge.setHeader("Content-Type", "text/html; charset=utf-8");
       if (!bridge.headers.has("Cache-Control")) {
-        if (!bridge.headers.has("Cache-Control")) {
-  bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-}
+        bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
       }
       if (!bridge._explicitStatusSet) {
         bridge.status(metadata.status || 200);
+      }
+      if (isHeadRequest) {
+        bridge.end();
+        return bridge.toResponse();
       }
       let content = cachedItem.content;
       if (typeof content === "string" && !content.includes("window.__DINOU_LAYOUTS__")) {
@@ -4648,6 +4680,7 @@ async function handleRequest(request, platformContext = {}) {
       navigator.userAgent === "Cloudflare-Workers";
     const canUseInFlight =
       !isDevelopment &&
+      !isHeadRequest &&
       !isCfWorkers &&
       !hasCookies &&
       !hasPluginMutation &&
@@ -5440,6 +5473,7 @@ async function handleRequest(request, platformContext = {}) {
         const ssgPprUnwrappedBailout = Boolean(platformContext?.isSSG && isPprConfig && dynamicState.value);
         const shouldCacheISG =
           (!isDevelopment &&
+            !isHeadRequest &&
             genMeta.status === 200 &&
             !isNotFound.value &&
             !isPathBlocked &&
@@ -5667,6 +5701,13 @@ async function handleRequest(request, platformContext = {}) {
                     bootstrapModules,
                     bootstrapScriptContent,
                     onError(err) {
+                      if (
+                        isHeadRequest &&
+                        (err?.name === "AbortError" ||
+                          /cancel|abort/i.test(String(err?.message || err)))
+                      ) {
+                        return;
+                      }
                       if (!platformContext?.isSSG || process.env.DINOU_DEBUG) {
                         console.error("[Edge Native SSR] Stream error:", err);
                       }
@@ -5678,6 +5719,13 @@ async function handleRequest(request, platformContext = {}) {
                   bootstrapModules,
                   bootstrapScriptContent,
                   onError(err) {
+                    if (
+                      isHeadRequest &&
+                      (err?.name === "AbortError" ||
+                        /cancel|abort/i.test(String(err?.message || err)))
+                    ) {
+                      return;
+                    }
                     if (!platformContext?.isSSG || process.env.DINOU_DEBUG) {
                       console.error("[Edge Native SSR] Stream error:", err);
                     }
@@ -6017,7 +6065,7 @@ async function handleRequest(request, platformContext = {}) {
             inFlightGenerations.delete(inFlightKey);
           }
 
-          if (canUseInlineRsc && !isError && htmlStream) {
+          if (!isHeadRequest && canUseInlineRsc && !isError && htmlStream) {
             htmlStream = createInlineRscHtmlStream(htmlStream, context, clientManifest);
           }
 
@@ -6074,9 +6122,7 @@ async function handleRequest(request, platformContext = {}) {
       }
       bridge.setHeader("Content-Type", "text/html; charset=utf-8");
       if (!bridge.headers.has("Cache-Control")) {
-        if (!bridge.headers.has("Cache-Control")) {
-  bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-}
+        bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
       }
       if (
         !bridge._explicitStatusSet ||
@@ -6087,11 +6133,24 @@ async function handleRequest(request, platformContext = {}) {
       }
 
       if (result.type === "stream") {
+        if (isHeadRequest) {
+          applyStreamingResponseHeaders(bridge.headers);
+          if (result.stream && typeof result.stream.cancel === "function") {
+            try {
+              const cancelRes = result.stream.cancel();
+              if (cancelRes && typeof cancelRes.catch === "function") {
+                cancelRes.catch(() => {});
+              }
+            } catch (_) {}
+          }
+          bridge.end();
+          return bridge.toResponse();
+        }
         bridge.setEdgeStream(result.stream);
         return bridge.toResponse();
       }
 
-      bridge.end(result.html);
+      bridge.end(isHeadRequest ? undefined : result.html);
       return bridge.toResponse();
     } finally {
       if (inFlightKey) {
@@ -6102,7 +6161,9 @@ async function handleRequest(request, platformContext = {}) {
 
   // Node.js Runtime: Serve static pre-rendered HTML if available in production
   if (!isDevelopment && (!dynamicState.value || isPprConfig) && pagePath && !isPathBlocked) {
-    revalidating(reqPath, dynamicState);
+    if (!isHeadRequest) {
+      revalidating(reqPath, dynamicState);
+    }
     let htmlPathOld;
     if (regenerating.has(reqPath)) {
       htmlPathOld = path.join(".dinou/dist2", reqPath, "index._old.html");
@@ -6156,6 +6217,11 @@ async function handleRequest(request, platformContext = {}) {
 
         if (!bridge._explicitStatusSet) {
           bridge.status(status || 200);
+        }
+
+        if (isHeadRequest) {
+          bridge.end();
+          return bridge.toResponse();
         }
 
         const knownLayouts = getDiscoveredLayouts();

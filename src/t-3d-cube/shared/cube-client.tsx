@@ -13,6 +13,8 @@ import {
   cubePingAction,
   cubeGetStampedeExecs,
   cubeResetStampedeExecs,
+  cubeGetHhPprHoleExecs,
+  cubeResetHhPprHoleExecs,
 } from "./cube-actions";
 import type { Cube3DState } from "./cube-state";
 
@@ -113,6 +115,8 @@ export function CubeControlBridge() {
       push: (href: string) => router.push(href as any),
       getStampedeExecs: () => cubeGetStampedeExecs(),
       resetStampedeExecs: () => cubeResetStampedeExecs(),
+      getHhPprHoleExecs: () => cubeGetHhPprHoleExecs(),
+      resetHhPprHoleExecs: () => cubeResetHhPprHoleExecs(),
     };
   }, [router]);
 

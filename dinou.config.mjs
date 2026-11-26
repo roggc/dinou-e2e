@@ -71,6 +71,35 @@ export default defineConfig({
           return Response.json({ ok: true, op, target, source: "cube-webhook" });
         }
 
+        // 1c. Phase 8 Stage 3 (#89): Scoped custom response headers for HTTP HEAD & Header Preservation tests
+        if (
+          url.pathname.startsWith("/t-3d-cube/http-head-headers") ||
+          url.pathname.startsWith("/____rsc_page____/t-3d-cube/http-head-headers") ||
+          url.pathname.startsWith("/____rsc_layout____/t-3d-cube/http-head-headers") ||
+          url.pathname.startsWith("/____rsc_slot____/hh-")
+        ) {
+          context.res.setHeader("X-Cube-Plugin", "plugin-ok");
+          if (
+            url.pathname === "/t-3d-cube/http-head-headers/static-page" ||
+            url.pathname === "/t-3d-cube/http-head-headers/static-page/"
+          ) {
+            context.res.setHeader(
+              "Cache-Control",
+              "public, max-age=60, stale-while-revalidate=300"
+            );
+            context.res.setHeader("Vary", "Accept-Encoding");
+          } else if (
+            url.pathname === "/t-3d-cube/http-head-headers/pure-ppr" ||
+            url.pathname === "/t-3d-cube/http-head-headers/pure-ppr/"
+          ) {
+            context.res.setHeader(
+              "Cache-Control",
+              "public, max-age=45, stale-while-revalidate=120"
+            );
+            context.res.setHeader("X-Cube-Ppr-Plugin", "ppr-plugin-ok");
+          }
+        }
+
         // 2. Protected middleware route: Returns 401 if missing valid token
         if (url.pathname === "/api/protected") {
           const auth = request.headers.get("authorization");

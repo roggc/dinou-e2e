@@ -23913,5 +23913,269 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         // Idempotent across sequential browsers via dynamic baselines
       }
     });
+
+    test("51. [Phase 8 / Stage 3 / Check #89] HTTP HEAD Semantics (RFC 9110) & Custom Headers (Cache-Control, Vary, X-*) Across 3D Cube Static, Pure PPR, Asymmetric PPR, Dynamic, Cold ISG & Tombstones", async ({
+      page,
+    }) => {
+      test.skip(!isProd, "3D Caching Cube Stage 3 requires production mode");
+
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      const waitHhReady = async () => {
+        await page.waitForFunction(
+          () => Boolean((window as any).__CUBE_3D__),
+          null,
+          { timeout: 15000 }
+        );
+      };
+
+      const readSeq = async (p: typeof page, selector: string) => {
+        const raw = (await p.locator(selector).textContent())?.trim() || "0";
+        return Number(raw);
+      };
+
+      // Load static route first to establish browser control bridge & verify live hydration
+      await page.goto("/t-3d-cube/http-head-headers/static-page", {
+        waitUntil: "networkidle",
+      });
+      await waitHhReady();
+      await expect(page.locator("#hh-static-page")).toBeVisible();
+
+      const baseL1 = await readSeq(page, "#hh-l1-shell-seq");
+      const baseStatic = await readSeq(page, "#hh-static-seq");
+      const base = Math.max(baseL1, baseStatic) + 10;
+
+      try {
+        // -----------------------------------------------------------------
+        // PHASE A: Static SSG Route — HEAD vs GET Parity & Custom Headers
+        // -----------------------------------------------------------------
+        const staticGet = await page.request.get(
+          "/t-3d-cube/http-head-headers/static-page"
+        );
+        const staticHead = await page.request.head(
+          "/t-3d-cube/http-head-headers/static-page"
+        );
+        expect(staticGet.status()).toBe(200);
+        expect(staticHead.status()).toBe(200);
+        expect((await staticHead.body()).length).toBe(0);
+        expect(staticGet.headers()["x-cube-plugin"]).toBe("plugin-ok");
+        expect(staticHead.headers()["x-cube-plugin"]).toBe("plugin-ok");
+        expect(staticGet.headers()["cache-control"]).toBe(
+          "public, max-age=60, stale-while-revalidate=300"
+        );
+        expect(staticHead.headers()["cache-control"]).toBe(
+          "public, max-age=60, stale-while-revalidate=300"
+        );
+        expect(staticGet.headers()["vary"]).toBe("Accept-Encoding");
+        expect(staticHead.headers()["vary"]).toBe("Accept-Encoding");
+        expect(staticHead.headers()["content-type"]).toContain("text/html");
+
+        // -----------------------------------------------------------------
+        // PHASE B: Warm Pure PPR Route — HEAD returns empty body, preserves
+        //          custom Cache-Control + no-transform, and runs 0 dynamic holes!
+        // -----------------------------------------------------------------
+        const pprGet = await page.request.get(
+          "/t-3d-cube/http-head-headers/pure-ppr"
+        );
+        expect(pprGet.status()).toBe(200);
+        expect(pprGet.headers()["x-cube-plugin"]).toBe("plugin-ok");
+        expect(pprGet.headers()["x-cube-ppr-plugin"]).toBe("ppr-plugin-ok");
+        expect(pprGet.headers()["cache-control"]).toContain(
+          "public, max-age=45, stale-while-revalidate=120"
+        );
+        expect(pprGet.headers()["cache-control"]).toMatch(/\bno-transform\b/i);
+
+        const execsBefore = await page.evaluate(() =>
+          (window as any).__CUBE_3D__.getHhPprHoleExecs()
+        );
+        const pprHead = await page.request.head(
+          "/t-3d-cube/http-head-headers/pure-ppr"
+        );
+        expect(pprHead.status()).toBe(200);
+        expect((await pprHead.body()).length).toBe(0);
+        expect(pprHead.headers()["x-cube-plugin"]).toBe("plugin-ok");
+        expect(pprHead.headers()["x-cube-ppr-plugin"]).toBe("ppr-plugin-ok");
+        expect(pprHead.headers()["cache-control"]).toBe(
+          pprGet.headers()["cache-control"]
+        );
+        const execsAfter = await page.evaluate(() =>
+          (window as any).__CUBE_3D__.getHhPprHoleExecs()
+        );
+        expect(execsAfter).toBe(execsBefore);
+
+        // -----------------------------------------------------------------
+        // PHASE C: Asymmetric 3D PPR & Dynamic Route Custom Headers (GET & HEAD)
+        // -----------------------------------------------------------------
+        const nextAsymL2 = base + 1;
+        const nextAsymHole = base + 2;
+        const nextDyn = base + 3;
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          {
+            hhAsymL2Seq: nextAsymL2,
+            hhAsymHoleSeq: nextAsymHole,
+            hhDynSeq: nextDyn,
+          }
+        );
+
+        const asymGet = await page.request.get(
+          "/t-3d-cube/http-head-headers/asym-l2"
+        );
+        const asymHead = await page.request.head(
+          "/t-3d-cube/http-head-headers/asym-l2"
+        );
+        expect(asymGet.status()).toBe(200);
+        expect(asymHead.status()).toBe(200);
+        expect((await asymHead.body()).length).toBe(0);
+        expect(asymGet.headers()["x-cube-plugin"]).toBe("plugin-ok");
+        expect(asymHead.headers()["x-cube-plugin"]).toBe("plugin-ok");
+        expect(asymHead.headers()["vary"]).toBe("Accept-Language");
+        expect(asymHead.headers()["x-cube-asym-l2"]).toBe(
+          `asym-l2-v${nextAsymL2}`
+        );
+        expect(asymHead.headers()["x-cube-asym-hole"]).toBe(
+          `asym-hole-v${nextAsymHole}`
+        );
+
+        const dynGet = await page.request.get(
+          "/t-3d-cube/http-head-headers/dyn-page"
+        );
+        const dynHead = await page.request.head(
+          "/t-3d-cube/http-head-headers/dyn-page"
+        );
+        expect(dynGet.status()).toBe(200);
+        expect(dynHead.status()).toBe(200);
+        expect((await dynHead.body()).length).toBe(0);
+        expect(dynHead.headers()["x-cube-plugin"]).toBe("plugin-ok");
+        expect(dynHead.headers()["vary"]).toBe("Accept-Language");
+        expect(dynHead.headers()["x-cube-dyn"]).toBe(`dyn-v${nextDyn}`);
+        expect(dynHead.headers()["cache-control"]).toContain(
+          "private, max-age=30"
+        );
+
+        // -----------------------------------------------------------------
+        // PHASE D: Mid-ISR Tombstones (404, 410, 302) + RSC Endpoints Under HEAD
+        // -----------------------------------------------------------------
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          { hhTombstoneMode: "404" }
+        );
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.revalPage(
+            "/t-3d-cube/http-head-headers/tombstone"
+          )
+        );
+        const t404Head = await page.request.head(
+          "/t-3d-cube/http-head-headers/tombstone"
+        );
+        expect(t404Head.status()).toBe(404);
+        expect((await t404Head.body()).length).toBe(0);
+        expect(t404Head.headers()["x-cube-plugin"]).toBe("plugin-ok");
+
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          { hhTombstoneMode: "410" }
+        );
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.revalPage(
+            "/t-3d-cube/http-head-headers/tombstone"
+          )
+        );
+        const t410Head = await page.request.head(
+          "/t-3d-cube/http-head-headers/tombstone"
+        );
+        expect(t410Head.status()).toBe(410);
+        expect((await t410Head.body()).length).toBe(0);
+        expect(t410Head.headers()["x-cube-gone"]).toBe("gone-410");
+        expect(t410Head.headers()["x-cube-plugin"]).toBe("plugin-ok");
+
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          { hhTombstoneMode: "302" }
+        );
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.revalPage(
+            "/t-3d-cube/http-head-headers/tombstone"
+          )
+        );
+        const t302Head = await page.request.head(
+          "/t-3d-cube/http-head-headers/tombstone",
+          { maxRedirects: 0 }
+        );
+        expect(t302Head.status()).toBe(302);
+        expect((await t302Head.body()).length).toBe(0);
+        expect(t302Head.headers()["location"]).toBe(
+          "/t-3d-cube/http-head-headers/static-page"
+        );
+        expect(t302Head.headers()["x-cube-plugin"]).toBe("plugin-ok");
+
+        // RSC endpoints preserve plugin headers & empty body on HEAD
+        const rscPageHead = await page.request.head(
+          "/____rsc_page____/t-3d-cube/http-head-headers/static-page"
+        );
+        expect(rscPageHead.status()).toBe(200);
+        expect((await rscPageHead.body()).length).toBe(0);
+        expect(rscPageHead.headers()["x-cube-plugin"]).toBe("plugin-ok");
+
+        const rscSlotHead = await page.request.head(
+          "/____rsc_slot____/hh-static-slot",
+          {
+            headers: {
+              "x-dinou-current-path": "/t-3d-cube/http-head-headers/static-page",
+            },
+          }
+        );
+        expect(rscSlotHead.status()).toBe(200);
+        expect((await rscSlotHead.body()).length).toBe(0);
+        expect(rscSlotHead.headers()["x-cube-plugin"]).toBe("plugin-ok");
+
+        // -----------------------------------------------------------------
+        // PHASE E: Post-revalidatePage() Preservation & Clean Browser Soft-Nav
+        // -----------------------------------------------------------------
+        const nextStatic = base + 10;
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          { hhStaticSeq: nextStatic }
+        );
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.revalPage(
+            "/t-3d-cube/http-head-headers/static-page"
+          )
+        );
+        const staticRevalHead = await page.request.head(
+          "/t-3d-cube/http-head-headers/static-page"
+        );
+        expect(staticRevalHead.status()).toBe(200);
+        expect((await staticRevalHead.body()).length).toBe(0);
+        expect(staticRevalHead.headers()["x-cube-plugin"]).toBe("plugin-ok");
+        expect(staticRevalHead.headers()["cache-control"]).toBe(
+          "public, max-age=60, stale-while-revalidate=300"
+        );
+
+        // Navigate across Pure PPR & Asymmetric L2 in browser to verify zero hydration issues
+        await page.locator("#link-hh-ppr").click();
+        await expect(page.locator("#hh-ppr-hole")).toBeVisible();
+        await page.locator("#link-hh-asym").click();
+        await expect(page.locator("#hh-asym-hole")).toBeVisible();
+        await expect(page.locator("#hh-asym-l2-seq")).toHaveText(
+          String(nextAsymL2)
+        );
+
+        expect(hydrationErrors).toEqual([]);
+        expect(routerWarnings).toEqual([]);
+        expect(pageErrors).toEqual([]);
+      } finally {
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          { hhTombstoneMode: "none" }
+        );
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.revalPage(
+            "/t-3d-cube/http-head-headers/tombstone"
+          )
+        );
+      }
+    });
   });
 });

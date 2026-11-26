@@ -489,6 +489,20 @@ export interface Cube3DState {
   encSlugRamenShellSeq: number;
   encSlugRamenHoleSeq: number;
   encSlugRamenSlotSeq: number;
+
+  // Phase 8 — Stage 3 — Check #89: HTTP HEAD Semantics & Custom HTTP Headers Across 3D Cube
+  hhL1ShellSeq: number;
+  hhStaticSeq: number;
+  hhStaticSlotSeq: number;
+  hhPprShellSeq: number;
+  hhPprHoleSeq: number;
+  hhAsymL2Seq: number;
+  hhAsymShellSeq: number;
+  hhAsymHoleSeq: number;
+  hhDynSeq: number;
+  hhTombstoneSeq: number;
+  hhTombstoneMode: "none" | "404" | "410" | "302";
+  hhColdIsgSeq: number;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -939,6 +953,19 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   encSlugRamenShellSeq: 100,
   encSlugRamenHoleSeq: 100,
   encSlugRamenSlotSeq: 100,
+
+  hhL1ShellSeq: 100,
+  hhStaticSeq: 100,
+  hhStaticSlotSeq: 100,
+  hhPprShellSeq: 100,
+  hhPprHoleSeq: 100,
+  hhAsymL2Seq: 100,
+  hhAsymShellSeq: 100,
+  hhAsymHoleSeq: 100,
+  hhDynSeq: 100,
+  hhTombstoneSeq: 100,
+  hhTombstoneMode: "none",
+  hhColdIsgSeq: 100,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {
@@ -1035,5 +1062,22 @@ export function getStampedeShellExecs(): number {
 
 export function resetStampedeShellExecs(): number {
   (globalThis as any)[STAMPEDE_EXEC_KEY] = 0;
+  return 0;
+}
+
+const HH_PPR_HOLE_EXEC_KEY = Symbol.for("dinou.e2e.3d.cube.hh.ppr.hole.execs");
+
+export function incrementHhPprHoleExecs(): number {
+  const next = Number((globalThis as any)[HH_PPR_HOLE_EXEC_KEY] || 0) + 1;
+  (globalThis as any)[HH_PPR_HOLE_EXEC_KEY] = next;
+  return next;
+}
+
+export function getHhPprHoleExecs(): number {
+  return Number((globalThis as any)[HH_PPR_HOLE_EXEC_KEY] || 0);
+}
+
+export function resetHhPprHoleExecs(): number {
+  (globalThis as any)[HH_PPR_HOLE_EXEC_KEY] = 0;
   return 0;
 }

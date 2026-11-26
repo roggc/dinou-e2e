@@ -995,6 +995,41 @@ async function handlePprResume({
   preloadedPageShellJson,
   preloadedLayoutShellJson,
 }) {
+  const buildPprResponseHeaders = () => {
+    const headers = new Headers(bridge?.headers);
+    if (Array.isArray(bridge?.cookies)) {
+      for (const c of bridge.cookies) {
+        headers.append("Set-Cookie", c);
+      }
+    }
+    headers.set("Content-Type", "text/html; charset=utf-8");
+    const existingCacheControl = headers.get("Cache-Control");
+    if (!existingCacheControl) {
+      headers.set("Cache-Control", "no-store, no-cache, must-revalidate, no-transform");
+    } else if (!/\bno-transform\b/i.test(existingCacheControl)) {
+      headers.set("Cache-Control", `${existingCacheControl}, no-transform`);
+    }
+    if (!headers.has("Content-Encoding")) {
+      headers.set("Content-Encoding", "identity");
+    }
+    if (!headers.has("X-Accel-Buffering")) {
+      headers.set("X-Accel-Buffering", "no");
+    }
+    return headers;
+  };
+
+  // RFC 9110 §9.3.2: HEAD on warm Pure PPR returns matching status & headers
+  // with an empty body and MUST NOT spawn TransformStream or execute dynamic holes.
+  if (String(simReq?.method || "").toUpperCase() === "HEAD") {
+    const headers = buildPprResponseHeaders();
+    return new Response(null, {
+      status: bridge?._explicitStatusSet
+        ? bridge.statusCode
+        : metadata?.status || 200,
+      headers,
+    });
+  }
+
   let shellHtml = cachedItem.content;
   if (typeof shellHtml === "string") {
     if (!shellHtml.includes("window.__DINOU_LAYOUTS__")) {
@@ -1277,25 +1312,7 @@ async function handlePprResume({
     platformContext.ctx.waitUntil(resumePromise);
   }
 
-  const headers = new Headers(bridge.headers);
-  if (Array.isArray(bridge.cookies)) {
-    for (const c of bridge.cookies) {
-      headers.append("Set-Cookie", c);
-    }
-  }
-  headers.set("Content-Type", "text/html; charset=utf-8");
-  const existingCacheControl = headers.get("Cache-Control");
-  if (!existingCacheControl) {
-    headers.set("Cache-Control", "no-store, no-cache, must-revalidate, no-transform");
-  } else if (!/\bno-transform\b/i.test(existingCacheControl)) {
-    headers.set("Cache-Control", `${existingCacheControl}, no-transform`);
-  }
-  if (!headers.has("Content-Encoding")) {
-    headers.set("Content-Encoding", "identity");
-  }
-  if (!headers.has("X-Accel-Buffering")) {
-    headers.set("X-Accel-Buffering", "no");
-  }
+  const headers = buildPprResponseHeaders();
 
   return new Response(readable, {
     status: bridge._explicitStatusSet
