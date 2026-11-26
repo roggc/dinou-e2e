@@ -23510,5 +23510,225 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           .catch(() => {});
       }
     });
+
+    // =========================================================================
+    // 49. [Phase 8 / Stage 1 / Check #87] Client Router Cache Coherence Across
+    //     Server Function revalidate*(), <Link prefetch>, redirect(), and
+    //     PPR / Dynamic Route Re-Visits (A -> B -> A)
+    // =========================================================================
+    test("49. [Check #87] Client Router Cache Coherence (pageCache/layoutCache) across Server Function revalidate*(), <Link prefetch>, redirect() & PPR/Dynamic re-visits", async ({
+      page,
+    }) => {
+      test.setTimeout(120000);
+      test.skip(
+        !isProd,
+        "Phase 8 Stage 1 client router cache coherence stress test requires production mode"
+      );
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      const readSeq = async (p: typeof page, selector: string) =>
+        Number((await p.locator(selector).textContent())?.trim() || "0");
+
+      const waitRcReady = async () => {
+        await waitCubeReady(page);
+        await expect(page.locator("#rc-actions-bridge")).toHaveAttribute(
+          "data-ready",
+          "true"
+        );
+      };
+
+      try {
+        // -----------------------------------------------------------------
+        // PHASE A: Warm static-b in client pageCache, navigate to ppr-a,
+        //          run Server Function revalidatePage("/.../static-b") with
+        //          L1 poisoned, click normal <Link> (NO fresh prop!) -> V2!
+        // -----------------------------------------------------------------
+        await page.goto("/t-3d-cube/router-coherence/static-b", {
+          waitUntil: "networkidle",
+        });
+        await waitRcReady();
+
+        const baseL1 = await readSeq(page, "#rc-l1-shell-seq");
+        const baseB = await readSeq(page, "#rc-static-b-seq");
+        const l1Mount0 = (
+          await page.locator("#probe-mount-rc-l1").textContent()
+        )?.trim();
+        await page.locator("#probe-inc-rc-l1").click();
+        await expect(page.locator("#probe-count-rc-l1")).toHaveText("1");
+
+        // Navigate to ppr-a (static-b stays in client pageCache with baseB)
+        await page.locator("#link-rc-ppr-a").click();
+        await expect(page.locator("#rc-ppr-a-page")).toBeVisible();
+        await expect(page.locator("#rc-ppr-a-hole")).toBeVisible();
+
+        const basePprAShell = await readSeq(page, "#rc-ppr-a-shell-seq");
+        const basePprAHole = await readSeq(page, "#rc-ppr-a-hole-seq");
+        const base = Math.max(baseL1, baseB, basePprAShell, basePprAHole) + 10;
+        const POISON = base + 899;
+
+        const v2B = base + 1;
+        await page.evaluate(
+          ({ target, patch }) =>
+            (window as any).__RC_ACTIONS__.mutateAndRevalPage(target, patch),
+          {
+            target: "/t-3d-cube/router-coherence/static-b",
+            patch: { rcStaticBSeq: v2B, rcL1ShellSeq: POISON },
+          }
+        );
+
+        // Normal <Link> click (no fresh prop!) MUST show v2B, not stale cached baseB!
+        await page.locator("#link-rc-static-b").click();
+        await expect(page.locator("#rc-static-b-seq")).toHaveText(String(v2B));
+        // L1 stayed mounted & frozen (not POISON!)
+        await expect(page.locator("#rc-l1-shell-seq")).toHaveText(String(baseL1));
+        expect(
+          (await page.locator("#probe-mount-rc-l1").textContent())?.trim()
+        ).toBe(l1Mount0);
+        await expect(page.locator("#probe-count-rc-l1")).toHaveText("1");
+
+        // -----------------------------------------------------------------
+        // PHASE B: Hover <Link prefetch> warming pageCache with v2B, then
+        //          Server Function revalidateTag("rc-static-b") -> v3B,
+        //          then click prefetched <Link> -> MUST show v3B!
+        // -----------------------------------------------------------------
+        await page.locator("#link-rc-ppr-a").click();
+        await expect(page.locator("#rc-ppr-a-page")).toBeVisible();
+
+        // Trigger real mouseenter prefetch on #link-rc-static-b
+        await page.locator("#link-rc-static-b").hover();
+        await page.waitForTimeout(150);
+
+        const v3B = base + 2;
+        await page.evaluate(
+          ({ tag, patch }) =>
+            (window as any).__RC_ACTIONS__.mutateAndRevalTag(tag, patch),
+          {
+            tag: "rc-static-b",
+            patch: { rcStaticBSeq: v3B, rcL1ShellSeq: POISON },
+          }
+        );
+
+        await page.locator("#link-rc-static-b").click();
+        await expect(page.locator("#rc-static-b-seq")).toHaveText(String(v3B));
+        await expect(page.locator("#rc-l1-shell-seq")).toHaveText(String(baseL1));
+
+        // -----------------------------------------------------------------
+        // PHASE C: Server Function revalidatePage() + redirect() back to
+        //          already-visited static-b -> MUST land on fresh v4B!
+        // -----------------------------------------------------------------
+        await page.locator("#link-rc-ppr-a").click();
+        await expect(page.locator("#rc-ppr-a-page")).toBeVisible();
+
+        const v4B = base + 3;
+        await page.evaluate(
+          ({ target, patch }) =>
+            (window as any).__RC_ACTIONS__.mutateRevalAndRedirect(target, patch),
+          {
+            target: "/t-3d-cube/router-coherence/static-b",
+            patch: { rcStaticBSeq: v4B, rcL1ShellSeq: POISON },
+          }
+        );
+        await expect(page).toHaveURL(/\/t-3d-cube\/router-coherence\/static-b/);
+        await expect(page.locator("#rc-static-b-seq")).toHaveText(String(v4B));
+
+        // -----------------------------------------------------------------
+        // PHASE D: Warm sub-layout in layoutCache, navigate away, run
+        //          Server Function revalidateLayout("/.../sub-layout")
+        //          poisoning L1 & sub-page, return via normal <Link> -> V2!
+        // -----------------------------------------------------------------
+        await page.locator("#link-rc-sub-layout").click();
+        await expect(page.locator("#rc-sub-l2-shell")).toBeVisible();
+        await expect(page.locator("#rc-sub-page")).toBeVisible();
+        const baseSubL2 = await readSeq(page, "#rc-sub-l2-seq");
+        const baseSubPage = await readSeq(page, "#rc-sub-page-seq");
+
+        await page.locator("#link-rc-static-b").click();
+        await expect(page.locator("#rc-static-b-page")).toBeVisible();
+
+        const v2SubL2 = Math.max(base, baseSubL2, baseSubPage) + 10;
+        await page.evaluate(
+          ({ target, patch }) =>
+            (window as any).__RC_ACTIONS__.mutateAndRevalLayout(target, patch),
+          {
+            target: "/t-3d-cube/router-coherence/sub-layout",
+            patch: {
+              rcSubL2Seq: v2SubL2,
+              rcL1ShellSeq: POISON,
+              rcSubPageSeq: POISON,
+            },
+          }
+        );
+
+        await page.locator("#link-rc-sub-layout").click();
+        await expect(page.locator("#rc-sub-l2-seq")).toHaveText(String(v2SubL2));
+        // Poisoned L1 & sub-page stayed frozen!
+        await expect(page.locator("#rc-l1-shell-seq")).toHaveText(String(baseL1));
+        await expect(page.locator("#rc-sub-page-seq")).toHaveText(
+          String(baseSubPage)
+        );
+
+        // -----------------------------------------------------------------
+        // PHASE E: PPR Dynamic Hole & revalidate=0 Re-Visits (A -> B -> A)
+        //          WITHOUT fresh prop and WITHOUT calling revalidatePage()!
+        // -----------------------------------------------------------------
+        // First test direct SSR inline-RSC hydration of ppr-a -> static-b -> ppr-a
+        await page.goto("/t-3d-cube/router-coherence/ppr-a", {
+          waitUntil: "networkidle",
+        });
+        await waitRcReady();
+        await expect(page.locator("#rc-ppr-a-hole")).toBeVisible();
+        const pprShellBefore = await readSeq(page, "#rc-ppr-a-shell-seq");
+
+        await page.locator("#link-rc-static-b").click();
+        await expect(page.locator("#rc-static-b-page")).toBeVisible();
+
+        const nextPprHole = base + 25;
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          {
+            rcPprAHoleSeq: nextPprHole,
+            rcPprAShellSeq: POISON,
+            rcL1ShellSeq: POISON,
+          }
+        );
+
+        // Normal <Link> back to ppr-a -> static shell frozen, dynamic hole fresh!
+        await page.locator("#link-rc-ppr-a").click();
+        await expect(page.locator("#rc-ppr-a-page")).toBeVisible();
+        await expect(page.locator("#rc-ppr-a-hole-seq")).toHaveText(
+          String(nextPprHole)
+        );
+        await expect(page.locator("#rc-ppr-a-shell-seq")).toHaveText(
+          String(pprShellBefore)
+        );
+
+        // Now repeat on revalidate=0 dynamic page (dyn-c -> static-b -> dyn-c)
+        const v1Dyn = base + 30;
+        const v2Dyn = base + 31;
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          { rcDynCSeq: v1Dyn }
+        );
+        await page.locator("#link-rc-dyn-c").click();
+        await expect(page.locator("#rc-dyn-c-seq")).toHaveText(String(v1Dyn));
+
+        await page.locator("#link-rc-static-b").click();
+        await expect(page.locator("#rc-static-b-page")).toBeVisible();
+
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          { rcDynCSeq: v2Dyn }
+        );
+        await page.locator("#link-rc-dyn-c").click();
+        await expect(page.locator("#rc-dyn-c-seq")).toHaveText(String(v2Dyn));
+
+        expect(hydrationErrors).toEqual([]);
+        expect(routerWarnings).toEqual([]);
+        expect(pageErrors).toEqual([]);
+      } finally {
+        // Leave state clean for sequential browsers
+      }
+    });
   });
 });

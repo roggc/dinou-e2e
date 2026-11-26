@@ -89,6 +89,30 @@ function isCloudflareWorkersRuntime() {
   );
 }
 
+function recordClientRevalidationHint(kind, value, explicitCtx = null) {
+  try {
+    const ctx = explicitCtx || getContext();
+    if (!ctx || !ctx._isServerFunction) return;
+    if (!ctx._revalidatedHint) {
+      ctx._revalidatedHint = {
+        pages: new Set(),
+        layouts: new Set(),
+        allPages: false,
+        allLayouts: false,
+      };
+    }
+    if (kind === "page" && value) {
+      ctx._revalidatedHint.pages.add(String(value));
+    } else if (kind === "layout" && value) {
+      ctx._revalidatedHint.layouts.add(String(value));
+    } else if (kind === "allPages") {
+      ctx._revalidatedHint.allPages = true;
+    } else if (kind === "allLayouts") {
+      ctx._revalidatedHint.allLayouts = true;
+    }
+  } catch (e) {}
+}
+
 function enqueueRevalidation(fn) {
   if (revalQueueStorage.getStore()) {
     return fn();
@@ -475,6 +499,9 @@ async function revalidatePage(reqPath, internalOptions = {}) {
   const cleanPath = normalizeRevalidatePath(reqPath);
   const onlyRefreshSlots = Boolean(internalOptions?.onlyRefreshSlots);
   const onlyIfExpired = Boolean(internalOptions?.onlyIfExpired);
+  if (!onlyIfExpired) {
+    recordClientRevalidationHint("page", cleanPath);
+  }
   const inFlightKey = `${cleanPath}:${onlyRefreshSlots ? "slots" : "full"}:${onlyIfExpired ? "ttl" : "force"}`;
   // Never await an outer queued inflightPageRevalidations promise when already inside
   // revalQueueStorage (holding revalState.queue), or a concurrent caller queued behind us
@@ -1384,6 +1411,9 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
   const onlyRefreshSlots = Boolean(internalOptions?.onlyRefreshSlots);
   const onlyIfExpired = Boolean(internalOptions?.onlyIfExpired);
   const recomposeOnly = Boolean(internalOptions?.recomposeOnly);
+  if (!onlyIfExpired) {
+    recordClientRevalidationHint("layout", targetPath);
+  }
   const inFlightKey = `${targetPath}:${recomposeOnly ? "recompose" : onlyRefreshSlots ? "slots" : "full"}:${onlyIfExpired ? "ttl" : "force"}`;
   // Never await an outer queued inflightLayoutRevalidations promise when already inside
   // revalQueueStorage (e.g. revalidatePage holding revalState.queue calling nested revalidateLayout),
@@ -2036,6 +2066,7 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
 }
 
 async function revalidateTag(tag, options) {
+  const sfCallerCtx = getContext();
   if (options !== undefined) {
     console.warn(
       `⚠️ [Dinou] The second parameter (options) in revalidateTag("${tag}", ...) is deprecated and ignored since v9.0.3. Zero hydration mismatch is now guaranteed automatically via lazy index.html re-composition.`
@@ -2251,12 +2282,18 @@ async function revalidateTag(tag, options) {
         compareLayoutPathsAncestorFirst(a, b)
       );
       for (const [p, opts] of sortedTargetLayouts) {
+        recordClientRevalidationHint("layout", p, sfCallerCtx);
         await revalidateLayout(p, opts);
       }
 
       // 3. Revalidate affected pages sequentially (without deleting metadata.json!)
       for (const [p, opts] of targetPaths.entries()) {
+        recordClientRevalidationHint("page", p, sfCallerCtx);
         await revalidatePage(p, opts);
+      }
+
+      if (sortedTargetLayouts.length === 0 && targetPaths.size === 0) {
+        recordClientRevalidationHint("allPages", true, sfCallerCtx);
       }
 
       // 4. Restore last-known-good slot cache (BOTH slot.json AND full slot.metadata.json)
@@ -2341,10 +2378,15 @@ async function revalidateTag(tag, options) {
   await Promise.all(slotPromises);
   targetLayoutPaths.sort((a, b) => compareLayoutPathsAncestorFirst(a.reqPath, b.reqPath));
   for (const { reqPath, onlyRefreshSlots } of targetLayoutPaths) {
+    recordClientRevalidationHint("layout", reqPath, sfCallerCtx);
     await revalidateLayout(reqPath, { onlyRefreshSlots });
   }
   for (const { reqPath, onlyRefreshSlots } of targetPagePaths) {
+    recordClientRevalidationHint("page", reqPath, sfCallerCtx);
     await revalidatePage(reqPath, { onlyRefreshSlots });
+  }
+  if (targetLayoutPaths.length === 0 && targetPagePaths.length === 0) {
+    recordClientRevalidationHint("allPages", true, sfCallerCtx);
   }
 }
 

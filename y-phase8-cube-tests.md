@@ -28,7 +28,7 @@ All 4 stages below are designed to be executed strictly via **TDD (RED → GREEN
 
 ## Master Checklist (Phase 8)
 
-- [ ] **Stage 1 — Check `#87`:** Client Router Cache Coherence (`pageCache` / `layoutCache`) Across `revalidate*()` Server Functions, `<Link prefetch>`, `redirect()`, and PPR / Dynamic Route Re-Visits
+- [x] **Stage 1 — Check `#87`:** Client Router Cache Coherence (`pageCache` / `layoutCache`) Across `revalidate*()` Server Functions, `<Link prefetch>`, `redirect()`, and PPR / Dynamic Route Re-Visits
 - [ ] **Stage 2 — Check `#88`:** Unicode, Spaces & Percent-Encoded Dynamic Parameters (`/items/caf%C3%A9`, `/items/hello%20world`, Trailing Slashes) Across 3D Cube SSG/ISG, RSC Endpoints, `<DinouCacheSlot>` & `revalidate*()`
 - [ ] **Stage 3 — Check `#89`:** HTTP `HEAD` Method Semantics & Custom HTTP Headers (`Cache-Control`, `Vary`, `X-*`) Preservation Across 3D Cube Static, PPR Resume, Asymmetric Dynamic & Tombstoned Routes
 - [ ] **Stage 4 — Check `#90`:** Cross-Primitive Concurrent Revalidation Races on Cloudflare Workers, Multi-Slot Tag Resolution, `<DinouCacheSlot>` Edge Placements (`revalidate={false}`, `not_found.tsx`, `error.tsx`) & `React.cache()` Isolation

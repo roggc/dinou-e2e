@@ -1505,6 +1505,8 @@ function createServerFunctionContext(simReq, resBridge, platformContext = {}) {
     ctx: platformContext.ctx || null,
     platformContext,
     _dynamicState: { value: true },
+    _isServerFunction: true,
+    _revalidatedHint: null,
   };
   setCurrentContext(context);
   return context;
@@ -1849,6 +1851,29 @@ async function handleRequest(request, platformContext = {}) {
 
       const context = createServerFunctionContext(simReq, bridge, platformContext);
       copyCustomContextProperties(rootContext, context);
+      const attachServerFunctionRevalidatedHint = () => {
+        const hint = context?._revalidatedHint;
+        if (!hint) return;
+        const pages = hint.pages instanceof Set ? Array.from(hint.pages) : [];
+        const layouts = hint.layouts instanceof Set ? Array.from(hint.layouts) : [];
+        const allPages = Boolean(hint.allPages);
+        const allLayouts = Boolean(hint.allLayouts);
+        if (pages.length === 0 && layouts.length === 0 && !allPages && !allLayouts) {
+          return;
+        }
+        const payload = {
+          ...(pages.length > 0 ? { pages } : {}),
+          ...(layouts.length > 0 ? { layouts } : {}),
+          ...(allPages ? { allPages: true } : {}),
+          ...(allLayouts ? { allLayouts: true } : {}),
+        };
+        if (!bridge.headersSent) {
+          bridge.setHeader("X-Dinou-Revalidated", JSON.stringify(payload));
+        } else {
+          bridge.write(`D:${JSON.stringify({ type: "revalidate", ...payload })}\n`);
+        }
+      };
+
       let returnValue;
       try {
         await requestStorage.run(context, async () => {
@@ -1856,6 +1881,7 @@ async function handleRequest(request, platformContext = {}) {
         });
       } catch (e) {
         if (e && e.$$type === "dinou-internal-redirect") {
+          attachServerFunctionRevalidatedHint();
           const safeUrl = JSON.stringify(e.url);
           if (!bridge.headersSent) {
             bridge.setHeader("Content-Type", "application/json");
@@ -1873,6 +1899,7 @@ async function handleRequest(request, platformContext = {}) {
         throw e;
       }
 
+      attachServerFunctionRevalidatedHint();
       bridge.setHeader("Content-Type", "text/x-component");
       if (!bridge.headers.has("Cache-Control")) {
   bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
@@ -2751,6 +2778,7 @@ async function handleRequest(request, platformContext = {}) {
               const contentStr = typeof cached.content === "string" ? cached.content : "";
               if (!contentStr.trimStart().startsWith("<")) {
                 bridge.setHeader("Content-Type", "text/x-component");
+                bridge.setHeader("X-Dinou-Cache-Mode", "static");
                 if (!bridge.headers.has("Cache-Control")) {
   bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
 }
@@ -2789,6 +2817,7 @@ async function handleRequest(request, platformContext = {}) {
               ) {
                 await storage.set(rscKey, rscContent);
                 bridge.setHeader("Content-Type", "text/x-component");
+                bridge.setHeader("X-Dinou-Cache-Mode", "static");
                 if (!bridge.headers.has("Cache-Control")) {
   bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
 }
@@ -2808,6 +2837,7 @@ async function handleRequest(request, platformContext = {}) {
             !dist2Rsc.content.trimStart().startsWith("<")
           ) {
             bridge.setHeader("Content-Type", "text/x-component");
+            bridge.setHeader("X-Dinou-Cache-Mode", "static");
             if (!bridge.headers.has("Cache-Control")) {
   bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
 }
@@ -2820,6 +2850,7 @@ async function handleRequest(request, platformContext = {}) {
           const buffer = readFileSync(payloadPath);
           if (buffer && buffer.length > 0) {
             bridge.setHeader("Content-Type", "application/octet-stream");
+            bridge.setHeader("X-Dinou-Cache-Mode", "static");
             if (!bridge.headers.has("Cache-Control")) {
   bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
 }
@@ -3507,6 +3538,14 @@ async function handleRequest(request, platformContext = {}) {
           bridge.status(404);
         }
         bridge.setHeader("Content-Type", "text/x-component");
+        if (!bridge.headers.has("X-Dinou-Cache-Mode")) {
+          const rscCacheMode = isRoutePpr
+            ? "ppr"
+            : rscDynamicState.value || dynamicState.value
+            ? "dynamic"
+            : "static";
+          bridge.setHeader("X-Dinou-Cache-Mode", rscCacheMode);
+        }
         if (!bridge.headers.has("Cache-Control")) {
   bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
 }
@@ -5421,8 +5460,16 @@ async function handleRequest(request, platformContext = {}) {
             }
           }
           if (canUseInlineRsc) {
+            const initialPageCacheMode = dynamicState.value
+              ? "dynamic"
+              : isPprConfig
+              ? "ppr"
+              : !shouldCacheISG
+              ? "dynamic"
+              : "static";
             bootstrapScriptContent +=
               "window.__DINOU_INLINE_RSC__ = true;\n" +
+              `window.__DINOU_PAGE_CACHE_MODE__="${initialPageCacheMode}";\n` +
               "window.__DINOU_RSC_P__ = window.__DINOU_RSC_P__ || [];\n" +
               "window.__DINOU_RSC_L__ = window.__DINOU_RSC_L__ || [];\n";
           }

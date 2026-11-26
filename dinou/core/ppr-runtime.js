@@ -1229,8 +1229,10 @@ async function handlePprResume({
               new Response(pageRscStream).text(),
             ]);
             if (!isAborted() && pageRscText && (!hasActiveLayout || layoutRscText)) {
+              const pprPageCacheMode =
+                !Array.isArray(holes) || holes.length > 0 ? "ppr" : "static";
               let rscScripts =
-                "\n<script>window.__DINOU_INLINE_RSC__=true;window.__DINOU_RSC_P__=window.__DINOU_RSC_P__||[];window.__DINOU_RSC_L__=window.__DINOU_RSC_L__||[];</script>";
+                `\n<script>window.__DINOU_INLINE_RSC__=true;window.__DINOU_PAGE_CACHE_MODE__="${pprPageCacheMode}";window.__DINOU_RSC_P__=window.__DINOU_RSC_P__||[];window.__DINOU_RSC_L__=window.__DINOU_RSC_L__||[];</script>`;
               if (hasActiveLayout && layoutRscText) {
                 rscScripts +=
                   formatRscPushScript("L", layoutRscText) + formatRscDoneScript("L");

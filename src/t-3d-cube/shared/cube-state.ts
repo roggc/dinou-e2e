@@ -465,6 +465,15 @@ export interface Cube3DState {
   mcPurePprHoleSeq: number;
   mcTitleSlotSeq: number;
   mcTitleSlotOdd: boolean;
+
+  // Phase 8 — Stage 1 — Check #87: Client Router Cache Coherence (pageCache / layoutCache + prefetch + redirect + PPR/Dynamic re-visits)
+  rcL1ShellSeq: number;
+  rcPprAShellSeq: number;
+  rcPprAHoleSeq: number;
+  rcStaticBSeq: number;
+  rcDynCSeq: number;
+  rcSubL2Seq: number;
+  rcSubPageSeq: number;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -893,6 +902,14 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   mcPurePprHoleSeq: 100,
   mcTitleSlotSeq: 100,
   mcTitleSlotOdd: false,
+
+  rcL1ShellSeq: 100,
+  rcPprAShellSeq: 100,
+  rcPprAHoleSeq: 100,
+  rcStaticBSeq: 100,
+  rcDynCSeq: 100,
+  rcSubL2Seq: 100,
+  rcSubPageSeq: 100,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {
