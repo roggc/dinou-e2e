@@ -12453,6 +12453,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           cwd: tmpExportDir,
           env: { ...process.env, DINOU_BUILD_TOOL: activeBundler },
           stdio: "pipe",
+          timeout: 60000,
         });
 
         const outDir = path.join(tmpExportDir, "out");
@@ -12544,39 +12545,52 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         };
 
         staticServer = http.createServer((req, res) => {
-          const reqUrl = new URL(req.url || "/", "http://127.0.0.1");
-          const relPath = decodeURIComponent(reqUrl.pathname).replace(
-            /^\/+/,
-            ""
-          );
-          let target = path.resolve(outDir, relPath);
-          const rootResolved = path.resolve(outDir);
+          try {
+            const reqUrl = new URL(req.url || "/", "http://127.0.0.1");
+            const relPath = decodeURIComponent(reqUrl.pathname).replace(
+              /^\/+/,
+              ""
+            );
+            let target = path.resolve(outDir, relPath);
+            const rootResolved = path.resolve(outDir);
 
-          if (
-            target !== rootResolved &&
-            !target.startsWith(rootResolved + path.sep)
-          ) {
-            res.writeHead(403).end("Forbidden");
-            return;
+            if (
+              target !== rootResolved &&
+              !target.startsWith(rootResolved + path.sep)
+            ) {
+              res.writeHead(403, { Connection: "close" }).end("Forbidden");
+              return;
+            }
+
+            if (fs.existsSync(target) && fs.statSync(target).isDirectory()) {
+              target = path.join(target, "index.html");
+            }
+
+            if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
+              res
+                .writeHead(404, {
+                  "Content-Type": "text/plain; charset=utf-8",
+                  Connection: "close",
+                })
+                .end("Not Found");
+              return;
+            }
+
+            const ext = path.extname(target).toLowerCase();
+            res.writeHead(200, {
+              "Content-Type": mimeByExt[ext] || "application/octet-stream",
+              Connection: "close",
+            });
+            res.end(fs.readFileSync(target));
+          } catch {
+            if (!res.headersSent) {
+              res.writeHead(500, { Connection: "close" });
+            }
+            res.end();
           }
-
-          if (fs.existsSync(target) && fs.statSync(target).isDirectory()) {
-            target = path.join(target, "index.html");
-          }
-
-          if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
-            res
-              .writeHead(404, { "Content-Type": "text/plain; charset=utf-8" })
-              .end("Not Found");
-            return;
-          }
-
-          const ext = path.extname(target).toLowerCase();
-          res.writeHead(200, {
-            "Content-Type": mimeByExt[ext] || "application/octet-stream",
-          });
-          res.end(fs.readFileSync(target));
         });
+        staticServer.keepAliveTimeout = 1000;
+        staticServer.headersTimeout = 5000;
 
         await new Promise<void>((resolve) =>
           staticServer!.listen(0, "127.0.0.1", () => resolve())
@@ -12688,9 +12702,16 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         expect(pageErrors).toEqual([]);
       } finally {
         if (staticServer) {
-          await new Promise<void>((resolve) =>
-            staticServer!.close(() => resolve())
-          );
+          await new Promise<void>((resolve) => {
+            const done = () => {
+              clearTimeout(timer);
+              resolve();
+            };
+            const timer = setTimeout(done, 5000);
+            staticServer!.close(done);
+            staticServer!.closeIdleConnections?.();
+            staticServer!.closeAllConnections?.();
+          });
         }
         try {
           fs.rmSync(tmpExportDir, {
@@ -15723,9 +15744,16 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
         expect(pageErrors).toEqual([]);
       } finally {
-        await new Promise<void>((resolve) =>
-          externalServer.close(() => resolve())
-        );
+        await new Promise<void>((resolve) => {
+          const done = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+          const timer = setTimeout(done, 5000);
+          externalServer.close(done);
+          externalServer.closeIdleConnections?.();
+          externalServer.closeAllConnections?.();
+        });
       }
     });
 
