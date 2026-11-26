@@ -58,6 +58,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
       1. `ppr-runtime.js` (`handlePprResume`): stopped emitting bootstrap `<script>` tags from `shellPostlude` in `finally` after `redirectScript` (`didEmitRedirect = true`) has already been written.
       2. `client.jsx` & `client-webpack.jsx`: guarded the `pageshow` listener with `if (event && event.persisted)` so initial document `pageshow` (`persisted === false`) never clobbers `window.__DINOU_STATIC_EXPORT_UNLOADING__ = true` back to `false` before React's async `hydrateRoot` macrotask executes, and skipped calling `hydrateRoot` entirely when `isStaticExportUnloading()` is already `true` at boot time.
 
+  - **Causal Hydration `#418` Guards Under 1s Layout TTL & Mid-ISR Bailout (`handler.js`, `cache-revalidate.js`)**:
+    - `handler.js` (`/____rsc_layout_static____` & `/____rsc_page_static____`): guarded initial causal hydration requests (`?____build_id____=T1`) against synchronous layout TTL revalidation (`!internalBuildId`) and against rejecting `layout._old.rsc` via the layout TTL check (`isLayoutReq && !useOld && !internalBuildId && cached.metadata`, matching the existing page guard). Also added `page._old.rsc` / `layout._old.rsc` fallback when a static causal hydration fetch arrives right as `page.rsc` is evicted during mid-ISR bailout.
+    - `cache-revalidate.js` (`revalidatePage` mid-ISR bailout): committed `metadata.json` (`dynamic: true`, bumped `generatedAt`) **before** deleting `page.rsc` / `shell.page.json` so concurrent KV readers (e.g. Deno KV on Windows) never observe a deleted `page.rsc` with a stale `generatedAt` timestamp.
+    - `handler.js` (Asymmetric SSR): deferred launching `pendingAsymLayoutSlotRevalPaths` background SWR until **after** `composeLayoutChainFromOwnFragments()` completes reading the pre-SWR `shell.layout.own.json` snapshot.
+
 ---
 
 ## Tracking Log by Stage
