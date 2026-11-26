@@ -1089,3 +1089,712 @@ console.log("PHASE7_STAGE1_MID_ISR_STATUS_OK");
     removeDirSafe(tmpApp);
   }
 });
+
+test("2. [Phase 7 / Stage 2 / Check #86] React 19 Document Metadata Hoisting & Scoped CSS Modules Under Asymmetric 3D PPR, Pure PPR Resume, <DinouCacheSlot> & All 3 Bundlers (Esbuild, Rollup, Webpack)", async () => {
+  const bundlers = ["esbuild", "rollup", "webpack"];
+  for (const bundler of bundlers) {
+    const tmpApp = createFixtureDir(`p7-s2-meta-css-${bundler}-`);
+    try {
+      writeDinouShim(tmpApp);
+      fs.writeFileSync(
+        path.join(tmpApp, "package.json"),
+        JSON.stringify(
+          { name: `p7-s2-meta-css-${bundler}`, private: true, type: "module" },
+          null,
+          2
+        )
+      );
+      fs.writeFileSync(
+        path.join(tmpApp, "p7s2-state.json"),
+        JSON.stringify({
+          l1Shell: 100,
+          l1Slot: 100,
+          l1SlotOdd: false,
+          l2Dyn: 100,
+          l3Shell: 100,
+          routeAShell: 100,
+          routeAHole: 100,
+          pageSlot: 100,
+          pageSlotOdd: false,
+          routeBShell: 100,
+          routeBHole: 100,
+          pureShell: 100,
+          pureHole: 100,
+          titleSlot: 100,
+          titleSlotOdd: false,
+          holeTitleSeq: 100,
+        })
+      );
+
+      const write = (rel, content) => {
+        const full = path.join(tmpApp, rel);
+        fs.mkdirSync(path.dirname(full), { recursive: true });
+        fs.writeFileSync(full, content, "utf8");
+      };
+
+      write(
+        "src/state.ts",
+        `import fs from "node:fs";
+import path from "node:path";
+export function readS() {
+  return JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "p7s2-state.json"), "utf8"));
+}
+`
+      );
+
+      write("src/layout_functions.ts", `export const revalidate = 3600;\n`);
+      write(
+        "src/layout.tsx",
+        `import type { ReactNode } from "react";
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <head>
+        <meta charSet="UTF-8" />
+        <link href="/styles.css" rel="stylesheet" />
+        <title>Root</title>
+      </head>
+      <body>{children}</body>
+    </html>
+  );
+}
+`
+      );
+      write("src/page.tsx", `export default function Home() { return <main>home</main>; }\n`);
+
+      // Isolated reset_layout branch under /mc so leaf routes/slots own the single <title>
+      write("src/mc/reset_layout", "");
+      write(
+        "src/mc/layout.module.css",
+        `.l1Shell { background-color: rgb(16, 32, 48); border-radius: 6px; }\n`
+      );
+      write(
+        "src/mc/slot.module.css",
+        `.slotEven { background-color: rgb(20, 80, 140); border-radius: 4px; }
+.slotOdd { background-color: rgb(180, 40, 90); border-radius: 12px; }
+.pageSlotEven { background-color: rgb(30, 110, 70); border-radius: 4px; }
+.pageSlotOdd { background-color: rgb(200, 100, 20); border-radius: 10px; }
+.titleSlotEven { background-color: rgb(60, 40, 120); border-radius: 4px; }
+.titleSlotOdd { background-color: rgb(150, 30, 150); border-radius: 14px; }
+`
+      );
+      write(
+        "src/mc/layout_functions.ts",
+        `export const ppr = true;
+export const revalidate = 3600;
+export function getCacheTags() { return ["cube-mc-l1"]; }
+`
+      );
+      write(
+        "src/mc/layout.tsx",
+        `import type { ReactNode } from "react";
+import { DinouCacheSlot } from "dinou/server";
+import { readS } from "../state";
+import layoutStyles from "./layout.module.css";
+import slotStyles from "./slot.module.css";
+
+export default function McL1Layout({ children }: { children: ReactNode }) {
+  const s = readS();
+  return (
+    <html lang="en">
+      <head>
+        <meta charSet="UTF-8" />
+        <link href="/styles.css" rel="stylesheet" />
+      </head>
+      <body>
+        <section id="mc-l1-shell" className={layoutStyles.l1Shell} data-class-hash={layoutStyles.l1Shell}>
+          <meta name="x-cube-l1" content={\`l1-meta-v\${s.l1Shell}\`} />
+          <span id="mc-l1-shell-seq">{s.l1Shell}</span>
+          <DinouCacheSlot id="cube-mc-l1-slot" tags={["mc-l1-slot"]} revalidate={3600}>
+            {async () => {
+              const st = readS();
+              const cls = st.l1SlotOdd ? slotStyles.slotOdd : slotStyles.slotEven;
+              const mode = st.l1SlotOdd ? "odd" : "even";
+              return (
+                <div id="mc-l1-slot-box" className={cls} data-class-hash={cls} data-mode={mode}>
+                  <meta name="x-cube-slot" content={\`slot-\${mode}-\${st.l1Slot}\`} />
+                  <span id="mc-l1-slot-seq">{st.l1Slot}</span>
+                </div>
+              );
+            }}
+          </DinouCacheSlot>
+          <div id="mc-l1-outlet">{children}</div>
+        </section>
+      </body>
+    </html>
+  );
+}
+`
+      );
+
+      // Dynamic L2
+      write("src/mc/dyn-l2/l2.module.css", `.l2Dyn { background-color: rgb(40, 60, 80); border-radius: 8px; }\n`);
+      write("src/mc/dyn-l2/layout_functions.ts", `export const revalidate = 0;\n`);
+      write(
+        "src/mc/dyn-l2/layout.tsx",
+        `import type { ReactNode } from "react";
+import { getContext } from "dinou/server";
+import { readS } from "../../state";
+import l2Styles from "./l2.module.css";
+
+export default function McDynL2Layout({ children }: { children: ReactNode }) {
+  const reqTag = String(getContext()?.req?.headers?.["x-mc-l2"] || "live");
+  const s = readS();
+  return (
+    <section id="mc-l2-dyn" className={l2Styles.l2Dyn} data-class-hash={l2Styles.l2Dyn} data-req-tag={reqTag}>
+      <meta name="x-cube-l2-dyn" content={\`dyn-v\${s.l2Dyn}\`} />
+      <span id="mc-l2-dyn-seq">{s.l2Dyn}</span>
+      <div>{children}</div>
+    </section>
+  );
+}
+`
+      );
+
+      // Static PPR L3
+      write("src/mc/dyn-l2/l3/l3.module.css", `.l3Shell { background-color: rgb(55, 75, 95); border-radius: 5px; }\n`);
+      write(
+        "src/mc/dyn-l2/l3/layout_functions.ts",
+        `export const ppr = true;
+export const revalidate = 3600;
+export function getCacheTags() { return ["cube-mc-l3"]; }
+`
+      );
+      write(
+        "src/mc/dyn-l2/l3/layout.tsx",
+        `import type { ReactNode } from "react";
+import { readS } from "../../../state";
+import l3Styles from "./l3.module.css";
+
+export default function McL3Layout({ children }: { children: ReactNode }) {
+  const s = readS();
+  return (
+    <section id="mc-l3-shell" className={l3Styles.l3Shell} data-class-hash={l3Styles.l3Shell}>
+      <meta name="x-cube-l3" content={\`l3-meta-v\${s.l3Shell}\`} />
+      <span id="mc-l3-shell-seq">{s.l3Shell}</span>
+      <div>{children}</div>
+    </section>
+  );
+}
+`
+      );
+
+      // Route A (Asymmetric PPR + Dynamic Hole + Page Slot)
+      write(
+        "src/mc/dyn-l2/l3/route-a/route-a.module.css",
+        `.shellBox { background-color: rgb(10, 90, 130); border-radius: 7px; }
+.holeBox { background-color: rgb(130, 60, 20); border-radius: 9px; }
+`
+      );
+      write(
+        "src/mc/dyn-l2/l3/route-a/page_functions.ts",
+        `export const ppr = true;
+export const revalidate = 3600;
+export function getCacheTags() { return ["cube-mc-route-a"]; }
+`
+      );
+      write(
+        "src/mc/dyn-l2/l3/route-a/page.tsx",
+        `import { Suspense } from "react";
+import { DinouCacheSlot, getContext } from "dinou/server";
+import { readS } from "../../../../state";
+import slotStyles from "../../../slot.module.css";
+import styles from "./route-a.module.css";
+
+async function RouteADynamicHole() {
+  const reqTag = String(getContext()?.req?.headers?.["x-mc-hole"] || "live");
+  const s = readS();
+  return (
+    <div id="mc-route-a-hole" className={styles.holeBox} data-class-hash={styles.holeBox} data-req-tag={reqTag}>
+      <meta name="x-cube-hole" content={\`hole-a-v\${s.routeAHole}\`} />
+      <span id="mc-route-a-hole-seq">{s.routeAHole}</span>
+      <DinouCacheSlot id="cube-mc-page-slot" tags={["mc-page-slot"]} revalidate={3600}>
+        {async () => {
+          const ps = readS();
+          const cls = ps.pageSlotOdd ? slotStyles.pageSlotOdd : slotStyles.pageSlotEven;
+          const mode = ps.pageSlotOdd ? "odd" : "even";
+          return (
+            <div id="mc-page-slot-box" className={cls} data-class-hash={cls} data-mode={mode}>
+              <meta name="x-cube-page-slot" content={\`page-slot-\${mode}-\${ps.pageSlot}\`} />
+              <span id="mc-page-slot-seq">{ps.pageSlot}</span>
+            </div>
+          );
+        }}
+      </DinouCacheSlot>
+    </div>
+  );
+}
+
+export default function RouteAPage() {
+  const s = readS();
+  return (
+    <article id="mc-route-a-page">
+      <title>{\`Cube Route A v\${s.routeAShell}\`}</title>
+      <meta name="description" content={\`Desc A v\${s.routeAShell}\`} />
+      <link rel="canonical" href="https://example.test/route-a" />
+      <div id="mc-route-a-shell" className={styles.shellBox} data-class-hash={styles.shellBox}>
+        <span id="mc-route-a-shell-seq">{s.routeAShell}</span>
+      </div>
+      <Suspense fallback={<div>loading-a</div>}>
+        <RouteADynamicHole />
+      </Suspense>
+    </article>
+  );
+}
+`
+      );
+
+      // Route B (Asymmetric PPR + Dynamic Hole)
+      write(
+        "src/mc/dyn-l2/l3/route-b/route-b.module.css",
+        `.shellBox { background-color: rgb(90, 20, 110); border-radius: 11px; }
+.holeBox { background-color: rgb(20, 120, 90); border-radius: 13px; }
+`
+      );
+      write(
+        "src/mc/dyn-l2/l3/route-b/page_functions.ts",
+        `export const ppr = true;
+export const revalidate = 3600;
+export function getCacheTags() { return ["cube-mc-route-b"]; }
+`
+      );
+      write(
+        "src/mc/dyn-l2/l3/route-b/page.tsx",
+        `import { Suspense } from "react";
+import { getContext } from "dinou/server";
+import { readS } from "../../../../state";
+import styles from "./route-b.module.css";
+
+async function RouteBDynamicHole() {
+  const reqTag = String(getContext()?.req?.headers?.["x-mc-hole"] || "live");
+  const s = readS();
+  return (
+    <div id="mc-route-b-hole" className={styles.holeBox} data-class-hash={styles.holeBox} data-req-tag={reqTag}>
+      <meta name="x-cube-hole" content={\`hole-b-v\${s.routeBHole}\`} />
+      <span id="mc-route-b-hole-seq">{s.routeBHole}</span>
+    </div>
+  );
+}
+
+export default function RouteBPage() {
+  const s = readS();
+  return (
+    <article id="mc-route-b-page">
+      <title>{\`Cube Route B v\${s.routeBShell}\`}</title>
+      <meta name="description" content={\`Desc B v\${s.routeBShell}\`} />
+      <link rel="canonical" href="https://example.test/route-b" />
+      <div id="mc-route-b-shell" className={styles.shellBox} data-class-hash={styles.shellBox}>
+        <span id="mc-route-b-shell-seq">{s.routeBShell}</span>
+      </div>
+      <Suspense fallback={<div>loading-b</div>}>
+        <RouteBDynamicHole />
+      </Suspense>
+    </article>
+  );
+}
+`
+      );
+
+      // Pure PPR (Direct under static PPR L1 -> exercises handlePprResume streaming!)
+      write(
+        "src/mc/pure-ppr/pure-ppr.module.css",
+        `.shellBox { background-color: rgb(70, 80, 90); border-radius: 6px; }
+.holeBox { background-color: rgb(160, 50, 70); border-radius: 10px; }
+`
+      );
+      write(
+        "src/mc/pure-ppr/page_functions.ts",
+        `export const ppr = true;
+export const revalidate = 3600;
+export function getCacheTags() { return ["cube-mc-pure-ppr"]; }
+`
+      );
+      write(
+        "src/mc/pure-ppr/page.tsx",
+        `import { Suspense } from "react";
+import { DinouCacheSlot, getContext } from "dinou/server";
+import { readS } from "../../state";
+import slotStyles from "../slot.module.css";
+import styles from "./pure-ppr.module.css";
+
+async function PurePprDynamicHole() {
+  const reqTag = String(getContext()?.req?.headers?.["x-mc-hole"] || "live");
+  const s = readS();
+  return (
+    <div id="mc-pure-hole" className={styles.holeBox} data-class-hash={styles.holeBox} data-req-tag={reqTag}>
+      <meta name="x-cube-pure-hole" content={\`pure-hole-v\${s.pureHole}\`} />
+      <link rel="alternate" href={\`https://example.test/pure-hole/\${s.pureHole}\`} />
+      <span id="mc-pure-hole-seq">{s.pureHole}</span>
+    </div>
+  );
+}
+
+export default function PurePprPage() {
+  const s = readS();
+  return (
+    <article id="mc-pure-ppr-page">
+      <meta name="description" content={\`Pure PPR Desc v\${s.pureShell}\`} />
+      <link rel="canonical" href="https://example.test/pure-ppr" />
+      <div id="mc-pure-shell" className={styles.shellBox} data-class-hash={styles.shellBox}>
+        <span id="mc-pure-shell-seq">{s.pureShell}</span>
+      </div>
+      <DinouCacheSlot id="cube-mc-title-slot" tags={["mc-title-slot"]} revalidate={3600}>
+        {async () => {
+          const ts = readS();
+          const cls = ts.titleSlotOdd ? slotStyles.titleSlotOdd : slotStyles.titleSlotEven;
+          const mode = ts.titleSlotOdd ? "odd" : "even";
+          return (
+            <div id="mc-title-slot-box" className={cls} data-class-hash={cls} data-mode={mode}>
+              <title>{\`Cube Slot Title (\${ts.titleSlot})\`}</title>
+              <meta name="x-cube-title-slot" content={\`title-slot-\${mode}-\${ts.titleSlot}\`} />
+              <span id="mc-title-slot-seq">{ts.titleSlot}</span>
+            </div>
+          );
+        }}
+      </DinouCacheSlot>
+      <Suspense fallback={<div>loading-pure</div>}>
+        <PurePprDynamicHole />
+      </Suspense>
+    </article>
+  );
+}
+`
+      );
+
+      // Pure PPR route where the dynamic hole itself emits <title>
+      write("src/mc/pure-ppr-hole-title/page_functions.ts", `export const ppr = true;\nexport const revalidate = 3600;\n`);
+      write(
+        "src/mc/pure-ppr-hole-title/page.tsx",
+        `import { Suspense } from "react";
+import { getContext } from "dinou/server";
+import { readS } from "../../state";
+
+async function HoleWithTitle() {
+  const reqTag = String(getContext()?.req?.headers?.["x-mc-hole"] || "live");
+  const s = readS();
+  return (
+    <div id="mc-hole-title-box" data-req-tag={reqTag}>
+      <title>{\`Hole Dynamic Title v\${s.holeTitleSeq}\`}</title>
+      <meta name="x-cube-hole-title" content={\`ht-v\${s.holeTitleSeq}\`} />
+      <span id="mc-hole-title-seq">{s.holeTitleSeq}</span>
+    </div>
+  );
+}
+
+export default function PurePprHoleTitlePage() {
+  return (
+    <article id="mc-pure-hole-title-page">
+      <Suspense fallback={<div>loading-ht</div>}>
+        <HoleWithTitle />
+      </Suspense>
+    </article>
+  );
+}
+`
+      );
+
+      // Build with the current bundler (esbuild | rollup | webpack)
+      const buildRes = spawnSync(process.execPath, [CLI_PATH, `build:node:${bundler}`], {
+        cwd: tmpApp,
+        encoding: "utf8",
+        env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+        timeout: 120_000,
+      });
+      assert.equal(
+        buildRes.status,
+        0,
+        `[${bundler}] build:node:${bundler} failed:\nSTDOUT:\n${buildRes.stdout}\nSTDERR:\n${buildRes.stderr}`
+      );
+
+      const verifyScript = path.join(tmpApp, "_verify_p7s2.mjs");
+      fs.writeFileSync(
+        verifyScript,
+        `import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const BUNDLER = ${JSON.stringify(bundler)};
+const DINOU_ROOT = ${JSON.stringify(DINOU_ROOT)};
+const STATE_PATH = path.resolve(process.cwd(), "p7s2-state.json");
+const POISON = 999;
+
+function writeS(patch) {
+  const cur = JSON.parse(fs.readFileSync(STATE_PATH, "utf8"));
+  fs.writeFileSync(STATE_PATH, JSON.stringify({ ...cur, ...patch }), "utf8");
+}
+
+function attrById(html, id, attr) {
+  const re = new RegExp(\`<[^>]*id="\${id}"[^>]*>\`);
+  const m = html.match(re);
+  if (!m) return null;
+  const am = m[0].match(new RegExp(\`\${attr}="([^"]+)"\`));
+  return am ? am[1] : null;
+}
+
+function extractHead(html) {
+  const m = html.match(/<head[^>]*>([\\s\\S]*?)<\\/head>/i);
+  return m ? m[1] : "";
+}
+
+function countMatches(str, re) {
+  const m = str.match(re);
+  return m ? m.length : 0;
+}
+
+const { default: createScopedName } = await import(pathToFileURL(path.join(DINOU_ROOT, "core", "createScopedName.js")).href);
+const { deserializeJSX } = await import(pathToFileURL(path.join(DINOU_ROOT, "core", "cache-slot.js")).href);
+const { FileSystemStorage, setStorageAdapter } = await import(pathToFileURL(path.join(DINOU_ROOT, "core", "storage-adapter.js")).href);
+setStorageAdapter(new FileSystemStorage(path.resolve(process.cwd(), ".dinou/dist2")));
+globalThis.__DINOU_RUNTIME__ = "node-bundle";
+const rscMod = await import(pathToFileURL(path.resolve(process.cwd(), ".dinou/node/rsc-engine.mjs")).href);
+const ssrMod = await import(pathToFileURL(path.resolve(process.cwd(), ".dinou/node/ssr-engine.mjs")).href);
+globalThis.__DINOU_RENDER_HTML_STREAM__ = ssrMod.renderHtml;
+
+const dist3Dir = path.resolve(process.cwd(), ".dinou/dist3");
+const stylesCssPath = path.join(dist3Dir, "styles.css");
+assert.ok(fs.existsSync(stylesCssPath), \`[\${BUNDLER}] styles.css must exist in .dinou/dist3\`);
+const stylesCss = fs.readFileSync(stylesCssPath, "utf8");
+
+// 1. Verify expected scoped class hashes exist in emitted styles.css with exact color rules!
+const expectedClasses = [
+  ["l1Shell", "src/mc/layout.module.css", "16"],
+  ["slotEven", "src/mc/slot.module.css", "140"],
+  ["slotOdd", "src/mc/slot.module.css", "180"],
+  ["pageSlotEven", "src/mc/slot.module.css", "110"],
+  ["pageSlotOdd", "src/mc/slot.module.css", "200"],
+  ["titleSlotEven", "src/mc/slot.module.css", "120"],
+  ["titleSlotOdd", "src/mc/slot.module.css", "150"],
+  ["l2Dyn", "src/mc/dyn-l2/l2.module.css", "80"],
+  ["l3Shell", "src/mc/dyn-l2/l3/l3.module.css", "95"],
+  ["shellBox", "src/mc/dyn-l2/l3/route-a/route-a.module.css", "130"],
+  ["holeBox", "src/mc/dyn-l2/l3/route-a/route-a.module.css", "60"],
+  ["shellBox", "src/mc/dyn-l2/l3/route-b/route-b.module.css", "110"],
+  ["holeBox", "src/mc/dyn-l2/l3/route-b/route-b.module.css", "120"],
+  ["shellBox", "src/mc/pure-ppr/pure-ppr.module.css", "90"],
+  ["holeBox", "src/mc/pure-ppr/pure-ppr.module.css", "160"],
+];
+
+const scopedMap = {};
+for (const [localName, relCss] of expectedClasses) {
+  const absCss = path.resolve(process.cwd(), relCss);
+  const hash = createScopedName(localName, absCss);
+  scopedMap[\`\${relCss}#\${localName}\`] = hash;
+  assert.ok(
+    stylesCss.includes(\`.\${hash}\`),
+    \`[\${BUNDLER}] styles.css MUST contain scoped selector .\${hash} for \${relCss}#\${localName}\`
+  );
+}
+
+// 2. Verify serializeJSX / deserializeJSX round-trip fidelity of <title>, <meta>, <link> in dist2 shell/slot JSONs
+const routeAShellJsonPath = path.resolve(process.cwd(), ".dinou/dist2/mc/dyn-l2/l3/route-a/shell.page.json");
+assert.ok(fs.existsSync(routeAShellJsonPath), \`[\${BUNDLER}] route-a/shell.page.json must exist\`);
+const deserializedRouteA = deserializeJSX(fs.readFileSync(routeAShellJsonPath, "utf8"));
+const foundTags = [];
+(function walk(node) {
+  if (!node || typeof node !== "object") return;
+  if (Array.isArray(node)) { node.forEach(walk); return; }
+  if (node.$$typeof === Symbol.for("react.transitional.element")) {
+    if (node.type === "title" || node.type === "meta" || node.type === "link") {
+      foundTags.push({ type: node.type, props: node.props });
+    }
+    if (node.props && node.props.children) walk(node.props.children);
+  }
+})(deserializedRouteA);
+assert.ok(
+  foundTags.some((t) => t.type === "title" && t.props?.children === "Cube Route A v100"),
+  \`[\${BUNDLER}] deserializeJSX must preserve <title>Cube Route A v100</title>, found: \${JSON.stringify(foundTags)}\`
+);
+assert.ok(
+  foundTags.some((t) => t.type === "meta" && t.props?.name === "description" && t.props?.content === "Desc A v100"),
+  \`[\${BUNDLER}] deserializeJSX must preserve <meta name="description">\`
+);
+assert.ok(
+  foundTags.some((t) => t.type === "link" && t.props?.rel === "canonical" && t.props?.href === "https://example.test/route-a"),
+  \`[\${BUNDLER}] deserializeJSX must preserve <link rel="canonical">\`
+);
+
+const platformContext = {
+  runtime: "node-bundle",
+  renderHtmlStream: ssrMod.renderHtml,
+};
+async function req(urlPath, headers = {}) {
+  const res = await rscMod.handleRequest(
+    new Request(\`http://localhost:3000\${urlPath}\`, { headers }),
+    platformContext
+  );
+  return { status: res.status, headers: res.headers, text: await res.text() };
+}
+
+// 3. Asymmetric 3D PPR Route A SSR: all 7 layers metadata hoisted into <head> + exact CSS Module hashes!
+const resA = await req("/mc/dyn-l2/l3/route-a", { "x-mc-l2": "r1", "x-mc-hole": "r1" });
+assert.equal(resA.status, 200);
+const headA = extractHead(resA.text);
+assert.equal(countMatches(resA.text, /<title\\b[^>]*>/gi), 1, \`[\${BUNDLER}] Route A must have exactly 1 <title> tag\`);
+assert.ok(headA.includes("<title>Cube Route A v100</title>"), \`[\${BUNDLER}] Route A <head> missing hoisted <title>\`);
+assert.ok(headA.includes('name="x-cube-l1"') && headA.includes('content="l1-meta-v100"'), \`[\${BUNDLER}] Route A <head> missing L1 meta\`);
+assert.ok(headA.includes('name="x-cube-slot"') && headA.includes('content="slot-even-100"'), \`[\${BUNDLER}] Route A <head> missing L1 slot meta\`);
+assert.ok(headA.includes('name="x-cube-l2-dyn"') && headA.includes('content="dyn-v100"'), \`[\${BUNDLER}] Route A <head> missing Dynamic L2 meta\`);
+assert.ok(headA.includes('name="x-cube-l3"') && headA.includes('content="l3-meta-v100"'), \`[\${BUNDLER}] Route A <head> missing L3 meta\`);
+assert.ok(headA.includes('name="description"') && headA.includes('content="Desc A v100"'), \`[\${BUNDLER}] Route A <head> missing description meta\`);
+assert.ok(headA.includes('rel="canonical"') && headA.includes('href="https://example.test/route-a"'), \`[\${BUNDLER}] Route A <head> missing canonical link\`);
+assert.ok(headA.includes('name="x-cube-hole"') && headA.includes('content="hole-a-v100"'), \`[\${BUNDLER}] Route A <head> missing dynamic hole meta\`);
+assert.ok(headA.includes('name="x-cube-page-slot"') && headA.includes('content="page-slot-even-100"'), \`[\${BUNDLER}] Route A <head> missing page slot meta\`);
+assert.equal(countMatches(headA, /name="description"/gi), 1, \`[\${BUNDLER}] Route A must have 0 duplicate description metas\`);
+
+// Verify CSS Module hash parity on EVERY layer in Route A HTML!
+assert.equal(attrById(resA.text, "mc-l1-shell", "class"), scopedMap["src/mc/layout.module.css#l1Shell"]);
+assert.equal(attrById(resA.text, "mc-l1-slot-box", "class"), scopedMap["src/mc/slot.module.css#slotEven"]);
+assert.equal(attrById(resA.text, "mc-l2-dyn", "class"), scopedMap["src/mc/dyn-l2/l2.module.css#l2Dyn"]);
+assert.equal(attrById(resA.text, "mc-l3-shell", "class"), scopedMap["src/mc/dyn-l2/l3/l3.module.css#l3Shell"]);
+assert.equal(attrById(resA.text, "mc-route-a-shell", "class"), scopedMap["src/mc/dyn-l2/l3/route-a/route-a.module.css#shellBox"]);
+assert.equal(attrById(resA.text, "mc-route-a-hole", "class"), scopedMap["src/mc/dyn-l2/l3/route-a/route-a.module.css#holeBox"]);
+assert.equal(attrById(resA.text, "mc-page-slot-box", "class"), scopedMap["src/mc/slot.module.css#pageSlotEven"]);
+
+// Route B SSR: zero Route A leakage!
+const resB = await req("/mc/dyn-l2/l3/route-b", { "x-mc-l2": "r2", "x-mc-hole": "r2" });
+assert.equal(resB.status, 200);
+const headB = extractHead(resB.text);
+assert.equal(countMatches(resB.text, /<title\\b[^>]*>/gi), 1);
+assert.ok(headB.includes("<title>Cube Route B v100</title>"));
+assert.ok(headB.includes('content="Desc B v100"'));
+assert.ok(headB.includes('href="https://example.test/route-b"'));
+assert.ok(headB.includes('content="hole-b-v100"'));
+assert.ok(!headB.includes("Route A") && !headB.includes("route-a") && !headB.includes("hole-a"));
+assert.equal(attrById(resB.text, "mc-route-b-shell", "class"), scopedMap["src/mc/dyn-l2/l3/route-b/route-b.module.css#shellBox"]);
+assert.equal(attrById(resB.text, "mc-route-b-hole", "class"), scopedMap["src/mc/dyn-l2/l3/route-b/route-b.module.css#holeBox"]);
+
+// 4. Pure PPR Streaming Resume (handlePprResume): Dynamic Hole MUST NOT drop hoisted <meta>/<link>/<title>!
+writeS({ pureHole: 155, holeTitleSeq: 177, l1Shell: POISON, pureShell: POISON });
+const resPure = await req("/mc/pure-ppr", { "x-mc-hole": "pure-live" });
+assert.equal(resPure.status, 200);
+const headPure = extractHead(resPure.text);
+assert.ok(headPure.includes("<title>Cube Slot Title (100)</title>"), \`[\${BUNDLER}] Pure PPR <head> missing title slot\`);
+assert.ok(headPure.includes('name="x-cube-title-slot"') && headPure.includes('content="title-slot-even-100"'));
+assert.ok(headPure.includes('name="description"') && headPure.includes('content="Pure PPR Desc v100"'));
+assert.ok(
+  resPure.text.includes('name="x-cube-pure-hole"') && resPure.text.includes('content="pure-hole-v155"'),
+  \`[\${BUNDLER}] Pure PPR dynamic hole hoisted <meta name="x-cube-pure-hole" content="pure-hole-v155"> MUST NOT be dropped by extractPprHoleHtml!\`
+);
+assert.ok(
+  resPure.text.includes('rel="alternate"') && resPure.text.includes('href="https://example.test/pure-hole/155"'),
+  \`[\${BUNDLER}] Pure PPR dynamic hole hoisted <link rel="alternate"> MUST NOT be dropped by extractPprHoleHtml!\`
+);
+// Ensure the body replacement template (ppr-content-ppr-hole-1) does NOT dump hoisted <meta>/<link> into <body>!
+const bodyTplMatch = resPure.text.match(/<template id="ppr-content-ppr-hole-\\d+">([\\s\\S]*?)<\\/template>/i);
+assert.ok(bodyTplMatch, \`[\${BUNDLER}] Expected ppr-content template in Pure PPR stream\`);
+assert.ok(
+  !bodyTplMatch[1].includes('name="x-cube-pure-hole"') && !bodyTplMatch[1].includes('rel="alternate"'),
+  \`[\${BUNDLER}] Hoisted <meta>/<link> must be hoisted into document.head, NOT dumped into body template: \${bodyTplMatch[1]}\`
+);
+assert.equal(attrById(resPure.text, "mc-pure-shell", "class"), scopedMap["src/mc/pure-ppr/pure-ppr.module.css#shellBox"]);
+assert.equal(attrById(resPure.text, "mc-title-slot-box", "class"), scopedMap["src/mc/slot.module.css#titleSlotEven"]);
+assert.equal(attrById(resPure.text, "mc-pure-hole", "class"), scopedMap["src/mc/pure-ppr/pure-ppr.module.css#holeBox"]);
+assert.ok(!resPure.text.includes(String(POISON)), \`[\${BUNDLER}] Pure PPR poisoned static shells must stay frozen!\`);
+
+// Pure PPR dynamic hole emitting <title>
+const resHoleTitle = await req("/mc/pure-ppr-hole-title", { "x-mc-hole": "ht-live" });
+assert.equal(resHoleTitle.status, 200);
+assert.ok(
+  resHoleTitle.text.includes("<title>Hole Dynamic Title v177</title>"),
+  \`[\${BUNDLER}] Pure PPR dynamic hole hoisted <title> MUST NOT be dropped!\`
+);
+assert.ok(
+  resHoleTitle.text.includes('name="x-cube-hole-title"') && resHoleTitle.text.includes('content="ht-v177"'),
+  \`[\${BUNDLER}] Pure PPR dynamic hole hoisted <meta name="x-cube-hole-title"> MUST NOT be dropped!\`
+);
+
+// 5. Live Slot Refresh (/____rsc_slot____?fresh=1) & revalidateTag() updating metadata + CSS Module class while poisoned shells stay frozen!
+writeS({
+  l1SlotOdd: true,
+  l1Slot: 200,
+  pageSlotOdd: true,
+  pageSlot: 201,
+  titleSlotOdd: true,
+  titleSlot: 202,
+  l1Shell: POISON,
+  l3Shell: POISON,
+  routeAShell: POISON,
+  pureShell: POISON,
+});
+
+const slotFreshRes = await req("/____rsc_slot____/cube-mc-l1-slot?fresh=1&path=/mc/dyn-l2/l3/route-a");
+assert.equal(slotFreshRes.status, 200);
+assert.ok(slotFreshRes.text.includes("slot-odd-200"), \`[\${BUNDLER}] /____rsc_slot____ must emit updated meta content\`);
+assert.ok(
+  slotFreshRes.text.includes(scopedMap["src/mc/slot.module.css#slotOdd"]),
+  \`[\${BUNDLER}] /____rsc_slot____ must emit exact slotOdd CSS Module hash matching styles.css\`
+);
+
+await rscMod.revalidateTag("mc-page-slot");
+await rscMod.revalidateTag("mc-title-slot");
+
+const resAAfterSlot = await req("/mc/dyn-l2/l3/route-a", { "x-mc-l2": "r3", "x-mc-hole": "r3" });
+const headAAfterSlot = extractHead(resAAfterSlot.text);
+assert.ok(headAAfterSlot.includes('content="slot-odd-200"'), \`[\${BUNDLER}] L1 slot meta must persist after fresh refresh\`);
+assert.ok(headAAfterSlot.includes('content="page-slot-odd-201"'), \`[\${BUNDLER}] Page slot meta must update after revalidateTag\`);
+assert.equal(attrById(resAAfterSlot.text, "mc-l1-slot-box", "class"), scopedMap["src/mc/slot.module.css#slotOdd"]);
+assert.equal(attrById(resAAfterSlot.text, "mc-page-slot-box", "class"), scopedMap["src/mc/slot.module.css#pageSlotOdd"]);
+assert.ok(headAAfterSlot.includes("<title>Cube Route A v100</title>"), \`[\${BUNDLER}] Poisoned Route A shell must stay frozen at 100\`);
+assert.ok(headAAfterSlot.includes('content="l1-meta-v100"'), \`[\${BUNDLER}] Poisoned L1 shell must stay frozen at 100\`);
+assert.ok(headAAfterSlot.includes('content="l3-meta-v100"'), \`[\${BUNDLER}] Poisoned L3 shell must stay frozen at 100\`);
+assert.ok(!resAAfterSlot.text.includes(String(POISON)));
+
+const resPureAfterSlot = await req("/mc/pure-ppr", { "x-mc-hole": "pure-2" });
+const headPureAfterSlot = extractHead(resPureAfterSlot.text);
+assert.ok(headPureAfterSlot.includes("<title>Cube Slot Title (202)</title>"), \`[\${BUNDLER}] Title-owning slot must update <title> after revalidateTag\`);
+assert.ok(headPureAfterSlot.includes('content="title-slot-odd-202"'));
+assert.equal(attrById(resPureAfterSlot.text, "mc-title-slot-box", "class"), scopedMap["src/mc/slot.module.css#titleSlotOdd"]);
+assert.ok(!resPureAfterSlot.text.includes(String(POISON)));
+
+// 6. Surgical revalidatePage() & revalidateLayout() metadata updates with poisoning!
+writeS({ routeAShell: 300, l1Shell: POISON, l3Shell: POISON });
+await rscMod.revalidatePage("/mc/dyn-l2/l3/route-a");
+const resARevalPage = await req("/mc/dyn-l2/l3/route-a");
+const headARevalPage = extractHead(resARevalPage.text);
+assert.ok(headARevalPage.includes("<title>Cube Route A v300</title>"));
+assert.ok(headARevalPage.includes('content="Desc A v300"'));
+assert.ok(headARevalPage.includes('content="l1-meta-v100"'), \`[\${BUNDLER}] L1 must remain frozen on revalidatePage\`);
+assert.ok(headARevalPage.includes('content="l3-meta-v100"'), \`[\${BUNDLER}] L3 must remain frozen on revalidatePage\`);
+
+writeS({ l3Shell: 301, l1Shell: POISON, routeAShell: POISON });
+await rscMod.revalidateLayout("/mc/dyn-l2/l3");
+const resARevalL3 = await req("/mc/dyn-l2/l3/route-a");
+const headARevalL3 = extractHead(resARevalL3.text);
+assert.ok(headARevalL3.includes('content="l3-meta-v301"'));
+assert.ok(headARevalL3.includes('content="l1-meta-v100"'), \`[\${BUNDLER}] L1 must remain frozen on L3 revalidateLayout\`);
+assert.ok(headARevalL3.includes("<title>Cube Route A v300</title>"), \`[\${BUNDLER}] Route A must remain frozen on L3 revalidateLayout\`);
+
+writeS({ l1Shell: 302, l3Shell: POISON, routeAShell: POISON });
+await rscMod.revalidateLayout("/mc");
+const resARevalL1 = await req("/mc/dyn-l2/l3/route-a");
+const headARevalL1 = extractHead(resARevalL1.text);
+assert.ok(headARevalL1.includes('content="l1-meta-v302"'));
+assert.ok(headARevalL1.includes('content="l3-meta-v301"'), \`[\${BUNDLER}] L3 must remain frozen on L1 revalidateLayout\`);
+assert.ok(headARevalL1.includes("<title>Cube Route A v300</title>"), \`[\${BUNDLER}] Route A must remain frozen on L1 revalidateLayout\`);
+
+console.log(\`PHASE7_STAGE2_META_CSS_\${BUNDLER.toUpperCase()}_OK\`);
+`,
+        "utf8"
+      );
+
+      const runRes = spawnSync(process.execPath, [verifyScript], {
+        cwd: tmpApp,
+        encoding: "utf8",
+        env: { ...process.env, NODE_ENV: "production", NODE_OPTIONS: "" },
+        timeout: 90_000,
+      });
+      assert.equal(
+        runRes.status,
+        0,
+        `[${bundler}] Phase 7 Stage 2 verification failed:\nSTDOUT:\n${runRes.stdout}\nSTDERR:\n${runRes.stderr}`
+      );
+      assert.ok(
+        runRes.stdout.includes(`PHASE7_STAGE2_META_CSS_${bundler.toUpperCase()}_OK`),
+        `[${bundler}] Expected success marker in stdout`
+      );
+    } finally {
+      removeDirSafe(tmpApp);
+    }
+  }
+});

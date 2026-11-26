@@ -318,6 +318,44 @@ function buildPprHoleSkeleton(node, targetHoleId, replacementEl, pageTree = null
   return { found: false, node: null };
 }
 
+const HOIST_ATTR_PATTERN = '(?:"[^"]*"|\'[^\']*\'|[^>"\'])*';
+const LEADING_HOIST_TOKEN_RE = new RegExp(
+  `^(?:(\\s+)|(<title\\b${HOIST_ATTR_PATTERN}>[\\s\\S]*?<\\/title>)|(<meta\\b${HOIST_ATTR_PATTERN}\\/?>)|(<link\\b${HOIST_ATTR_PATTERN}\\/?>)|(<style\\b${HOIST_ATTR_PATTERN}\\bdata-precedence=${HOIST_ATTR_PATTERN}>[\\s\\S]*?<\\/style>))`,
+  "i"
+);
+
+/**
+ * Separates React 19 hoisted document metadata (<title>, <meta>, <link>, and
+ * precedence-scoped <style>) emitted at the beginning of a streamed HTML fragment
+ * from the remaining body markup. Preserves non-hoisted tags (e.g. <meta itemProp>)
+ * and React Suspense boundary comments (<!--$-->) intact in `restHtml`.
+ */
+function extractLeadingHoistedHeadHtml(rawHtml) {
+  if (typeof rawHtml !== "string" || !rawHtml) {
+    return { headHtml: "", restHtml: rawHtml || "" };
+  }
+  let idx = 0;
+  let lastHeadEnd = 0;
+  const len = rawHtml.length;
+  const headParts = [];
+  while (idx < len) {
+    const m = LEADING_HOIST_TOKEN_RE.exec(rawHtml.slice(idx));
+    if (!m) break;
+    idx += m[0].length;
+    if (m[2] || m[3] || m[4] || m[5]) {
+      headParts.push(m[0]);
+      lastHeadEnd = idx;
+    }
+  }
+  if (headParts.length === 0) {
+    return { headHtml: "", restHtml: rawHtml };
+  }
+  return {
+    headHtml: headParts.join(""),
+    restHtml: rawHtml.slice(lastHeadEnd),
+  };
+}
+
 function extractPprHoleHtml(rawHtml, holeId) {
   if (typeof rawHtml !== "string") return null;
   const openTag = `<dinou-ppr-extract data-h="${holeId}">`;
@@ -325,9 +363,22 @@ function extractPprHoleHtml(rawHtml, holeId) {
   const startIdx = rawHtml.indexOf(openTag);
   const endIdx = rawHtml.lastIndexOf(closeTag);
   if (startIdx !== -1 && endIdx > startIdx) {
-    return rawHtml.slice(startIdx + openTag.length, endIdx);
+    const prefix = rawHtml.slice(0, startIdx);
+    const { headHtml } = extractLeadingHoistedHeadHtml(prefix);
+    const bodyHtml = rawHtml.slice(startIdx + openTag.length, endIdx);
+    return { bodyHtml, headHtml };
   }
   return null;
+}
+
+function buildPprHoleChunk(holeId, boundaryIndex, bodyHtml, headHtml) {
+  const headTpl = headHtml
+    ? `<template id="ppr-head-${holeId}">${headHtml}</template>\n`
+    : "";
+  const headScript = headHtml
+    ? `var h=document.getElementById("ppr-head-${holeId}");if(h&&document.head){try{var ns=Array.from((h.content||h).childNodes);for(var i=0;i<ns.length;i++){var n=ns[i];if(!n||n.nodeType!==1)continue;var tn=n.tagName;if(tn==="TITLE"){var exT=document.head.querySelector("title");if(!exT){document.head.appendChild(n);}else if(exT.textContent!==n.textContent){exT.textContent=n.textContent;}continue;}var dup=false;var ex=document.head.querySelectorAll(tn.toLowerCase());for(var j=0;j<ex.length;j++){var e=ex[j];if(e.attributes.length!==n.attributes.length)continue;var same=true;for(var k=0;k<n.attributes.length;k++){var a=n.attributes[k];if(e.getAttribute(a.name)!==a.value){same=false;break;}}if(same){dup=true;break;}}if(!dup)document.head.appendChild(n);}}finally{h.remove();}}`
+    : "";
+  return `\n${headTpl}<template id="ppr-content-${holeId}"><!--$-->${bodyHtml}<!--/$--></template>\n<script>(function(){${headScript}var c=document.getElementById("ppr-content-${holeId}");if(!c)return;var b=document.getElementById("B:${boundaryIndex}");var t=document.querySelector('[data-ppr-hole="${holeId}"]')||(b?b.nextElementSibling:null);try{if(t){if(c.content){t.replaceWith(c.content);}else{t.replaceWith.apply(t,Array.from(c.childNodes));}}}finally{c.remove();}})();</script>\n`;
 }
 
 /**
@@ -770,6 +821,7 @@ async function streamDynamicHoles(
           let chunkToWrite = null;
           try {
             let html = "";
+            let headHtml = "";
             const resolvedChildren = await asyncRenderJSXToClientJSX(children);
             if (isAborted()) return;
             if (resolvedHolesOut && typeof resolvedHolesOut.set === "function") {
@@ -819,7 +871,8 @@ async function streamDynamicHoles(
                     const rawSkelHtml = await new Response(skelHtmlStream).text();
                     const extracted = extractPprHoleHtml(rawSkelHtml, currentHoleId);
                     if (extracted !== null) {
-                      html = extracted;
+                      html = extracted.bodyHtml;
+                      headHtml = extracted.headHtml;
                       renderedViaSkeleton = true;
                     }
                   }
@@ -831,11 +884,19 @@ async function streamDynamicHoles(
                   bootstrapModules: [], importMapHtml: "",
                 });
                 if (isAborted()) return;
-                html = await new Response(htmlStream).text();
+                const rawHoleHtml = await new Response(htmlStream).text();
+                const split = extractLeadingHoistedHeadHtml(rawHoleHtml);
+                html = split.restHtml;
+                headHtml = split.headHtml;
               }
             }
             if (isAborted()) return;
-            chunkToWrite = `\n<template id="ppr-content-${currentHoleId}"><!--$-->${html}<!--/$--></template>\n<script>(function(){var c=document.getElementById("ppr-content-${currentHoleId}");if(!c)return;var b=document.getElementById("B:${currentBoundaryIndex}");var t=document.querySelector('[data-ppr-hole="${currentHoleId}"]')||(b?b.nextElementSibling:null);try{if(t){if(c.content){t.replaceWith(c.content);}else{t.replaceWith.apply(t,Array.from(c.childNodes));}}}finally{c.remove();}})();</script>\n`;
+            chunkToWrite = buildPprHoleChunk(
+              currentHoleId,
+              currentBoundaryIndex,
+              html,
+              headHtml
+            );
           } catch (holeErr) {
             if (isAborted()) return;
             if (holeErr && holeErr.$$type === "dinou-internal-redirect") {

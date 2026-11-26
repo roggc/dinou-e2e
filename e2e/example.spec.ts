@@ -23029,5 +23029,486 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         await tabB.close().catch(() => {});
       }
     });
+
+    // =========================================================================
+    // 48. [Phase 7 / Stage 2 / Check #86] React 19 Document Metadata Hoisting &
+    //     Scoped CSS Modules Under Asymmetric 3D PPR, Pure PPR Resume,
+    //     <DinouCacheSlot> Live Refresh & Soft Navigation
+    // =========================================================================
+    test("48. [Check #86] React 19 Document Metadata Hoisting & Scoped CSS Modules across Asymmetric 3D PPR, Pure PPR Resume, Soft-Nav & Live <DinouCacheSlot> Refresh", async ({
+      page,
+    }) => {
+      test.setTimeout(120000);
+      test.skip(
+        !isProd,
+        "Phase 7 Stage 2 3D PPR metadata hoisting & CSS Modules stress test requires production mode"
+      );
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      const readSeq = async (p: typeof page, selector: string) =>
+        Number((await p.locator(selector).textContent())?.trim() || "0");
+
+      const readHeadSnapshot = async () =>
+        page.evaluate(() => {
+          const head = document.head;
+          const body = document.body;
+          const metas = (name: string) =>
+            Array.from(head.querySelectorAll(`meta[name="${name}"]`)).map(
+              (el) => el.getAttribute("content")
+            );
+          const links = (rel: string) =>
+            Array.from(head.querySelectorAll(`link[rel="${rel}"]`)).map((el) =>
+              el.getAttribute("href")
+            );
+          return {
+            title: document.title,
+            titleCount: document.querySelectorAll("title").length,
+            headTitleCount: head.querySelectorAll("title").length,
+            bodyMetaCount: body.querySelectorAll("meta[name^='x-cube-']").length,
+            bodyLinkCount: body.querySelectorAll("link[rel='alternate'], link[rel='canonical']").length,
+            l1: metas("x-cube-l1"),
+            slot: metas("x-cube-slot"),
+            l2Dyn: metas("x-cube-l2-dyn"),
+            l3: metas("x-cube-l3"),
+            desc: metas("description"),
+            hole: metas("x-cube-hole"),
+            pageSlot: metas("x-cube-page-slot"),
+            titleSlot: metas("x-cube-title-slot"),
+            pureHole: metas("x-cube-pure-hole"),
+            canonical: links("canonical"),
+            alternate: links("alternate"),
+          };
+        });
+
+      const readBoxStyle = async (selector: string) =>
+        page.evaluate((sel) => {
+          const el = document.querySelector(sel);
+          if (!el) return null;
+          const cs = window.getComputedStyle(el);
+          return {
+            bg: cs.backgroundColor,
+            radius: cs.borderRadius,
+            cls: el.getAttribute("class"),
+            hash: el.getAttribute("data-class-hash"),
+          };
+        }, selector);
+
+      try {
+        // -----------------------------------------------------------------
+        // PHASE A: Direct SSR & Hydration on Asymmetric 3D PPR Route A
+        //          (L1 Static PPR + Slot -> Dynamic L2 -> L3 Static PPR ->
+        //           Route A Static PPR + Dynamic Hole + Page Slot)
+        // -----------------------------------------------------------------
+        const rawResA = await page.request.get(
+          "/t-3d-cube/meta-css-ppr/dyn-l2/l3/route-a"
+        );
+        expect(rawResA.status()).toBe(200);
+        const rawHtmlA = await rawResA.text();
+        const rawHeadA = (rawHtmlA.match(/<head[^>]*>([\s\S]*?)<\/head>/i) || ["", ""])[1];
+        expect((rawHtmlA.match(/<title\b[^>]*>/gi) || []).length).toBe(1);
+        expect(rawHeadA).toContain("Cube Route A v");
+        expect(rawHeadA).toContain('name="x-cube-l1"');
+        expect(rawHeadA).toContain('name="x-cube-slot"');
+        expect(rawHeadA).toContain('name="x-cube-l2-dyn"');
+        expect(rawHeadA).toContain('name="x-cube-l3"');
+        expect(rawHeadA).toContain('name="description"');
+        expect(rawHeadA).toContain('rel="canonical"');
+        expect(rawHeadA).toContain('name="x-cube-hole"');
+        expect(rawHeadA).toContain('name="x-cube-page-slot"');
+
+        await page.goto("/t-3d-cube/meta-css-ppr/dyn-l2/l3/route-a", {
+          waitUntil: "networkidle",
+        });
+        await waitCubeReady(page);
+        await expect(page.locator("#mc-route-a-hole")).toBeVisible();
+        await expect(page.locator("#mc-page-slot-box")).toBeVisible();
+
+        const baseL1 = await readSeq(page, "#mc-l1-shell-seq");
+        const baseL1Slot = await readSeq(page, "#mc-l1-slot-seq");
+        const baseL2 = await readSeq(page, "#mc-l2-dyn-seq");
+        const baseL3 = await readSeq(page, "#mc-l3-shell-seq");
+        const baseRouteA = await readSeq(page, "#mc-route-a-shell-seq");
+        const baseHoleA = await readSeq(page, "#mc-route-a-hole-seq");
+        const basePageSlot = await readSeq(page, "#mc-page-slot-seq");
+        const base =
+          Math.max(baseL1, baseL1Slot, baseL2, baseL3, baseRouteA, baseHoleA, basePageSlot) + 10;
+        const POISON = base + 899;
+
+        const headA = await readHeadSnapshot();
+        expect(headA.title).toBe(`Cube Route A v${baseRouteA}`);
+        expect(headA.titleCount).toBe(1);
+        expect(headA.headTitleCount).toBe(1);
+        expect(headA.bodyMetaCount).toBe(0);
+        expect(headA.bodyLinkCount).toBe(0);
+        expect(headA.l1).toEqual([`l1-meta-v${baseL1}`]);
+        expect(headA.slot).toEqual([`slot-even-${baseL1Slot}`]);
+        expect(headA.l2Dyn).toEqual([`dyn-v${baseL2}`]);
+        expect(headA.l3).toEqual([`l3-meta-v${baseL3}`]);
+        expect(headA.desc).toEqual([`Desc A v${baseRouteA}`]);
+        expect(headA.canonical).toEqual(["https://example.test/route-a"]);
+        expect(headA.hole).toEqual([`hole-a-v${baseHoleA}`]);
+        expect(headA.pageSlot).toEqual([`page-slot-even-${basePageSlot}`]);
+
+        // Computed CSS Module styles across ALL 7 layers!
+        expect(await readBoxStyle("#mc-l1-shell")).toMatchObject({
+          bg: "rgb(16, 32, 48)",
+          radius: "6px",
+        });
+        expect(await readBoxStyle("#mc-l1-slot-box")).toMatchObject({
+          bg: "rgb(20, 80, 140)",
+          radius: "4px",
+        });
+        expect(await readBoxStyle("#mc-l2-dyn")).toMatchObject({
+          bg: "rgb(40, 60, 80)",
+          radius: "8px",
+        });
+        expect(await readBoxStyle("#mc-l3-shell")).toMatchObject({
+          bg: "rgb(55, 75, 95)",
+          radius: "5px",
+        });
+        expect(await readBoxStyle("#mc-route-a-shell")).toMatchObject({
+          bg: "rgb(10, 90, 130)",
+          radius: "7px",
+        });
+        expect(await readBoxStyle("#mc-route-a-hole")).toMatchObject({
+          bg: "rgb(130, 60, 20)",
+          radius: "9px",
+        });
+        expect(await readBoxStyle("#mc-page-slot-box")).toMatchObject({
+          bg: "rgb(30, 110, 70)",
+          radius: "4px",
+        });
+
+        // Anchor interactive client probes on L1 & L3 before soft-nav
+        const l1Mount0 = (await page.locator("#probe-mount-mc-l1").textContent())?.trim();
+        await page.locator("#probe-inc-mc-l1").click();
+        await expect(page.locator("#probe-count-mc-l1")).toHaveText("1");
+
+        // -----------------------------------------------------------------
+        // PHASE B: Soft Navigation Route A -> Route B -> Back -> Forward
+        //          (with L1 & L3 poisoned to prove surgical preservation!)
+        // -----------------------------------------------------------------
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          {
+            mcL1ShellSeq: POISON,
+            mcL3ShellSeq: POISON,
+            mcL2DynSeq: base + 1,
+            mcRouteBHoleSeq: base + 2,
+          }
+        );
+
+        await page.locator("#link-mc-route-b").click();
+        await expect(page.locator("#mc-route-b-shell")).toBeVisible();
+        await expect(page.locator("#mc-route-b-hole")).toBeVisible();
+
+        const baseRouteB = await readSeq(page, "#mc-route-b-shell-seq");
+        await expect
+          .poll(async () => (await readHeadSnapshot()).title)
+          .toBe(`Cube Route B v${baseRouteB}`);
+
+        const headB = await readHeadSnapshot();
+        expect(headB.titleCount).toBe(1);
+        expect(headB.headTitleCount).toBe(1);
+        expect(headB.l1).toEqual([`l1-meta-v${baseL1}`]);
+        expect(headB.l3).toEqual([`l3-meta-v${baseL3}`]);
+        expect(headB.desc).toEqual([`Desc B v${baseRouteB}`]);
+        expect(headB.canonical).toEqual(["https://example.test/route-b"]);
+        expect(headB.hole).toEqual([`hole-b-v${base + 2}`]);
+        expect(headB.pageSlot).toEqual([]);
+        expect(await readBoxStyle("#mc-route-b-shell")).toMatchObject({
+          bg: "rgb(90, 20, 110)",
+          radius: "11px",
+        });
+        expect(await readBoxStyle("#mc-route-b-hole")).toMatchObject({
+          bg: "rgb(20, 120, 90)",
+          radius: "13px",
+        });
+        // L1 client probe stayed mounted with counter=1!
+        expect((await page.locator("#probe-mount-mc-l1").textContent())?.trim()).toBe(l1Mount0);
+        await expect(page.locator("#probe-count-mc-l1")).toHaveText("1");
+
+        // Browser Back -> restores Route A exact metadata & styles
+        await page.goBack();
+        await expect(page.locator("#mc-route-a-shell")).toBeVisible();
+        await expect
+          .poll(async () => (await readHeadSnapshot()).title)
+          .toBe(`Cube Route A v${baseRouteA}`);
+        const headBackA = await readHeadSnapshot();
+        expect(headBackA.titleCount).toBe(1);
+        expect(headBackA.desc).toEqual([`Desc A v${baseRouteA}`]);
+        expect(headBackA.canonical).toEqual(["https://example.test/route-a"]);
+        expect(headBackA.l1).toEqual([`l1-meta-v${baseL1}`]);
+        expect(await readBoxStyle("#mc-route-a-shell")).toMatchObject({
+          bg: "rgb(10, 90, 130)",
+          radius: "7px",
+        });
+
+        // Browser Forward -> restores Route B exact metadata & styles
+        await page.goForward();
+        await expect(page.locator("#mc-route-b-shell")).toBeVisible();
+        await expect
+          .poll(async () => (await readHeadSnapshot()).title)
+          .toBe(`Cube Route B v${baseRouteB}`);
+        const headFwdB = await readHeadSnapshot();
+        expect(headFwdB.titleCount).toBe(1);
+        expect(headFwdB.desc).toEqual([`Desc B v${baseRouteB}`]);
+        expect(headFwdB.canonical).toEqual(["https://example.test/route-b"]);
+        expect(await readBoxStyle("#mc-route-b-shell")).toMatchObject({
+          bg: "rgb(90, 20, 110)",
+          radius: "11px",
+        });
+
+        // Return to Route A for Phase C
+        await page.goBack();
+        await expect(page.locator("#mc-route-a-shell")).toBeVisible();
+        await expect(page.locator("#mc-page-slot-box")).toBeVisible();
+
+        // -----------------------------------------------------------------
+        // PHASE C: Live <DinouCacheSlot> Refresh (refreshSlot + revalidateTag)
+        //          updating <meta> + CSS Module classes while shells stay frozen!
+        // -----------------------------------------------------------------
+        const nextL1Slot = base + 10;
+        const nextPageSlot = base + 11;
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          {
+            mcL1SlotOdd: true,
+            mcL1SlotSeq: nextL1Slot,
+            mcPageSlotOdd: true,
+            mcPageSlotSeq: nextPageSlot,
+            mcL1ShellSeq: POISON,
+            mcL3ShellSeq: POISON,
+            mcRouteAShellSeq: POISON,
+          }
+        );
+
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.refreshSlot("cube-mc-l1-slot", true)
+        );
+        await expect(page.locator("#mc-l1-slot-seq")).toHaveText(String(nextL1Slot));
+        await expect
+          .poll(async () => (await readHeadSnapshot()).slot)
+          .toEqual([`slot-odd-${nextL1Slot}`]);
+        expect(await readBoxStyle("#mc-l1-slot-box")).toMatchObject({
+          bg: "rgb(180, 40, 90)",
+          radius: "12px",
+        });
+
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.revalTag("mc-page-slot")
+        );
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.refreshSlot("cube-mc-page-slot", true)
+        );
+        await expect(page.locator("#mc-page-slot-seq")).toHaveText(String(nextPageSlot));
+        await expect
+          .poll(async () => (await readHeadSnapshot()).pageSlot)
+          .toEqual([`page-slot-odd-${nextPageSlot}`]);
+        expect(await readBoxStyle("#mc-page-slot-box")).toMatchObject({
+          bg: "rgb(200, 100, 20)",
+          radius: "10px",
+        });
+
+        // Poisoned static shells stayed 100% frozen!
+        await expect(page.locator("#mc-l1-shell-seq")).toHaveText(String(baseL1));
+        await expect(page.locator("#mc-l3-shell-seq")).toHaveText(String(baseL3));
+        await expect(page.locator("#mc-route-a-shell-seq")).toHaveText(String(baseRouteA));
+
+        // Hard F5 reload persists updated slot metadata & computed RGB styles!
+        await page.reload({ waitUntil: "networkidle" });
+        await waitCubeReady(page);
+        const headReloadA = await readHeadSnapshot();
+        expect(headReloadA.titleCount).toBe(1);
+        expect(headReloadA.slot).toEqual([`slot-odd-${nextL1Slot}`]);
+        expect(headReloadA.pageSlot).toEqual([`page-slot-odd-${nextPageSlot}`]);
+        expect(headReloadA.l1).toEqual([`l1-meta-v${baseL1}`]);
+        expect(headReloadA.l3).toEqual([`l3-meta-v${baseL3}`]);
+        expect(headReloadA.title).toBe(`Cube Route A v${baseRouteA}`);
+        expect(await readBoxStyle("#mc-l1-slot-box")).toMatchObject({
+          bg: "rgb(180, 40, 90)",
+          radius: "12px",
+        });
+        expect(await readBoxStyle("#mc-page-slot-box")).toMatchObject({
+          bg: "rgb(200, 100, 20)",
+          radius: "10px",
+        });
+
+        // -----------------------------------------------------------------
+        // PHASE D: Pure PPR Streaming Resume (handlePprResume) +
+        //          Dynamic Hole Hoisted <meta>/<link> +
+        //          Title-Owning <DinouCacheSlot> Live Title & CSS Flip!
+        // -----------------------------------------------------------------
+        const pureHoleSeq = base + 15;
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          {
+            mcPurePprHoleSeq: pureHoleSeq,
+            mcL1ShellSeq: POISON,
+            mcPurePprShellSeq: POISON,
+          }
+        );
+
+        await page.goto("/t-3d-cube/meta-css-ppr/pure-ppr", {
+          waitUntil: "networkidle",
+        });
+        await waitCubeReady(page);
+        await expect(page.locator("#mc-pure-hole")).toBeVisible();
+        await expect(page.locator("#mc-title-slot-box")).toBeVisible();
+
+        const basePureShell = await readSeq(page, "#mc-pure-shell-seq");
+        const baseTitleSlot = await readSeq(page, "#mc-title-slot-seq");
+        const headPure = await readHeadSnapshot();
+        expect(headPure.title).toBe(`Cube Slot Title (${baseTitleSlot})`);
+        expect(headPure.titleCount).toBe(1);
+        expect(headPure.headTitleCount).toBe(1);
+        expect(headPure.bodyMetaCount).toBe(0);
+        expect(headPure.bodyLinkCount).toBe(0);
+        expect(headPure.l1).toEqual([`l1-meta-v${baseL1}`]);
+        expect(headPure.slot).toEqual([`slot-odd-${nextL1Slot}`]);
+        expect(headPure.desc).toEqual([`Pure PPR Desc v${basePureShell}`]);
+        expect(headPure.canonical).toEqual(["https://example.test/pure-ppr"]);
+        expect(headPure.titleSlot).toEqual([`title-slot-even-${baseTitleSlot}`]);
+        expect(headPure.pureHole).toEqual([`pure-hole-v${pureHoleSeq}`]);
+        expect(headPure.alternate).toEqual([
+          `https://example.test/pure-hole/${pureHoleSeq}`,
+        ]);
+        expect(await readBoxStyle("#mc-pure-shell")).toMatchObject({
+          bg: "rgb(70, 80, 90)",
+          radius: "6px",
+        });
+        expect(await readBoxStyle("#mc-title-slot-box")).toMatchObject({
+          bg: "rgb(60, 40, 120)",
+          radius: "4px",
+        });
+        expect(await readBoxStyle("#mc-pure-hole")).toMatchObject({
+          bg: "rgb(160, 50, 70)",
+          radius: "10px",
+        });
+
+        // Refresh title-owning slot live -> updates document.title, <meta>, & CSS RGB!
+        const nextTitleSlot = base + 20;
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          {
+            mcTitleSlotOdd: true,
+            mcTitleSlotSeq: nextTitleSlot,
+            mcL1ShellSeq: POISON,
+            mcPurePprShellSeq: POISON,
+          }
+        );
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.refreshSlot("cube-mc-title-slot", true)
+        );
+        await expect(page.locator("#mc-title-slot-seq")).toHaveText(
+          String(nextTitleSlot)
+        );
+        await expect
+          .poll(async () => (await readHeadSnapshot()).title)
+          .toBe(`Cube Slot Title (${nextTitleSlot})`);
+        const headPureRefreshed = await readHeadSnapshot();
+        expect(headPureRefreshed.titleCount).toBe(1);
+        expect(headPureRefreshed.titleSlot).toEqual([
+          `title-slot-odd-${nextTitleSlot}`,
+        ]);
+        expect(await readBoxStyle("#mc-title-slot-box")).toMatchObject({
+          bg: "rgb(150, 30, 150)",
+          radius: "14px",
+        });
+        await expect(page.locator("#mc-pure-shell-seq")).toHaveText(
+          String(basePureShell)
+        );
+        await expect(page.locator("#mc-l1-shell-seq")).toHaveText(
+          String(baseL1)
+        );
+
+        // Hard F5 reload on Pure PPR persists new <title>, <meta>, & RGB!
+        await page.reload({ waitUntil: "networkidle" });
+        await waitCubeReady(page);
+        const headPureReload = await readHeadSnapshot();
+        expect(headPureReload.title).toBe(`Cube Slot Title (${nextTitleSlot})`);
+        expect(headPureReload.titleCount).toBe(1);
+        expect(headPureReload.pureHole).toEqual([`pure-hole-v${pureHoleSeq}`]);
+        expect(headPureReload.bodyMetaCount).toBe(0);
+        expect(await readBoxStyle("#mc-title-slot-box")).toMatchObject({
+          bg: "rgb(150, 30, 150)",
+          radius: "14px",
+        });
+
+        // -----------------------------------------------------------------
+        // PHASE E: Surgical revalidatePage() & revalidateLayout() Metadata Update
+        // -----------------------------------------------------------------
+        const nextRouteA = base + 30;
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          {
+            mcRouteAShellSeq: nextRouteA,
+            mcL1ShellSeq: POISON,
+            mcL3ShellSeq: POISON,
+          }
+        );
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.revalPage(
+            "/t-3d-cube/meta-css-ppr/dyn-l2/l3/route-a"
+          )
+        );
+        await page.locator("#link-mc-route-a").click();
+        await expect(page.locator("#mc-route-a-shell-seq")).toHaveText(
+          String(nextRouteA)
+        );
+        await expect
+          .poll(async () => (await readHeadSnapshot()).title)
+          .toBe(`Cube Route A v${nextRouteA}`);
+        const headRevalPage = await readHeadSnapshot();
+        expect(headRevalPage.titleCount).toBe(1);
+        expect(headRevalPage.desc).toEqual([`Desc A v${nextRouteA}`]);
+        expect(headRevalPage.l1).toEqual([`l1-meta-v${baseL1}`]);
+        expect(headRevalPage.l3).toEqual([`l3-meta-v${baseL3}`]);
+
+        // Surgical revalidateLayout() on L3 updates x-cube-l3 while L1 & Route A stay frozen!
+        const nextL3 = base + 31;
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          {
+            mcL3ShellSeq: nextL3,
+            mcL1ShellSeq: POISON,
+            mcRouteAShellSeq: POISON,
+          }
+        );
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.revalLayout(
+            "/t-3d-cube/meta-css-ppr/dyn-l2/l3"
+          )
+        );
+        await page.reload({ waitUntil: "networkidle" });
+        await waitCubeReady(page);
+        const headRevalL3 = await readHeadSnapshot();
+        expect(headRevalL3.titleCount).toBe(1);
+        expect(headRevalL3.l3).toEqual([`l3-meta-v${nextL3}`]);
+        expect(headRevalL3.l1).toEqual([`l1-meta-v${baseL1}`]);
+        expect(headRevalL3.title).toBe(`Cube Route A v${nextRouteA}`);
+
+        expect(hydrationErrors).toEqual([]);
+        expect(routerWarnings).toEqual([]);
+        expect(pageErrors).toEqual([]);
+      } finally {
+        // Restore even modes and revalidate slots so Chromium -> Firefox -> WebKit stays idempotent!
+        await page
+          .evaluate(async () => {
+            if ((window as any).__CUBE_3D__) {
+              await (window as any).__CUBE_3D__.mutate({
+                mcL1SlotOdd: false,
+                mcPageSlotOdd: false,
+                mcTitleSlotOdd: false,
+              });
+              await (window as any).__CUBE_3D__.revalTag("mc-l1-slot");
+              await (window as any).__CUBE_3D__.revalTag("mc-page-slot");
+              await (window as any).__CUBE_3D__.revalTag("mc-title-slot");
+            }
+          })
+          .catch(() => {});
+      }
+    });
   });
 });

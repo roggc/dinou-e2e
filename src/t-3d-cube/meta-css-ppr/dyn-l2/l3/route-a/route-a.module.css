@@ -1,0 +1,13 @@
+.shellBox {
+  background-color: rgb(10, 90, 130);
+  color: rgb(255, 255, 255);
+  border-radius: 7px;
+  padding: 8px;
+}
+
+.holeBox {
+  background-color: rgb(130, 60, 20);
+  color: rgb(255, 255, 255);
+  border-radius: 9px;
+  padding: 8px;
+}

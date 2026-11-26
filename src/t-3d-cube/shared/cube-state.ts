@@ -448,6 +448,23 @@ export interface Cube3DState {
   misCausalSeq: number;
   misCausalMode: "none" | "gone410" | "redirect";
   misTargetPageSeq: number;
+
+  // Phase 7 — Stage 2 — Check #86: React 19 Document Metadata Hoisting & Scoped CSS Modules Under 3D PPR + Slots
+  mcL1ShellSeq: number;
+  mcL1SlotSeq: number;
+  mcL1SlotOdd: boolean;
+  mcL2DynSeq: number;
+  mcL3ShellSeq: number;
+  mcRouteAShellSeq: number;
+  mcRouteAHoleSeq: number;
+  mcPageSlotSeq: number;
+  mcPageSlotOdd: boolean;
+  mcRouteBShellSeq: number;
+  mcRouteBHoleSeq: number;
+  mcPurePprShellSeq: number;
+  mcPurePprHoleSeq: number;
+  mcTitleSlotSeq: number;
+  mcTitleSlotOdd: boolean;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -860,6 +877,22 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   misCausalSeq: 100,
   misCausalMode: "none",
   misTargetPageSeq: 100,
+
+  mcL1ShellSeq: 100,
+  mcL1SlotSeq: 100,
+  mcL1SlotOdd: false,
+  mcL2DynSeq: 100,
+  mcL3ShellSeq: 100,
+  mcRouteAShellSeq: 100,
+  mcRouteAHoleSeq: 100,
+  mcPageSlotSeq: 100,
+  mcPageSlotOdd: false,
+  mcRouteBShellSeq: 100,
+  mcRouteBHoleSeq: 100,
+  mcPurePprShellSeq: 100,
+  mcPurePprHoleSeq: 100,
+  mcTitleSlotSeq: 100,
+  mcTitleSlotOdd: false,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {
