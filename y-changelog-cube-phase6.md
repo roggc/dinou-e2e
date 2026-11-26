@@ -52,6 +52,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
     - Updated `inspectSlotsFreshness()` (`cache-slot.js`) to check `getTagInvalidatedAtAsync()` (in addition to `isKeyDeleted()`) when a slot is missing in storage so cross-pod `revalidateTag()` invalidations always trigger `hasNewer = true`.
     - Sorted `candidateLayoutKeySet` ancestor-first in `getSlotJSX()` host layout persistence (`cache-slot.js`) and added `ownSlotTags` to `readDist2Fallback()` (`storage-adapter.js`).
 
+  - **WebKit mid-hydration redirect abort suppression (`client.jsx`, `client-webpack.jsx`, `slot.js`, `handler.js`, `client-redirect.jsx`, `server-function-proxy.js`, `server-function-proxy-webpack.js`)**: When a PPR dynamic hole triggers `redirect()` while initial hydration fetches (`/____rsc_page____`, `/____rsc_layout____`) are still in flight on WebKit, WebKit aborts those fetches with `... due to access control checks.` before `beforeunload` fires. Broadened `isNavigationAbortError()` / `isSlotNavigationAbortError()` from `____rsc_payload_error____` to `/____rsc_[a-z_]+____.*due to access control checks/i`, applied `isNavigationAbortError(err)` in `getPagePayload` and `getLayoutPayload` rejection handlers (matching `getErrorRSCPayload` / `fetchSlotRSC`), and marked `window.__DINOU_STATIC_EXPORT_UNLOADING__ = true` before all hard `window.location.href` redirects.
+
 ---
 
 ## Tracking Log by Stage

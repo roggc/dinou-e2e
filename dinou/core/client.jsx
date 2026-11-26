@@ -333,7 +333,7 @@ const isNavigationAbortError = (err) => {
     /^(?:Load failed|Failed to fetch|NetworkError|The operation was aborted|Error in input stream)/i.test(
       msg.trim()
     ) ||
-    /____rsc_payload_error____.*due to access control checks/i.test(msg)
+    /____rsc_[a-z_]+____.*due to access control checks/i.test(msg)
   );
 };
 
@@ -546,7 +546,7 @@ const getPagePayload = (route, isPrefetch = false, version = 0) => {
         }
         return res;
       }, (err) => {
-        if (isStaticExportUnloading()) {
+        if (isStaticExportUnloading() || isNavigationAbortError(err)) {
           return new Promise(() => {});
         }
         throw err;
@@ -649,7 +649,7 @@ const getLayoutPayload = (layoutKey, searchPart = "", version = 0) => {
           return res;
         },
         (err) => {
-          if (isStaticExportUnloading()) {
+          if (isStaticExportUnloading() || isNavigationAbortError(err)) {
             return new Promise(() => {});
           }
           throw err;
@@ -706,6 +706,7 @@ const getErrorRSCPayload = (route, error) => {
           if (window.__DINOU_ROUTER_NAVIGATE__) {
             window.__DINOU_ROUTER_NAVIGATE__(redirectUrl, { replace: true });
           } else {
+            window.__DINOU_STATIC_EXPORT_UNLOADING__ = true;
             window.location.href = redirectUrl;
           }
           return new Promise(() => {});

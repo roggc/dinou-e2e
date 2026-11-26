@@ -1345,7 +1345,7 @@ function createRequestContext(simReq, resBridge, platformContext = {}, dynamicSt
         const finalUrl = isAllowedRedirectTarget(resolvedUrl) ? resolvedUrl : "/";
         if (context) context._redirectLocation = finalUrl;
         const safeUrl = JSON.stringify(finalUrl);
-        resBridge.write(`<script>window.location.href = ${safeUrl};</script>`);
+        resBridge.write(`<script>window.__DINOU_STATIC_EXPORT_UNLOADING__ = true; window.location.href = ${safeUrl};</script>`);
         resBridge.end();
         return;
       }
