@@ -180,6 +180,36 @@ function safeJsonForInlineScript(str) {
     .replace(/\u2029/g, "\\u2029");
 }
 
+function toAsciiHeaderJson(value) {
+  return JSON.stringify(value).replace(/[\u0080-\uffff]/g, (ch) => {
+    return "\\u" + ch.charCodeAt(0).toString(16).padStart(4, "0");
+  });
+}
+
+function decodePathSegmentsSafely(rawPath) {
+  const rawSegs = String(rawPath || "").split("/").filter(Boolean);
+  const segments = [];
+  for (const seg of rawSegs) {
+    let decoded;
+    try {
+      decoded = decodeURIComponent(seg);
+    } catch (e) {
+      return { segments: null, invalid: true };
+    }
+    if (
+      decoded === "." ||
+      decoded === ".." ||
+      decoded.includes("/") ||
+      decoded.includes("\\") ||
+      decoded.includes("\0")
+    ) {
+      return { segments: null, invalid: true };
+    }
+    segments.push(decoded);
+  }
+  return { segments, invalid: false };
+}
+
 function formatRscPushScript(kind, chunkStr) {
   const arrName = `__DINOU_RSC_${kind}__`;
   const pushFn = `__DINOU_RSC_${kind}_PUSH__`;
@@ -1868,7 +1898,7 @@ async function handleRequest(request, platformContext = {}) {
           ...(allLayouts ? { allLayouts: true } : {}),
         };
         if (!bridge.headersSent) {
-          bridge.setHeader("X-Dinou-Revalidated", JSON.stringify(payload));
+          bridge.setHeader("X-Dinou-Revalidated", toAsciiHeaderJson(payload));
         } else {
           bridge.write(`D:${JSON.stringify({ type: "revalidate", ...payload })}\n`);
         }
@@ -1968,14 +1998,31 @@ async function handleRequest(request, platformContext = {}) {
   // 5.5. Granular Slot RSC Endpoint (GET /____rsc_slot____/*)
   if (pathname.includes("____rsc_slot____")) {
     try {
-      const slotId = pathname
+      const rawSlotId = pathname
         .replace(/^.*\/____rsc_slot____\/?/, "")
         .split("?")[0]
         .split("/")[0]
         .trim();
 
-      if (!slotId) {
+      if (!rawSlotId) {
         return new Response("Missing slot id", { status: 400 });
+      }
+
+      let slotId;
+      try {
+        slotId = decodeURIComponent(rawSlotId).trim();
+      } catch (e) {
+        return new Response("Bad Request", { status: 400 });
+      }
+      if (
+        !slotId ||
+        slotId === "." ||
+        slotId === ".." ||
+        slotId.includes("/") ||
+        slotId.includes("\\") ||
+        slotId.includes("\0")
+      ) {
+        return new Response("Bad Request", { status: 400 });
       }
 
       const urlObj = new URL(request.url || `http://localhost${pathname}`);
@@ -1985,10 +2032,19 @@ async function handleRequest(request, platformContext = {}) {
         rawFreshParam !== "0" &&
         rawFreshParam.toLowerCase() !== "false";
 
-      const currentPath =
+      const rawCurrentPath =
         request.headers?.get?.("x-dinou-current-path") ||
         simReq.headers?.["x-dinou-current-path"] ||
         "/";
+      const decodedSlotPath = decodePathSegmentsSafely(
+        String(rawCurrentPath).split("?")[0].split("#")[0]
+      );
+      const currentPath =
+        !decodedSlotPath.invalid && decodedSlotPath.segments
+          ? decodedSlotPath.segments.length > 0
+            ? "/" + decodedSlotPath.segments.join("/")
+            : "/"
+          : rawCurrentPath;
 
       const context = createRequestContext(simReq, bridge, platformContext);
       copyCustomContextProperties(rootContext, context);
@@ -2011,7 +2067,7 @@ async function handleRequest(request, platformContext = {}) {
         if (!bridge.headers.has("Cache-Control")) {
   bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
 }
-        bridge.setHeader("X-Dinou-Slot", slotId);
+        bridge.setHeader("X-Dinou-Slot", encodeURIComponent(slotId));
 
         const manifest = getClientManifest();
         pipeRSC(slotJsx, bridge, manifest, platformContext);
@@ -2043,22 +2099,13 @@ async function handleRequest(request, platformContext = {}) {
       .replace(/^\/____rsc_(?:page|layout|payload)_(?:old_static|old|static)____/, "")
       .replace(/^\/____rsc_(?:page|layout|payload)____/, "");
 
-    const reqSegments = rawCleanPath
-      .split("/")
-      .filter(Boolean)
-      .map((s) => {
-        if (!isLayoutReq) return s;
-        try {
-          return decodeURIComponent(s);
-        } catch (e) {
-          return s;
-        }
-      });
-    const cleanPath = isLayoutReq
-      ? reqSegments.length > 0
-        ? "/" + reqSegments.join("/") + "/"
-        : "/"
-      : rawCleanPath;
+    const decodedRscPath = decodePathSegmentsSafely(rawCleanPath);
+    if (decodedRscPath.invalid) {
+      return new Response("Bad Request", { status: 400 });
+    }
+    const reqSegments = decodedRscPath.segments;
+    const cleanPath =
+      reqSegments.length > 0 ? "/" + reqSegments.join("/") + "/" : "/";
     const srcFolder = path.resolve(process.cwd(), "src");
     const [pagePath, dynamicParams] = isLayoutReq
       ? [undefined, {}]
@@ -3581,15 +3628,23 @@ async function handleRequest(request, platformContext = {}) {
   }
 
   // 7. Page SSR HTML & ISG/ISR (GET /*)
-  const reqSegments = pathname.split("/").filter(Boolean);
+  const decodedSsrPath = decodePathSegmentsSafely(pathname);
+  if (decodedSsrPath.invalid) {
+    return new Response("Bad Request", { status: 400 });
+  }
+  const reqSegments = decodedSsrPath.segments;
+  const canonicalPathname =
+    reqSegments.length > 0 ? "/" + reqSegments.join("/") : "/";
   const srcFolder = path.resolve(process.cwd(), "src");
   const [pagePath, dynamicParams] = getFilePathAndDynamicParams(reqSegments, queryObj, srcFolder);
 
-  if (!pagePath && path.extname(pathname)) {
+  if (!pagePath && path.extname(canonicalPathname)) {
     return new Response("Not Found", { status: 404 });
   }
 
-  const reqPath = pathname.endsWith("/") ? pathname : pathname + "/";
+  const reqPath = canonicalPathname.endsWith("/")
+    ? canonicalPathname
+    : canonicalPathname + "/";
   if (!isDynamic.has(reqPath)) {
     isDynamic.set(reqPath, { value: false });
   }

@@ -486,7 +486,8 @@ const volatileLayoutCacheKeys = new Set();
 
 const normalizeCachePathname = (p) => {
   const clean = String(p || "/").split("?")[0].split("#")[0] || "/";
-  return clean.length > 1 && clean.endsWith("/") ? clean.slice(0, -1) : clean;
+  const segs = clean.split("/").filter(Boolean).map(safeDecodeSeg);
+  return segs.length > 0 ? "/" + segs.join("/") : "/";
 };
 
 const invalidateClientRouterCache = (hint) => {
@@ -856,7 +857,7 @@ const fetchSlotRSC = (slotId, options = {}) => {
     (typeof window !== "undefined" ? window.location.pathname : "/");
   const freshQuery = options && options.fresh ? "&fresh=1" : "";
   const slotSeq = (window.__DINOU_SLOT_SEQ__ = (window.__DINOU_SLOT_SEQ__ || 0) + 1);
-  const slotUrl = `/____rsc_slot____/${slotId}?t=${Date.now()}-${slotSeq}${freshQuery}`;
+  const slotUrl = `/____rsc_slot____/${encodeURIComponent(slotId)}?t=${Date.now()}-${slotSeq}${freshQuery}`;
   return createFromFetch(
     fetch(slotUrl, {
       headers: {

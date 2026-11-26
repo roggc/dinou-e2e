@@ -474,6 +474,21 @@ export interface Cube3DState {
   rcDynCSeq: number;
   rcSubL2Seq: number;
   rcSubPageSeq: number;
+
+  // Phase 8 — Stage 2 — Check #88: Unicode, Spaces & Percent-Encoded Dynamic Parameters
+  encL1ShellSeq: number;
+  encCatCafeSeq: number;
+  encCatHelloSeq: number;
+  encCatTokyoSeq: number;
+  encSlugCremeShellSeq: number;
+  encSlugCremeHoleSeq: number;
+  encSlugCremeSlotSeq: number;
+  encSlugCppShellSeq: number;
+  encSlugCppHoleSeq: number;
+  encSlugCppSlotSeq: number;
+  encSlugRamenShellSeq: number;
+  encSlugRamenHoleSeq: number;
+  encSlugRamenSlotSeq: number;
 }
 
 export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
@@ -910,6 +925,20 @@ export const DEFAULT_CUBE_3D_STATE: Cube3DState = {
   rcDynCSeq: 100,
   rcSubL2Seq: 100,
   rcSubPageSeq: 100,
+
+  encL1ShellSeq: 100,
+  encCatCafeSeq: 100,
+  encCatHelloSeq: 100,
+  encCatTokyoSeq: 100,
+  encSlugCremeShellSeq: 100,
+  encSlugCremeHoleSeq: 100,
+  encSlugCremeSlotSeq: 100,
+  encSlugCppShellSeq: 100,
+  encSlugCppHoleSeq: 100,
+  encSlugCppSlotSeq: 100,
+  encSlugRamenShellSeq: 100,
+  encSlugRamenHoleSeq: 100,
+  encSlugRamenSlotSeq: 100,
 };
 
 function getNodeFsAndPath(): { fs: any; stateFile: string } | null {

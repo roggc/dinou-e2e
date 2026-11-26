@@ -486,12 +486,26 @@ function normalizeRevalidatePath(reqPath) {
   }
 
   let cleanPath = String(targetPath || "/").split("?")[0].split("#")[0] || "/";
-  if (!cleanPath.startsWith("/")) {
-    cleanPath = "/" + cleanPath;
+  const decodedSegs = [];
+  for (const rawSeg of cleanPath.split("/").filter(Boolean)) {
+    let dec = rawSeg;
+    try {
+      dec = decodeURIComponent(rawSeg);
+    } catch (e) {
+      dec = rawSeg;
+    }
+    if (
+      dec === "." ||
+      dec === ".." ||
+      dec.includes("/") ||
+      dec.includes("\\") ||
+      dec.includes("\0")
+    ) {
+      continue;
+    }
+    decodedSegs.push(dec);
   }
-  if (cleanPath !== "/" && cleanPath.endsWith("/")) {
-    cleanPath = cleanPath.slice(0, -1);
-  }
+  cleanPath = decodedSegs.length > 0 ? "/" + decodedSegs.join("/") : "/";
   return cleanPath;
 }
 

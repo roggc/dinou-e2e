@@ -100,7 +100,17 @@ function normalizeSlotRouteKey(rawPath) {
   ) {
     return null;
   }
-  return clean.replace(/^\/+/, "").replace(/\/+$/, "");
+  return clean
+    .split("/")
+    .filter(Boolean)
+    .map((s) => {
+      try {
+        return decodeURIComponent(s);
+      } catch (e) {
+        return s;
+      }
+    })
+    .join("/");
 }
 
 function doesSlotEntryMatchRoute(entry, targetRouteKey) {
@@ -1472,8 +1482,17 @@ async function getSlotJSX(slotId, options = {}) {
         try {
           const cleanRouteKey = String(options.currentPath)
             .split("?")[0]
-            .replace(/^\/+/, "")
-            .replace(/\/+$/, "");
+            .split("#")[0]
+            .split("/")
+            .filter(Boolean)
+            .map((s) => {
+              try {
+                return decodeURIComponent(s);
+              } catch (e) {
+                return s;
+              }
+            })
+            .join("/");
           const slotTagsToMatch = new Set([
             targetId,
             slotId,

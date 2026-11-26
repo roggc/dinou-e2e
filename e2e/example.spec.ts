@@ -23730,5 +23730,188 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         // Leave state clean for sequential browsers
       }
     });
+
+    // =========================================================================
+    // 50. [Phase 8 / Stage 2 / Check #88] Unicode, Spaces & Percent-Encoded
+    //     Dynamic Parameters Across 3D Cube SSG/ISG, Soft-Nav,
+    //     <DinouCacheSlot> & Relative revalidatePage("./") / revalidateLayout("..")
+    // =========================================================================
+    test("50. [Check #88] Unicode, Spaces & Percent-Encoded Dynamic Parameters across 3D Cube SSG/ISG, Soft-Nav, <DinouCacheSlot> & revalidate*()", async ({
+      page,
+    }) => {
+      test.setTimeout(120000);
+      test.skip(
+        !isProd,
+        "Phase 8 Stage 2 encoded-params 3D Cube stress test requires production mode"
+      );
+      const { hydrationErrors, routerWarnings, pageErrors } =
+        attachStrictWatchers(page);
+
+      const readSeq = async (p: typeof page, selector: string) =>
+        Number((await p.locator(selector).textContent())?.trim() || "0");
+
+      const waitEncReady = async () => {
+        await waitCubeReady(page);
+        await expect(page.locator("#enc-actions-bridge")).toHaveAttribute(
+          "data-ready",
+          "true"
+        );
+      };
+
+      try {
+        // -----------------------------------------------------------------
+        // PHASE A: Direct SSR & Hydration on Percent-Encoded Accented + Space Route
+        // -----------------------------------------------------------------
+        await page.goto(
+          "/t-3d-cube/encoded-params/caf%C3%A9/cr%C3%A8me%20br%C3%BBl%C3%A9e",
+          { waitUntil: "networkidle" }
+        );
+        await waitEncReady();
+        await expect(page.locator("#enc-page-hole")).toBeVisible();
+        await expect(page.locator("#enc-page-slot")).toBeVisible();
+
+        await expect(page.locator("#enc-cat-param")).toHaveText("café");
+        await expect(page.locator("#enc-page-category")).toHaveText("café");
+        await expect(page.locator("#enc-page-slug")).toHaveText("crème brûlée");
+        await expect(page.locator("#enc-hole-slug")).toHaveText("crème brûlée");
+
+        const baseL1 = await readSeq(page, "#enc-l1-shell-seq");
+        const baseCatCafe = await readSeq(page, "#enc-cat-l2-seq");
+        const baseCremeShell = await readSeq(page, "#enc-page-shell-seq");
+        const baseCremeSlot = await readSeq(page, "#enc-page-slot-seq");
+        const base =
+          Math.max(baseL1, baseCatCafe, baseCremeShell, baseCremeSlot) + 10;
+        const POISON = base + 899;
+
+        const l1Mount0 = (
+          await page.locator("#probe-mount-enc-l1").textContent()
+        )?.trim();
+        await page.locator("#probe-inc-enc-l1").click();
+        await expect(page.locator("#probe-count-enc-l1")).toHaveText("1");
+
+        // -----------------------------------------------------------------
+        // PHASE B: Soft-Nav to Spaces+Plus ("hello world / c++ guide") &
+        //          On-Demand ISG CJK Unicode ("東京 / ramen bowl")
+        // -----------------------------------------------------------------
+        await page.locator("#link-enc-hello").click();
+        await expect(page.locator("#enc-cat-param")).toHaveText("hello world");
+        await expect(page.locator("#enc-page-slug")).toHaveText("c++ guide");
+        await expect(page.locator("#enc-hole-slug")).toHaveText("c++ guide");
+        expect(
+          (await page.locator("#probe-mount-enc-l1").textContent())?.trim()
+        ).toBe(l1Mount0);
+        await expect(page.locator("#probe-count-enc-l1")).toHaveText("1");
+        const baseCatHello = await readSeq(page, "#enc-cat-l2-seq");
+
+        await page.locator("#link-enc-tokyo").click();
+        await expect(page.locator("#enc-cat-param")).toHaveText("東京");
+        await expect(page.locator("#enc-page-slug")).toHaveText("ramen bowl");
+        await expect(page.locator("#enc-hole-slug")).toHaveText("ramen bowl");
+        // Materialize on-demand ISG cache via direct SSR before poisoning shell!
+        await page.reload({ waitUntil: "networkidle" });
+        await waitEncReady();
+        const baseTokyoShell = await readSeq(page, "#enc-page-shell-seq");
+
+        // -----------------------------------------------------------------
+        // PHASE C: Live <DinouCacheSlot> Refresh with Non-Latin-1 CJK Slot ID
+        //          ("enc-slot-東京-ramen bowl") -> ZERO 404, ZERO ByteString crash!
+        // -----------------------------------------------------------------
+        const nextRamenSlot = base + 10;
+        await page.evaluate(
+          (patch) => (window as any).__CUBE_3D__.mutate(patch),
+          {
+            encSlugRamenSlotSeq: nextRamenSlot,
+            encSlugRamenShellSeq: POISON,
+            encL1ShellSeq: POISON,
+          }
+        );
+        await page.evaluate(() =>
+          (window as any).__CUBE_3D__.refreshSlot("enc-slot-東京-ramen bowl", true)
+        );
+        await expect(page.locator("#enc-page-slot-seq")).toHaveText(
+          String(nextRamenSlot)
+        );
+        await expect(page.locator("#enc-page-shell-seq")).toHaveText(
+          String(baseTokyoShell)
+        );
+
+        // Hard F5 reload persists CJK slot update while static shell stays frozen!
+        await page.reload({ waitUntil: "networkidle" });
+        await waitEncReady();
+        await expect(page.locator("#enc-page-slot-seq")).toHaveText(
+          String(nextRamenSlot)
+        );
+        await expect(page.locator("#enc-page-shell-seq")).toHaveText(
+          String(baseTokyoShell)
+        );
+
+        // -----------------------------------------------------------------
+        // PHASE D: Relative Server Function revalidatePage("./") on CJK Path
+        //          + Client Cache Coherence across Encoded/Decoded Keys!
+        // -----------------------------------------------------------------
+        const nextTokyoShell = base + 20;
+        await page.evaluate(
+          (patch) => (window as any).__ENC_ACTIONS__.revalRelativePage(patch),
+          {
+            encSlugRamenShellSeq: nextTokyoShell,
+            encL1ShellSeq: POISON,
+            encCatTokyoSeq: POISON,
+          }
+        );
+        await page.locator("#link-enc-hello").click();
+        await expect(page.locator("#enc-cat-param")).toHaveText("hello world");
+        await page.locator("#link-enc-tokyo").click();
+        await expect(page.locator("#enc-page-shell-seq")).toHaveText(
+          String(nextTokyoShell)
+        );
+        await expect(page.locator("#enc-l1-shell-seq")).toHaveText(String(baseL1));
+
+        // -----------------------------------------------------------------
+        // PHASE E: Relative Server Function revalidateLayout("..") on Accented
+        //          Route ("café / crème brûlée") + Trailing-Slash Canonical Hit!
+        // -----------------------------------------------------------------
+        await page.locator("#link-enc-cafe").click();
+        await expect(page.locator("#enc-cat-param")).toHaveText("café");
+        await expect(page.locator("#enc-page-slug")).toHaveText("crème brûlée");
+
+        const nextCatCafe = base + 30;
+        await page.evaluate(
+          (patch) =>
+            (window as any).__ENC_ACTIONS__.revalRelativeParentLayout(patch),
+          {
+            encCatCafeSeq: nextCatCafe,
+            encL1ShellSeq: POISON,
+            encSlugCremeShellSeq: POISON,
+            encCatHelloSeq: POISON,
+          }
+        );
+
+        // Trailing-slash navigation hits the EXACT same canonical cache with updated L2!
+        await page.goto(
+          "/t-3d-cube/encoded-params/caf%C3%A9/cr%C3%A8me%20br%C3%BBl%C3%A9e/",
+          { waitUntil: "networkidle" }
+        );
+        await waitEncReady();
+        await expect(page.locator("#enc-cat-l2-seq")).toHaveText(
+          String(nextCatCafe)
+        );
+        await expect(page.locator("#enc-page-shell-seq")).toHaveText(
+          String(baseCremeShell)
+        );
+        await expect(page.locator("#enc-l1-shell-seq")).toHaveText(String(baseL1));
+
+        // Sibling "hello world" layout stayed untouched!
+        await page.locator("#link-enc-hello").click();
+        await expect(page.locator("#enc-cat-l2-seq")).toHaveText(
+          String(baseCatHello)
+        );
+
+        expect(hydrationErrors).toEqual([]);
+        expect(routerWarnings).toEqual([]);
+        expect(pageErrors).toEqual([]);
+      } finally {
+        // Idempotent across sequential browsers via dynamic baselines
+      }
+    });
   });
 });
