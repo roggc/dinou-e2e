@@ -476,7 +476,11 @@ async function revalidatePage(reqPath, internalOptions = {}) {
   const onlyRefreshSlots = Boolean(internalOptions?.onlyRefreshSlots);
   const onlyIfExpired = Boolean(internalOptions?.onlyIfExpired);
   const inFlightKey = `${cleanPath}:${onlyRefreshSlots ? "slots" : "full"}:${onlyIfExpired ? "ttl" : "force"}`;
-  const useInflightDedup = !isCloudflareWorkersRuntime();
+  // Never await an outer queued inflightPageRevalidations promise when already inside
+  // revalQueueStorage (holding revalState.queue), or a concurrent caller queued behind us
+  // on revalState.queue would create a permanent self-deadlock.
+  const isInsideRevalQueue = Boolean(revalQueueStorage.getStore());
+  const useInflightDedup = !isCloudflareWorkersRuntime() && !isInsideRevalQueue;
 
   if (useInflightDedup && inflightPageRevalidations.has(inFlightKey)) {
     return inflightPageRevalidations.get(inFlightKey);
@@ -1296,7 +1300,11 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
   const onlyIfExpired = Boolean(internalOptions?.onlyIfExpired);
   const recomposeOnly = Boolean(internalOptions?.recomposeOnly);
   const inFlightKey = `${targetPath}:${recomposeOnly ? "recompose" : onlyRefreshSlots ? "slots" : "full"}:${onlyIfExpired ? "ttl" : "force"}`;
-  const useInflightDedup = !isCloudflareWorkersRuntime();
+  // Never await an outer queued inflightLayoutRevalidations promise when already inside
+  // revalQueueStorage (e.g. revalidatePage holding revalState.queue calling nested revalidateLayout),
+  // or a concurrent caller queued behind us on revalState.queue would permanently deadlock the queue.
+  const isInsideRevalQueue = Boolean(revalQueueStorage.getStore());
+  const useInflightDedup = !isCloudflareWorkersRuntime() && !isInsideRevalQueue;
 
   if (useInflightDedup && inflightLayoutRevalidations.has(inFlightKey)) {
     return inflightLayoutRevalidations.get(inFlightKey);

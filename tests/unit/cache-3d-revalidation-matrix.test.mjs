@@ -1780,6 +1780,34 @@ assert.equal(textById(afterStampedeHtml.text, "s3-l1-v"), "601");
 assert.equal(textById(afterStampedeHtml.text, "s3-slot-v"), "602");
 assert.equal(textById(afterStampedeHtml.text, "s3-page-v"), "603");
 
+// ============================================================================
+// 6. Re-entrant Queue Deadlock Regression:
+//    revalidatePage (holding revalState.queue) calling nested revalidateLayout while an external
+//    concurrent revalidateLayout for the same key is queued behind it on revalState.queue MUST NEVER deadlock!
+// ============================================================================
+writeS({ nestedL1: 701, nestedSlot: 702, nestedPage: 703, nestedDelayMs: 0 });
+try { fs.unlinkSync(path.join(dist2, "nested/layout.rsc")); } catch (e) {}
+let deadlockTimer;
+const deadlockRace = Promise.race([
+  Promise.all([
+    rscMod.revalidatePage("/nested/ppr"),
+    rscMod.revalidateLayout("/nested", { onlyRefreshSlots: true }),
+  ]),
+  new Promise((_, reject) => {
+    deadlockTimer = setTimeout(() => reject(new Error("DEADLOCK: revalState.queue hung on re-entrant inflightLayoutRevalidations!")), 8000);
+  }),
+]);
+try {
+  await deadlockRace;
+} finally {
+  clearTimeout(deadlockTimer);
+}
+// Verify queue is still alive and responsive after the concurrent race!
+writeS({ nestedPage: 704 });
+await rscMod.revalidatePage("/nested/ppr");
+const afterDeadlockCheck = await req("/nested/ppr");
+assert.equal(textById(afterDeadlockCheck.text, "s3-page-v"), "704");
+
 console.log("PHASE6_STAGE3_SURGICAL_OLD_STAMPEDE_OK");
 `
     );
