@@ -9481,14 +9481,14 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
         // Raw HTTP verification: per-request dynamic SSR without PPR <template> tail
         const [resAlice, resBob, resNested] = await Promise.all([
-          request.get("/t-ppr-mixed-segments-bailout?bquery=q-alice", {
-            headers: { Cookie: "mppr_bailout_user=alice-raw" },
+          safeApiGet(request, "/t-ppr-mixed-segments-bailout?bquery=q-alice", {
+            headers: { Cookie: "mppr_bailout_user=alice-raw", connection: "close" },
           }),
-          request.get("/t-ppr-mixed-segments-bailout?bquery=q-bob", {
-            headers: { Cookie: "mppr_bailout_user=bob-raw" },
+          safeApiGet(request, "/t-ppr-mixed-segments-bailout?bquery=q-bob", {
+            headers: { Cookie: "mppr_bailout_user=bob-raw", connection: "close" },
           }),
-          request.get("/t-ppr-mixed-segments-bailout/nested-ppr?nmode=n-raw", {
-            headers: { Cookie: "mppr_bailout_user=nested-raw" },
+          safeApiGet(request, "/t-ppr-mixed-segments-bailout/nested-ppr?nmode=n-raw", {
+            headers: { Cookie: "mppr_bailout_user=nested-raw", connection: "close" },
           }),
         ]);
         const [htmlAlice, htmlBob, htmlNested] = await Promise.all([
@@ -18785,7 +18785,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const [httpBodies] = await Promise.all([
         Promise.all(
           Array.from({ length: 12 }, async () => {
-            const res = await request.get("/t-3d-cube/ppr-stampede");
+            const res = await safeApiGet(request, "/t-3d-cube/ppr-stampede", {
+              headers: { connection: "close" },
+            });
             expect(res.status()).toBe(200);
             return await res.text();
           })
