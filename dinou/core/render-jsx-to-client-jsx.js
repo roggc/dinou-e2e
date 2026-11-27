@@ -343,6 +343,9 @@ const DinouServerAsyncDispatcher = {
   cacheSignal() {
     return null;
   },
+  getOwner() {
+    return null;
+  },
   _dinouIsServerAsyncDispatcher: true,
 };
 
