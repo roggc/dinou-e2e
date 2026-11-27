@@ -180,6 +180,30 @@ export interface DinouPlugin {
   onRequestContext?(simReq: any, resBridge: any, context: any): void;
 }
 
+export interface DinouSecurityConfig {
+  /**
+   * Trust incoming `X-Forwarded-Host` header when validating Server Function CSRF `Origin`.
+   * Keep `false` unless Dinou runs behind a trusted reverse proxy (Nginx, ALB, Traefik, Cloudflare)
+   * that overwrites `X-Forwarded-Host`. Can also be enabled via `DINOU_TRUST_PROXY=true`.
+   * @default false
+   */
+  trustProxy?: boolean;
+
+  /**
+   * Additional explicitly allowed origins or hosts (e.g. `["https://app.example.com"]`)
+   * permitted to invoke Server Functions (`POST /____server_function____`).
+   */
+  allowedOrigins?: string[];
+
+  /**
+   * Maximum incoming request body size (in bytes) accepted by `POST /____server_function____`.
+   * Applies only to incoming arguments / `FormData` payloads (never to response streams).
+   * Can also be set via `DINOU_MAX_SERVER_FUNCTION_BODY_BYTES`.
+   * @default 1048576 (1 MB) for JSON, 10485760 (10 MB) for multipart/form-data
+   */
+  maxServerFunctionBodyBytes?: number;
+}
+
 export interface DinouConfig {
   /**
    * Enable or disable the React Compiler (`babel-plugin-react-compiler`) during production builds.
@@ -230,6 +254,11 @@ export interface DinouConfig {
    * with ambient TypeScript declarations emitted into `.dinou/types/routes.d.ts`.
    */
   assetExtensions?: string[];
+
+  /**
+   * HTTP security & Server Function hardening options (`trustProxy`, `allowedOrigins`, `maxServerFunctionBodyBytes`).
+   */
+  security?: DinouSecurityConfig;
 
   /**
    * Array of Dinou plugins.
