@@ -821,3 +821,151 @@ test("OPT-5: getDiscoveredLayouts() caches permanently in production, pre-serial
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
 });
+
+test("OPT-6: replaceHolesWithMap preserves referential equality and handlePprResume reuses pre-rendered 0-hole layout.rsc / page.rsc causally", async () => {
+  const prevNodeEnv = process.env.NODE_ENV;
+  const prevDinouDev = process.env.DINOU_DEV;
+  const prevGlobalDev = globalThis.__DINOU_DEV__;
+
+  const React = (await import("react")).default;
+  const pprMod = await import(
+    pathToFileURL(path.resolve(rootDir, "dinou/core/ppr-runtime.js")).href
+  );
+  const storageMod = await import(
+    pathToFileURL(path.resolve(rootDir, "dinou/core/storage-adapter.js")).href
+  );
+  const handlerMod = await import(
+    pathToFileURL(path.resolve(rootDir, "dinou/core/handler.js")).href
+  );
+  const prevAdapter = storageMod.getStorageAdapter();
+
+  try {
+    process.env.NODE_ENV = "production";
+    delete process.env.DINOU_DEV;
+    delete globalThis.__DINOU_DEV__;
+
+    // 1. replaceHolesWithMap returns exact same reference when 0 holes match (including nested arrays & elements)
+    const nestedLayoutTree = React.createElement(
+      "div",
+      { className: "layout", meta: { nested: [1, 2, 3] } },
+      [
+        React.createElement("header", { key: "h" }, "Header"),
+        React.createElement("main", { key: "m" }, [
+          React.createElement("span", { key: "s", "data-ppr-hole": "ppr-hole-99" }, "fallback"),
+        ]),
+      ]
+    );
+    assert.equal(
+      pprMod.replaceHolesWithMap(nestedLayoutTree, new Map()),
+      nestedLayoutTree,
+      "Empty liveHolesMap must short-circuit and return exact same reference"
+    );
+    const unrelatedHoles = new Map([["ppr-hole-0", React.createElement("b", null, "live")]]);
+    assert.equal(
+      pprMod.replaceHolesWithMap(nestedLayoutTree, unrelatedHoles),
+      nestedLayoutTree,
+      "Unrelated hole IDs must preserve exact referential equality across arrays and elements"
+    );
+    const matchingHoles = new Map([["ppr-hole-99", React.createElement("strong", null, "resolved")]]);
+    const spliced = pprMod.replaceHolesWithMap(nestedLayoutTree, matchingHoles);
+    assert.notEqual(spliced, nestedLayoutTree);
+    assert.equal(spliced.props.children[0], nestedLayoutTree.props.children[0], "Unchanged sibling preserves reference");
+    const splicedMainChild = Array.isArray(spliced.props.children[1].props.children)
+      ? spliced.props.children[1].props.children[0]
+      : spliced.props.children[1].props.children;
+    assert.equal(splicedMainChild.type, "strong");
+
+    // 2. Zero-hole PPR route in handlePprResume reuses preloadedLayoutRsc & preloadedPageRsc without reading shell.*.json
+    const store = new storageMod.MemoryStorage();
+    const touchedKeys = [];
+    const origGet = store.get.bind(store);
+    store.get = async (k) => {
+      touchedKeys.push(String(k));
+      return origGet(k);
+    };
+    storageMod.setStorageAdapter(store);
+
+    const sentinelLayoutRsc = '0:["$","div",null,{"children":"PRELOADED_STATIC_LAYOUT_RSC"}]\n';
+    const sentinelPageRsc = '0:["$","section",null,{"children":"PRELOADED_ZERO_HOLE_PAGE_RSC"}]\n';
+    const resZeroHole = await pprMod.handlePprResume({
+      reqPath: "/t-3d-cube/router-coherence/ppr-a",
+      queryObj: {},
+      simReq: { method: "GET", path: "/t-3d-cube/router-coherence/ppr-a", query: {}, cookies: {}, headers: {} },
+      bridge: { headers: new Headers(), cookies: [], _explicitStatusSet: false, statusCode: 200 },
+      platformContext: {},
+      rootContext: {},
+      cachedItem: {
+        content: '<!DOCTYPE html><html><head><script>window.__DINOU_LAYOUTS__=[""];</script></head><body><main>shell</main></body></html>',
+        metadata: { status: 200, ppr: true, holes: [] },
+      },
+      metadata: { status: 200, ppr: true, holes: [] },
+      isDevelopment: false,
+      getDiscoveredLayouts: () => [""],
+      getDiscoveredLayoutsJson: () => '[""]',
+      createRequestContext: () => ({}),
+      copyCustomContextProperties: () => {},
+      preloadedLayoutRsc: sentinelLayoutRsc,
+      preloadedPageRsc: sentinelPageRsc,
+      activeLayoutChain: [{ cleanLayoutKey: "t-3d-cube/router-coherence", layoutPath: "src/t-3d-cube/router-coherence/layout.tsx", dParams: {} }],
+    });
+    const htmlZeroHole = await resZeroHole.text();
+    assert.ok(htmlZeroHole.includes("PRELOADED_STATIC_LAYOUT_RSC"), "Must emit preloaded layout.rsc inline");
+    assert.ok(htmlZeroHole.includes("PRELOADED_ZERO_HOLE_PAGE_RSC"), "Must emit preloaded page.rsc inline");
+    assert.ok(htmlZeroHole.includes('window.__DINOU_PAGE_CACHE_MODE__="static"'));
+    assert.equal(touchedKeys.length, 0, "Zero-hole fast path with preloaded RSCs must perform 0 storage reads");
+
+    // 3. Causal SWR safety in handler.js: older shell.html buildId selects layout._old.rsc (not newer layout.rsc)
+    const cleanRel = "t-3d-cube/router-coherence/ppr-a";
+    const tOld = Date.now() - 5000;
+    const tNew = Date.now() - 1000;
+    const oldHtml = `<!DOCTYPE html><html><head><script>window.__DINOU_LAYOUTS__=[""];window.__DINOU_BUILD_ID__="${tOld}";</script></head><body><main>old-shell</main></body></html>`;
+    await store.set(`${cleanRel}/shell.html`, oldHtml, {
+      status: 200,
+      generatedAt: tOld,
+      pageGeneratedAt: tOld,
+      ppr: true,
+      holes: [],
+    });
+    await store.set(`${cleanRel}/metadata.json`, JSON.stringify({
+      status: 200,
+      generatedAt: tOld,
+      pageGeneratedAt: tOld,
+      ppr: true,
+      holes: [],
+    }));
+    await store.set(`${cleanRel}/page.rsc`, '0:["$","p",null,{"children":"CAUSAL_PAGE_RSC"}]\n');
+    for (const lk of ["", "t-3d-cube", "t-3d-cube/router-coherence"]) {
+      const gen = lk === "t-3d-cube/router-coherence" ? tNew : tOld;
+      await store.set(
+        lk ? `${lk}/layout.metadata.json` : "layout.metadata.json",
+        JSON.stringify({ generatedAt: gen, layoutGeneratedAt: gen, ownGeneratedAt: gen, revalidate: 3600 })
+      );
+    }
+    await store.set("t-3d-cube/router-coherence/layout.rsc", '0:["$","div",null,{"children":"NEW_LAYOUT_T_NEW"}]\n');
+    await store.set("t-3d-cube/router-coherence/layout._old.rsc", '0:["$","div",null,{"children":"OLD_LAYOUT_T_OLD"}]\n');
+
+    touchedKeys.length = 0;
+    const swrRes = await handlerMod.handleRequest(
+      new Request(`http://localhost:3000/${cleanRel}`),
+      { runtime: "edge" }
+    );
+    const swrHtml = await swrRes.text();
+    assert.equal(swrRes.status, 200);
+    assert.ok(swrHtml.includes("OLD_LAYOUT_T_OLD"), "Causal SWR snapshot must emit layout._old.rsc matching shell.html buildId");
+    assert.equal(swrHtml.includes("NEW_LAYOUT_T_NEW"), false, "Must NOT mix newer T_new layout.rsc into older T_old shell.html");
+    assert.ok(swrHtml.includes("CAUSAL_PAGE_RSC"));
+    assert.equal(
+      touchedKeys.some((k) => k.endsWith("shell.page.json") || k.endsWith("shell.layout.json")),
+      false,
+      "0-hole PPR route with valid page.rsc + layout.rsc should skip shell.*.json reads"
+    );
+  } finally {
+    if (prevAdapter) storageMod.setStorageAdapter(prevAdapter);
+    if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevNodeEnv;
+    if (prevDinouDev === undefined) delete process.env.DINOU_DEV;
+    else process.env.DINOU_DEV = prevDinouDev;
+    if (prevGlobalDev === undefined) delete globalThis.__DINOU_DEV__;
+    else globalThis.__DINOU_DEV__ = prevGlobalDev;
+  }
+});

@@ -4378,6 +4378,8 @@ async function handleRequestInner(request, platformContext = {}) {
         } catch (slotSyncErr) {}
       }
 
+      let lazyRecomposedLayoutRsc = null;
+      let lazyRecomposedPageRsc = null;
       try {
         if (cachedHitActiveLayoutChain.length > 0) {
           const leafLayout = cachedHitActiveLayoutChain[0];
@@ -4402,6 +4404,8 @@ async function handleRequestInner(request, platformContext = {}) {
               pageRscText = await readRscFromStorage(storage, pageRscKey, platformContext, request.url);
             }
             if (layoutRscText && pageRscText) {
+              lazyRecomposedLayoutRsc = layoutRscText;
+              lazyRecomposedPageRsc = pageRscText;
               const encoder = new TextEncoder();
               const toStream = (str) =>
                 new ReadableStream({
@@ -4470,15 +4474,19 @@ async function handleRequestInner(request, platformContext = {}) {
         console.warn(`⚠️ [Dinou] Error during lazy HTML re-composition for ${reqPath}:`, lazyErr?.message || lazyErr);
       }
 
-      // Snapshot PPR shell JSONs causally matching `cachedItem.content` BEFORE launching ANY background SWR,
-      // eliminating the SWR hydration race (#418) where background revalidation overwrites shell.page.json / shell.layout.json
+      // Snapshot PPR shell JSONs & pre-rendered 0-hole RSCs causally matching `cachedItem.content` BEFORE launching ANY background SWR,
+      // eliminating the SWR hydration race (#418) where background revalidation overwrites shell.*.json / *.rsc
       // while handlePprResume is streaming the stale shellPrelude HTML.
       let preloadedPageShellJson;
       let preloadedLayoutShellJson;
+      let preloadedPageRsc;
+      let preloadedLayoutRsc;
       if (cachedItem.metadata?.ppr || isPprConfig) {
         try {
           const shellPageKey = cleanPath ? `${cleanPath}/shell.page.json` : "shell.page.json";
           const shellPageOldKey = cleanPath ? `${cleanPath}/shell.page._old.json` : "shell.page._old.json";
+          const pageRscKey = cleanPath ? `${cleanPath}/page.rsc` : "page.rsc";
+          const pageOldRscKey = cleanPath ? `${cleanPath}/page._old.rsc` : "page._old.rsc";
           const htmlBuildIdMatch =
             typeof cachedItem.content === "string"
               ? cachedItem.content.match(/window\.__DINOU_BUILD_ID__\s*=\s*"(\d+)"/)
@@ -4493,7 +4501,7 @@ async function handleRequestInner(request, platformContext = {}) {
             const latestPageMeta = await readMetaFromStorage(
               storage,
               metaKey,
-              cleanPath ? `${cleanPath}/page.rsc` : "page.rsc",
+              pageRscKey,
               platformContext,
               request.url
             );
@@ -4501,41 +4509,104 @@ async function handleRequestInner(request, platformContext = {}) {
               useOldPageShell = true;
             }
           }
-          const pageShellPromise = useOldPageShell
-            ? readShellJsonFromStorage(storage, shellPageOldKey, platformContext, request.url).then(
-                (oldJson) =>
-                  oldJson ||
-                  readShellJsonFromStorage(storage, shellPageKey, platformContext, request.url)
-              )
-            : readShellJsonFromStorage(storage, shellPageKey, platformContext, request.url);
+
+          const cachedHoles = cachedItem.metadata?.holes;
+          const isZeroHolePprRoute =
+            Array.isArray(cachedHoles) &&
+            cachedHoles.length === 0 &&
+            (typeof cachedItem.content !== "string" || !cachedItem.content.includes("data-ppr-hole="));
+          const isStaticPageInPprRoute =
+            isZeroHolePprRoute || cachedItem.metadata?.pagePpr === false;
 
           const hasActiveLayout = cachedHitActiveLayoutChain.length > 0;
           const leafLayoutEntry = hasActiveLayout ? cachedHitActiveLayoutChain[0] : null;
-          let layoutShellPromise = Promise.resolve(null);
-          if (hasActiveLayout && leafLayoutEntry) {
-            const leafKey = leafLayoutEntry.cleanLayoutKey;
-            const shellLayoutKey = leafKey ? `${leafKey}/shell.layout.json` : "shell.layout.json";
-            const shellLayoutOldKey = leafKey ? `${leafKey}/shell.layout._old.json` : "shell.layout._old.json";
-            let useOldLayoutShell = false;
-            if (htmlGenAt > 0 && leafLayoutEntry.generatedAt > htmlGenAt) {
-              useOldLayoutShell = true;
-            }
-            layoutShellPromise = useOldLayoutShell
-              ? readShellJsonFromStorage(storage, shellLayoutOldKey, platformContext, request.url).then(
-                  (oldJson) =>
-                    oldJson ||
-                    readShellJsonFromStorage(storage, shellLayoutKey, platformContext, request.url)
-                )
-              : readShellJsonFromStorage(storage, shellLayoutKey, platformContext, request.url);
+          const leafMeta = leafLayoutEntry?._hasPrefetchedMeta ? leafLayoutEntry._prefetchedMeta : null;
+          const layoutMetaHasHoles = Array.isArray(leafMeta?.holes) && leafMeta.holes.length > 0;
+          let useOldLayoutShell = false;
+          if (hasActiveLayout && leafLayoutEntry && htmlGenAt > 0 && leafLayoutEntry.generatedAt > htmlGenAt) {
+            useOldLayoutShell = true;
           }
 
-          [preloadedPageShellJson, preloadedLayoutShellJson] = await Promise.all([
-            pageShellPromise,
-            layoutShellPromise,
-          ]);
+          const leafKey = leafLayoutEntry ? leafLayoutEntry.cleanLayoutKey : "";
+          const shellLayoutKey = leafKey ? `${leafKey}/shell.layout.json` : "shell.layout.json";
+          const shellLayoutOldKey = leafKey ? `${leafKey}/shell.layout._old.json` : "shell.layout._old.json";
+          const layoutRscKey = leafKey ? `${leafKey}/layout.rsc` : "layout.rsc";
+          const layoutOldRscKey = leafKey ? `${leafKey}/layout._old.rsc` : "layout._old.rsc";
+
+          const loadPageShell = () =>
+            useOldPageShell
+              ? readShellJsonFromStorage(storage, shellPageOldKey, platformContext, request.url).then(
+                  (oldJson) =>
+                    oldJson ||
+                    readShellJsonFromStorage(storage, shellPageKey, platformContext, request.url)
+                )
+              : readShellJsonFromStorage(storage, shellPageKey, platformContext, request.url);
+
+          const loadLayoutShell = () =>
+            hasActiveLayout && leafLayoutEntry
+              ? useOldLayoutShell
+                ? readShellJsonFromStorage(storage, shellLayoutOldKey, platformContext, request.url).then(
+                    (oldJson) =>
+                      oldJson ||
+                      readShellJsonFromStorage(storage, shellLayoutKey, platformContext, request.url)
+                  )
+                : readShellJsonFromStorage(storage, shellLayoutKey, platformContext, request.url)
+              : Promise.resolve(null);
+
+          const loadPageRsc = () =>
+            isStaticPageInPprRoute
+              ? lazyRecomposedPageRsc && !useOldPageShell
+                ? Promise.resolve(lazyRecomposedPageRsc)
+                : useOldPageShell
+                ? readRscFromStorage(storage, pageOldRscKey, platformContext, request.url).then(
+                    (oldRsc) =>
+                      oldRsc || readRscFromStorage(storage, pageRscKey, platformContext, request.url)
+                  )
+                : readRscFromStorage(storage, pageRscKey, platformContext, request.url)
+              : Promise.resolve(null);
+
+          const loadLayoutRsc = () =>
+            hasActiveLayout && leafLayoutEntry && !layoutMetaHasHoles
+              ? lazyRecomposedLayoutRsc && !useOldLayoutShell
+                ? Promise.resolve(lazyRecomposedLayoutRsc)
+                : useOldLayoutShell
+                ? readRscFromStorage(storage, layoutOldRscKey, platformContext, request.url).then(
+                    (oldRsc) =>
+                      oldRsc || readRscFromStorage(storage, layoutRscKey, platformContext, request.url)
+                  )
+                : readRscFromStorage(storage, layoutRscKey, platformContext, request.url)
+              : Promise.resolve(null);
+
+          if (isZeroHolePprRoute) {
+            [preloadedPageRsc, preloadedLayoutRsc] = await Promise.all([
+              loadPageRsc(),
+              loadLayoutRsc(),
+            ]);
+            // Only read shell.*.json on 0-hole PPR routes if a pre-rendered .rsc artifact is missing.
+            if (!preloadedPageRsc || (hasActiveLayout && !preloadedLayoutRsc)) {
+              [preloadedPageShellJson, preloadedLayoutShellJson] = await Promise.all([
+                loadPageShell(),
+                loadLayoutShell(),
+              ]);
+            }
+          } else {
+            [
+              preloadedPageShellJson,
+              preloadedLayoutShellJson,
+              preloadedPageRsc,
+              preloadedLayoutRsc,
+            ] = await Promise.all([
+              loadPageShell(),
+              loadLayoutShell(),
+              loadPageRsc(),
+              loadLayoutRsc(),
+            ]);
+          }
         } catch (snapErr) {
           preloadedPageShellJson = undefined;
           preloadedLayoutShellJson = undefined;
+          preloadedPageRsc = undefined;
+          preloadedLayoutRsc = undefined;
         }
       }
 
@@ -4774,6 +4845,9 @@ async function handleRequestInner(request, platformContext = {}) {
           copyCustomContextProperties,
           preloadedPageShellJson,
           preloadedLayoutShellJson,
+          preloadedPageRsc,
+          preloadedLayoutRsc,
+          activeLayoutChain: cachedHitActiveLayoutChain,
         });
       }
 

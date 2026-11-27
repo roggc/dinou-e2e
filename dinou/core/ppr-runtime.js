@@ -113,18 +113,102 @@ async function readShellJsonFromStorage(storage, key, platformContext, reqUrl) {
   return null;
 }
 
+async function readRscTextFromStorage(storage, key, platformContext, reqUrl) {
+  if (!key) return null;
+  if (storage) {
+    try {
+      const item = await storage.get(key);
+      if (
+        item &&
+        typeof item.content === "string" &&
+        item.content.length > 0 &&
+        !item.content.trimStart().startsWith("<")
+      ) {
+        return item.content;
+      }
+    } catch (e) {}
+  }
+  const isDeleted =
+    storage &&
+    (typeof storage.isKeyDeleted === "function"
+      ? await storage.isKeyDeleted(key)
+      : typeof storage.isDeleted === "function" && storage.isDeleted(key));
+  if (isDeleted) {
+    return null;
+  }
+  if (platformContext?.env?.ASSETS && reqUrl) {
+    try {
+      const assetRes = await fetchCloudflareDist2Asset(
+        platformContext.env.ASSETS,
+        key,
+        reqUrl
+      );
+      if (assetRes && assetRes.status === 200) {
+        const txt = await assetRes.text();
+        if (txt && txt.length > 0 && !txt.trimStart().startsWith("<")) {
+          if (storage) {
+            try {
+              await storage.set(key, txt);
+            } catch (e) {}
+          }
+          return txt;
+        }
+      }
+    } catch (e) {}
+  }
+  if (storage) {
+    const dist2Item = await readDist2Fallback(storage, key);
+    if (
+      dist2Item &&
+      typeof dist2Item.content === "string" &&
+      dist2Item.content.length > 0 &&
+      !dist2Item.content.trimStart().startsWith("<")
+    ) {
+      return dist2Item.content;
+    }
+  } else {
+    try {
+      const diskPath = path.resolve(process.cwd(), ".dinou/dist2", key);
+      if (existsSync(diskPath)) {
+        const txt = readFileSync(diskPath, "utf8");
+        if (txt && txt.length > 0 && !txt.trimStart().startsWith("<")) {
+          return txt;
+        }
+      }
+    } catch (e) {}
+  }
+  return null;
+}
+
 function replaceHolesWithMap(node, liveHolesMap) {
   if (
     !node ||
     typeof node !== "object" ||
     node instanceof Promise ||
     node.$$typeof === Symbol.for("react.client.reference") ||
-    typeof node.then === "function"
+    typeof node.then === "function" ||
+    !liveHolesMap ||
+    liveHolesMap.size === 0
   ) {
     return node;
   }
   if (Array.isArray(node)) {
-    return node.map((item) => replaceHolesWithMap(item, liveHolesMap));
+    let changed = false;
+    let result = null;
+    for (let i = 0; i < node.length; i++) {
+      const item = node[i];
+      const updated = replaceHolesWithMap(item, liveHolesMap);
+      if (updated !== item) {
+        if (!changed) {
+          result = node.slice(0, i);
+          changed = true;
+        }
+      }
+      if (changed) {
+        result.push(updated);
+      }
+    }
+    return changed ? result : node;
   }
   if (node.$$typeof === Symbol.for("react.transitional.element")) {
     const holeId = node.props && node.props["data-ppr-hole"];
@@ -133,13 +217,16 @@ function replaceHolesWithMap(node, liveHolesMap) {
     }
     if (node.props && typeof node.props === "object") {
       let changed = false;
-      const newProps = { ...node.props };
+      let newProps = null;
       for (const [k, v] of Object.entries(node.props)) {
         if (v && typeof v === "object") {
           const updated = replaceHolesWithMap(v, liveHolesMap);
           if (updated !== v) {
+            if (!changed) {
+              newProps = { ...node.props };
+              changed = true;
+            }
             newProps[k] = updated;
-            changed = true;
           }
         }
       }
@@ -156,13 +243,16 @@ function replaceHolesWithMap(node, liveHolesMap) {
     return node;
   }
   let changed = false;
-  const clone = { ...node };
+  let clone = null;
   for (const [k, v] of Object.entries(node)) {
     if (v && typeof v === "object") {
       const updated = replaceHolesWithMap(v, liveHolesMap);
       if (updated !== v) {
+        if (!changed) {
+          clone = { ...node };
+          changed = true;
+        }
         clone[k] = updated;
-        changed = true;
       }
     }
   }
@@ -995,6 +1085,9 @@ async function handlePprResume({
   copyCustomContextProperties,
   preloadedPageShellJson,
   preloadedLayoutShellJson,
+  preloadedPageRsc,
+  preloadedLayoutRsc,
+  activeLayoutChain,
 }) {
   const buildPprResponseHeaders = () => {
     const headers = new Headers(bridge?.headers);
@@ -1114,31 +1207,29 @@ async function handlePprResume({
       const cleanRel = (reqPath || "").replace(/^\/+/, "").replace(/\/+$/, "");
       const reqSegments = cleanRel ? cleanRel.split("/").filter(Boolean) : [];
       const srcFolder = path.resolve(process.cwd(), "src");
-      let activeChain = [];
-      try {
-        activeChain = getActiveLayoutChain(reqSegments, queryObj || {}, srcFolder);
-      } catch (e) {}
+      let activeChain = Array.isArray(activeLayoutChain) ? activeLayoutChain : [];
+      if (!Array.isArray(activeLayoutChain)) {
+        try {
+          activeChain = getActiveLayoutChain(reqSegments, queryObj || {}, srcFolder);
+        } catch (e) {}
+      }
       const hasActiveLayout = activeChain.length > 0;
       const leafLayoutKey = hasActiveLayout ? activeChain[0].cleanLayoutKey : null;
       const shellPageKey = cleanRel ? `${cleanRel}/shell.page.json` : "shell.page.json";
+      const pageRscKey = cleanRel ? `${cleanRel}/page.rsc` : "page.rsc";
       const shellLayoutKey = hasActiveLayout
         ? leafLayoutKey
           ? `${leafLayoutKey}/shell.layout.json`
           : "shell.layout.json"
         : null;
+      const layoutRscKey = hasActiveLayout
+        ? leafLayoutKey
+          ? `${leafLayoutKey}/layout.rsc`
+          : "layout.rsc"
+        : null;
       const reqOriginUrl = simReq?.url
         ? `http://${simReq.headers?.host || "localhost:3000"}${simReq.url}`
         : null;
-      const [pageShellJson, layoutShellJson] = await Promise.all([
-        preloadedPageShellJson !== undefined
-          ? Promise.resolve(preloadedPageShellJson)
-          : readShellJsonFromStorage(storage, shellPageKey, platformContext, reqOriginUrl),
-        hasActiveLayout
-          ? preloadedLayoutShellJson !== undefined
-            ? Promise.resolve(preloadedLayoutShellJson)
-            : readShellJsonFromStorage(storage, shellLayoutKey, platformContext, reqOriginUrl)
-          : Promise.resolve(null),
-      ]);
 
       let holes = Array.isArray(metadata?.holes) ? metadata.holes : null;
       if ((!holes || holes.length === 0) && typeof shellPrelude === "string") {
@@ -1148,6 +1239,45 @@ async function handlePprResume({
         if (extracted.length > 0 || Array.isArray(metadata?.holes)) {
           holes = extracted;
         }
+      }
+      const hasDynamicHoles = !Array.isArray(holes) || holes.length > 0;
+
+      // Fast path for 0-hole PPR routes: if pre-rendered page.rsc & layout.rsc are available,
+      // skip reading/deserializing shell.*.json and skip renderRSCStream() completely.
+      let resolvedPreloadedPageRsc = preloadedPageRsc;
+      let resolvedPreloadedLayoutRsc = preloadedLayoutRsc;
+      if (!hasDynamicHoles) {
+        const [fetchedPageRsc, fetchedLayoutRsc] = await Promise.all([
+          resolvedPreloadedPageRsc !== undefined
+            ? Promise.resolve(resolvedPreloadedPageRsc)
+            : readRscTextFromStorage(storage, pageRscKey, platformContext, reqOriginUrl),
+          hasActiveLayout
+            ? resolvedPreloadedLayoutRsc !== undefined
+              ? Promise.resolve(resolvedPreloadedLayoutRsc)
+              : readRscTextFromStorage(storage, layoutRscKey, platformContext, reqOriginUrl)
+            : Promise.resolve(""),
+        ]);
+        resolvedPreloadedPageRsc = fetchedPageRsc;
+        resolvedPreloadedLayoutRsc = fetchedLayoutRsc;
+      }
+      const hasZeroHolePreloadedRsc =
+        !hasDynamicHoles &&
+        Boolean(resolvedPreloadedPageRsc) &&
+        (!hasActiveLayout || Boolean(resolvedPreloadedLayoutRsc));
+
+      let pageShellJson = null;
+      let layoutShellJson = null;
+      if (!hasZeroHolePreloadedRsc) {
+        [pageShellJson, layoutShellJson] = await Promise.all([
+          preloadedPageShellJson !== undefined
+            ? Promise.resolve(preloadedPageShellJson)
+            : readShellJsonFromStorage(storage, shellPageKey, platformContext, reqOriginUrl),
+          hasActiveLayout
+            ? preloadedLayoutShellJson !== undefined
+              ? Promise.resolve(preloadedLayoutShellJson)
+              : readShellJsonFromStorage(storage, shellLayoutKey, platformContext, reqOriginUrl)
+            : Promise.resolve(null),
+        ]);
       }
 
       const dynamicState = { value: true };
@@ -1163,15 +1293,17 @@ async function handlePprResume({
       const resolvedHolesMap = new Map();
       let cachedPageTreeForResume = null;
       let cachedLayoutTreeForResume = null;
-      if (pageShellJson) {
-        try {
-          cachedPageTreeForResume = deserializeJSX(pageShellJson);
-        } catch (_) {}
-      }
-      if (hasActiveLayout && layoutShellJson) {
-        try {
-          cachedLayoutTreeForResume = deserializeJSX(layoutShellJson);
-        } catch (_) {}
+      if (!hasZeroHolePreloadedRsc) {
+        if (pageShellJson) {
+          try {
+            cachedPageTreeForResume = deserializeJSX(pageShellJson);
+          } catch (_) {}
+        }
+        if (hasActiveLayout && layoutShellJson) {
+          try {
+            cachedLayoutTreeForResume = deserializeJSX(layoutShellJson);
+          } catch (_) {}
+        }
       }
       const shellContextForHoles =
         cachedPageTreeForResume || cachedLayoutTreeForResume
@@ -1182,7 +1314,7 @@ async function handlePprResume({
           : null;
 
       await requestStorage.run(context, async () => {
-        if (!Array.isArray(holes) || holes.length > 0) {
+        if (hasDynamicHoles) {
           const isNotFound = { value: false };
           const jsx = await getJSX(
             reqPath,
@@ -1238,38 +1370,93 @@ async function handlePprResume({
 
         if (
           !isAborted() &&
-          pageShellJson &&
-          (!hasActiveLayout || layoutShellJson)
+          (hasZeroHolePreloadedRsc ||
+            (pageShellJson && (!hasActiveLayout || layoutShellJson)))
         ) {
           try {
-            const clientManifest = getClientManifest();
-            const cachedPageTree = cachedPageTreeForResume || deserializeJSX(pageShellJson);
-            const splicedPageTree = replaceHolesWithMap(cachedPageTree, resolvedHolesMap);
-            const pageRscStream = renderRSCStream(splicedPageTree, clientManifest, {
-              runtime: "edge",
-            });
-            let layoutRscPromise = Promise.resolve("");
-            if (hasActiveLayout && layoutShellJson) {
-              const cachedLayoutTree =
-                cachedLayoutTreeForResume || deserializeJSX(layoutShellJson);
-              const splicedLayoutTree = replaceHolesWithMap(
-                cachedLayoutTree,
-                resolvedHolesMap
-              );
-              const layoutRscStream = renderRSCStream(
-                splicedLayoutTree,
-                clientManifest,
-                { runtime: "edge" }
-              );
-              layoutRscPromise = new Response(layoutRscStream).text();
+            let layoutRscText = "";
+            let pageRscText = "";
+            if (hasZeroHolePreloadedRsc) {
+              layoutRscText = hasActiveLayout ? resolvedPreloadedLayoutRsc : "";
+              pageRscText = resolvedPreloadedPageRsc;
+            } else {
+              const clientManifest = getClientManifest();
+              const pageHasShellHoles =
+                typeof pageShellJson === "string" &&
+                pageShellJson.includes('"data-ppr-hole"');
+              let pageRscPromise = null;
+              if (!pageHasShellHoles) {
+                const cachedPageRsc =
+                  resolvedPreloadedPageRsc !== undefined
+                    ? resolvedPreloadedPageRsc
+                    : await readRscTextFromStorage(
+                        storage,
+                        pageRscKey,
+                        platformContext,
+                        reqOriginUrl
+                      );
+                if (cachedPageRsc) {
+                  pageRscPromise = Promise.resolve(cachedPageRsc);
+                }
+              }
+              if (!pageRscPromise) {
+                const cachedPageTree =
+                  cachedPageTreeForResume || deserializeJSX(pageShellJson);
+                const splicedPageTree = replaceHolesWithMap(
+                  cachedPageTree,
+                  resolvedHolesMap
+                );
+                const pageRscStream = renderRSCStream(
+                  splicedPageTree,
+                  clientManifest,
+                  {
+                    runtime: "edge",
+                  }
+                );
+                pageRscPromise = new Response(pageRscStream).text();
+              }
+
+              let layoutRscPromise = Promise.resolve("");
+              if (hasActiveLayout && layoutShellJson) {
+                const layoutHasShellHoles =
+                  typeof layoutShellJson === "string" &&
+                  layoutShellJson.includes('"data-ppr-hole"');
+                let reusedLayoutRsc = null;
+                if (!layoutHasShellHoles) {
+                  reusedLayoutRsc =
+                    resolvedPreloadedLayoutRsc !== undefined
+                      ? resolvedPreloadedLayoutRsc
+                      : await readRscTextFromStorage(
+                          storage,
+                          layoutRscKey,
+                          platformContext,
+                          reqOriginUrl
+                        );
+                }
+                if (reusedLayoutRsc) {
+                  layoutRscPromise = Promise.resolve(reusedLayoutRsc);
+                } else {
+                  const cachedLayoutTree =
+                    cachedLayoutTreeForResume || deserializeJSX(layoutShellJson);
+                  const splicedLayoutTree = replaceHolesWithMap(
+                    cachedLayoutTree,
+                    resolvedHolesMap
+                  );
+                  const layoutRscStream = renderRSCStream(
+                    splicedLayoutTree,
+                    clientManifest,
+                    { runtime: "edge" }
+                  );
+                  layoutRscPromise = new Response(layoutRscStream).text();
+                }
+              }
+              [layoutRscText, pageRscText] = await Promise.all([
+                layoutRscPromise,
+                pageRscPromise,
+              ]);
             }
-            const [layoutRscText, pageRscText] = await Promise.all([
-              layoutRscPromise,
-              new Response(pageRscStream).text(),
-            ]);
             if (!isAborted() && pageRscText && (!hasActiveLayout || layoutRscText)) {
-              const pprPageCacheMode =
-                !Array.isArray(holes) || holes.length > 0 ? "ppr" : "static";
+              const pprPageCacheMode = hasDynamicHoles ? "ppr" : "static";
               let rscScripts =
                 `\n<script>window.__DINOU_INLINE_RSC__=true;window.__DINOU_PAGE_CACHE_MODE__="${pprPageCacheMode}";window.__DINOU_RSC_P__=window.__DINOU_RSC_P__||[];window.__DINOU_RSC_L__=window.__DINOU_RSC_L__||[];</script>`;
               if (hasActiveLayout && layoutRscText) {
@@ -1332,10 +1519,14 @@ export {
   handlePprResume,
   spliceDynamicHolesIntoShell,
   readShellJsonFromStorage,
+  readRscTextFromStorage,
+  replaceHolesWithMap,
 };
 export default {
   streamDynamicHoles,
   handlePprResume,
   spliceDynamicHolesIntoShell,
   readShellJsonFromStorage,
+  readRscTextFromStorage,
+  replaceHolesWithMap,
 };
