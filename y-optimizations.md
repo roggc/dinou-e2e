@@ -1,6 +1,6 @@
 # Dinou Request-Path & 3D Caching Cube Performance Optimizations (`y-optimizations.md`)
 
-This document specifies **7 concrete, code-verified request-path latency optimizations** (`OPT-1` through `OPT-7`) uncovered during a full hot-path audit of `dinou/core/` following the completion of Phases 1–8 of the **3D Caching Cube + Revalidation** suite.
+This document specifies **8 concrete, code-verified request-path & revalidation latency optimizations** (`OPT-1` through `OPT-8`) uncovered during a full hot-path audit of `dinou/core/` following the completion of Phases 1–8 of the **3D Caching Cube + Revalidation** suite.
 
 > **Audit Scope & Baseline**
 > Prior latency regressions introduced in Phase 8 Stage 4 (`#90`) — namely `O(tags × totalSlots)` slot scans in `resolveAllCanonicalSlotIds`, sequential tag-invalidation loops in `cache-revalidate.js`, per-request `readdirSync` and full-index invalidation on `delete()` in `FileSystemStorage` — have already been fixed (`45d4741`, `5709bdd`, and pending `storage-adapter.js` / `cache-slot.js` hardening).
@@ -22,6 +22,7 @@ All optimizations below are designed to be implemented **one stage at a time**, 
 | **`OPT-5`** | **Tier 2** | Permanent Production Caching & Pre-Serialization for `getDiscoveredLayouts()` | `dinou/core/handler.js` | Node, Bun, Bun Pure, Edge (when `__DINOU_LAYOUTS__` not injected) | **Medium** — eliminates full `src/` / VFS tree walk every 1000 ms and repeated `JSON.stringify` on streaming/recomposed HTML | Very Low |
 | **`OPT-6`** | **Tier 3** | Zero-Hole Layout RSC Fast-Path in Pure PPR Streaming Resume | `dinou/core/ppr-runtime.js` | **All runtimes** (Pure PPR routes with static layouts) | **Medium** — skips `deserializeJSX` + `renderRSCStream` for static layouts on every PPR resume request | Medium |
 | **`OPT-7`** | **Tier 3** | Memoized `_DinouPageSlot` Client Ref & Bounded Production Route-Match LRU Cache | `dinou/core/get-jsx.js`, `dinou/core/get-file-path-and-dynamic-params.js`, `dinou/core/layout-functions.js` | **All runtimes** | **Low–Medium** — `O(1)` cached route/layout resolution for hot URLs and zero manifest scans per `createDinouPageSlotElement()` | Low |
+| **`OPT-8`** | **Tier 2** | `O(1)` Inverted Tag Index (`FileSystemStorage` / `MemoryStorage`) & Parallel/Metadata-List `revalidateTag()` Scan | `dinou/core/storage-adapter.js`, `dinou/core/cache-revalidate.js` | **All runtimes** (`revalidateTag()` on FS, Memory, Cloudflare KV, Redis, Deno KV) | **High** — eliminates `O(total_files)` `.dinou/dist2` full tree walks & sequential metadata reads on every `revalidateTag()` (e.g. `4,227` files / `910` metadata reads → `O(1)` lookup on FS/Memory; `10–16×` fewer sequential RTTs on KV/Redis/DenoKV) | Low–Med |
 
 ---
 
@@ -35,6 +36,7 @@ All optimizations below are designed to be implemented **one stage at a time**, 
 ### Tier 2 — Clean, High-Value Low-Risk Wins
 - [x] **`OPT-4`** — `FileSystemStorage.get()` Syscall Reduction (`6 → 1–2` syscalls) & Redundant Cache-Miss Elimination (`storage-adapter.js`, `handler.js`)
 - [x] **`OPT-5`** — Permanent Production Caching & Pre-Serialized JSON for `getDiscoveredLayouts()` (`handler.js`)
+- [ ] **`OPT-8`** — `O(1)` Inverted Tag Index (`FileSystemStorage` / `MemoryStorage`) & Parallel / Metadata-List `revalidateTag()` Scan (`storage-adapter.js`, `cache-revalidate.js`)
 
 ### Tier 3 — PPR & Micro-Level CPU Optimizations
 - [x] **`OPT-6`** — Zero-Hole Static Layout (and 0-Hole Page) Pre-Rendered RSC Reuse in `handlePprResume()` (`ppr-runtime.js`)
@@ -44,7 +46,7 @@ All optimizations below are designed to be implemented **one stage at a time**, 
 
 ## Global Execution & Verification Rules
 
-1. **One Stage at a Time:** Implement and verify optimizations sequentially (`OPT-1 → OPT-7`), keeping each diff surgical and easy to review or bisect.
+1. **One Stage at a Time:** Implement and verify optimizations sequentially (`OPT-1 → OPT-8`), keeping each diff surgical and easy to review or bisect.
 2. **Zero Behavioral Regressions:** Every optimization must preserve 100% of existing semantics:
    - Dev mode (`DINOU_DEV === "true"` / `NODE_ENV !== "production"`) hot-reloading and filesystem mutations remain uncached / live.
    - Dynamic perimeter hooks (`validateParams(params)`), dynamic TTL functions (`revalidate(params)`), and dynamic tag functions (`getCacheTags(params)`) MUST continue executing per-request when exported as functions (never frozen to a single param's return value).
@@ -327,3 +329,67 @@ All optimizations below are designed to be implemented **one stage at a time**, 
 - **Zero unbounded memory growth:** Hard cap at `1000` entries with `Map` insertion-order LRU eviction.
 - **Multi-cwd safety:** Include normalized `srcFolder` in the cache key so compiled/in-process unit tests running against temporary fixtures never collide.
 - Verify with full unit & E2E suites (`test:3d-cube`, `test:3d-reval`, `cache-3d-cube-phase7`, `cache-3d-cube-phase8`).
+
+---
+
+### `OPT-8` — `O(1)` Inverted Tag Index (`FileSystemStorage` / `MemoryStorage`) & Parallel / Metadata-List `revalidateTag()` Scan
+
+#### Code Locations & Root Cause
+1. **Full `.dinou/dist2` Recursive Walk + Sequential Metadata Reads on Every `revalidateTag()` (`dinou/core/cache-revalidate.js:2330–2484`, `dinou/core/storage-adapter.js:404–426`):**
+   ```js
+   const allKeysSet = new Set(await storage.keys());
+   ...
+   for (const rawKey of allKeys) {
+     if (key.endsWith("/slot.metadata.json") || ...) {
+       const item = await readKeyOrFallback(key);
+     } else if (key.endsWith("layout.metadata.json") || ...) {
+       const item = await readKeyOrFallback(key);
+     } else if (key.endsWith("metadata.json")) {
+       const item = await readKeyOrFallback(key);
+     }
+   }
+   ```
+   - On `FileSystemStorage`, `storage.keys()` executes a full synchronous recursive `fs.readdirSync` walk across **every artifact file** in `.dinou/dist2` (HTML, RSC, `_old` snapshots, shell JSONs, and metadata — `4,227` files across ~700 directories in `dinou-e2e`), sorts every directory's entries, and then `revalidateTag()` sequentially reads & `JSON.parse()`s **every single `metadata.json`, `layout.metadata.json`, and `slot.metadata.json`** (`910` files in `dinou-e2e`) — **~1,610 synchronous OS syscalls** on every single `revalidateTag(tag)` call!
+   - While this takes ~190 ms on an idle local SSD, under concurrent disk contention (e.g., Windows NTFS under heavy parallel I/O or container network volumes), a single `revalidateTag()` call can stall the Node.js event loop for **multiple seconds** (observed up to **16 s** during 4-worker local Playwright E2E runs on `/t-slot-combo`).
+2. **Sequential Network RTTs on Distributed / Edge Adapters (`dinou/core/cache-revalidate.js:2377–2483`):**
+   - On `CloudflareKVStorage`, `RedisStorage`, and `DenoKVStorage`, the `for (const rawKey of allKeys) { const item = await readKeyOrFallback(key); }` loop reads every cached metadata/artifact key **strictly sequentially** (`1` RTT at a time). On a site with 100 cached routes at 10 ms RTT, scanning metadata alone takes **1–4 seconds** before revalidation even begins.
+   - Worse, on `CloudflareKVStorage`, `kv.list()` already returns inline `k.metadata` for all keys with `<= 1024B` metadata — yet `revalidateTag()` discards that metadata by calling `storage.keys()` (names only) and then issuing `N` sequential `kv.get()` calls!
+
+#### Why It Hurts Latency
+- `revalidateTag()` is invoked synchronously inside Server Functions (`"use server"`), plugin webhooks, and on-demand ISR endpoints — blocking the HTTP response until tag discovery completes.
+- On `FileSystemStorage` (Node/Bun/Netlify/Docker), the synchronous `readdirSync` + `readFileSync` scan also blocks the single-threaded event loop for **all** concurrent requests hitting the same process while `revalidateTag()` runs.
+- On Edge/Distributed storage (`CloudflareKVStorage`, `RedisStorage`, `DenoKVStorage`), sequential `for ... await` scanning scales linearly (`O(N × RTT)`) with the total number of cached pages/layouts/slots in the entire application, even when only 1 slot or 1 page actually carries the target tag.
+
+#### Proposed Optimization Design
+1. **Add an Incremental `O(1)` Inverted Tag Index (`findTargetsByTag(tag)`) on `FileSystemStorage` (`dinou/core/storage-adapter.js`):**
+   - Mirror the existing `_slotTagIndex` architecture, extended across all three artifact classes (`slots`, `layouts`, and `pages`):
+     - `tagToSlots: Map<tag, Set<slotId>>` (mapping both `slotId` and every `meta.tags[]` entry to canonical `slotId`, producing `slots/<id>/slot.json` + `slots/<id>/slot.metadata.json`).
+     - `tagToLayouts: Map<tag, Map<normPath, { hasRouteTag: boolean, hasSlotTag: boolean }>>` (tracking `tags` vs `slotTags`/`ownSlotTags` so exact `onlyRefreshSlots = !hasRouteTag && hasSlotTag` semantics are preserved!).
+     - `tagToPages: Map<tag, Map<normPath, { hasRouteTag: boolean, hasSlotTag: boolean }>>` (tracking `tags` vs `slotTags`/`ownSlotTags` with exact `onlyRefreshSlots` semantics).
+     - Reverse lookup `metaKeyToRecord: Map<normMetaKey, { kind, targetIdOrPath, routeTags: Set, slotTags: Set }>` so `set()` and `delete()` update or remove entries surgically in `O(tags_of_key)` with **zero** full index rebuilds.
+   - **Lazy one-time build** on first `findTargetsByTag(tag)` call: walks `this.baseDir` reading **only** `*.metadata.json` files (never collecting `index.html`, `*.rsc`, or `shell.*.json`, and without sorting directory entries).
+   - **Incremental maintenance**:
+     - `FileSystemStorage.set(key, content, metadata)`: whenever `metadata` is written alongside an artifact OR `key` itself is `metadata.json` / `layout.metadata.json` / `slot.metadata.json`, update the inverted index in place via `_updateFullTagIndex()`.
+     - `FileSystemStorage.delete(key)`: surgically remove the entry from the reverse map via `_removeFromFullTagIndex()`.
+     - Expose `invalidateTagIndex()` for explicit cache resets (e.g., tests or external rebuild hooks).
+   - **Cross-process / external disk write safety**:
+     - Standalone child worker processes (`Check #84`) start with `_fullTagIndex === null`, so they build directly from live disk state.
+     - Check `baseDir` and `slots/` `mtimeNs` (and verify each matched file still exists before relying on stale entries; if `baseDir` doesn't exist, reset `_fullTagIndex = null`). For deployments where an external process outside `FileSystemStorage` may create new directories under `.dinou/dist2` in an already-running process, ensure `mtimeNs` checks on `baseDir` and `slots/` catch top-level/slot additions, and provide a lightweight staleness guard without re-walking the whole tree on every call.
+2. **Add `O(1)` `findTargetsByTag(tag)` on `MemoryStorage` (`dinou/core/storage-adapter.js`):**
+   - Maintain the exact same inverted tag index inside `MemoryStorage.set()` / `MemoryStorage.delete()` (used whenever `!this.hydrateFromDisk`, and merged cleanly with disk fallback if `hydrateFromDisk === true`).
+   - Reduces `MemoryStorage` `revalidateTag()` target discovery from `O(total_keys)` to `O(1)`.
+3. **Zero-`get` `kv.list()` Metadata Discovery on `CloudflareKVStorage` + Concurrency-Bounded Parallel Scan Fallback in `revalidateTag()` (`dinou/core/storage-adapter.js`, `dinou/core/cache-revalidate.js`):**
+   - Add `listKeysWithMetadata(prefix = "")` on `CloudflareKVStorage` (extending the `listSlotsWithMetadata()` cursor-paginated pattern to all keys) returning `Map<key, inlineMetadata | null>`.
+   - In `revalidateTag()` (`dinou/core/cache-revalidate.js`):
+     - **Fast path**: if `typeof storage.findTargetsByTag === "function"`, resolve `{ targetSlotKeys, targetLayoutPaths, targetPaths }` directly in **`O(1)`** (still merging in-memory `slotRegistry` matches and skipping the full `storage.keys()` + sequential loop completely!).
+     - **Distributed/Fallback path** (`CloudflareKVStorage`, `RedisStorage`, `DenoKVStorage`, custom adapters):
+       - Use `listKeysWithMetadata()` when available (`CloudflareKVStorage`) so keys whose `kv.list()` inline metadata already contains `tags` / `slotTags` / `ownSlotTags` / `slotId` (or `generatedAt`, confirming inline metadata fit within `<= 1024B`) are classified with **zero** extra `kv.get()` calls!
+       - Only fetch keys that actually need a storage read (e.g., `>1024B` overflow metadata on Cloudflare KV, or metadata keys on Redis / Deno KV), executing them via a **concurrency-bounded parallel batch worker** (e.g., concurrency `16`) instead of sequential `for ... await`!
+     - Keep all post-discovery phases (**slot backup snapshot → slot deletion → strict ancestor-first sequential `revalidateLayout()` → sequential `revalidatePage()` → error rollback**) 100% unchanged!
+
+#### Safety Invariants & Verification
+- **Exact `onlyRefreshSlots` semantics:** If a page or layout has BOTH a matching route tag (`tags`) AND a matching slot tag (`slotTags`/`ownSlotTags`), `onlyRefreshSlots` MUST evaluate to `false` (full revalidation), whereas matching ONLY `slotTags`/`ownSlotTags` MUST evaluate to `onlyRefreshSlots: true`.
+- **Cold-pod `revalidateTag(slotId)` parity:** Even when `globalThis[Symbol.for("dinou.slot.registry")]` is cleared (cold restart / sibling pod), matching a slot strictly by its `slotId` (with empty `tags: []`) MUST find both `slots/<id>/slot.json` and the hosting page/layout with `onlyRefreshSlots: true`.
+- **Standalone child worker process (`Check #84`) & multi-pod distributed storage (`RedisStorage`, `DenoKVStorage`, `CloudflareKVStorage` + `env.ASSETS`):** Must preserve 100% parity when revalidating across isolated processes/pods and when Cloudflare KV metadata exceeds `1024B`.
+- **Order preservation:** Ancestor-first `compareLayoutPathsAncestorFirst()` sorting for `revalidateLayout()` and sequential page revalidation remain strictly deterministic.
+- Verify with `optimizations-hot-path.test.mjs` (new `OPT-8` unit tests + before/after benchmark), `cache-3d-distributed-storage.test.mjs`, `test:3d-reval` (`Check #80` & `Check #84`), `test:3d-cube`, `cache-3d-cube-phase7`, `cache-3d-cube-phase8`, `verify-api-reference-fixes-3-ci.mjs`, and `/t-slot-combo` E2E test.
