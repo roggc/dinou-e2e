@@ -190,20 +190,20 @@ const nodeMiddlewares = [];
 export async function startServer(port = PORT, host = process.env.HOST || undefined) {
   const server = http.createServer(async (req, res) => {
     try {
-      if (res.writableEnded || res.headersSent) {
+      if (res.writableEnded || res.headersSent || res.destroyed) {
         return;
       }
 
       if (nodeMiddlewares.length > 0) {
         const shouldContinue = await runNodeMiddlewares(nodeMiddlewares, req, res);
-        if (!shouldContinue || res.writableEnded || res.headersSent) {
+        if (!shouldContinue || res.writableEnded || res.headersSent || res.destroyed) {
           return;
         }
       }
 
       const webReq = nodeToWebRequest(req);
       const webRes = await fetch(webReq);
-      if (!res.writableEnded && !res.headersSent) {
+      if (!res.writableEnded && !res.headersSent && !res.destroyed) {
         await sendWebResponseToNode(webRes, res);
       }
     } catch (err) {
@@ -212,6 +212,8 @@ export async function startServer(port = PORT, host = process.env.HOST || undefi
         res.statusCode = 500;
         res.setHeader("content-type", "text/plain; charset=utf-8");
         res.end("Internal Server Error");
+      } else if (!res.writableEnded && !res.destroyed) {
+        res.end();
       }
     }
   });

@@ -22,12 +22,25 @@ async function runSingleNodeMiddleware(mw, req, res) {
   let nextCalled = false;
   let nextError = null;
   let resolveWait = null;
+  let settledMiddleware = false;
+
+  const isResponseDone = () =>
+    Boolean(res.writableEnded || res.headersSent || res.destroyed);
+  const isRequestAborted = () => Boolean(req && (req.aborted || req.destroyed));
 
   const next = (err) => {
     if (nextCalled) return;
     nextCalled = true;
     if (err !== undefined && err !== null) {
       nextError = err instanceof Error ? err : new Error(String(err));
+      if (settledMiddleware && !res.writableEnded && !res.destroyed) {
+        console.error("[Dinou Node Middleware] Error after headers sent:", nextError);
+        try {
+          if (typeof res.end === "function") {
+            res.end();
+          }
+        } catch {}
+      }
     }
     if (resolveWait) {
       const fn = resolveWait;
@@ -36,58 +49,76 @@ async function runSingleNodeMiddleware(mw, req, res) {
     }
   };
 
-  const ret = mw(req, res, next);
+  try {
+    const ret = mw(req, res, next);
 
-  if (ret && typeof ret.then === "function") {
-    await ret;
-    if (nextError) throw nextError;
-    if (res.writableEnded || res.headersSent) return false;
-    return nextCalled;
-  }
-
-  if (nextError) throw nextError;
-  if (res.writableEnded || res.headersSent) return false;
-  if (nextCalled) return true;
-
-  // A middleware with fewer than 3 declared parameters `(req, res) => {}` cannot call `next`
-  if (typeof mw === "function" && mw.length < 3) {
-    return false;
-  }
-
-  await new Promise((resolve) => {
-    let settled = false;
-    let fallbackTimer = null;
-    const done = () => {
-      if (settled) return;
-      settled = true;
-      if (fallbackTimer) {
-        clearTimeout(fallbackTimer);
-        fallbackTimer = null;
-      }
-      if (typeof res.off === "function") {
-        res.off("finish", done);
-        res.off("close", done);
-      } else if (typeof res.removeListener === "function") {
-        res.removeListener("finish", done);
-        res.removeListener("close", done);
-      }
-      resolve();
-    };
-
-    resolveWait = done;
-
-    if (typeof res.once === "function") {
-      res.once("finish", done);
-      res.once("close", done);
-    } else {
-      // Fallback only for synthetic plain-object mocks without EventEmitter methods
-      fallbackTimer = setTimeout(done, 100);
+    if (ret && typeof ret.then === "function") {
+      await ret;
+      if (nextError) throw nextError;
+      if (isResponseDone() || isRequestAborted()) return false;
+      return nextCalled;
     }
-  });
 
-  if (nextError) throw nextError;
-  if (res.writableEnded || res.headersSent) return false;
-  return nextCalled;
+    if (nextError) throw nextError;
+    if (isResponseDone() || isRequestAborted()) return false;
+    if (nextCalled) return true;
+
+    // A middleware with fewer than 3 declared parameters `(req, res) => {}` cannot call `next`
+    if (typeof mw === "function" && mw.length < 3) {
+      return false;
+    }
+
+    await new Promise((resolve) => {
+      let settled = false;
+      let fallbackTimer = null;
+      const removeListenerSafe = (emitter, event, fn) => {
+        if (!emitter) return;
+        if (typeof emitter.off === "function") {
+          emitter.off(event, fn);
+        } else if (typeof emitter.removeListener === "function") {
+          emitter.removeListener(event, fn);
+        }
+      };
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        if (fallbackTimer) {
+          clearTimeout(fallbackTimer);
+          fallbackTimer = null;
+        }
+        removeListenerSafe(res, "finish", done);
+        removeListenerSafe(res, "close", done);
+        removeListenerSafe(res, "error", done);
+        removeListenerSafe(req, "aborted", done);
+        resolve();
+      };
+
+      resolveWait = done;
+
+      if (nextCalled || isResponseDone() || isRequestAborted()) {
+        done();
+        return;
+      }
+
+      if (typeof res.once === "function") {
+        res.once("finish", done);
+        res.once("close", done);
+        res.once("error", done);
+        if (req && typeof req.once === "function") {
+          req.once("aborted", done);
+        }
+      } else {
+        // Fallback only for synthetic plain-object mocks without EventEmitter methods
+        fallbackTimer = setTimeout(done, 100);
+      }
+    });
+
+    if (nextError) throw nextError;
+    if (isResponseDone() || isRequestAborted()) return false;
+    return nextCalled;
+  } finally {
+    settledMiddleware = true;
+  }
 }
 
 /**
@@ -102,14 +133,14 @@ async function runSingleNodeMiddleware(mw, req, res) {
  */
 export async function runNodeMiddlewares(middlewares, req, res) {
   if (!Array.isArray(middlewares) || middlewares.length === 0) {
-    return !(res.writableEnded || res.headersSent);
+    return !(res.writableEnded || res.headersSent || res.destroyed);
   }
   for (const mw of middlewares) {
-    if (res.writableEnded || res.headersSent) {
+    if (res.writableEnded || res.headersSent || res.destroyed) {
       return false;
     }
     const shouldContinue = await runSingleNodeMiddleware(mw, req, res);
-    if (!shouldContinue || res.writableEnded || res.headersSent) {
+    if (!shouldContinue || res.writableEnded || res.headersSent || res.destroyed) {
       return false;
     }
   }

@@ -22,6 +22,7 @@ if (
 }
 
 const bundleCacheByCwd = new Map();
+let bundleLoadSeq = 0;
 
 function resolveNetlifyBundlePath(cwd) {
   const dedicated = path.resolve(cwd, ".dinou/netlify/functions/ssr.mjs");
@@ -42,12 +43,15 @@ async function getNetlifyBundle(cwd) {
     return null;
   }
   let mtimeMs = 0;
+  let size = 0;
   try {
-    mtimeMs = fs.statSync(bundlePath).mtimeMs;
+    const stat = fs.statSync(bundlePath);
+    mtimeMs = stat.mtimeMs;
+    size = stat.size;
   } catch (e) {}
 
   const cached = bundleCacheByCwd.get(bundlePath);
-  if (cached && cached.mtimeMs === mtimeMs) {
+  if (cached && cached.mtimeMs === mtimeMs && cached.size === size) {
     return cached.promise;
   }
 
@@ -55,12 +59,19 @@ async function getNetlifyBundle(cwd) {
     loadEnvFiles(resolvedCwd, { mode: "production" });
   } catch (e) {}
 
-  const loadPromise = import(pathToFileURL(bundlePath).href).catch((err) => {
-    bundleCacheByCwd.delete(bundlePath);
+  const reloadSeq = ++bundleLoadSeq;
+  const moduleUrl = `${pathToFileURL(bundlePath).href}?v=${encodeURIComponent(
+    `${mtimeMs}-${size}-${reloadSeq}`
+  )}`;
+  const loadPromise = import(moduleUrl).catch((err) => {
+    const cur = bundleCacheByCwd.get(bundlePath);
+    if (cur && cur.promise === loadPromise) {
+      bundleCacheByCwd.delete(bundlePath);
+    }
     console.error(`[Dinou Netlify Adapter] Failed to load ${bundlePath}:`, err);
     return null;
   });
-  bundleCacheByCwd.set(bundlePath, { mtimeMs, promise: loadPromise });
+  bundleCacheByCwd.set(bundlePath, { mtimeMs, size, promise: loadPromise });
   return loadPromise;
 }
 

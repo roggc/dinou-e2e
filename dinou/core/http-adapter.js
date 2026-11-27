@@ -69,18 +69,31 @@ async function sendWebResponseToNode(webResponse, res) {
     res.statusMessage = webResponse.statusText;
   }
 
-  // Handle cookies (multiple Set-Cookie headers)
+  // Handle cookies (multiple Set-Cookie headers) while preserving any Set-Cookie
+  // already appended by upstream Node configureServer middlewares.
+  const appendSetCookies = (newCookies) => {
+    if (!newCookies || newCookies.length === 0) return;
+    const existing =
+      typeof res.getHeader === "function" ? res.getHeader("Set-Cookie") : undefined;
+    if (!existing) {
+      res.setHeader("Set-Cookie", newCookies);
+      return;
+    }
+    const existingArr = Array.isArray(existing) ? existing : [String(existing)];
+    res.setHeader("Set-Cookie", [...existingArr, ...newCookies]);
+  };
+
   if (typeof webResponse.headers.getSetCookie === "function") {
     const cookies = webResponse.headers.getSetCookie();
     if (cookies && cookies.length > 0) {
-      res.setHeader("Set-Cookie", cookies);
+      appendSetCookies(cookies);
     }
   }
 
   for (const [key, value] of webResponse.headers.entries()) {
     if (key.toLowerCase() === "set-cookie") {
       if (typeof webResponse.headers.getSetCookie !== "function") {
-        res.setHeader("Set-Cookie", value);
+        appendSetCookies([value]);
       }
     } else {
       res.setHeader(key, value);

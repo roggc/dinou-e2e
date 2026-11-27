@@ -3204,7 +3204,7 @@ async function applyServerPlugins(serverInstance) {
 // HTTP Server
 const server = http.createServer(async (req, res) => {
   try {
-    if (res.writableEnded || res.headersSent) {
+    if (res.writableEnded || res.headersSent || res.destroyed) {
       return;
     }
 
@@ -3535,6 +3535,8 @@ const server = http.createServer(async (req, res) => {
       const errMsg = (err?.message || String(err)).replace(/</g, "&lt;").replace(/>/g, "&gt;");
       const errStack = (err?.stack || "").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       res.end(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dinou Dev Error</title></head><body style="margin:0;background:#fff1f2;padding:20px;"><div style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:32px;max-width:960px;margin:40px auto;background-color:#fff1f2;border:1px solid #fecdd3;border-radius:12px;color:#9f1239;box-shadow:0 10px 25px -5px rgba(0,0,0,0.1);"><div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;"><span style="background:#e11d48;color:white;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:bold;">Dinou Dev Error</span><h2 style="margin:0;font-size:1.25rem;font-weight:700;color:#881337;">${errMsg}</h2></div><p style="margin:0 0 16px 0;font-size:0.875rem;color:#9f1239;line-height:1.5;">An unhandled error occurred in the dev server request handler.</p>${errStack ? `<pre style="background:#0f172a;color:#f8fafc;padding:16px;border-radius:8px;overflow-x:auto;font-size:0.8125rem;line-height:1.6;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;">${errStack}</pre>` : ""}</div></body></html>`);
+    } else if (!res.writableEnded && !res.destroyed) {
+      res.end();
     }
   }
 });
