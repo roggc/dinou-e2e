@@ -6,13 +6,19 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const rootDir = process.cwd();
-const vfsUrl = pathToFileURL(path.resolve(rootDir, "dinou/core/vfs.js")).href;
-const layoutFnUrl = pathToFileURL(
-  path.resolve(rootDir, "dinou/core/layout-functions.js")
-).href;
-const routeModUrl = pathToFileURL(
-  path.resolve(rootDir, "dinou/core/get-file-path-and-dynamic-params.js")
-).href;
+fs.mkdirSync(path.join(rootDir, ".dinou"), { recursive: true });
+const DINOU_ROOT = fs.existsSync(path.resolve(rootDir, "dinou", "cli.js"))
+  ? path.resolve(rootDir, "dinou")
+  : fs.existsSync(
+        path.resolve(rootDir, "node_modules", "dinou", "dinou", "cli.js")
+      )
+    ? path.resolve(rootDir, "node_modules", "dinou", "dinou")
+    : path.resolve(rootDir, "node_modules", "dinou");
+const dinouCoreUrl = (relPath) =>
+  pathToFileURL(path.join(DINOU_ROOT, "core", relPath)).href;
+const vfsUrl = dinouCoreUrl("vfs.js");
+const layoutFnUrl = dinouCoreUrl("layout-functions.js");
+const routeModUrl = dinouCoreUrl("get-file-path-and-dynamic-params.js");
 
 test("OPT-1: Production VFS authoritative negative lookups eliminate fs.existsSync/readdirSync syscalls while keeping DEV live & external temp dirs safe", async () => {
   const prevNodeEnv = process.env.NODE_ENV;
@@ -199,9 +205,7 @@ export function getProps(params) {
 `
   );
 
-  const storageMod = await import(
-    pathToFileURL(path.resolve(rootDir, "dinou/core/storage-adapter.js")).href
-  );
+  const storageMod = await import(dinouCoreUrl("storage-adapter.js"));
   const prevAdapter = storageMod.hasExplicitStorageAdapter()
     ? storageMod.getStorageAdapter()
     : null;
@@ -262,9 +266,7 @@ export function getProps(params) {
     // Verify single-pass layout.metadata.json reads on a warm HTML cache hit (3 layouts -> 3 reads, not 6)
     process.env.NODE_ENV = "production";
     delete process.env.DINOU_DEV;
-    const handlerMod = await import(
-      pathToFileURL(path.resolve(rootDir, "dinou/core/handler.js")).href
-    );
+    const handlerMod = await import(dinouCoreUrl("handler.js"));
     const mem = new storageMod.MemoryStorage();
     const staticRel = "t-3d-cube/router-coherence/sub-layout";
     const now = Date.now();
@@ -334,15 +336,9 @@ test("OPT-3: Metadata-only parallel inspectSlotsFreshness(), request-scoped dedu
   const origReadFileSync = fs.readFileSync;
   const tmpDir = fs.mkdtempSync(path.join(rootDir, ".dinou", "tmp-opt3-slots-"));
 
-  const storageMod = await import(
-    pathToFileURL(path.resolve(rootDir, "dinou/core/storage-adapter.js")).href
-  );
-  const slotMod = await import(
-    pathToFileURL(path.resolve(rootDir, "dinou/core/cache-slot.js")).href
-  );
-  const reqCtxMod = await import(
-    pathToFileURL(path.resolve(rootDir, "dinou/core/request-context.js")).href
-  );
+  const storageMod = await import(dinouCoreUrl("storage-adapter.js"));
+  const slotMod = await import(dinouCoreUrl("cache-slot.js"));
+  const reqCtxMod = await import(dinouCoreUrl("request-context.js"));
   const prevAdapter = storageMod.hasExplicitStorageAdapter()
     ? storageMod.getStorageAdapter()
     : null;
@@ -534,12 +530,8 @@ test("OPT-4: FileSystemStorage.get()/has() minimal syscalls, directory EISDIR fa
   const origRead = fs.readFileSync;
   const tmpDir = fs.mkdtempSync(path.join(rootDir, ".dinou", "tmp-opt4-fs-"));
 
-  const storageMod = await import(
-    pathToFileURL(path.resolve(rootDir, "dinou/core/storage-adapter.js")).href
-  );
-  const handlerMod = await import(
-    pathToFileURL(path.resolve(rootDir, "dinou/core/handler.js")).href
-  );
+  const storageMod = await import(dinouCoreUrl("storage-adapter.js"));
+  const handlerMod = await import(dinouCoreUrl("handler.js"));
   const prevAdapter = storageMod.hasExplicitStorageAdapter()
     ? storageMod.getStorageAdapter()
     : null;
@@ -691,12 +683,8 @@ test("OPT-5: getDiscoveredLayouts() caches permanently in production, pre-serial
     delete globalThis.__DINOU_VFS__;
     delete globalThis.__DINOU_ROUTE_MODULES__;
 
-    const handlerMod = await import(
-      pathToFileURL(path.resolve(origCwd, "dinou/core/handler.js")).href
-    );
-    const pprMod = await import(
-      pathToFileURL(path.resolve(origCwd, "dinou/core/ppr-runtime.js")).href
-    );
+    const handlerMod = await import(dinouCoreUrl("handler.js"));
+    const pprMod = await import(dinouCoreUrl("ppr-runtime.js"));
 
     process.chdir(tmpRoot);
     handlerMod.clearDiscoveredLayoutsCache();
@@ -814,9 +802,7 @@ test("OPT-5: getDiscoveredLayouts() caches permanently in production, pre-serial
     else globalThis.__DINOU_VFS__ = prevGlobalVfs;
     if (prevGlobalRouteMods === undefined) delete globalThis.__DINOU_ROUTE_MODULES__;
     else globalThis.__DINOU_ROUTE_MODULES__ = prevGlobalRouteMods;
-    const handlerMod = await import(
-      pathToFileURL(path.resolve(origCwd, "dinou/core/handler.js")).href
-    );
+    const handlerMod = await import(dinouCoreUrl("handler.js"));
     handlerMod.clearDiscoveredLayoutsCache();
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
@@ -828,15 +814,9 @@ test("OPT-6: replaceHolesWithMap preserves referential equality and handlePprRes
   const prevGlobalDev = globalThis.__DINOU_DEV__;
 
   const React = (await import("react")).default;
-  const pprMod = await import(
-    pathToFileURL(path.resolve(rootDir, "dinou/core/ppr-runtime.js")).href
-  );
-  const storageMod = await import(
-    pathToFileURL(path.resolve(rootDir, "dinou/core/storage-adapter.js")).href
-  );
-  const handlerMod = await import(
-    pathToFileURL(path.resolve(rootDir, "dinou/core/handler.js")).href
-  );
+  const pprMod = await import(dinouCoreUrl("ppr-runtime.js"));
+  const storageMod = await import(dinouCoreUrl("storage-adapter.js"));
+  const handlerMod = await import(dinouCoreUrl("handler.js"));
   const prevAdapter = storageMod.getStorageAdapter();
 
   try {
@@ -977,9 +957,7 @@ test("OPT-7: _DinouPageSlot memoizes client ref with manifest invalidation, and 
   const prevManifest = globalThis.__DINOU_CLIENT_MANIFEST__;
   const prevEdgeRenderer = globalThis.__DINOU_EDGE_RENDERER__;
 
-  const jsxMod = await import(
-    pathToFileURL(path.resolve(rootDir, "dinou/core/get-jsx.js")).href
-  );
+  const jsxMod = await import(dinouCoreUrl("get-jsx.js"));
   const routeMod = await import(routeModUrl);
   const layoutFnMod = await import(layoutFnUrl);
 
@@ -1135,12 +1113,8 @@ test("OPT-7: _DinouPageSlot memoizes client ref with manifest invalidation, and 
 });
 
 test("OPT-8: O(1) inverted tag index on FileSystemStorage & MemoryStorage, zero-get CloudflareKV listKeysWithMetadata, and parallel revalidateTag scan", async () => {
-  const storageMod = await import(
-    pathToFileURL(path.resolve(rootDir, "dinou/core/storage-adapter.js")).href
-  );
-  const revalMod = await import(
-    pathToFileURL(path.resolve(rootDir, "dinou/core/cache-revalidate.js")).href
-  );
+  const storageMod = await import(dinouCoreUrl("storage-adapter.js"));
+  const revalMod = await import(dinouCoreUrl("cache-revalidate.js"));
   const {
     FileSystemStorage,
     MemoryStorage,
