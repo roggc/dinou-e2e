@@ -326,3 +326,201 @@ export function getProps(params) {
     fs.rmSync(tmpBase, { recursive: true, force: true });
   }
 });
+
+test("OPT-3: Metadata-only parallel inspectSlotsFreshness(), request-scoped deduplication with _mutationEpoch invalidation, DenoKV chunk-skip & parallel multi-layout prefetch", async () => {
+  const prevNodeEnv = process.env.NODE_ENV;
+  const prevDinouDev = process.env.DINOU_DEV;
+  const origReadFileSync = fs.readFileSync;
+  const tmpDir = fs.mkdtempSync(path.join(rootDir, ".dinou", "tmp-opt3-slots-"));
+
+  const storageMod = await import(
+    pathToFileURL(path.resolve(rootDir, "dinou/core/storage-adapter.js")).href
+  );
+  const slotMod = await import(
+    pathToFileURL(path.resolve(rootDir, "dinou/core/cache-slot.js")).href
+  );
+  const reqCtxMod = await import(
+    pathToFileURL(path.resolve(rootDir, "dinou/core/request-context.js")).href
+  );
+  const prevAdapter = storageMod.hasExplicitStorageAdapter()
+    ? storageMod.getStorageAdapter()
+    : null;
+
+  try {
+    process.env.NODE_ENV = "production";
+    delete process.env.DINOU_DEV;
+
+    // 1. FileSystemStorage: inspectSlotsFreshness reads ZERO slot.json payload bodies,
+    //    deduplicates repeated inspections within the same request, and auto-invalidates on mutation.
+    const fsStore = new storageMod.FileSystemStorage(tmpDir);
+    const t0 = Date.now();
+    const bigSlotPayload = JSON.stringify({ payload: "Z".repeat(32 * 1024) });
+    for (const id of ["opt3-a", "opt3-b", "opt3-shared"]) {
+      await fsStore.set(`slots/${id}/slot.json`, bigSlotPayload, {
+        slotId: id,
+        tags: id === "opt3-shared" ? ["shared-tag"] : [id],
+        revalidate: 3600,
+        generatedAt: t0,
+      });
+    }
+    storageMod.setStorageAdapter(fsStore);
+
+    let slotBodyReads = 0;
+    let slotMetaReads = 0;
+    fs.readFileSync = function (p, ...rest) {
+      const norm = String(p).replace(/\\/g, "/");
+      if (norm.endsWith("/slot.json")) slotBodyReads++;
+      if (norm.endsWith("/slot.metadata.json")) slotMetaReads++;
+      return origReadFileSync.call(this, p, ...rest);
+    };
+
+    // Prime slotTagIndex once
+    fsStore.getSlotTagIndex();
+    slotBodyReads = 0;
+    slotMetaReads = 0;
+
+    await reqCtxMod.requestStorage.run({ req: { path: "/opt3" } }, async () => {
+      const r1 = await slotMod.inspectSlotsFreshness(["opt3-a", "shared-tag"], t0);
+      assert.deepEqual(r1, { hasExpired: false, hasNewer: false });
+      const metaReadsAfterFirst = slotMetaReads;
+      assert.equal(slotBodyReads, 0, "Expected 0 slot.json body reads on FileSystemStorage");
+      assert.equal(metaReadsAfterFirst, 2, "Expected 2 slot.metadata.json reads (opt3-a + opt3-shared)");
+
+      // Second call in same request with overlapping tag MUST hit request-scoped cache (0 extra reads)
+      const r2 = await slotMod.inspectSlotsFreshness(["opt3-b", "shared-tag"], t0);
+      assert.deepEqual(r2, { hasExpired: false, hasNewer: false });
+      assert.equal(slotBodyReads, 0);
+      assert.equal(
+        slotMetaReads,
+        metaReadsAfterFirst + 1,
+        "Expected only 1 new slot.metadata.json read (opt3-b); opt3-shared must be deduplicated"
+      );
+
+      // Mid-request mutation bumps storage._mutationEpoch -> cache MUST auto-invalidate!
+      await fsStore.set(`slots/opt3-shared/slot.json`, bigSlotPayload, {
+        slotId: "opt3-shared",
+        tags: ["shared-tag"],
+        revalidate: 3600,
+        generatedAt: t0 + 500,
+      });
+      const r3 = await slotMod.inspectSlotsFreshness(["shared-tag"], t0);
+      assert.equal(
+        r3.hasNewer,
+        true,
+        "Mid-request storage.set() must invalidate request slot freshness cache via _mutationEpoch"
+      );
+
+      // Explicit bypassRequestCache must always read fresh from storage
+      const beforeBypass = slotMetaReads;
+      const r4 = await slotMod.inspectSlotsFreshness(["shared-tag"], t0, {
+        bypassRequestCache: true,
+      });
+      assert.equal(r4.hasNewer, true);
+      assert.equal(
+        slotMetaReads,
+        beforeBypass + 1,
+        "bypassRequestCache: true must always read fresh metadata"
+      );
+    });
+    fs.readFileSync = origReadFileSync;
+
+    // 2. DenoKVStorage.getSlotMetadata() skips reading >16KB chunk keys
+    const kvMap = new Map();
+    let chunkGets = 0;
+    const mockKv = {
+      async get(key) {
+        if (key[0] === "dinou_cache_chunk") chunkGets++;
+        const k = JSON.stringify(key);
+        return { value: kvMap.has(k) ? kvMap.get(k) : null };
+      },
+      async set(key, value) {
+        kvMap.set(JSON.stringify(key), value);
+      },
+      async delete(key) {
+        kvMap.delete(JSON.stringify(key));
+      },
+      atomic() {
+        const ops = [];
+        return {
+          set(key, value) {
+            ops.push(() => kvMap.set(JSON.stringify(key), value));
+            return this;
+          },
+          delete(key) {
+            ops.push(() => kvMap.delete(JSON.stringify(key)));
+            return this;
+          },
+          async commit() {
+            for (const op of ops) op();
+            return { ok: true };
+          },
+        };
+      },
+      async *list({ prefix }) {
+        for (const [k, value] of kvMap.entries()) {
+          const parsed = JSON.parse(k);
+          if (parsed[0] === prefix[0]) yield { key: parsed, value };
+        }
+      },
+    };
+    const denoStore = new storageMod.DenoKVStorage(mockKv, { hydrateFromDisk: false });
+    await denoStore.set("slots/chunked-slot/slot.json", bigSlotPayload, {
+      slotId: "chunked-slot",
+      tags: ["chunked-tag"],
+      revalidate: 3600,
+      generatedAt: t0,
+    });
+    chunkGets = 0;
+    const metaOnly = await denoStore.getSlotMetadata("chunked-slot");
+    assert.equal(metaOnly?.exists, true);
+    assert.equal(metaOnly?.metadata?.generatedAt, t0);
+    assert.equal(
+      chunkGets,
+      0,
+      `DenoKVStorage.getSlotMetadata() must not fetch chunk keys, got ${chunkGets}`
+    );
+
+    // 3. Parallel multi-slot inspection completes in ~1 RTT instead of N sequential RTTs
+    class DelayedSlotMemoryStorage extends storageMod.MemoryStorage {
+      constructor() {
+        super({ hydrateFromDisk: false });
+        this.inFlight = 0;
+        this.maxConcurrent = 0;
+      }
+      async getSlotMetadata(slotId) {
+        this.inFlight++;
+        if (this.inFlight > this.maxConcurrent) this.maxConcurrent = this.inFlight;
+        await new Promise((r) => setTimeout(r, 15));
+        this.inFlight--;
+        return super.getSlotMetadata(slotId);
+      }
+    }
+    const parallelStore = new DelayedSlotMemoryStorage();
+    for (const id of ["p1", "p2", "p3", "p4"]) {
+      await parallelStore.set(`slots/${id}/slot.json`, "{}", {
+        slotId: id,
+        tags: ["par-all"],
+        revalidate: 3600,
+        generatedAt: t0,
+      });
+    }
+    storageMod.setStorageAdapter(parallelStore);
+    await reqCtxMod.requestStorage.run({ req: { path: "/par" } }, async () => {
+      const res = await slotMod.inspectSlotsFreshness(["par-all"], t0);
+      assert.deepEqual(res, { hasExpired: false, hasNewer: false });
+    });
+    assert.equal(
+      parallelStore.maxConcurrent,
+      4,
+      `Expected all 4 slots to be inspected concurrently (maxConcurrent=4), got ${parallelStore.maxConcurrent}`
+    );
+  } finally {
+    fs.readFileSync = origReadFileSync;
+    if (prevAdapter) storageMod.setStorageAdapter(prevAdapter);
+    if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevNodeEnv;
+    if (prevDinouDev === undefined) delete process.env.DINOU_DEV;
+    else process.env.DINOU_DEV = prevDinouDev;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});

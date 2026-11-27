@@ -539,14 +539,18 @@ async function getSlotFromStorage(storage, storageKey, knownTags = []) {
             ...(slotIdFromKey ? [slotIdFromKey] : []),
             ...(Array.isArray(knownTags) ? knownTags : []),
           ]);
-          for (const t of combinedTags) {
-            const invAt =
-              typeof storage.getTagInvalidatedAtAsync === "function"
-                ? await storage.getTagInvalidatedAtAsync(t)
-                : typeof storage.getTagInvalidatedAt === "function"
-                ? storage.getTagInvalidatedAt(t)
-                : 0;
-            if (invAt > 0 && invAt >= generatedAt) {
+          const combinedTagList = Array.from(combinedTags).filter(Boolean);
+          if (combinedTagList.length > 0) {
+            const invTimestamps = await Promise.all(
+              combinedTagList.map((t) =>
+                typeof storage.getTagInvalidatedAtAsync === "function"
+                  ? storage.getTagInvalidatedAtAsync(t)
+                  : typeof storage.getTagInvalidatedAt === "function"
+                  ? storage.getTagInvalidatedAt(t)
+                  : 0
+              )
+            );
+            if (invTimestamps.some((invAt) => invAt > 0 && invAt >= generatedAt)) {
               return null;
             }
           }
@@ -1767,71 +1771,167 @@ async function getSlotJSX(slotId, options = {}) {
   return null;
 }
 
-async function inspectSlotsFreshness(slotTags, hostGeneratedAt = 0) {
+async function getSlotMetaFromStorage(storage, targetId, knownTags = []) {
+  if (!storage || !targetId) return null;
+  if (typeof storage.getSlotMetadata === "function") {
+    try {
+      const fast = await storage.getSlotMetadata(targetId);
+      if (fast && fast.exists) {
+        return { exists: true, metadata: fast.metadata || {} };
+      }
+    } catch (err) {}
+  }
+  const full = await getSlotFromStorage(storage, `slots/${targetId}/slot.json`, knownTags);
+  if (full && full.content) {
+    return { exists: true, metadata: full.metadata || {} };
+  }
+  return null;
+}
+
+async function inspectSlotsFreshness(slotTags, hostGeneratedAt = 0, options = {}) {
   const result = { hasExpired: false, hasNewer: false };
   if (!Array.isArray(slotTags) || slotTags.length === 0) return result;
   const storage = getStorageAdapter();
   if (!storage) return result;
   const now = Date.now();
   const hostGen = Number(hostGeneratedAt || 0);
-  const checkedIds = new Set();
   const resolvedBatch = await resolveAllCanonicalSlotIdsBatch(slotTags, storage);
+
+  // Deduplicate targetIds and collect all associated raw tags per targetId
+  const tagsByTargetId = new Map();
   for (const rawTagOrId of slotTags) {
     if (!rawTagOrId) continue;
     const matchedSet = resolvedBatch.get(rawTagOrId);
     const targetIds =
       matchedSet && matchedSet.size > 0 ? Array.from(matchedSet) : [rawTagOrId];
     for (const targetId of targetIds) {
-      if (!targetId || checkedIds.has(targetId)) continue;
-      checkedIds.add(targetId);
-      const storageKey = `slots/${targetId}/slot.json`;
-      const cached = await getSlotFromStorage(storage, storageKey, [targetId, rawTagOrId]);
-      if (!cached || !cached.content) {
+      if (!targetId) continue;
+      let tagSet = tagsByTargetId.get(targetId);
+      if (!tagSet) {
+        tagSet = new Set([targetId]);
+        tagsByTargetId.set(targetId, tagSet);
+      }
+      tagSet.add(rawTagOrId);
+    }
+  }
+  if (tagsByTargetId.size === 0) return result;
+
+  // Request-scoped memoization (auto-invalidated on any storage mutation via _mutationEpoch;
+  // bypassed during active revalidations and explicit cross-isolate race checks).
+  const reqCtx = requestStorage?.getStore?.();
+  const canUseReqCache = Boolean(
+    reqCtx &&
+      typeof reqCtx === "object" &&
+      !options?.bypassRequestCache &&
+      !isRevalidationActive()
+  );
+  const currentEpoch = Number(storage._mutationEpoch || 0);
+  let slotMetaCache = null;
+  if (canUseReqCache) {
+    if (
+      !reqCtx._dinouSlotMetaCache ||
+      reqCtx._dinouSlotMetaCache.storage !== storage ||
+      reqCtx._dinouSlotMetaCache.epoch !== currentEpoch
+    ) {
+      reqCtx._dinouSlotMetaCache = {
+        storage,
+        epoch: currentEpoch,
+        entries: new Map(),
+      };
+    }
+    slotMetaCache = reqCtx._dinouSlotMetaCache.entries;
+  }
+
+  const readTagInvAt = async (tag) =>
+    typeof storage.getTagInvalidatedAtAsync === "function"
+      ? await storage.getTagInvalidatedAtAsync(tag)
+      : typeof storage.getTagInvalidatedAt === "function"
+      ? storage.getTagInvalidatedAt(tag)
+      : 0;
+
+  const inspectOneTarget = async ([targetId, tagSet]) => {
+    const knownTags = Array.from(tagSet);
+    const storageKey = `slots/${targetId}/slot.json`;
+    let info = slotMetaCache ? slotMetaCache.get(targetId) : null;
+
+    if (!info) {
+      const slotMetaRes = await getSlotMetaFromStorage(storage, targetId, knownTags);
+      if (!slotMetaRes || !slotMetaRes.exists) {
         const isDeleted =
           typeof storage.isKeyDeleted === "function"
             ? await storage.isKeyDeleted(storageKey)
             : typeof storage.isDeleted === "function" && storage.isDeleted(storageKey);
-        let isTagInvalidated = false;
-        if (!isDeleted && hostGen > 0) {
-          for (const t of new Set([rawTagOrId, targetId])) {
-            if (!t) continue;
-            const invAt =
-              typeof storage.getTagInvalidatedAtAsync === "function"
-                ? await storage.getTagInvalidatedAtAsync(t)
-                : typeof storage.getTagInvalidatedAt === "function"
-                ? storage.getTagInvalidatedAt(t)
-                : 0;
-            if (invAt > 0 && invAt >= hostGen) {
-              isTagInvalidated = true;
-              break;
-            }
+        const tagInvMap = new Map();
+        if (!isDeleted && knownTags.length > 0) {
+          const invValues = await Promise.all(knownTags.map((t) => readTagInvAt(t)));
+          for (let i = 0; i < knownTags.length; i++) {
+            tagInvMap.set(knownTags[i], Number(invValues[i] || 0));
           }
         }
-        if (isDeleted || isTagInvalidated) {
-          result.hasNewer = true;
+        info = {
+          exists: false,
+          isDeleted: Boolean(isDeleted),
+          tagInvMap,
+          generatedAt: 0,
+          revalidate: undefined,
+        };
+      } else {
+        const meta = slotMetaRes.metadata || {};
+        info = {
+          exists: true,
+          isDeleted: false,
+          tagInvMap: null,
+          generatedAt: Number(meta.generatedAt || 0),
+          revalidate: typeof meta.revalidate === "number" ? meta.revalidate : undefined,
+        };
+      }
+      if (slotMetaCache) {
+        slotMetaCache.set(targetId, info);
+      }
+    } else if (!info.exists && !info.isDeleted && hostGen > 0) {
+      const missingTags = knownTags.filter((t) => !info.tagInvMap.has(t));
+      if (missingTags.length > 0) {
+        const invValues = await Promise.all(missingTags.map((t) => readTagInvAt(t)));
+        for (let i = 0; i < missingTags.length; i++) {
+          info.tagInvMap.set(missingTags[i], Number(invValues[i] || 0));
         }
-        continue;
-      }
-      const meta = cached.metadata || {};
-      const slotGen = Number(meta.generatedAt || 0);
-      if (hostGen > 0 && slotGen > hostGen) {
-        result.hasNewer = true;
-      }
-      const regEntry = slotRegistry.get(targetId);
-      const revalidateSeconds =
-        typeof regEntry?.revalidate === "number"
-          ? regEntry.revalidate
-          : typeof meta.revalidate === "number"
-          ? meta.revalidate
-          : undefined;
-      if (
-        typeof revalidateSeconds === "number" &&
-        revalidateSeconds >= 1 &&
-        now > slotGen + revalidateSeconds * 1000
-      ) {
-        result.hasExpired = true;
       }
     }
+
+    if (!info.exists) {
+      let isTagInvalidated = false;
+      if (!info.isDeleted && hostGen > 0 && info.tagInvMap) {
+        for (const t of knownTags) {
+          const invAt = info.tagInvMap.get(t) || 0;
+          if (invAt > 0 && invAt >= hostGen) {
+            isTagInvalidated = true;
+            break;
+          }
+        }
+      }
+      return { hasNewer: Boolean(info.isDeleted || isTagInvalidated), hasExpired: false };
+    }
+
+    const slotGen = info.generatedAt;
+    const hasNewer = hostGen > 0 && slotGen > hostGen;
+    const regEntry = slotRegistry.get(targetId);
+    const revalidateSeconds =
+      typeof regEntry?.revalidate === "number"
+        ? regEntry.revalidate
+        : info.revalidate;
+    const hasExpired =
+      typeof revalidateSeconds === "number" &&
+      revalidateSeconds >= 1 &&
+      now > slotGen + revalidateSeconds * 1000;
+    return { hasNewer, hasExpired };
+  };
+
+  const perTargetResults = await Promise.all(
+    Array.from(tagsByTargetId.entries()).map(inspectOneTarget)
+  );
+  for (const r of perTargetResults) {
+    if (r.hasNewer) result.hasNewer = true;
+    if (r.hasExpired) result.hasExpired = true;
   }
   return result;
 }

@@ -2448,10 +2448,16 @@ async function handleRequestInner(request, platformContext = {}) {
       try {
         const activeChain = perimeterLayoutChain;
         if (activeChain.length > 0) {
-          for (const entry of activeChain) {
-            const lMetaKey = entry.cleanLayoutKey ? `${entry.cleanLayoutKey}/layout.metadata.json` : "layout.metadata.json";
-            const lRscKey = entry.cleanLayoutKey ? `${entry.cleanLayoutKey}/layout.rsc` : "layout.rsc";
-            const lMeta = await readMetaFromStorage(storage, lMetaKey, lRscKey, platformContext, request.url);
+          const prefetchedRscMetas = await Promise.all(
+            activeChain.map((entry) => {
+              const lMetaKey = entry.cleanLayoutKey ? `${entry.cleanLayoutKey}/layout.metadata.json` : "layout.metadata.json";
+              const lRscKey = entry.cleanLayoutKey ? `${entry.cleanLayoutKey}/layout.rsc` : "layout.rsc";
+              return readMetaFromStorage(storage, lMetaKey, lRscKey, platformContext, request.url);
+            })
+          );
+          for (let idx = 0; idx < activeChain.length; idx++) {
+            const entry = activeChain[idx];
+            const lMeta = prefetchedRscMetas[idx];
             entry._prefetchedMeta = lMeta;
             entry._hasPrefetchedMeta = true;
             entry.hasMeta = Boolean(lMeta);
@@ -2468,6 +2474,23 @@ async function handleRequestInner(request, platformContext = {}) {
             );
           }
           if (!platformContext?.isSSG && !isOld && !dynamicState.value && !internalBuildId) {
+            const rscUnionSlotTags = new Set();
+            const nowRscPrewarm = Date.now();
+            for (const entry of activeChain) {
+              const isOwnTtlExp =
+                typeof entry.revalidate === "number" &&
+                entry.revalidate >= 1 &&
+                entry.ownGeneratedAt > 0 &&
+                nowRscPrewarm > entry.ownGeneratedAt + entry.revalidate * 1000;
+              if (!isOwnTtlExp && Array.isArray(entry.slotTags)) {
+                for (const t of entry.slotTags) {
+                  if (t) rscUnionSlotTags.add(t);
+                }
+              }
+            }
+            if (rscUnionSlotTags.size > 0) {
+              await inspectSlotsFreshness(Array.from(rscUnionSlotTags), 0);
+            }
             const pendingRscLayoutSlotRevalPaths = [];
             for (let i = activeChain.length - 1; i >= 0; i--) {
               const entry = activeChain[i];
@@ -3728,6 +3751,7 @@ async function handleRequestInner(request, platformContext = {}) {
   const activeLayoutsForRoute = getActiveLayoutChain(reqSegments, queryObj, srcFolder);
   if (activeLayoutsForRoute.length > 0) {
     await requestStorage.run(rootContext, async () => {
+      const entriesNeedingMeta = [];
       for (let i = activeLayoutsForRoute.length - 1; i >= 0; i--) {
         const entry = activeLayoutsForRoute[i];
         const layoutConfig = await resolveLayoutFunctionsConfig(entry.layoutPath, entry.dParams);
@@ -3758,33 +3782,8 @@ async function handleRequestInner(request, platformContext = {}) {
           dynamicState = { value: true };
           hasStaticDynamicConfig = true;
           hasDynamicLayoutConfig = true;
-        } else if (
-          !isDevelopment &&
-          !platformContext?.isSSG
-        ) {
-          try {
-            const storageForMeta = getStorageAdapter();
-            const lMetaKey = entry.cleanLayoutKey
-              ? `${entry.cleanLayoutKey}/layout.metadata.json`
-              : "layout.metadata.json";
-            const lRscKey = entry.cleanLayoutKey
-              ? `${entry.cleanLayoutKey}/layout.rsc`
-              : "layout.rsc";
-            const lMeta = await readMetaFromStorage(
-              storageForMeta,
-              lMetaKey,
-              lRscKey,
-              platformContext,
-              request.url
-            );
-            entry._prefetchedMeta = lMeta;
-            entry._hasPrefetchedMeta = true;
-            if (lMeta?.dynamic) {
-              entry.isDynamicConfig = true;
-              dynamicState = { value: true };
-              hasDynamicLayoutConfig = true;
-            }
-          } catch (e) {}
+        } else if (!isDevelopment && !platformContext?.isSSG) {
+          entriesNeedingMeta.push(entry);
         }
 
         if (typeof layoutConfig.revalidate === "number" && layoutConfig.revalidate >= 0) {
@@ -3802,6 +3801,36 @@ async function handleRequestInner(request, platformContext = {}) {
             }
           }
         }
+      }
+
+      if (entriesNeedingMeta.length > 0) {
+        const storageForMeta = getStorageAdapter();
+        await Promise.all(
+          entriesNeedingMeta.map(async (entry) => {
+            try {
+              const lMetaKey = entry.cleanLayoutKey
+                ? `${entry.cleanLayoutKey}/layout.metadata.json`
+                : "layout.metadata.json";
+              const lRscKey = entry.cleanLayoutKey
+                ? `${entry.cleanLayoutKey}/layout.rsc`
+                : "layout.rsc";
+              const lMeta = await readMetaFromStorage(
+                storageForMeta,
+                lMetaKey,
+                lRscKey,
+                platformContext,
+                request.url
+              );
+              entry._prefetchedMeta = lMeta;
+              entry._hasPrefetchedMeta = true;
+              if (lMeta?.dynamic) {
+                entry.isDynamicConfig = true;
+                dynamicState = { value: true };
+                hasDynamicLayoutConfig = true;
+              }
+            } catch (e) {}
+          })
+        );
       }
     });
   }
@@ -4103,24 +4132,32 @@ async function handleRequestInner(request, platformContext = {}) {
         const activeLayoutChain = activeLayoutsForRoute;
         cachedHitActiveLayoutChain = activeLayoutChain;
         if (activeLayoutChain.length > 0) {
-          for (const entry of activeLayoutChain) {
-            const lMetaKey = entry.cleanLayoutKey
-              ? `${entry.cleanLayoutKey}/layout.metadata.json`
-              : "layout.metadata.json";
-            const lRscKey = entry.cleanLayoutKey
-              ? `${entry.cleanLayoutKey}/layout.rsc`
-              : "layout.rsc";
-            const lMeta = entry._hasPrefetchedMeta
-              ? entry._prefetchedMeta
-              : await readMetaFromStorage(
+          const missingMetaEntries = activeLayoutChain.filter((e) => !e._hasPrefetchedMeta);
+          if (missingMetaEntries.length > 0) {
+            await Promise.all(
+              missingMetaEntries.map(async (entry) => {
+                const lMetaKey = entry.cleanLayoutKey
+                  ? `${entry.cleanLayoutKey}/layout.metadata.json`
+                  : "layout.metadata.json";
+                const lRscKey = entry.cleanLayoutKey
+                  ? `${entry.cleanLayoutKey}/layout.rsc`
+                  : "layout.rsc";
+                const lMeta = await readMetaFromStorage(
                   storage,
                   lMetaKey,
                   lRscKey,
                   platformContext,
                   request.url
                 );
-            entry._prefetchedMeta = lMeta;
-            entry._hasPrefetchedMeta = true;
+                entry._prefetchedMeta = lMeta;
+                entry._hasPrefetchedMeta = true;
+              })
+            );
+          }
+          const htmlUnionSlotTags = new Set();
+          const nowHtmlPrewarm = Date.now();
+          for (const entry of activeLayoutChain) {
+            const lMeta = entry._prefetchedMeta;
             entry.hasMeta = Boolean(lMeta);
             entry.isDynamicConfig = Boolean(entry.isDynamicConfig);
             entry.generatedAt = Number(lMeta?.generatedAt || 0);
@@ -4133,6 +4170,24 @@ async function handleRequestInner(request, platformContext = {}) {
                 ...(Array.isArray(lMeta?.slotTags) ? lMeta.slotTags : []),
               ])
             );
+            const isOwnTtlExp =
+              typeof entry.revalidate === "number" &&
+              entry.revalidate >= 1 &&
+              entry.ownGeneratedAt > 0 &&
+              nowHtmlPrewarm > entry.ownGeneratedAt + entry.revalidate * 1000;
+            if (!isOwnTtlExp) {
+              for (const t of entry.slotTags) {
+                if (t) htmlUnionSlotTags.add(t);
+              }
+            }
+          }
+          if (Array.isArray(cachedItem.metadata?.slotTags)) {
+            for (const t of cachedItem.metadata.slotTags) {
+              if (t) htmlUnionSlotTags.add(t);
+            }
+          }
+          if (htmlUnionSlotTags.size > 0) {
+            await inspectSlotsFreshness(Array.from(htmlUnionSlotTags), 0);
           }
           for (let i = activeLayoutChain.length - 1; i >= 0; i--) {
             const entry = activeLayoutChain[i];
@@ -5103,6 +5158,32 @@ async function handleRequestInner(request, platformContext = {}) {
                     const overrides = new Map();
                     let anyDynamicInChain = false;
                     const pendingAsymLayoutSlotRevalPaths = [];
+                    if (!isDevelopment) {
+                      const missingAsymEntries = effectiveLayoutsForRender.filter(
+                        (e) => !e._hasPrefetchedMeta
+                      );
+                      if (missingAsymEntries.length > 0) {
+                        await Promise.all(
+                          missingAsymEntries.map(async (entry) => {
+                            const lMetaKey = entry.cleanLayoutKey
+                              ? `${entry.cleanLayoutKey}/layout.metadata.json`
+                              : "layout.metadata.json";
+                            const lRscKey = entry.cleanLayoutKey
+                              ? `${entry.cleanLayoutKey}/layout.rsc`
+                              : "layout.rsc";
+                            const lMeta = await readMetaFromStorage(
+                              storage,
+                              lMetaKey,
+                              lRscKey,
+                              platformContext,
+                              request.url
+                            );
+                            entry._prefetchedMeta = lMeta;
+                            entry._hasPrefetchedMeta = true;
+                          })
+                        );
+                      }
+                    }
                     for (let i = effectiveLayoutsForRender.length - 1; i >= 0; i--) {
                       const entry = effectiveLayoutsForRender[i];
                       const lMetaKey = entry.cleanLayoutKey

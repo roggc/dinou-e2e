@@ -1375,7 +1375,8 @@ async function revalidatePage(reqPath, internalOptions = {}) {
         ) {
           const slotCheck = await inspectSlotsFreshness(
             currentMeta.slotTags,
-            committedGen
+            committedGen,
+            { bypassRequestCache: true }
           );
           if (slotCheck.hasNewer) {
             return true;
@@ -2245,7 +2246,8 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
           if (committedGen > 0 && lSlotTags.length > 0) {
             const slotCheck = await inspectSlotsFreshness(
               lSlotTags,
-              committedGen
+              committedGen,
+              { bypassRequestCache: true }
             );
             if (slotCheck.hasNewer) return true;
           }

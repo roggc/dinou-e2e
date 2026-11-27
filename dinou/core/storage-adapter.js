@@ -10,11 +10,13 @@ class StorageAdapter {
     this._deletedKeys = new Set();
     this._invalidatedTags = new Map();
     this.hydrateFromDisk = true;
+    this._mutationEpoch = 0;
   }
 
   markTagInvalidated(tag) {
     if (tag) {
       this._invalidatedTags.set(String(tag), Date.now());
+      this._mutationEpoch++;
     }
   }
 
@@ -38,6 +40,7 @@ class StorageAdapter {
   }
 
   _markDeleted(key) {
+    this._mutationEpoch++;
     const k = this._normalizeTrackKey(key);
     this._deletedKeys.add(k);
     if (k.endsWith("/index.html")) {
@@ -55,6 +58,7 @@ class StorageAdapter {
   }
 
   _unmarkDeleted(key) {
+    this._mutationEpoch++;
     const k = this._normalizeTrackKey(key);
     this._deletedKeys.delete(k);
     if (k.endsWith("/index.html")) {
@@ -295,6 +299,18 @@ class FileSystemStorage extends StorageAdapter {
       } catch (e) {}
     }
     return { content, metadata };
+  }
+
+  async getSlotMetadata(slotId) {
+    if (!slotId) return null;
+    const slotPath = this._resolve(`slots/${slotId}/slot.json`);
+    if (!fs.existsSync(slotPath)) return null;
+    const metaPath = path.join(path.dirname(slotPath), "slot.metadata.json");
+    let metadata = null;
+    try {
+      metadata = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+    } catch (e) {}
+    return { exists: true, metadata };
   }
 
   async set(key, content, metadata = null) {
@@ -824,6 +840,13 @@ class MemoryStorage extends StorageAdapter {
     return { content: item.content, metadata: item.metadata };
   }
 
+  async getSlotMetadata(slotId) {
+    if (!slotId) return null;
+    const item = this.store.get(`slots/${slotId}/slot.json`);
+    if (!item || !item.content) return null;
+    return { exists: true, metadata: item.metadata || null };
+  }
+
   async set(key, content, metadata = null) {
     this._unmarkDeleted(key);
     const cleanKey = this._cleanKey(key);
@@ -1293,6 +1316,27 @@ class DenoKVStorage extends StorageAdapter {
     }
     return {
       content: typeof val === "string" ? val : (val && val.content !== undefined ? val.content : ""),
+      metadata: val && typeof val === "object" && val.metadata ? val.metadata : null,
+    };
+  }
+
+  async getSlotMetadata(slotId) {
+    if (!slotId) return null;
+    const kv = await this._getKV();
+    if (!kv) return null;
+    const res = await kv.get(["dinou_cache", `slots/${slotId}/slot.json`]);
+    if (!res || res.value === null || res.value === undefined) return null;
+    const val = res.value;
+    if (val && typeof val === "object" && val.chunked) {
+      return { exists: true, metadata: val.metadata || null };
+    }
+    const hasContent =
+      typeof val === "string"
+        ? val.length > 0
+        : Boolean(val && typeof val.content === "string" && val.content.length > 0);
+    if (!hasContent) return null;
+    return {
+      exists: true,
       metadata: val && typeof val === "object" && val.metadata ? val.metadata : null,
     };
   }
