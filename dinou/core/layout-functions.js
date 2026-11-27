@@ -11,33 +11,67 @@ import { getDinouConfig } from "./load-dinou-config.js";
 const LAYOUT_FUNCTIONS_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mjs"];
 const LAYOUT_FUNCTIONS_NAMES = ["layout_functions", "layout.functions"];
 
+const layoutFunctionsPathCache = new Map();
+
+function isLayoutDevMode() {
+  return (
+    process.env.DINOU_DEV === "true" ||
+    (typeof globalThis !== "undefined" && Boolean(globalThis.__DINOU_DEV__)) ||
+    process.env.NODE_ENV !== "production"
+  );
+}
+
+function clearLayoutFunctionsPathCache() {
+  layoutFunctionsPathCache.clear();
+}
+
 /**
  * Finds the layout_functions file in the given layout directory, if it exists.
+ * Cached in production (`!isLayoutDevMode()`) to avoid repeated extension probes.
  * @param {string} layoutFolderPath
  * @returns {string | null}
  */
 function getLayoutFunctionsPath(layoutFolderPath) {
   if (!layoutFolderPath) return null;
-  for (const name of LAYOUT_FUNCTIONS_NAMES) {
+  const isDev = isLayoutDevMode();
+  const routeModules =
+    typeof globalThis !== "undefined" ? globalThis.__DINOU_ROUTE_MODULES__ : null;
+  let cacheKey = null;
+  if (!isDev) {
+    const rawKey = String(layoutFolderPath).replace(/\\/g, "/");
+    const prefix = routeModules ? "m:" : "f:";
+    cacheKey = path.isAbsolute(layoutFolderPath)
+      ? `${prefix}${rawKey}`
+      : `${prefix}${process.cwd().replace(/\\/g, "/")}/${rawKey}`;
+    if (layoutFunctionsPathCache.has(cacheKey)) {
+      return layoutFunctionsPathCache.get(cacheKey);
+    }
+  }
+
+  let resolved = null;
+  outer: for (const name of LAYOUT_FUNCTIONS_NAMES) {
     for (const ext of LAYOUT_FUNCTIONS_EXTENSIONS) {
       const candidate = path.join(layoutFolderPath, `${name}${ext}`);
       if (existsSync(candidate)) {
-        return candidate;
+        resolved = candidate;
+        break outer;
       }
-      const slashCandidate = candidate.replace(/\\/g, "/");
-      if (existsSync(slashCandidate)) {
-        return slashCandidate;
-      }
-      if (typeof globalThis !== "undefined" && globalThis.__DINOU_ROUTE_MODULES__) {
+      if (routeModules) {
+        const slashCandidate = candidate.replace(/\\/g, "/");
         const norm = slashCandidate.replace(/^file:\/\/\/?/, "").replace(/^\/+/, "");
         const clean = norm.startsWith("src/") ? norm : "src/" + norm.replace(/^.*\/src\//, "");
-        if (globalThis.__DINOU_ROUTE_MODULES__[clean] || globalThis.__DINOU_ROUTE_MODULES__[norm]) {
-          return clean;
+        if (routeModules[clean] || routeModules[norm]) {
+          resolved = clean;
+          break outer;
         }
       }
     }
   }
-  return null;
+
+  if (cacheKey !== null) {
+    layoutFunctionsPathCache.set(cacheKey, resolved);
+  }
+  return resolved;
 }
 
 /**
@@ -428,6 +462,7 @@ async function resolveLayoutChainPpr(
 
 export {
   getLayoutFunctionsPath,
+  clearLayoutFunctionsPathCache,
   getLayoutProps,
   resolveLayoutFunctionsConfig,
   computeLayoutKeyFromFolder,
@@ -436,6 +471,7 @@ export {
 };
 export default {
   getLayoutFunctionsPath,
+  clearLayoutFunctionsPathCache,
   getLayoutProps,
   resolveLayoutFunctionsConfig,
   computeLayoutKeyFromFolder,

@@ -28,7 +28,7 @@ All optimizations below are designed to be implemented **one stage at a time**, 
 ## Master Checklist
 
 ### Tier 1 — Highest Per-Request Impact (All Production Requests & 3D Cube Hot Paths)
-- [ ] **`OPT-1`** — Authoritative Production VFS Negative Lookups (`vfs.js`) & `getLayoutFunctionsPath()` Caching (`layout-functions.js`)
+- [x] **`OPT-1`** — Authoritative Production VFS Negative Lookups (`vfs.js`) & `getLayoutFunctionsPath()` Caching (`layout-functions.js`)
 - [ ] **`OPT-2`** — Production `layoutFunctionsConfigCache` (`layout-functions.js`) & Single-Pass Layout Chain / Metadata Reuse (`handler.js`)
 - [ ] **`OPT-3`** — Parallel Multi-Layout / Multi-Slot Prefetch & Metadata-Only, Per-Request Deduplicated `inspectSlotsFreshness()` (`cache-slot.js`, `handler.js`, `layout-composition.js`, `storage-adapter.js`)
 
