@@ -13,8 +13,34 @@ import {
   createHoistCssImportsPlugin,
 } from "./postcss-pipeline.js";
 
+export const DEFAULT_MAX_CSS_MODULE_CACHE_ENTRIES = 1000;
 const serverCssModuleCache = new Map();
 const lastKnownExportJsonByFile = new Map();
+
+function getMaxCssModuleCacheEntries() {
+  const envCap = Number(process.env.DINOU_MAX_CSS_MODULE_CACHE_ENTRIES);
+  if (Number.isFinite(envCap) && envCap > 0) {
+    return Math.floor(envCap);
+  }
+  return DEFAULT_MAX_CSS_MODULE_CACHE_ENTRIES;
+}
+
+function setBoundedCssEntry(map, key, value) {
+  if (map.has(key)) {
+    map.delete(key);
+  }
+  map.set(key, value);
+  const maxEntries = getMaxCssModuleCacheEntries();
+  while (map.size > maxEntries) {
+    const oldest = map.keys().next().value;
+    if (oldest === undefined || oldest === key) break;
+    map.delete(oldest);
+  }
+}
+
+export function getServerCssModuleCacheSize() {
+  return serverCssModuleCache.size;
+}
 
 export function clearServerCssModulesCache() {
   serverCssModuleCache.clear();
@@ -97,8 +123,8 @@ export async function compileCssModuleMap(filePath) {
   const mapJson = JSON.stringify(map);
   const contents = `export default ${mapJson};`;
 
-  lastKnownExportJsonByFile.set(key, mapJson);
-  serverCssModuleCache.set(key, {
+  setBoundedCssEntry(lastKnownExportJsonByFile, key, mapJson);
+  setBoundedCssEntry(serverCssModuleCache, key, {
     mtimeMs,
     deps,
     map,

@@ -391,6 +391,75 @@ const SlotRenderBatchContext =
     ? createContext(0)
     : null;
 
+const DEFAULT_MAX_CLIENT_SLOT_CACHE_ENTRIES = 50;
+
+function getMaxClientSlotCacheEntries() {
+  if (typeof window !== "undefined") {
+    const customSlotCap = Number(window.__DINOU_MAX_CLIENT_SLOT_CACHE_ENTRIES__);
+    if (Number.isFinite(customSlotCap) && customSlotCap > 0) {
+      return Math.floor(customSlotCap);
+    }
+    const customGlobalCap = Number(window.__DINOU_MAX_CLIENT_CACHE_ENTRIES__);
+    if (Number.isFinite(customGlobalCap) && customGlobalCap > 0) {
+      return Math.floor(customGlobalCap);
+    }
+  }
+  return DEFAULT_MAX_CLIENT_SLOT_CACHE_ENTRIES;
+}
+
+function clearOverrideEntryRefs(overrideEntry) {
+  if (!overrideEntry || typeof overrideEntry !== "object") return;
+  overrideEntry.baseChildren = null;
+  if (overrideEntry.baseChildrenSet instanceof Set) {
+    overrideEntry.baseChildrenSet.clear();
+  }
+  overrideEntry.content = null;
+}
+
+function evictUnmountedClientSlots(protectedId = null) {
+  const maxEntries = getMaxClientSlotCacheEntries();
+  if (knownClientSlots.size > maxEntries) {
+    for (const [slotId, entry] of knownClientSlots.entries()) {
+      if (knownClientSlots.size <= maxEntries) break;
+      if (slotId === protectedId) continue;
+      const hasMountedSubs =
+        entry && entry.subscribers instanceof Set && entry.subscribers.size > 0;
+      if (hasMountedSubs || mountedClientSlots.has(slotId) || entry?.pendingPromise) {
+        continue;
+      }
+      if (entry) {
+        entry.baseChildren = null;
+      }
+      knownClientSlots.delete(slotId);
+      const ov = slotOverrideCache.get(slotId);
+      if (ov) {
+        clearOverrideEntryRefs(ov);
+        slotOverrideCache.delete(slotId);
+      }
+    }
+  }
+  if (slotOverrideCache.size > maxEntries) {
+    for (const [slotId, ov] of slotOverrideCache.entries()) {
+      if (slotOverrideCache.size <= maxEntries) break;
+      if (slotId === protectedId || mountedClientSlots.has(slotId)) continue;
+      const known = knownClientSlots.get(slotId);
+      if (known && known.subscribers instanceof Set && known.subscribers.size > 0) {
+        continue;
+      }
+      clearOverrideEntryRefs(ov);
+      slotOverrideCache.delete(slotId);
+    }
+  }
+}
+
+function setBoundedSlotOverride(slotId, value) {
+  if (slotOverrideCache.has(slotId)) {
+    slotOverrideCache.delete(slotId);
+  }
+  slotOverrideCache.set(slotId, value);
+  evictUnmountedClientSlots(slotId);
+}
+
 function ensureKnownSlotEntry(id, tags, children) {
   let entry = knownClientSlots.get(id);
   if (!entry) {
@@ -408,6 +477,9 @@ function ensureKnownSlotEntry(id, tags, children) {
     };
     knownClientSlots.set(id, entry);
   } else {
+    // Refresh LRU order on access
+    knownClientSlots.delete(id);
+    knownClientSlots.set(id, entry);
     if (!(entry.subscribers instanceof Set)) {
       entry.subscribers = new Set();
     }
@@ -416,6 +488,7 @@ function ensureKnownSlotEntry(id, tags, children) {
     }
     entry.baseChildren = children;
   }
+  evictUnmountedClientSlots(id);
   return entry;
 }
 
@@ -497,7 +570,7 @@ if (
           } else {
             baseChildrenSet.add(entry.baseChildren);
           }
-          slotOverrideCache.set(slotId, {
+          setBoundedSlotOverride(slotId, {
             baseChildren: entry.baseChildren,
             baseChildrenSet,
             content: resolved,
@@ -652,6 +725,7 @@ export function DinouCacheSlotBoundary({ id, tags, children }) {
       if (entry.subscribers.size === 0) {
         mountedClientSlots.delete(id);
         entry.unmounted = true;
+        evictUnmountedClientSlots();
       }
     };
   }, [id, tagsKey]);

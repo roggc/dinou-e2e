@@ -32,11 +32,93 @@ import {
 // ====================================================================
 // 1. GLOBAL STATE (Outside the component)
 // ====================================================================
+const MAX_CLIENT_PAGE_CACHE_ENTRIES = 50;
+const MAX_CLIENT_LAYOUT_CACHE_ENTRIES = 50;
+const MAX_CLIENT_SCROLL_CACHE_ENTRIES = 100;
+
 const pageCache = new Map();
 const layoutCache = new Map();
 const scrollCache = new Map();
+if (typeof window !== "undefined") {
+  window.__DINOU_PAGE_CACHE__ = pageCache;
+  window.__DINOU_LAYOUT_CACHE__ = layoutCache;
+  window.__DINOU_SCROLL_CACHE__ = scrollCache;
+}
+
+const getMaxClientCacheEntries = (defaultMax) => {
+  if (typeof window !== "undefined") {
+    const custom = Number(window.__DINOU_MAX_CLIENT_CACHE_ENTRIES__);
+    if (Number.isFinite(custom) && custom > 0) {
+      return Math.floor(custom);
+    }
+  }
+  return defaultMax;
+};
 
 const getCurrentRoute = () => window.location.pathname + window.location.search;
+
+const getBoundedCacheEntry = (cache, key) => {
+  if (!cache.has(key)) return undefined;
+  const value = cache.get(key);
+  cache.delete(key);
+  cache.set(key, value);
+  return value;
+};
+
+const setBoundedPageCache = (key, value) => {
+  if (pageCache.has(key)) {
+    pageCache.delete(key);
+  }
+  pageCache.set(key, value);
+  const maxEntries = getMaxClientCacheEntries(MAX_CLIENT_PAGE_CACHE_ENTRIES);
+  if (pageCache.size <= maxEntries) return;
+  const activeRoute = typeof window !== "undefined" ? getCurrentRoute() : "";
+  for (const existingKey of pageCache.keys()) {
+    if (pageCache.size <= maxEntries) break;
+    if (existingKey === key || existingKey === activeRoute) continue;
+    pageCache.delete(existingKey);
+    erroredPageCacheKeys.delete(existingKey);
+    volatilePageCacheKeys.delete(existingKey);
+  }
+};
+
+const setBoundedLayoutCache = (key, value) => {
+  if (layoutCache.has(key)) {
+    layoutCache.delete(key);
+  }
+  layoutCache.set(key, value);
+  const maxEntries = getMaxClientCacheEntries(MAX_CLIENT_LAYOUT_CACHE_ENTRIES);
+  if (layoutCache.size <= maxEntries) return;
+  let activeLayoutCacheKey = null;
+  if (typeof window !== "undefined") {
+    const activeLKey = getLayoutKey(window.location.pathname);
+    activeLayoutCacheKey = activeLKey
+      ? isStaticExportMode()
+        ? activeLKey
+        : `${activeLKey}${window.location.search || ""}`
+      : null;
+  }
+  for (const existingKey of layoutCache.keys()) {
+    if (layoutCache.size <= maxEntries) break;
+    if (existingKey === key || existingKey === activeLayoutCacheKey) continue;
+    layoutCache.delete(existingKey);
+    erroredLayoutCacheKeys.delete(existingKey);
+    volatileLayoutCacheKeys.delete(existingKey);
+  }
+};
+
+const setBoundedScrollCache = (key, value) => {
+  if (scrollCache.has(key)) {
+    scrollCache.delete(key);
+  }
+  scrollCache.set(key, value);
+  const maxEntries = MAX_CLIENT_SCROLL_CACHE_ENTRIES;
+  while (scrollCache.size > maxEntries) {
+    const oldestKey = scrollCache.keys().next().value;
+    if (oldestKey === undefined || oldestKey === key) break;
+    scrollCache.delete(oldestKey);
+  }
+};
 
 const scrollToCurrentHash = (rawHash = typeof window !== "undefined" ? window.location.hash : "") => {
   if (!rawHash) return false;
@@ -607,7 +689,7 @@ const fetchWithInitialHydrationRetry = (fetchOnce, isInitialHydration) => {
 const getPagePayload = (route, isPrefetch = false, version = 0) => {
   const url = route.split("::")[0].split("#")[0] || "/";
   if (pageCache.has(url)) {
-    return pageCache.get(url);
+    return getBoundedCacheEntry(pageCache, url);
   }
 
   const staticExport = isStaticExportMode();
@@ -619,7 +701,7 @@ const getPagePayload = (route, isPrefetch = false, version = 0) => {
       },
     });
     pendingPromise.catch(() => {});
-    pageCache.set(url, pendingPromise);
+    setBoundedPageCache(url, pendingPromise);
     return pendingPromise;
   }
   let payloadUrl;
@@ -724,7 +806,7 @@ const getPagePayload = (route, isPrefetch = false, version = 0) => {
   );
 
   promise.catch(() => {});
-  pageCache.set(url, promise);
+  setBoundedPageCache(url, promise);
   return promise;
 };
 
@@ -733,7 +815,7 @@ const getLayoutPayload = (layoutKey, searchPart = "", version = 0) => {
   const staticExport = isStaticExportMode();
   const cacheKey = staticExport ? layoutKey : `${layoutKey}${searchPart}`;
   if (layoutCache.has(cacheKey)) {
-    return layoutCache.get(cacheKey);
+    return getBoundedCacheEntry(layoutCache, cacheKey);
   }
   if (isStaticExportUnloading()) {
     const pendingPromise = createFromFetch(new Promise(() => {}), {
@@ -743,7 +825,7 @@ const getLayoutPayload = (layoutKey, searchPart = "", version = 0) => {
       },
     });
     pendingPromise.catch(() => {});
-    layoutCache.set(cacheKey, pendingPromise);
+    setBoundedLayoutCache(cacheKey, pendingPromise);
     return pendingPromise;
   }
 
@@ -837,7 +919,7 @@ const getLayoutPayload = (layoutKey, searchPart = "", version = 0) => {
   );
 
   promise.catch(() => {});
-  layoutCache.set(cacheKey, promise);
+  setBoundedLayoutCache(cacheKey, promise);
   return promise;
 };
 
@@ -848,7 +930,7 @@ const getErrorRSCPayload = (route, error) => {
   const url = route.split("::")[0];
   const cacheKey = `error::${url}::${error.message || String(error)}`;
   if (pageCache.has(cacheKey)) {
-    return pageCache.get(cacheKey);
+    return getBoundedCacheEntry(pageCache, cacheKey);
   }
 
   const payloadUrl = "/____rsc_payload_error____" + url;
@@ -894,7 +976,7 @@ const getErrorRSCPayload = (route, error) => {
     }
   );
   promise.catch(() => {});
-  pageCache.set(cacheKey, promise);
+  setBoundedPageCache(cacheKey, promise);
   return promise;
 };
 
@@ -1182,7 +1264,7 @@ function Router() {
     }
 
     // Normal RSC Navigation
-    scrollCache.set(
+    setBoundedScrollCache(
       window.location.pathname + window.location.search,
       window.scrollY,
     );

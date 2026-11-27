@@ -80,6 +80,81 @@ if (!globalThis[SLOT_REGISTRY_KEY]) {
 }
 const slotRegistry = globalThis[SLOT_REGISTRY_KEY];
 
+const MAX_SLOT_REGISTRY_ENTRIES = Math.max(
+  16,
+  Number(process.env.DINOU_MAX_SLOT_REGISTRY_ENTRIES) || 1000
+);
+const MAX_SLOT_ROUTE_KEYS_PER_SLOT = 100;
+const MAX_RECENT_FRESH_SLOTS = Math.max(
+  16,
+  Number(process.env.DINOU_MAX_RECENT_FRESH_SLOTS) || 256
+);
+const RECENT_FRESH_SLOT_TTL_MS = 500;
+const MAX_SLOT_GENERATIONS = Math.max(
+  64,
+  Number(process.env.DINOU_MAX_SLOT_GENERATIONS) || 2000
+);
+
+function setBoundedSlotRegistry(slotId, entry) {
+  if (slotRegistry.has(slotId)) {
+    slotRegistry.delete(slotId);
+  }
+  slotRegistry.set(slotId, entry);
+  while (slotRegistry.size > MAX_SLOT_REGISTRY_ENTRIES) {
+    const oldestKey = slotRegistry.keys().next().value;
+    if (oldestKey === undefined || oldestKey === slotId) break;
+    slotRegistry.delete(oldestKey);
+  }
+}
+
+function touchSlotRegistry(slotId) {
+  if (!slotRegistry.has(slotId)) return undefined;
+  const entry = slotRegistry.get(slotId);
+  slotRegistry.delete(slotId);
+  slotRegistry.set(slotId, entry);
+  return entry;
+}
+
+function sweepExpiredRecentFreshSlotRenders(now = Date.now()) {
+  for (const [k, v] of recentFreshSlotRenders.entries()) {
+    if (!v || now - v.timestamp >= RECENT_FRESH_SLOT_TTL_MS) {
+      recentFreshSlotRenders.delete(k);
+    } else {
+      break;
+    }
+  }
+}
+
+function setRecentFreshSlotRender(key, entry) {
+  const now = entry?.timestamp || Date.now();
+  sweepExpiredRecentFreshSlotRenders(now);
+  if (recentFreshSlotRenders.has(key)) {
+    recentFreshSlotRenders.delete(key);
+  }
+  recentFreshSlotRenders.set(key, entry);
+  while (recentFreshSlotRenders.size > MAX_RECENT_FRESH_SLOTS) {
+    const oldestKey = recentFreshSlotRenders.keys().next().value;
+    if (oldestKey === undefined || oldestKey === key) break;
+    recentFreshSlotRenders.delete(oldestKey);
+  }
+}
+
+function bumpSlotRenderGeneration(storageKey) {
+  const nextGen = (slotRenderGenerations.get(storageKey) || 0) + 1;
+  if (slotRenderGenerations.has(storageKey)) {
+    slotRenderGenerations.delete(storageKey);
+  }
+  slotRenderGenerations.set(storageKey, nextGen);
+  if (slotRenderGenerations.size > MAX_SLOT_GENERATIONS) {
+    for (const key of slotRenderGenerations.keys()) {
+      if (slotRenderGenerations.size <= MAX_SLOT_GENERATIONS) break;
+      if (key === storageKey || inflightSlotRenders.has(key)) continue;
+      slotRenderGenerations.delete(key);
+    }
+  }
+  return nextGen;
+}
+
 const DISCOVERING_SLOTS_KEY = Symbol.for("dinou.slot.discovering");
 if (!globalThis[DISCOVERING_SLOTS_KEY]) {
   globalThis[DISCOVERING_SLOTS_KEY] = new Set();
@@ -814,9 +889,17 @@ async function DinouCacheSlot(props) {
       : new Set();
   const currentSlotRouteKey = normalizeSlotRouteKey(reqCtxInitial?.req?.path);
   if (currentSlotRouteKey !== null) {
+    if (slotRouteKeys.has(currentSlotRouteKey)) {
+      slotRouteKeys.delete(currentSlotRouteKey);
+    }
     slotRouteKeys.add(currentSlotRouteKey);
+    while (slotRouteKeys.size > MAX_SLOT_ROUTE_KEYS_PER_SLOT) {
+      const oldestRoute = slotRouteKeys.values().next().value;
+      if (oldestRoute === undefined) break;
+      slotRouteKeys.delete(oldestRoute);
+    }
   }
-  slotRegistry.set(slotId, {
+  setBoundedSlotRegistry(slotId, {
     render: async () => {
       return await runSlotScope(async () => {
         const childElement = typeof children === "function" ? await children() : children;
@@ -1591,7 +1674,7 @@ async function getSlotJSX(slotId, options = {}) {
   storageKey = `slots/${targetId}/slot.json`;
 
   if (slotRegistry.has(targetId)) {
-    const entry = slotRegistry.get(targetId);
+    const entry = touchSlotRegistry(targetId);
     const isEntryNoCache =
       typeof entry.revalidate === "number" && entry.revalidate < 1;
     const reqUrl = String(options.req?.url || "");
@@ -1613,23 +1696,23 @@ async function getSlotJSX(slotId, options = {}) {
         recentFreshSlotRenders.has(stampedeKey)
       ) {
         const recent = recentFreshSlotRenders.get(stampedeKey);
-        if (recent && Date.now() - recent.timestamp < 500 && recent.serialized) {
+        if (recent && Date.now() - recent.timestamp < RECENT_FRESH_SLOT_TTL_MS && recent.serialized) {
           recent.timestamp = Date.now();
+          setRecentFreshSlotRender(stampedeKey, recent);
           const restored = deserializeJSX(recent.serialized);
           return await refreshNestedSlotsInTree(restored, targetId, options);
         }
         recentFreshSlotRenders.delete(stampedeKey);
       }
 
-      const renderGen = (slotRenderGenerations.get(storageKey) || 0) + 1;
-      slotRenderGenerations.set(storageKey, renderGen);
+      const renderGen = bumpSlotRenderGeneration(storageKey);
       const isLatestGen = () => slotRenderGenerations.get(storageKey) === renderGen;
 
       const renderPromise = (async () => {
         const resolved = await entry.render();
         const serialized = serializeJSX(resolved);
         if (!isEntryNoCache && options.fresh && hasHttpRequest && isLatestGen()) {
-          recentFreshSlotRenders.set(stampedeKey, {
+          setRecentFreshSlotRender(stampedeKey, {
             timestamp: Date.now(),
             serialized,
           });
@@ -1663,7 +1746,7 @@ async function getSlotJSX(slotId, options = {}) {
           }
         }
         if (!isEntryNoCache && options.fresh && hasHttpRequest && isLatestGen()) {
-          recentFreshSlotRenders.set(stampedeKey, {
+          setRecentFreshSlotRender(stampedeKey, {
             timestamp: Date.now(),
             serialized,
           });

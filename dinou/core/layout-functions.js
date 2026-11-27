@@ -12,10 +12,23 @@ const LAYOUT_FUNCTIONS_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mjs"];
 const LAYOUT_FUNCTIONS_NAMES = ["layout_functions", "layout.functions"];
 
 const MAX_ACTIVE_CHAIN_CACHE_ENTRIES = 1000;
+const MAX_LAYOUT_FUNCTIONS_CACHE_ENTRIES = 500;
 const layoutFunctionsPathCache = new Map();
 const layoutFunctionsConfigCache = new Map();
 const activeLayoutChainCache = new Map();
 let activeLayoutChainCacheVfsRef = null;
+
+function setBoundedLayoutMap(map, key, value, maxEntries = MAX_LAYOUT_FUNCTIONS_CACHE_ENTRIES) {
+  if (map.has(key)) {
+    map.delete(key);
+  }
+  map.set(key, value);
+  while (map.size > maxEntries) {
+    const oldest = map.keys().next().value;
+    if (oldest === undefined || oldest === key) break;
+    map.delete(oldest);
+  }
+}
 
 function isLayoutDevMode() {
   return (
@@ -41,6 +54,14 @@ function clearActiveLayoutChainCache() {
 
 function getActiveLayoutChainCacheSize() {
   return activeLayoutChainCache.size;
+}
+
+function getLayoutFunctionsCacheSizes() {
+  return {
+    pathCache: layoutFunctionsPathCache.size,
+    configCache: layoutFunctionsConfigCache.size,
+    activeChainCache: activeLayoutChainCache.size,
+  };
 }
 
 function cloneLayoutParams(params) {
@@ -130,7 +151,7 @@ function getLayoutFunctionsPath(layoutFolderPath) {
   }
 
   if (cacheKey !== null) {
-    layoutFunctionsPathCache.set(cacheKey, resolved);
+    setBoundedLayoutMap(layoutFunctionsPathCache, cacheKey, resolved);
   }
   return resolved;
 }
@@ -296,7 +317,7 @@ async function resolveLayoutFunctionsConfig(layoutPath, dParams = {}) {
         ppr: layoutPpr,
       };
       if (cacheKey) {
-        layoutFunctionsConfigCache.set(cacheKey, cachedStatic);
+        setBoundedLayoutMap(layoutFunctionsConfigCache, cacheKey, cachedStatic);
       }
     } catch (err) {
       console.error(`[Dinou] Error resolving layout_functions config from ${layoutFunctionsPath}:`, err);
@@ -613,6 +634,7 @@ export {
   clearLayoutFunctionsConfigCache,
   clearActiveLayoutChainCache,
   getActiveLayoutChainCacheSize,
+  getLayoutFunctionsCacheSizes,
   getLayoutProps,
   resolveLayoutFunctionsConfig,
   computeLayoutKeyFromFolder,
@@ -625,6 +647,7 @@ export default {
   clearLayoutFunctionsConfigCache,
   clearActiveLayoutChainCache,
   getActiveLayoutChainCacheSize,
+  getLayoutFunctionsCacheSizes,
   getLayoutProps,
   resolveLayoutFunctionsConfig,
   computeLayoutKeyFromFolder,

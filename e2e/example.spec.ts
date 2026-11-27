@@ -24508,6 +24508,220 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
     });
   });
 
+  test.describe("🧠 Series Z — Phase 1 — Stage 1 (Check #Z1): Long-Running Client SPA Memory Bounds & LRU Eviction", () => {
+    test("1. 155-route SPA soak with dynamic layouts & <DinouCacheSlot> refreshSlot keeps all client caches bounded and cleanly re-fetches evicted routes on Back/navigation (/t-z-soak/[id])", async ({
+      page,
+    }) => {
+      test.setTimeout(180000);
+      const pageErrors: string[] = [];
+      const consoleErrors: string[] = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+      page.on("console", (msg) => {
+        if (msg.type() === "error") consoleErrors.push(msg.text());
+      });
+
+      const TOTAL_ROUTES = 155;
+
+      // 1. Cold SSR + hydration on /t-z-soak/1
+      const firstRes = await page.goto("/t-z-soak/1");
+      expect(firstRes?.status()).toBe(200);
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+      await page.waitForFunction(() => Boolean((window as any).__Z1_SOAK__), {
+        timeout: 15000,
+      });
+      await expect(page.getByTestId("z1-item-id")).toHaveText("1");
+      await expect(page.getByTestId("z1-layout-header")).toHaveText("Z1 Layout 1");
+
+      // Trigger refreshSlot on route 1 and confirm DOM seq increments
+      const seq1Before = Number(
+        (await page.getByTestId("z1-slot-value").getAttribute("data-slot-seq")) || "0"
+      );
+      await page.evaluate(() =>
+        (window as any).__Z1_SOAK__.refreshSlot("z1-spa-slot-1")
+      );
+      await expect
+        .poll(async () =>
+          Number(
+            (await page.getByTestId("z1-slot-value").getAttribute("data-slot-seq")) || "0"
+          )
+        )
+        .toBeGreaterThan(seq1Before);
+
+      // 2. Soft-navigate sequentially across 155 unique /t-z-soak/[id] routes in a single tab,
+      //    triggering refreshSlot on each to exercise pageCache, layoutCache, scrollCache,
+      //    knownClientSlots, and slotOverrideCache LRU caps simultaneously.
+      for (let i = 2; i <= TOTAL_ROUTES; i++) {
+        await page.evaluate(
+          (id) => (window as any).__Z1_SOAK__.push(`/t-z-soak/${id}`),
+          i
+        );
+        await expect(page.getByTestId("z1-item-id")).toHaveText(String(i), {
+          timeout: 15000,
+        });
+        await expect(page.getByTestId("z1-layout-header")).toHaveText(
+          `Z1 Layout ${i}`,
+          { timeout: 15000 }
+        );
+        await page.evaluate(
+          (id) => (window as any).__Z1_SOAK__.refreshSlot(`z1-spa-slot-${id}`),
+          i
+        );
+      }
+
+      // Verify final route slot value rendered cleanly after refreshSlot
+      await expect(page.getByTestId("z1-slot-value")).toContainText(
+        `z1-slot:${TOTAL_ROUTES}:seq=`
+      );
+
+      // 3. Assert ALL 5 client-side caches stayed strictly within LRU bounds
+      const cacheStats = await page.evaluate((lastId) => {
+        const w = window as any;
+        const knownSlots: Map<string, any> | undefined = w.__DINOU_KNOWN_CLIENT_SLOTS__;
+        const overrideCache: Map<string, any> | undefined = w.__DINOU_SLOT_OVERRIDE_CACHE__;
+        const pageCache: Map<string, any> | undefined = w.__DINOU_PAGE_CACHE__;
+        const layoutCache: Map<string, any> | undefined = w.__DINOU_LAYOUT_CACHE__;
+        const scrollCache: Map<string, any> | undefined = w.__DINOU_SCROLL_CACHE__;
+        return {
+          knownSlotsSize: knownSlots ? knownSlots.size : -1,
+          overrideCacheSize: overrideCache ? overrideCache.size : -1,
+          pageCacheSize: pageCache ? pageCache.size : -1,
+          layoutCacheSize: layoutCache ? layoutCache.size : -1,
+          scrollCacheSize: scrollCache ? scrollCache.size : -1,
+          hasActiveSlot: knownSlots ? knownSlots.has(`z1-spa-slot-${lastId}`) : false,
+          hasEvictedSlot1: knownSlots ? knownSlots.has("z1-spa-slot-1") : true,
+          hasEvictedOverride1: overrideCache ? overrideCache.has("z1-spa-slot-1") : true,
+          hasEvictedPage1: pageCache ? pageCache.has("/t-z-soak/1") : true,
+          hasEvictedLayout1: layoutCache ? layoutCache.has("/t-z-soak/1") : true,
+        };
+      }, TOTAL_ROUTES);
+
+      expect(cacheStats.knownSlotsSize).toBeGreaterThan(0);
+      expect(cacheStats.knownSlotsSize).toBeLessThanOrEqual(50);
+      expect(cacheStats.overrideCacheSize).toBeGreaterThan(0);
+      expect(cacheStats.overrideCacheSize).toBeLessThanOrEqual(50);
+      expect(cacheStats.pageCacheSize).toBeGreaterThan(0);
+      expect(cacheStats.pageCacheSize).toBeLessThanOrEqual(50);
+      expect(cacheStats.layoutCacheSize).toBeGreaterThan(0);
+      expect(cacheStats.layoutCacheSize).toBeLessThanOrEqual(50);
+      expect(cacheStats.scrollCacheSize).toBeGreaterThan(0);
+      expect(cacheStats.scrollCacheSize).toBeLessThanOrEqual(100);
+
+      // Currently mounted slot MUST remain retained, while route 1 MUST have been LRU-evicted
+      expect(cacheStats.hasActiveSlot).toBe(true);
+      expect(cacheStats.hasEvictedSlot1).toBe(false);
+      expect(cacheStats.hasEvictedOverride1).toBe(false);
+      expect(cacheStats.hasEvictedPage1).toBe(false);
+      expect(cacheStats.hasEvictedLayout1).toBe(false);
+
+      // 4. Eviction Recovery via soft push to genuinely LRU-evicted /t-z-soak/1
+      await page.evaluate(() =>
+        (window as any).__Z1_SOAK__.push("/t-z-soak/1")
+      );
+      await expect(page.getByTestId("z1-item-id")).toHaveText("1", {
+        timeout: 15000,
+      });
+      await expect(page.getByTestId("z1-layout-header")).toHaveText("Z1 Layout 1", {
+        timeout: 15000,
+      });
+      await expect(page.getByTestId("z1-slot-value")).toContainText(
+        "z1-slot:1:seq=",
+        { timeout: 15000 }
+      );
+
+      // 5. Eviction Recovery via genuine Browser History Back (`popstate`):
+      //    Chromium caps window.history.length at 50 entries, so configure a 15-entry
+      //    cache cap and push 20 new routes (/t-z-soak/156..175) so /t-z-soak/1 stays
+      //    within browser session history (-20 steps) while being genuinely LRU-evicted
+      //    from pageCache, layoutCache, knownClientSlots, and slotOverrideCache.
+      await page.evaluate(() => {
+        (window as any).__DINOU_MAX_CLIENT_CACHE_ENTRIES__ = 15;
+      });
+      try {
+        for (let i = TOTAL_ROUTES + 1; i <= TOTAL_ROUTES + 20; i++) {
+          await page.evaluate(
+            (id) => (window as any).__Z1_SOAK__.push(`/t-z-soak/${id}`),
+            i
+          );
+          await expect(page.getByTestId("z1-item-id")).toHaveText(String(i), {
+            timeout: 15000,
+          });
+          await page.evaluate(
+            (id) => (window as any).__Z1_SOAK__.refreshSlot(`z1-spa-slot-${id}`),
+            i
+          );
+        }
+
+        const tightStats = await page.evaluate(() => {
+          const w = window as any;
+          return {
+            knownSlotsSize: w.__DINOU_KNOWN_CLIENT_SLOTS__.size,
+            overrideCacheSize: w.__DINOU_SLOT_OVERRIDE_CACHE__.size,
+            pageCacheSize: w.__DINOU_PAGE_CACHE__.size,
+            layoutCacheSize: w.__DINOU_LAYOUT_CACHE__.size,
+            hasPage1: w.__DINOU_PAGE_CACHE__.has("/t-z-soak/1"),
+            hasLayout1: w.__DINOU_LAYOUT_CACHE__.has("/t-z-soak/1"),
+            hasSlot1: w.__DINOU_KNOWN_CLIENT_SLOTS__.has("z1-spa-slot-1"),
+          };
+        });
+        expect(tightStats.knownSlotsSize).toBeLessThanOrEqual(15);
+        expect(tightStats.overrideCacheSize).toBeLessThanOrEqual(15);
+        expect(tightStats.pageCacheSize).toBeLessThanOrEqual(15);
+        expect(tightStats.layoutCacheSize).toBeLessThanOrEqual(15);
+        expect(tightStats.hasPage1).toBe(false);
+        expect(tightStats.hasLayout1).toBe(false);
+        expect(tightStats.hasSlot1).toBe(false);
+
+        await page.evaluate(() => window.history.go(-20));
+        await expect(page).toHaveURL(/\/t-z-soak\/1$/, { timeout: 15000 });
+        await expect(page.getByTestId("z1-item-id")).toHaveText("1", {
+          timeout: 15000,
+        });
+        await expect(page.getByTestId("z1-layout-header")).toHaveText(
+          "Z1 Layout 1",
+          { timeout: 15000 }
+        );
+        await expect(page.getByTestId("z1-slot-value")).toContainText(
+          "z1-slot:1:seq=",
+          { timeout: 15000 }
+        );
+
+        // And refreshSlot on the Back-recovered evicted route works cleanly!
+        const seq1AfterBack = Number(
+          (await page.getByTestId("z1-slot-value").getAttribute("data-slot-seq")) ||
+            "0"
+        );
+        await page.evaluate(() =>
+          (window as any).__Z1_SOAK__.refreshSlot("z1-spa-slot-1")
+        );
+        await expect
+          .poll(async () =>
+            Number(
+              (await page
+                .getByTestId("z1-slot-value")
+                .getAttribute("data-slot-seq")) || "0"
+            )
+          )
+          .toBeGreaterThan(seq1AfterBack);
+      } finally {
+        await page.evaluate(() => {
+          delete (window as any).__DINOU_MAX_CLIENT_CACHE_ENTRIES__;
+        });
+      }
+
+      // Zero page/console/hydration errors across the entire 155-route soak!
+      const fatalConsoleErrors = consoleErrors.filter((e) =>
+        /hydrat|418|419|422|423|425|Failed to refresh slot|TypeError|ReferenceError/i.test(
+          e
+        )
+      );
+      expect(fatalConsoleErrors).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+  });
+
   test.describe("🛡️ Series Z — Phase 1 — Stage 2 (Check #Z2): HTTP Security & Hardening", () => {
     test("1. CSRF Origin/Host/Sec-Fetch-Site rejection, traversal confinement, malicious redirect blocking & production error sanitization (/t-z-security)", async ({
       page,

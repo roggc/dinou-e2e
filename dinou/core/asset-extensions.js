@@ -19,8 +19,31 @@ export { extensions, globPattern, regex, extensionsWithDot };
 
 const escapeRegExp = (str) => String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+const MAX_SYNC_CONFIG_EXT_CACHE_ENTRIES = 64;
+const MAX_ASSET_HASH_CACHE_ENTRIES = 2000;
 const syncConfigExtCache = new Map();
 const assetHashCache = new Map();
+
+function setBoundedMapEntry(map, key, value, maxEntries) {
+  if (map.has(key)) {
+    map.delete(key);
+  }
+  map.set(key, value);
+  while (map.size > maxEntries) {
+    const oldest = map.keys().next().value;
+    if (oldest === undefined || oldest === key) break;
+    map.delete(oldest);
+  }
+}
+
+export function getAssetHashCacheSize() {
+  return assetHashCache.size;
+}
+
+export function clearAssetHashCache() {
+  assetHashCache.clear();
+  syncConfigExtCache.clear();
+}
 
 export function normalizeAssetExtension(rawExt) {
   if (typeof rawExt !== "string") return null;
@@ -90,10 +113,15 @@ export function readCustomAssetExtensionsSync(projectRoot = process.cwd()) {
       const customExtensions = normalizeAssetExtensionsList(parsed).filter(
         (ext) => !DEFAULT_EXTENSIONS_SET.has(ext)
       );
-      syncConfigExtCache.set(cfgPath, {
-        mtimeMs: stat.mtimeMs,
-        customExtensions,
-      });
+      setBoundedMapEntry(
+        syncConfigExtCache,
+        cfgPath,
+        {
+          mtimeMs: stat.mtimeMs,
+          customExtensions,
+        },
+        MAX_SYNC_CONFIG_EXT_CACHE_ENTRIES
+      );
       return customExtensions;
     } catch (e) {
       return [];
@@ -232,14 +260,19 @@ export function getAssetInfo(
   const publicUrl = `/${fileName}`;
 
   if (stat && stat.isFile()) {
-    assetHashCache.set(normAbs, {
-      normRoot,
-      mtimeMs: stat.mtimeMs,
-      size: stat.size,
-      hash,
-      fileName,
-      publicUrl,
-    });
+    setBoundedMapEntry(
+      assetHashCache,
+      normAbs,
+      {
+        normRoot,
+        mtimeMs: stat.mtimeMs,
+        size: stat.size,
+        hash,
+        fileName,
+        publicUrl,
+      },
+      MAX_ASSET_HASH_CACHE_ENTRIES
+    );
   }
 
   return includeBuffer

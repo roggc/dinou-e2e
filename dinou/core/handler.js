@@ -592,7 +592,41 @@ if (!globalThis[IS_DYNAMIC_MAP_KEY]) {
   globalThis[IS_DYNAMIC_MAP_KEY] = new Map();
 }
 const isDynamic = globalThis[IS_DYNAMIC_MAP_KEY];
+const MAX_IS_DYNAMIC_ENTRIES = Math.max(
+  64,
+  Number(process.env.DINOU_MAX_IS_DYNAMIC_ENTRIES) || 1000
+);
+const MAX_PAGE_FUNCTIONS_CONFIG_ENTRIES = 500;
 const pageFunctionsConfigCache = new Map();
+
+function getOrCreateDynamicState(key) {
+  if (isDynamic.has(key)) {
+    const existing = isDynamic.get(key);
+    isDynamic.delete(key);
+    isDynamic.set(key, existing);
+    return existing;
+  }
+  const created = { value: false };
+  isDynamic.set(key, created);
+  while (isDynamic.size > MAX_IS_DYNAMIC_ENTRIES) {
+    const oldestKey = isDynamic.keys().next().value;
+    if (oldestKey === undefined || oldestKey === key) break;
+    isDynamic.delete(oldestKey);
+  }
+  return created;
+}
+
+function setBoundedPageFunctionsConfig(pagePath, cfg) {
+  if (pageFunctionsConfigCache.has(pagePath)) {
+    pageFunctionsConfigCache.delete(pagePath);
+  }
+  pageFunctionsConfigCache.set(pagePath, cfg);
+  while (pageFunctionsConfigCache.size > MAX_PAGE_FUNCTIONS_CONFIG_ENTRIES) {
+    const oldestKey = pageFunctionsConfigCache.keys().next().value;
+    if (oldestKey === undefined || oldestKey === pagePath) break;
+    pageFunctionsConfigCache.delete(oldestKey);
+  }
+}
 
 async function resolvePprForRoute(
   pagePath,
@@ -814,7 +848,7 @@ async function resolvePageFunctionsConfig(
       }
 
       if (!isDevelopment) {
-        pageFunctionsConfigCache.set(pagePath, cachedConfig);
+        setBoundedPageFunctionsConfig(pagePath, cachedConfig);
       }
     }
 
@@ -2493,10 +2527,10 @@ async function handleRequestInner(request, platformContext = {}) {
       layoutParams = leafLayout.dParams || dynamicParams;
     }
 
-    if (!isDynamic.has(cleanPath)) {
-      isDynamic.set(cleanPath, { value: false });
-    }
-    const dynamicState = isLayoutReq ? { value: false } : isDynamic.get(cleanPath);
+    const dynamicState =
+      isLayoutReq || !pagePath
+        ? { value: false }
+        : getOrCreateDynamicState(cleanPath);
 
     const reqPath = cleanPath.endsWith("/") ? cleanPath : cleanPath + "/";
     let isPathBlocked = false;
@@ -4044,10 +4078,9 @@ async function handleRequestInner(request, platformContext = {}) {
   const reqPath = canonicalPathname.endsWith("/")
     ? canonicalPathname
     : canonicalPathname + "/";
-  if (!isDynamic.has(reqPath)) {
-    isDynamic.set(reqPath, { value: false });
-  }
-  const pageDynamicStateRef = isDynamic.get(reqPath);
+  const pageDynamicStateRef = pagePath
+    ? getOrCreateDynamicState(reqPath)
+    : { value: false };
   let dynamicState = pageDynamicStateRef;
   if (platformContext?.isSSG) {
     dynamicState.value = false;
