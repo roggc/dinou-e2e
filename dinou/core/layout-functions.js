@@ -11,8 +11,11 @@ import { getDinouConfig } from "./load-dinou-config.js";
 const LAYOUT_FUNCTIONS_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mjs"];
 const LAYOUT_FUNCTIONS_NAMES = ["layout_functions", "layout.functions"];
 
+const MAX_ACTIVE_CHAIN_CACHE_ENTRIES = 1000;
 const layoutFunctionsPathCache = new Map();
 const layoutFunctionsConfigCache = new Map();
+const activeLayoutChainCache = new Map();
+let activeLayoutChainCacheVfsRef = null;
 
 function isLayoutDevMode() {
   return (
@@ -28,6 +31,49 @@ function clearLayoutFunctionsPathCache() {
 
 function clearLayoutFunctionsConfigCache() {
   layoutFunctionsConfigCache.clear();
+}
+
+function clearActiveLayoutChainCache() {
+  activeLayoutChainCache.clear();
+  activeLayoutChainCacheVfsRef =
+    typeof globalThis !== "undefined" ? globalThis.__DINOU_VFS__ || null : null;
+}
+
+function getActiveLayoutChainCacheSize() {
+  return activeLayoutChainCache.size;
+}
+
+function cloneLayoutParams(params) {
+  if (!params || typeof params !== "object") return {};
+  const out = {};
+  for (const [k, v] of Object.entries(params)) {
+    out[k] = Array.isArray(v) ? v.slice() : v;
+  }
+  return out;
+}
+
+function cloneLayoutSlots(slots) {
+  if (!slots || typeof slots !== "object") return {};
+  const out = {};
+  for (const [k, v] of Object.entries(slots)) {
+    out[k] =
+      v && typeof v === "object"
+        ? { slotPath: v.slotPath, slotParams: cloneLayoutParams(v.slotParams) }
+        : v;
+  }
+  return out;
+}
+
+function cloneActiveLayoutChain(chain) {
+  if (!Array.isArray(chain) || chain.length === 0) return [];
+  return chain.map((entry) => ({
+    layoutPath: entry.layoutPath,
+    dParams: cloneLayoutParams(entry.dParams),
+    slots: cloneLayoutSlots(entry.slots),
+    cleanLayoutKey: entry.cleanLayoutKey,
+    layoutRoutePath: entry.layoutRoutePath,
+    hasResetLayout: entry.hasResetLayout,
+  }));
 }
 
 function getLayoutConfigCacheKey(layoutFunctionsPath) {
@@ -408,11 +454,45 @@ function getActiveLayoutChain(
   srcFolder = path.resolve(process.cwd(), "src"),
   options = {}
 ) {
+  const normSrc = String(srcFolder || "").replace(/\\/g, "/").replace(/\/+$/, "");
+  let chainCacheKey = null;
+  if (!isLayoutDevMode()) {
+    const currentVfs =
+      typeof globalThis !== "undefined" ? globalThis.__DINOU_VFS__ || null : null;
+    if (currentVfs !== activeLayoutChainCacheVfsRef) {
+      activeLayoutChainCache.clear();
+      activeLayoutChainCacheVfsRef = currentVfs;
+    }
+    const segKey = Array.isArray(reqSegments) ? reqSegments.join("\x1f") : "";
+    chainCacheKey = `${normSrc}\0${segKey}\0${options?.ignoreNoLayout ? 1 : 0}\0${options?.exactLayoutKey ? 1 : 0}`;
+    if (activeLayoutChainCache.has(chainCacheKey)) {
+      const cachedChain = activeLayoutChainCache.get(chainCacheKey);
+      // Refresh LRU recency
+      activeLayoutChainCache.delete(chainCacheKey);
+      activeLayoutChainCache.set(chainCacheKey, cachedChain);
+      return cloneActiveLayoutChain(cachedChain);
+    }
+  }
+
+  const storeChainInCache = (chain) => {
+    if (chainCacheKey !== null) {
+      const snapshot = cloneActiveLayoutChain(chain);
+      if (activeLayoutChainCache.has(chainCacheKey)) {
+        activeLayoutChainCache.delete(chainCacheKey);
+      } else if (activeLayoutChainCache.size >= MAX_ACTIVE_CHAIN_CACHE_ENTRIES) {
+        const oldestKey = activeLayoutChainCache.keys().next().value;
+        activeLayoutChainCache.delete(oldestKey);
+      }
+      activeLayoutChainCache.set(chainCacheKey, snapshot);
+    }
+    return chain;
+  };
+
   if (
     !options.ignoreNoLayout &&
     getFilePathAndDynamicParams(reqSegments, queryObj, srcFolder, "no_layout", false)[0]
   ) {
-    return [];
+    return storeChainInCache([]);
   }
 
   const allLayouts = options.exactLayoutKey
@@ -431,10 +511,9 @@ function getActiveLayoutChain(
       );
 
   if (!allLayouts || !Array.isArray(allLayouts) || allLayouts.length === 0) {
-    return [];
+    return storeChainInCache([]);
   }
 
-  const normSrc = srcFolder.replace(/\\/g, "/").replace(/\/+$/, "");
   const activeChain = [];
 
   for (const [layoutPath, dParams, slots] of [...allLayouts].reverse()) {
@@ -483,7 +562,7 @@ function getActiveLayoutChain(
     }
   }
 
-  return activeChain;
+  return storeChainInCache(activeChain);
 }
 
 /**
@@ -532,6 +611,8 @@ export {
   getLayoutFunctionsPath,
   clearLayoutFunctionsPathCache,
   clearLayoutFunctionsConfigCache,
+  clearActiveLayoutChainCache,
+  getActiveLayoutChainCacheSize,
   getLayoutProps,
   resolveLayoutFunctionsConfig,
   computeLayoutKeyFromFolder,
@@ -542,6 +623,8 @@ export default {
   getLayoutFunctionsPath,
   clearLayoutFunctionsPathCache,
   clearLayoutFunctionsConfigCache,
+  clearActiveLayoutChainCache,
+  getActiveLayoutChainCacheSize,
   getLayoutProps,
   resolveLayoutFunctionsConfig,
   computeLayoutKeyFromFolder,

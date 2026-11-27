@@ -38,7 +38,7 @@ All optimizations below are designed to be implemented **one stage at a time**, 
 
 ### Tier 3 — PPR & Micro-Level CPU Optimizations
 - [x] **`OPT-6`** — Zero-Hole Static Layout (and 0-Hole Page) Pre-Rendered RSC Reuse in `handlePprResume()` (`ppr-runtime.js`)
-- [ ] **`OPT-7`** — Cached `_DinouPageSlot` Client Reference (`get-jsx.js`) & Bounded Production Route-Match LRU Cache (`get-file-path-and-dynamic-params.js`, `layout-functions.js`)
+- [x] **`OPT-7`** — Cached `_DinouPageSlot` Client Reference (`get-jsx.js`) & Bounded Production Route-Match LRU Cache (`get-file-path-and-dynamic-params.js`, `layout-functions.js`)
 
 ---
 

@@ -969,3 +969,167 @@ test("OPT-6: replaceHolesWithMap preserves referential equality and handlePprRes
     else globalThis.__DINOU_DEV__ = prevGlobalDev;
   }
 });
+
+test("OPT-7: _DinouPageSlot memoizes client ref with manifest invalidation, and route-match/active-layout LRU caches enforce 1000-entry cap & zero mutation leaks", async () => {
+  const prevNodeEnv = process.env.NODE_ENV;
+  const prevDinouDev = process.env.DINOU_DEV;
+  const prevGlobalDev = globalThis.__DINOU_DEV__;
+  const prevManifest = globalThis.__DINOU_CLIENT_MANIFEST__;
+  const prevEdgeRenderer = globalThis.__DINOU_EDGE_RENDERER__;
+
+  const jsxMod = await import(
+    pathToFileURL(path.resolve(rootDir, "dinou/core/get-jsx.js")).href
+  );
+  const routeMod = await import(routeModUrl);
+  const layoutFnMod = await import(layoutFnUrl);
+
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dinou-opt7-"));
+  const tmpSrc = path.join(tmpRoot, "routes");
+  fs.mkdirSync(path.join(tmpSrc, "items", "[...slug]"), { recursive: true });
+  fs.writeFileSync(path.join(tmpSrc, "layout.tsx"), "export default ({children}) => children;", "utf8");
+  fs.writeFileSync(path.join(tmpSrc, "items", "layout.tsx"), "export default ({children}) => children;", "utf8");
+  fs.writeFileSync(path.join(tmpSrc, "items", "[...slug]", "page.tsx"), "export default () => null;", "utf8");
+
+  try {
+    process.env.NODE_ENV = "production";
+    delete process.env.DINOU_DEV;
+    delete globalThis.__DINOU_DEV__;
+
+    // 1. _DinouPageSlot client reference memoization + manifest invalidation
+    let regCalls = 0;
+    globalThis.__DINOU_EDGE_RENDERER__ = {
+      registerClientReference(_fn, fileUrl, exportName) {
+        regCalls++;
+        return {
+          $$typeof: Symbol.for("react.client.reference"),
+          $$id: `${fileUrl}#${exportName}`,
+        };
+      },
+    };
+    globalThis.__DINOU_CLIENT_MANIFEST__ = {
+      "file:///manifest-a/dinou/core/slot.js#DinouPageSlot": {
+        id: "slot-a",
+        chunks: ["main.js"],
+        name: "DinouPageSlot",
+      },
+    };
+    jsxMod.clearDinouPageSlotCache();
+
+    const el1 = jsxMod.createDinouPageSlotElement();
+    const el2 = jsxMod.createDinouPageSlotElement();
+    assert.equal(regCalls, 1, "registerClientReference must run only once while manifest reference is unchanged");
+    assert.equal(el1.type, el2.type);
+    assert.equal(el1.type.$$id, "file:///manifest-a/dinou/core/slot.js#DinouPageSlot");
+
+    // Replacing globalThis.__DINOU_CLIENT_MANIFEST__ invalidates cache automatically
+    globalThis.__DINOU_CLIENT_MANIFEST__ = {
+      "file:///manifest-b/dinou/core/slot.js#DinouPageSlot": {
+        id: "slot-b",
+        chunks: ["main.js"],
+        name: "DinouPageSlot",
+      },
+    };
+    const el3 = jsxMod.createDinouPageSlotElement();
+    assert.equal(regCalls, 2);
+    assert.equal(el3.type.$$id, "file:///manifest-b/dinou/core/slot.js#DinouPageSlot");
+
+    // 2. getFilePathAndDynamicParams production LRU cache: cloning & isFound preservation
+    routeMod.clearRouteMatchCache();
+    layoutFnMod.clearActiveLayoutChainCache();
+
+    const found1 = { value: false };
+    const match1 = routeMod.getFilePathAndDynamicParams(
+      ["items", "books", "sci-fi"],
+      {},
+      tmpSrc,
+      "page",
+      true,
+      true,
+      undefined,
+      0,
+      {},
+      false,
+      [],
+      found1
+    );
+    assert.equal(found1.value, true);
+    assert.deepEqual(match1[1].slug, ["books", "sci-fi"]);
+    // Mutate returned array & catch-all param array aggressively
+    match1[1].slug.push("MUTATED");
+    match1[1].injected = "bad";
+    match1.reverse();
+
+    const found2 = { value: false };
+    const match2 = routeMod.getFilePathAndDynamicParams(
+      ["items", "books", "sci-fi"],
+      {},
+      tmpSrc,
+      "page",
+      true,
+      true,
+      undefined,
+      0,
+      {},
+      false,
+      [],
+      found2
+    );
+    assert.equal(found2.value, true, "Cached route hit must faithfully set isFound.value = true");
+    assert.deepEqual(match2[1].slug, ["books", "sci-fi"], "Catch-all param array must be cloned per call");
+    assert.equal("injected" in match2[1], false, "dParams mutations must never leak across requests");
+
+    // 3. getActiveLayoutChain production LRU cache: shallow-cloned entries prevent cross-request mutation leaks
+    const chain1 = layoutFnMod.getActiveLayoutChain(["items", "books", "sci-fi"], {}, tmpSrc);
+    assert.equal(chain1.length, 2);
+    chain1[0]._prefetchedMeta = { generatedAt: 99999 };
+    chain1[0]._hasPrefetchedMeta = true;
+    chain1[0].effectivePpr = true;
+    chain1[0].dParams.tampered = "yes";
+    chain1.reverse();
+
+    const chain2 = layoutFnMod.getActiveLayoutChain(["items", "books", "sci-fi"], {}, tmpSrc);
+    assert.equal(chain2.length, 2);
+    assert.equal(chain2[0].cleanLayoutKey, "items", "Reversing previous chain must not reverse cached order");
+    assert.equal(chain2[0]._prefetchedMeta, undefined, "Request-scoped entry mutations must not bleed across requests");
+    assert.equal(chain2[0].effectivePpr, undefined);
+    assert.equal("tampered" in chain2[0].dParams, false);
+
+    // 4. Bounded LRU cap (MAX_ENTRIES = 1000) prevents unbounded memory growth on dynamic URLs
+    routeMod.clearRouteMatchCache();
+    layoutFnMod.clearActiveLayoutChainCache();
+    for (let i = 0; i < 1250; i++) {
+      routeMod.getFilePathAndDynamicParams(["items", `id-${i}`], {}, tmpSrc, "page");
+      layoutFnMod.getActiveLayoutChain(["items", `id-${i}`], {}, tmpSrc);
+    }
+    assert.equal(routeMod.getRouteMatchCacheSize(), 1000, "routeMatchCache must be hard-capped at 1000 entries");
+    assert.equal(
+      layoutFnMod.getActiveLayoutChainCacheSize(),
+      1000,
+      "activeLayoutChainCache must be hard-capped at 1000 entries"
+    );
+
+    // 5. DEV mode bypasses both route-match and active-layout-chain caches so new routes are seen immediately
+    process.env.DINOU_DEV = "true";
+    const devBefore = routeMod.getFilePathAndDynamicParams(["fresh-dev-route"], {}, tmpSrc, "page");
+    assert.equal(devBefore.length, 0);
+    fs.mkdirSync(path.join(tmpSrc, "fresh-dev-route"), { recursive: true });
+    fs.writeFileSync(path.join(tmpSrc, "fresh-dev-route", "page.tsx"), "export default () => null;", "utf8");
+    const devAfter = routeMod.getFilePathAndDynamicParams(["fresh-dev-route"], {}, tmpSrc, "page");
+    assert.ok(devAfter[0] && devAfter[0].endsWith("page.tsx"), "DEV mode must bypass route cache and see new files immediately");
+  } finally {
+    jsxMod.clearDinouPageSlotCache();
+    routeMod.clearRouteMatchCache();
+    layoutFnMod.clearActiveLayoutChainCache();
+    if (prevManifest === undefined) delete globalThis.__DINOU_CLIENT_MANIFEST__;
+    else globalThis.__DINOU_CLIENT_MANIFEST__ = prevManifest;
+    if (prevEdgeRenderer === undefined) delete globalThis.__DINOU_EDGE_RENDERER__;
+    else globalThis.__DINOU_EDGE_RENDERER__ = prevEdgeRenderer;
+    if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevNodeEnv;
+    if (prevDinouDev === undefined) delete process.env.DINOU_DEV;
+    else process.env.DINOU_DEV = prevDinouDev;
+    if (prevGlobalDev === undefined) delete globalThis.__DINOU_DEV__;
+    else globalThis.__DINOU_DEV__ = prevGlobalDev;
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
