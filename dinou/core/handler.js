@@ -2941,8 +2941,7 @@ async function handleRequestInner(request, platformContext = {}) {
 
     // Perimeter checks (root-to-child layouts + page) already ran authoritatively above before cache lookup.
     if (isPathBlocked) {
-      bridge.status(404).send("Not Found");
-      return bridge.toResponse();
+      return new Response("Not Found", { status: 404 });
     }
 
     const rscDynamicState = isLayoutReq ? dynamicState : (isRoutePpr ? { value: false } : dynamicState);

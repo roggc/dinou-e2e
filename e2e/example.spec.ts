@@ -23703,7 +23703,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           String(pprShellBefore)
         );
 
-        // Now repeat on revalidate=0 dynamic page (dyn-c -> static-b -> dyn-c)
+        // Now verify revalidate=0 non-PPR dynamic page (dyn-c -> static-b -> dyn-c):
+        // Normal <Link> preserves Dinou's client pageCache (<Link fresh> contract),
+        // while Server Function revalidatePage("/.../dyn-c") invalidates pageCache -> v2Dyn!
         const v1Dyn = base + 30;
         const v2Dyn = base + 31;
         await page.evaluate(
@@ -23716,9 +23718,24 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         await page.locator("#link-rc-static-b").click();
         await expect(page.locator("#rc-static-b-page")).toBeVisible();
 
+        // Mutate without revalidating -> normal <Link> keeps cached v1Dyn (preserving <Link fresh> contract)
         await page.evaluate(
           (patch) => (window as any).__CUBE_3D__.mutate(patch),
           { rcDynCSeq: v2Dyn }
+        );
+        await page.locator("#link-rc-dyn-c").click();
+        await expect(page.locator("#rc-dyn-c-seq")).toHaveText(String(v1Dyn));
+
+        // Now invalidate via Server Function revalidatePage -> normal <Link> fetches fresh v2Dyn!
+        await page.locator("#link-rc-static-b").click();
+        await expect(page.locator("#rc-static-b-page")).toBeVisible();
+        await page.evaluate(
+          ({ target, patch }) =>
+            (window as any).__RC_ACTIONS__.mutateAndRevalPage(target, patch),
+          {
+            target: "/t-3d-cube/router-coherence/dyn-c",
+            patch: { rcDynCSeq: v2Dyn },
+          }
         );
         await page.locator("#link-rc-dyn-c").click();
         await expect(page.locator("#rc-dyn-c-seq")).toHaveText(String(v2Dyn));

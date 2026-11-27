@@ -346,14 +346,20 @@ const DinouServerAsyncDispatcher = {
   _dinouIsServerAsyncDispatcher: true,
 };
 
-let suppressFallbackAsyncDispatcherDepth = 0;
+const SUPPRESS_ASYNC_DISPATCHER_KEY = Symbol.for(
+  "dinou.suppress.fallback.async.dispatcher"
+);
 
 function runWithNativeAsyncDispatcherInit(fn) {
-  suppressFallbackAsyncDispatcherDepth++;
+  globalThis[SUPPRESS_ASYNC_DISPATCHER_KEY] =
+    Number(globalThis[SUPPRESS_ASYNC_DISPATCHER_KEY] || 0) + 1;
   try {
     return fn();
   } finally {
-    suppressFallbackAsyncDispatcherDepth--;
+    globalThis[SUPPRESS_ASYNC_DISPATCHER_KEY] = Math.max(
+      0,
+      Number(globalThis[SUPPRESS_ASYNC_DISPATCHER_KEY] || 1) - 1
+    );
   }
 }
 
@@ -412,7 +418,7 @@ function patchInternalsAsyncDispatcher(internals) {
       enumerable: true,
       get() {
         if (currentA) return currentA;
-        if (suppressFallbackAsyncDispatcherDepth > 0) {
+        if (Number(globalThis[SUPPRESS_ASYNC_DISPATCHER_KEY] || 0) > 0) {
           return null;
         }
         const slotStore = getActiveCachedSlotStore();

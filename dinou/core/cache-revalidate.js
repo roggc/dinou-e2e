@@ -523,7 +523,7 @@ async function revalidatePage(reqPath, internalOptions = {}) {
   const onlyRefreshSlots = Boolean(internalOptions?.onlyRefreshSlots);
   const onlyIfExpired = Boolean(internalOptions?.onlyIfExpired);
   const retryDepth = Number(internalOptions?._retryDepth || 0);
-  if (!onlyIfExpired) {
+  if (!onlyIfExpired && !onlyRefreshSlots) {
     recordClientRevalidationHint("page", cleanPath);
   }
   const inFlightKey = `${cleanPath}:${onlyRefreshSlots ? "slots" : "full"}:${onlyIfExpired ? "ttl" : "force"}`;
@@ -1538,7 +1538,7 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
   const onlyIfExpired = Boolean(internalOptions?.onlyIfExpired);
   const recomposeOnly = Boolean(internalOptions?.recomposeOnly);
   const retryDepth = Number(internalOptions?._retryDepth || 0);
-  if (!onlyIfExpired) {
+  if (!onlyIfExpired && !onlyRefreshSlots) {
     recordClientRevalidationHint("layout", targetPath);
   }
   const inFlightKey = `${targetPath}:${recomposeOnly ? "recompose" : onlyRefreshSlots ? "slots" : "full"}:${onlyIfExpired ? "ttl" : "force"}`;
@@ -2460,17 +2460,25 @@ async function revalidateTag(tag, options) {
         compareLayoutPathsAncestorFirst(a, b)
       );
       for (const [p, opts] of sortedTargetLayouts) {
-        recordClientRevalidationHint("layout", p, sfCallerCtx);
+        if (!opts?.onlyRefreshSlots) {
+          recordClientRevalidationHint("layout", p, sfCallerCtx);
+        }
         await revalidateLayout(p, opts);
       }
 
       // 3. Revalidate affected pages sequentially (without deleting metadata.json!)
       for (const [p, opts] of targetPaths.entries()) {
-        recordClientRevalidationHint("page", p, sfCallerCtx);
+        if (!opts?.onlyRefreshSlots) {
+          recordClientRevalidationHint("page", p, sfCallerCtx);
+        }
         await revalidatePage(p, opts);
       }
 
-      if (sortedTargetLayouts.length === 0 && targetPaths.size === 0) {
+      if (
+        sortedTargetLayouts.length === 0 &&
+        targetPaths.size === 0 &&
+        targetSlotKeys.size === 0
+      ) {
         recordClientRevalidationHint("allPages", true, sfCallerCtx);
       }
 

@@ -606,7 +606,7 @@ const getPagePayload = (route, isPrefetch = false, version = 0) => {
   if (inlineRes && typeof window !== "undefined") {
     const initPageMode = String(window.__DINOU_PAGE_CACHE_MODE__ || "").toLowerCase();
     window.__DINOU_PAGE_CACHE_MODE__ = null;
-    if (initPageMode === "ppr" || initPageMode === "dynamic") {
+    if (initPageMode === "ppr") {
       volatilePageCacheKeys.add(url);
     }
   }
@@ -649,9 +649,9 @@ const getPagePayload = (route, isPrefetch = false, version = 0) => {
           erroredPageCacheKeys.add(url);
         }
         const cacheMode = (res.headers.get("x-dinou-cache-mode") || "").toLowerCase();
-        if (cacheMode === "ppr" || cacheMode === "dynamic") {
+        if (cacheMode === "ppr") {
           volatilePageCacheKeys.add(url);
-        } else if (cacheMode === "static") {
+        } else if (cacheMode === "static" || cacheMode === "dynamic") {
           volatilePageCacheKeys.delete(url);
         }
         return wrapAbortSafeResponse(res);
@@ -757,9 +757,9 @@ const getLayoutPayload = (layoutKey, searchPart = "", version = 0) => {
             erroredLayoutCacheKeys.add(cacheKey);
           }
           const layoutCacheMode = (res.headers.get("x-dinou-cache-mode") || "").toLowerCase();
-          if (layoutCacheMode === "ppr" || layoutCacheMode === "dynamic") {
+          if (layoutCacheMode === "ppr") {
             volatileLayoutCacheKeys.add(cacheKey);
-          } else if (layoutCacheMode === "static") {
+          } else if (layoutCacheMode === "static" || layoutCacheMode === "dynamic") {
             volatileLayoutCacheKeys.delete(cacheKey);
           }
           return wrapAbortSafeResponse(res);

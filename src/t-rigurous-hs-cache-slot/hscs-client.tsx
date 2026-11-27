@@ -313,16 +313,12 @@ export function HsCsAutomatedSuiteRunner() {
       if ((window as any).__DINOU_SLOT_OVERRIDE_CACHE__) {
         (window as any).__DINOU_SLOT_OVERRIDE_CACHE__.clear();
       }
-      if (
-        getText("hscs-l1-layout-seq") !== "100" ||
-        getText("hscs-page-a-seq") !== "100" ||
-        getText("hscs-page-a-slot-seq") !== "100"
-      ) {
-        router.refresh({ layout: true });
-        await waitForText("hscs-l1-layout-seq", "100");
-        await waitForText("hscs-page-a-seq", "100");
-        await waitForText("hscs-page-a-slot-seq", "100");
-      }
+      // Re-populate client pageCache & layoutCache after hscsResetAll()'s revalidatePage/revalidateLayout invalidation
+      router.refresh({ layout: true });
+      await new Promise((r) => setTimeout(r, 200));
+      await waitForText("hscs-l1-layout-seq", "100");
+      await waitForText("hscs-page-a-seq", "100");
+      await waitForText("hscs-page-a-slot-seq", "100");
 
       // SCENARIO 1: Baseline Segmented Render & Multi-Level Client State Init
       await runStep(1, async () => {
