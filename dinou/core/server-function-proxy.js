@@ -1,4 +1,8 @@
 import { createFromFetch } from "@roggc/react-server-dom-esm/client";
+import {
+  encodeServerFunctionArgs,
+  createBinarySafeFlightFilterStream,
+} from "./server-function-codec.js";
 
 function isSafeRedirect(url) {
   if (typeof url !== "string" || url.length === 0) return false;
@@ -76,20 +80,33 @@ export function createServerFunctionProxy(id) {
       const formDataIndex = args.findIndex((arg) => arg instanceof FormData);
 
       if (formDataIndex !== -1) {
-        const formData = args[formDataIndex];
-
-        formData.append("__dinou_func_id", id);
-        formData.append("__dinou_formData_index", String(formDataIndex));
-
-        if (args.length > 1) {
-          const serializedArgs = args.map((arg, i) => (i === formDataIndex ? null : arg));
-          formData.append("__dinou_args", JSON.stringify(serializedArgs));
+        const callerFormData = args[formDataIndex];
+        // Clone caller's FormData so internal metadata keys NEVER mutate caller state on retry
+        const payloadFormData = new FormData();
+        for (const [k, v] of callerFormData.entries()) {
+          payloadFormData.append(k, v);
         }
 
-        body = formData;
+        payloadFormData.append("__dinou_func_id", id);
+        payloadFormData.append("__dinou_formData_index", String(formDataIndex));
+
+        if (args.length > 1) {
+          const extraArgs = args.map((arg, i) => (i === formDataIndex ? null : arg));
+          payloadFormData.append(
+            "__dinou_args",
+            JSON.stringify(encodeServerFunctionArgs(extraArgs))
+          );
+          payloadFormData.append("__dinou_args_codec", "1");
+        }
+
+        body = payloadFormData;
       } else {
         headers["Content-Type"] = "application/json";
-        body = JSON.stringify({ id, args });
+        body = JSON.stringify({
+          id,
+          args: encodeServerFunctionArgs(args),
+          __dinou_codec: 1,
+        });
       }
       const res = await fetch("/____server_function____", {
         method: "POST",
@@ -148,92 +165,23 @@ export function createServerFunctionProxy(id) {
         return data;
       }
 
-      // Case 2: RSC or Hybrid Stream (Buffered)
+      // Case 2: RSC or Hybrid Stream (Binary-safe byte-level Flight framing filter)
       if (contentType.includes("text/x-component")) {
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        const encoder = new TextEncoder();
-
-        const readableStream = new ReadableStream({
-          async start(controller) {
-            let buffer = ""; // 📦 PERSISTENT STATE
-            let isRedirecting = false;
-
-            try {
-              while (true) {
-                const { done, value } = await reader.read();
-
-                if (done) {
-                  if (buffer.length > 0) {
-                    if (buffer.startsWith("D:")) {
-                      try {
-                        const payload = JSON.parse(buffer.slice(2));
-                        if (payload.type === "redirect") {
-                          isRedirecting = true;
-                          executeRedirect(payload.url);
-                        } else if (payload.type === "cookie") {
-                          document.cookie = payload.cookie;
-                        } else if (payload.type === "revalidate") {
-                          applyRevalidationHint(payload);
-                        }
-                      } catch (e) {
-                        console.error("[Dinou] Failed to parse stream command line at end:", e);
-                      }
-                    } else {
-                      controller.enqueue(encoder.encode(buffer));
-                    }
-                  }
-                  break;
-                }
-
-                // 1. ACCUMULATE
-                buffer += decoder.decode(value, { stream: true });
-
-                // 2. PROCESS COMPLETE LINES
-                const lastNewlineIndex = buffer.lastIndexOf("\n");
-                if (lastNewlineIndex !== -1) {
-                  const completeChunk = buffer.slice(0, lastNewlineIndex + 1);
-                  buffer = buffer.slice(lastNewlineIndex + 1);
-
-                  const lines = completeChunk.split("\n");
-                  let cleanChunk = "";
-
-                  for (let i = 0; i < lines.length; i++) {
-                    const line = lines[i];
-                    if (!line && i === lines.length - 1) {
-                      continue;
-                    }
-
-                    if (line.startsWith("D:")) {
-                      try {
-                        const payload = JSON.parse(line.slice(2));
-                        if (payload.type === "redirect") {
-                          isRedirecting = true;
-                          executeRedirect(payload.url);
-                        } else if (payload.type === "cookie") {
-                          document.cookie = payload.cookie;
-                        } else if (payload.type === "revalidate") {
-                          applyRevalidationHint(payload);
-                        }
-                      } catch (e) {
-                        console.error("[Dinou] Failed to parse stream command line:", e);
-                      }
-                    } else {
-                      cleanChunk += line + "\n";
-                    }
-                  }
-
-                  if (cleanChunk) {
-                    controller.enqueue(encoder.encode(cleanChunk));
-                  }
-                }
+        const readableStream = createBinarySafeFlightFilterStream(
+          res.body,
+          (payload) => {
+            if (!payload || typeof payload !== "object") return;
+            if (payload.type === "redirect") {
+              executeRedirect(payload.url);
+            } else if (payload.type === "cookie") {
+              if (typeof document !== "undefined") {
+                document.cookie = payload.cookie;
               }
-              controller.close();
-            } catch (err) {
-              controller.error(err);
+            } else if (payload.type === "revalidate") {
+              applyRevalidationHint(payload);
             }
-          },
-        });
+          }
+        );
 
         return createFromFetch(Promise.resolve(new Response(readableStream)), {
           callServer: async (nextId, nextArgs) => {

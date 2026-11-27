@@ -48,6 +48,7 @@ import {
   getServerFunctionsManifest,
 } from "./manifest-provider.js";
 import { pipeRSC, renderRSCStream, isEdgeRuntime } from "./rsc-renderer.js";
+import { decodeServerFunctionArgs } from "./server-function-codec.js";
 import {
   getStorageAdapter,
   setStorageAdapter,
@@ -1331,7 +1332,12 @@ class WebResponseBridge extends PassThrough {
   }
 
   clearCookie(name, options = {}) {
-    return this.cookie(name, "", { ...options, maxAge: 0, expires: new Date(0) });
+    return this.cookie(name, "", {
+      path: "/",
+      ...options,
+      maxAge: 0,
+      expires: new Date(0),
+    });
   }
 
   redirect(urlOrStatus, targetUrl) {
@@ -1727,10 +1733,10 @@ function createServerFunctionContext(simReq, resBridge, platformContext = {}) {
           return;
         }
         let cookieStr = `${name}=${encodeURIComponent(value)}`;
+        cookieStr += `; path=${options?.path || "/"}`;
         if (options) {
-          if (options.path) cookieStr += `; path=${options.path}`;
           if (options.domain) cookieStr += `; domain=${options.domain}`;
-          if (options.maxAge) cookieStr += `; max-age=${options.maxAge}`;
+          if (options.maxAge !== undefined) cookieStr += `; max-age=${options.maxAge}`;
           if (options.expires) cookieStr += `; expires=${new Date(options.expires).toUTCString()}`;
           if (options.secure) cookieStr += `; secure`;
           if (options.sameSite) cookieStr += `; samesite=${options.sameSite}`;
@@ -1744,6 +1750,11 @@ function createServerFunctionContext(simReq, resBridge, platformContext = {}) {
           return;
         }
         let cookieStr = `${name}=; Max-Age=0; path=${options?.path || "/"}`;
+        if (options) {
+          if (options.domain) cookieStr += `; domain=${options.domain}`;
+          if (options.secure) cookieStr += `; secure`;
+          if (options.sameSite) cookieStr += `; samesite=${options.sameSite}`;
+        }
         resBridge.write(`D:{"type":"cookie","cookie":${JSON.stringify(cookieStr)}}\n`);
       },
     },
@@ -1883,6 +1894,335 @@ function finalizeHeadResponse(request, response) {
   });
 }
 
+function reviveReactFormBoundValue(val) {
+  if (typeof val === "string") {
+    if (val === "$undefined") return undefined;
+    if (val === "$NaN") return Number.NaN;
+    if (val === "$Infinity") return Number.POSITIVE_INFINITY;
+    if (val === "$-Infinity") return Number.NEGATIVE_INFINITY;
+    if (val === "$-0") return -0;
+    if (val.startsWith("$n") && /^-?\d+$/.test(val.slice(2))) {
+      try {
+        return BigInt(val.slice(2));
+      } catch {
+        return val;
+      }
+    }
+    if (val.startsWith("$D")) {
+      return new Date(val.slice(2));
+    }
+    if (val.startsWith("$$")) {
+      return val.slice(1);
+    }
+    return val;
+  }
+  if (Array.isArray(val)) {
+    return val.map((item) => reviveReactFormBoundValue(item));
+  }
+  if (val && typeof val === "object") {
+    const out = {};
+    for (const k of Object.keys(val)) {
+      if (k === "__proto__" || k === "constructor" || k === "prototype") continue;
+      out[k] = reviveReactFormBoundValue(val[k]);
+    }
+    return out;
+  }
+  return val;
+}
+
+function extractReactProgressiveFormAction(formData) {
+  let id = null;
+  let boundArgs = [];
+
+  for (const key of formData.keys()) {
+    if (key.startsWith("$ACTION_ID_")) {
+      id = key.slice("$ACTION_ID_".length);
+      break;
+    }
+    if (key.startsWith("$ACTION_REF_")) {
+      const refId = key.slice("$ACTION_REF_".length);
+      const metaRaw = formData.get(`$ACTION_${refId}:0`);
+      if (typeof metaRaw === "string" && metaRaw.length > 0) {
+        try {
+          const meta = JSON.parse(metaRaw);
+          if (meta && typeof meta.id === "string") {
+            id = meta.id;
+            if (typeof meta.bound === "string" && meta.bound.startsWith("$@")) {
+              const boundSlot = meta.bound.slice(2);
+              const boundRaw = formData.get(`$ACTION_${refId}:${boundSlot}`);
+              if (typeof boundRaw === "string" && boundRaw.length > 0) {
+                const parsedBound = JSON.parse(boundRaw);
+                if (Array.isArray(parsedBound)) {
+                  boundArgs = parsedBound.map((v) => reviveReactFormBoundValue(v));
+                }
+              }
+            }
+          }
+        } catch {}
+      }
+      break;
+    }
+  }
+
+  if (!id) {
+    return null;
+  }
+
+  const userFormData = new FormData();
+  for (const [k, v] of formData.entries()) {
+    if (k.startsWith("$ACTION_") || k.startsWith("__dinou_")) continue;
+    userFormData.append(k, v);
+  }
+
+  return {
+    id,
+    args: [...boundArgs, userFormData],
+  };
+}
+
+function validateServerFunctionCsrf(headersObj, url, cfg, { requireOrigin = false } = {}) {
+  const origin = headersObj["origin"];
+  const referer = headersObj["referer"];
+  const secFetchSite = String(headersObj["sec-fetch-site"] || "").trim().toLowerCase();
+  const trustProxy = Boolean(
+    cfg?.security?.trustProxy === true ||
+      cfg?.trustProxy === true ||
+      process.env.DINOU_TRUST_PROXY === "true"
+  );
+  const rawDirectHost = headersObj["host"] || url.host || "";
+  const rawForwardedHost = trustProxy ? headersObj["x-forwarded-host"] || "" : "";
+  const expectedHost = String(rawForwardedHost || rawDirectHost)
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
+
+  const allowedOriginsRaw =
+    cfg?.security?.allowedOrigins || cfg?.allowedOrigins || [];
+  const allowedOriginSet = new Set(
+    Array.isArray(allowedOriginsRaw)
+      ? allowedOriginsRaw
+          .filter((v) => typeof v === "string" && v.trim())
+          .map((v) => v.trim().toLowerCase())
+      : []
+  );
+  const isAllowlistedOrigin = (origStr) => {
+    if (allowedOriginSet.size === 0 || !origStr) return false;
+    const lower = origStr.trim().toLowerCase();
+    if (allowedOriginSet.has(lower)) return true;
+    try {
+      const parsed = new URL(origStr);
+      return (
+        allowedOriginSet.has(parsed.origin.toLowerCase()) ||
+        allowedOriginSet.has(parsed.host.toLowerCase())
+      );
+    } catch {
+      return false;
+    }
+  };
+
+  if (isDevelopment) {
+    return null;
+  }
+
+  let effectiveOrigin = origin || "";
+  if (!effectiveOrigin && requireOrigin && referer) {
+    try {
+      effectiveOrigin = new URL(referer).origin;
+    } catch {
+      effectiveOrigin = "";
+    }
+  }
+
+  if (requireOrigin && !effectiveOrigin) {
+    return Response.json({ error: "Missing Origin" }, { status: 403 });
+  }
+
+  if (effectiveOrigin) {
+    let originValid = false;
+    try {
+      const originUrl = new URL(effectiveOrigin);
+      const isHttpProto =
+        originUrl.protocol === "http:" || originUrl.protocol === "https:";
+      if (isHttpProto) {
+        if (
+          expectedHost &&
+          originUrl.host.toLowerCase() === expectedHost
+        ) {
+          originValid = true;
+        } else if (isAllowlistedOrigin(effectiveOrigin)) {
+          originValid = true;
+        }
+      }
+    } catch {
+      originValid = false;
+    }
+    if (!originValid) {
+      return Response.json({ error: "Invalid Origin" }, { status: 403 });
+    }
+  }
+
+  if (secFetchSite === "cross-site" && !isAllowlistedOrigin(effectiveOrigin)) {
+    return Response.json({ error: "Cross-site request blocked" }, { status: 403 });
+  }
+
+  return null;
+}
+
+async function resolveAndLoadServerFunction(id) {
+  if (typeof id !== "string" || !id || id.includes("\0")) {
+    return {
+      ok: false,
+      response: Response.json({ error: "Invalid file URL format" }, { status: 400 }),
+    };
+  }
+
+  const hashIdx = id.indexOf("#");
+  const fileUrl = hashIdx !== -1 ? id.slice(0, hashIdx) : id;
+  const exportName = hashIdx !== -1 ? id.slice(hashIdx + 1) : "";
+  if (!fileUrl.startsWith("file://")) {
+    return {
+      ok: false,
+      response: Response.json({ error: "Invalid file URL format" }, { status: 400 }),
+    };
+  }
+  if (
+    !exportName ||
+    exportName === "__proto__" ||
+    exportName === "constructor" ||
+    exportName === "prototype" ||
+    exportName.includes("\0")
+  ) {
+    return {
+      ok: false,
+      response: Response.json({ error: "Invalid export name" }, { status: 400 }),
+    };
+  }
+
+  let relativePath;
+  const isRelativeSrc =
+    fileUrl.startsWith("file:///src/") || fileUrl.startsWith("file:///src\\");
+  if (isRelativeSrc) {
+    let rawRel = fileUrl.replace(/^file:\/\/\/?/, "").trim();
+    try {
+      rawRel = decodeURIComponent(rawRel);
+    } catch {
+      return {
+        ok: false,
+        response: Response.json({ error: "Invalid file URL format" }, { status: 400 }),
+      };
+    }
+    if (rawRel.includes("\0")) {
+      return {
+        ok: false,
+        response: Response.json({ error: "Invalid file URL format" }, { status: 400 }),
+      };
+    }
+    relativePath = rawRel;
+  } else {
+    let resolvedPath;
+    try {
+      resolvedPath = fileURLToPath(fileUrl);
+    } catch (e) {
+      return {
+        ok: false,
+        response: Response.json({ error: "Invalid file URL format" }, { status: 400 }),
+      };
+    }
+    const normalizedCwd = normalizePathCase(process.cwd());
+    const normalizedResolved = normalizePathCase(resolvedPath);
+    if (normalizedResolved.startsWith(normalizedCwd)) {
+      relativePath = path.relative(normalizedCwd, normalizedResolved);
+    } else {
+      relativePath = normalizedResolved;
+    }
+  }
+
+  const normalizedRelativePath = path.normalize(relativePath).replace(/\\/g, "/");
+  const hasEscapedDir = normalizedRelativePath
+    .split("/")
+    .slice(1, -1)
+    .some((seg) => seg.startsWith("_"));
+  if (
+    (!normalizedRelativePath.startsWith("src/") && normalizedRelativePath !== "src") ||
+    normalizedRelativePath.includes("..") ||
+    hasEscapedDir
+  ) {
+    return {
+      ok: false,
+      response: Response.json({ error: "Forbidden access" }, { status: 403 }),
+    };
+  }
+
+  const sfManifest = getServerFunctionsManifest();
+  let resolvedRelativePath = normalizedRelativePath;
+  if (sfManifest) {
+    let allowedExports = sfManifest[normalizedRelativePath];
+    if (!allowedExports) {
+      const lowerTarget = normalizedRelativePath.toLowerCase();
+      const matchedKey = Object.keys(sfManifest).find(
+        (k) => k.toLowerCase() === lowerTarget
+      );
+      if (matchedKey) {
+        allowedExports = sfManifest[matchedKey];
+        resolvedRelativePath = matchedKey;
+      }
+    }
+    if (!allowedExports || !allowedExports.has(exportName)) {
+      return {
+        ok: false,
+        response: Response.json({ error: "Invalid export name" }, { status: 400 }),
+      };
+    }
+  }
+
+  const srcRootDir = path.resolve(process.cwd(), "src");
+  const absPath = path.resolve(process.cwd(), resolvedRelativePath);
+  const srcRootPrefix = srcRootDir.endsWith(path.sep)
+    ? srcRootDir
+    : srcRootDir + path.sep;
+  if (!normalizePathCase(absPath).startsWith(normalizePathCase(srcRootPrefix))) {
+    return {
+      ok: false,
+      response: Response.json({ error: "Forbidden access" }, { status: 403 }),
+    };
+  }
+  if (typeof realpathSync === "function" && existsSync(absPath)) {
+    try {
+      const realSrc = realpathSync(srcRootDir);
+      const realAbs = realpathSync(absPath);
+      const realSrcPrefix = realSrc.endsWith(path.sep)
+        ? realSrc
+        : realSrc + path.sep;
+      if (!normalizePathCase(realAbs).startsWith(normalizePathCase(realSrcPrefix))) {
+        return {
+          ok: false,
+          response: Response.json({ error: "Forbidden access" }, { status: 403 }),
+        };
+      }
+    } catch {}
+  }
+
+  const mod = await importModule(absPath);
+  const fn =
+    exportName === "default"
+      ? mod.default
+      : Object.prototype.hasOwnProperty.call(mod, exportName)
+        ? mod[exportName]
+        : undefined;
+
+  if (typeof fn !== "function") {
+    return {
+      ok: false,
+      response: Response.json(
+        { error: `Function '${exportName}' not found` },
+        { status: 404 }
+      ),
+    };
+  }
+
+  return { ok: true, fn, exportName };
+}
+
 /**
  * Universal request handler: (Request, platformContext?) => Promise<Response>
  * @param {Request} request 
@@ -2014,71 +2354,11 @@ async function handleRequestInner(request, platformContext = {}) {
   // 5. Server Functions Endpoint (POST /____server_function____)
   if (pathname === "/____server_function____" && request.method === "POST") {
     try {
-      const origin = headersObj["origin"];
-      const secFetchSite = String(headersObj["sec-fetch-site"] || "").trim().toLowerCase();
-      const trustProxy = Boolean(
-        cfg?.security?.trustProxy === true ||
-          cfg?.trustProxy === true ||
-          process.env.DINOU_TRUST_PROXY === "true"
-      );
-      const rawDirectHost = headersObj["host"] || url.host || "";
-      const rawForwardedHost = trustProxy ? headersObj["x-forwarded-host"] || "" : "";
-      const expectedHost = String(rawForwardedHost || rawDirectHost)
-        .split(",")[0]
-        .trim()
-        .toLowerCase();
-
-      const allowedOriginsRaw =
-        cfg?.security?.allowedOrigins || cfg?.allowedOrigins || [];
-      const allowedOriginSet = new Set(
-        Array.isArray(allowedOriginsRaw)
-          ? allowedOriginsRaw
-              .filter((v) => typeof v === "string" && v.trim())
-              .map((v) => v.trim().toLowerCase())
-          : []
-      );
-      const isAllowlistedOrigin = (origStr) => {
-        if (allowedOriginSet.size === 0 || !origStr) return false;
-        const lower = origStr.trim().toLowerCase();
-        if (allowedOriginSet.has(lower)) return true;
-        try {
-          const parsed = new URL(origStr);
-          return (
-            allowedOriginSet.has(parsed.origin.toLowerCase()) ||
-            allowedOriginSet.has(parsed.host.toLowerCase())
-          );
-        } catch {
-          return false;
-        }
-      };
-
-      if (!isDevelopment) {
-        if (origin) {
-          let originValid = false;
-          try {
-            const originUrl = new URL(origin);
-            const isHttpProto =
-              originUrl.protocol === "http:" || originUrl.protocol === "https:";
-            if (isHttpProto) {
-              if (
-                expectedHost &&
-                originUrl.host.toLowerCase() === expectedHost
-              ) {
-                originValid = true;
-              } else if (isAllowlistedOrigin(origin)) {
-                originValid = true;
-              }
-            }
-          } catch {
-            originValid = false;
-          }
-          if (!originValid) {
-            return Response.json({ error: "Invalid Origin" }, { status: 403 });
-          }
-        }
-        if (secFetchSite === "cross-site" && !isAllowlistedOrigin(origin)) {
-          return Response.json({ error: "Cross-site request blocked" }, { status: 403 });
-        }
+      const csrfError = validateServerFunctionCsrf(headersObj, url, cfg, {
+        requireOrigin: false,
+      });
+      if (csrfError) {
+        return csrfError;
       }
       if (headersObj["x-server-function-call"] !== "1") {
         return Response.json({ error: "Missing security header" }, { status: 403 });
@@ -2116,15 +2396,20 @@ async function handleRequestInner(request, platformContext = {}) {
         id = formData.get("__dinou_func_id");
         const extraArgs = formData.get("__dinou_args");
         const formDataIndex = formData.get("__dinou_formData_index");
+        const argsCodec = formData.get("__dinou_args_codec");
 
         // Strip internal keys
         formData.delete("__dinou_func_id");
         formData.delete("__dinou_args");
         formData.delete("__dinou_formData_index");
+        formData.delete("__dinou_args_codec");
 
         if (extraArgs) {
           try {
-            const parsedArgs = JSON.parse(extraArgs);
+            let parsedArgs = JSON.parse(extraArgs);
+            if (argsCodec === "1" && Array.isArray(parsedArgs)) {
+              parsedArgs = decodeServerFunctionArgs(parsedArgs);
+            }
             if (formDataIndex !== null) {
               parsedArgs[parseInt(formDataIndex, 10)] = formData;
               args = parsedArgs;
@@ -2146,115 +2431,21 @@ async function handleRequestInner(request, platformContext = {}) {
           return Response.json({ error: "Invalid JSON body" }, { status: 400 });
         }
         id = bodyJson?.id;
-        args = bodyJson?.args;
+        args =
+          bodyJson?.__dinou_codec === 1 && Array.isArray(bodyJson?.args)
+            ? decodeServerFunctionArgs(bodyJson.args)
+            : bodyJson?.args;
       }
 
       if (typeof id !== "string" || !Array.isArray(args)) {
         return Response.json({ error: "Invalid request body" }, { status: 400 });
       }
-      if (id.includes("\0")) {
-        return Response.json({ error: "Invalid file URL format" }, { status: 400 });
-      }
 
-      const hashIdx = id.indexOf("#");
-      const fileUrl = hashIdx !== -1 ? id.slice(0, hashIdx) : id;
-      const exportName = hashIdx !== -1 ? id.slice(hashIdx + 1) : "";
-      if (!fileUrl.startsWith("file://")) {
-        return Response.json({ error: "Invalid file URL format" }, { status: 400 });
+      const resolvedSf = await resolveAndLoadServerFunction(id);
+      if (!resolvedSf.ok) {
+        return resolvedSf.response;
       }
-      if (
-        !exportName ||
-        exportName === "__proto__" ||
-        exportName === "constructor" ||
-        exportName === "prototype" ||
-        exportName.includes("\0")
-      ) {
-        return Response.json({ error: "Invalid export name" }, { status: 400 });
-      }
-
-      let relativePath;
-      const isRelativeSrc = fileUrl.startsWith("file:///src/") || fileUrl.startsWith("file:///src\\");
-      if (isRelativeSrc) {
-        let rawRel = fileUrl.replace(/^file:\/\/\/?/, "").trim();
-        try {
-          rawRel = decodeURIComponent(rawRel);
-        } catch {
-          return Response.json({ error: "Invalid file URL format" }, { status: 400 });
-        }
-        if (rawRel.includes("\0")) {
-          return Response.json({ error: "Invalid file URL format" }, { status: 400 });
-        }
-        relativePath = rawRel;
-      } else {
-        let resolvedPath;
-        try {
-          resolvedPath = fileURLToPath(fileUrl);
-        } catch (e) {
-          return Response.json({ error: "Invalid file URL format" }, { status: 400 });
-        }
-        const normalizedCwd = normalizePathCase(process.cwd());
-        const normalizedResolved = normalizePathCase(resolvedPath);
-        if (normalizedResolved.startsWith(normalizedCwd)) {
-          relativePath = path.relative(normalizedCwd, normalizedResolved);
-        } else {
-          relativePath = normalizedResolved;
-        }
-      }
-
-      const normalizedRelativePath = path.normalize(relativePath).replace(/\\/g, "/");
-      const hasEscapedDir = normalizedRelativePath.split("/").slice(1, -1).some((seg) => seg.startsWith("_"));
-      if (
-        (!normalizedRelativePath.startsWith("src/") && normalizedRelativePath !== "src") ||
-        normalizedRelativePath.includes("..") ||
-        hasEscapedDir
-      ) {
-        return Response.json({ error: "Forbidden access" }, { status: 403 });
-      }
-
-      const sfManifest = getServerFunctionsManifest();
-      let resolvedRelativePath = normalizedRelativePath;
-      if (sfManifest) {
-        let allowedExports = sfManifest[normalizedRelativePath];
-        if (!allowedExports) {
-          const lowerTarget = normalizedRelativePath.toLowerCase();
-          const matchedKey = Object.keys(sfManifest).find((k) => k.toLowerCase() === lowerTarget);
-          if (matchedKey) {
-            allowedExports = sfManifest[matchedKey];
-            resolvedRelativePath = matchedKey;
-          }
-        }
-        if (!allowedExports || !allowedExports.has(exportName)) {
-          return Response.json({ error: "Invalid export name" }, { status: 400 });
-        }
-      }
-
-      const srcRootDir = path.resolve(process.cwd(), "src");
-      const absPath = path.resolve(process.cwd(), resolvedRelativePath);
-      const srcRootPrefix = srcRootDir.endsWith(path.sep) ? srcRootDir : srcRootDir + path.sep;
-      if (!normalizePathCase(absPath).startsWith(normalizePathCase(srcRootPrefix))) {
-        return Response.json({ error: "Forbidden access" }, { status: 403 });
-      }
-      if (typeof realpathSync === "function" && existsSync(absPath)) {
-        try {
-          const realSrc = realpathSync(srcRootDir);
-          const realAbs = realpathSync(absPath);
-          const realSrcPrefix = realSrc.endsWith(path.sep) ? realSrc : realSrc + path.sep;
-          if (!normalizePathCase(realAbs).startsWith(normalizePathCase(realSrcPrefix))) {
-            return Response.json({ error: "Forbidden access" }, { status: 403 });
-          }
-        } catch {}
-      }
-      const mod = await importModule(absPath);
-      const fn =
-        exportName === "default"
-          ? mod.default
-          : Object.prototype.hasOwnProperty.call(mod, exportName)
-            ? mod[exportName]
-            : undefined;
-
-      if (typeof fn !== "function") {
-        return Response.json({ error: `Function '${exportName}' not found` }, { status: 404 });
-      }
+      const { fn } = resolvedSf;
 
       const context = createServerFunctionContext(simReq, bridge, platformContext);
       copyCustomContextProperties(rootContext, context);
@@ -2333,6 +2524,116 @@ async function handleRequestInner(request, platformContext = {}) {
         errorPayload.digest = err.digest;
       }
       return Response.json(errorPayload, { status: 500 });
+    }
+  }
+
+  // 5.1. True No-JS Progressive Enhancement for React 19 <form action={serverAction}> POSTs
+  if (
+    request.method === "POST" &&
+    pathname !== "/____server_function____" &&
+    !pathname.includes("____rsc_")
+  ) {
+    const progContentType = String(headersObj["content-type"] || "").toLowerCase();
+    const isFormSubmit =
+      progContentType.includes("multipart/form-data") ||
+      progContentType.includes("application/x-www-form-urlencoded");
+    if (isFormSubmit) {
+      try {
+        const configuredMaxBytes = Number(
+          cfg?.security?.maxServerFunctionBodyBytes ??
+            cfg?.maxServerFunctionBodyBytes ??
+            process.env.DINOU_MAX_SERVER_FUNCTION_BODY_BYTES
+        );
+        const maxFormBytes =
+          Number.isFinite(configuredMaxBytes) && configuredMaxBytes > 0
+            ? configuredMaxBytes
+            : DEFAULT_MAX_SF_MULTIPART_BYTES;
+
+        let boundedFormBytes;
+        try {
+          boundedFormBytes = await readRequestBodyWithLimit(request, maxFormBytes);
+        } catch (limitErr) {
+          if (limitErr && limitErr.$$dinouPayloadTooLarge) {
+            return Response.json({ error: "Payload Too Large" }, { status: 413 });
+          }
+          throw limitErr;
+        }
+
+        const parsedFormData = await new Response(boundedFormBytes, {
+          headers: { "content-type": headersObj["content-type"] || progContentType },
+        }).formData();
+
+        const extracted = extractReactProgressiveFormAction(parsedFormData);
+        if (extracted) {
+          const csrfError = validateServerFunctionCsrf(headersObj, url, cfg, {
+            requireOrigin: true,
+          });
+          if (csrfError) {
+            return csrfError;
+          }
+
+          const resolvedSf = await resolveAndLoadServerFunction(extracted.id);
+          if (!resolvedSf.ok) {
+            return resolvedSf.response;
+          }
+          const { fn } = resolvedSf;
+
+          const progReq = {
+            ...simReq,
+            headers: {
+              ...simReq.headers,
+              "x-dinou-current-path": simReq.headers["x-dinou-current-path"] || pathname,
+            },
+          };
+          const context = createServerFunctionContext(progReq, bridge, platformContext);
+          copyCustomContextProperties(rootContext, context);
+
+          let redirectTarget = isSafeRelativeRedirectPath(pathname + url.search)
+            ? pathname + url.search
+            : "/";
+          try {
+            await requestStorage.run(context, async () => {
+              await fn(...extracted.args);
+            });
+          } catch (e) {
+            if (e && e.$$type === "dinou-internal-redirect") {
+              redirectTarget = isSafeRelativeRedirectPath(e.url) ? e.url : "/";
+            } else {
+              throw e;
+            }
+          }
+
+          const prgHeaders = new Headers();
+          for (const [k, v] of bridge.headers.entries()) {
+            const lower = k.toLowerCase();
+            if (lower === "content-type" || lower === "location" || lower === "set-cookie") {
+              continue;
+            }
+            prgHeaders.set(k, v);
+          }
+          for (const c of bridge.cookies) {
+            prgHeaders.append("Set-Cookie", c);
+          }
+          prgHeaders.set("Location", redirectTarget);
+          prgHeaders.set("Cache-Control", "no-store, no-cache, must-revalidate");
+          return new Response(null, {
+            status: 303,
+            headers: prgHeaders,
+          });
+        }
+      } catch (err) {
+        console.error("[Dinou] Error executing progressive form server function:", err);
+        const hasIntentionalDigest =
+          err && typeof err.digest === "string" && err.digest.length > 0;
+        const shouldExposeMessage =
+          isDevelopment || hasIntentionalDigest || Boolean(err && err.expose === true);
+        return new Response(
+          shouldExposeMessage
+            ? (err?.message || "Internal Server Error")
+            : "Internal Server Error",
+          { status: 500, headers: { "Content-Type": "text/plain; charset=utf-8" } }
+        );
+      }
     }
   }
 

@@ -25,7 +25,7 @@ All 5 checks below are designed to be implemented and verified **incrementally (
 
 - [x] **Stage 1 — Check `#Z1`:** Long-Running Server & Client Memory Bounds (LRU / TTL Eviction Audit & Multi-Thousand-Route Soak Testing)
 - [x] **Stage 2 — Check `#Z2`:** HTTP Security & Hardening (CSRF Origin/Host Validation, Open Redirect Prevention, Path Traversal & Static Confinement, Body Size DoS Caps & Production Error Sanitization)
-- [ ] **Stage 3 — Check `#Z3`:** Advanced React 19 Server Functions & Progressive Enhancement (No-JS `<form action>`, `useOptimistic` + `useActionState`, Binary `File`/`Blob` `FormData`, Rich JS Types & Concurrent Cookie Mutations)
+- [x] **Stage 3 — Check `#Z3`:** Advanced React 19 Server Functions & Progressive Enhancement (No-JS `<form action>`, `useOptimistic` + `useActionState`, Binary `File`/`Blob` `FormData`, Rich JS Types & Concurrent Cookie Mutations)
 - [ ] **Stage 4 — Check `#Z4`:** Developer Experience — Live File-Edit HMR Across All 3 Bundlers (Esbuild, Rollup, Webpack) & Strict `dinou typegen` (`tsc --noEmit --strict`) Verification
 - [ ] **Stage 5 — Check `#Z5`:** Deployment Adapters & Node Middleware Parity (Netlify Functions v2 Contract Suite & `configureServer` Express/Connect / SSE / WebSocket Runner)
 

@@ -24868,4 +24868,183 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(pageErrors).toEqual([]);
     });
   });
+
+  test.describe("⚡ Series Z — Phase 1 — Stage 3 (Check #Z3): Advanced React 19 Server Functions & Progressive Enhancement", () => {
+    test("1. True No-JS Progressive Enhancement (<form action={serverAction}> + bound action + 303 PRG/redirect + Set-Cookie with javaScriptEnabled: false)", async ({
+      browser,
+      baseURL,
+    }) => {
+      const origin = baseURL || "http://localhost:3000";
+
+      // Reset server state first via JS-enabled context (or clean unique tokens)
+      const uniqueToken = `nojs-${Date.now()}`;
+      const uniqueBound = `bound-${Date.now()}`;
+      const uniqueRedir = `redir-${Date.now()}`;
+
+      // Open a REAL browser context with JavaScript COMPLETELY DISABLED!
+      const noJsContext = await browser.newContext({
+        baseURL: origin,
+        javaScriptEnabled: false,
+      });
+      try {
+        const noJsPage = await noJsContext.newPage();
+
+        // A. Load /t-z-server-actions with JS disabled
+        const res = await noJsPage.goto("/t-z-server-actions");
+        expect(res?.status()).toBe(200);
+
+        // Verify React 19 emitted native POST multipart form with $ACTION_ID_ hidden input
+        const hasActionIdInput = await noJsPage
+          .locator('form[data-testid="z3-nojs-form"] input[name^="$ACTION_ID_"]')
+          .count();
+        expect(hasActionIdInput).toBe(1);
+
+        // B. Submit plain Server Action form WITHOUT JavaScript -> 303 PRG back to /t-z-server-actions!
+        await noJsPage.getByTestId("z3-nojs-title-input").fill(uniqueToken);
+        await Promise.all([
+          noJsPage.waitForNavigation({ waitUntil: "load" }),
+          noJsPage.getByTestId("z3-nojs-submit").click(),
+        ]);
+        await expect(noJsPage).toHaveURL(/\/t-z-server-actions$/);
+        await expect(noJsPage.getByTestId("z3-nojs-items")).toContainText(
+          `${uniqueToken}|leaked=0`
+        );
+        await expect(noJsPage.getByTestId("z3-nojs-cookie")).toHaveText(
+          uniqueToken
+        );
+
+        // C. Submit BOUND Server Action form WITHOUT JavaScript ($ACTION_REF_)!
+        await noJsPage.getByTestId("z3-nojs-bound-input").fill(uniqueBound);
+        await Promise.all([
+          noJsPage.waitForNavigation({ waitUntil: "load" }),
+          noJsPage.getByTestId("z3-nojs-bound-submit").click(),
+        ]);
+        await expect(noJsPage).toHaveURL(/\/t-z-server-actions$/);
+        await expect(noJsPage.getByTestId("z3-nojs-bound-items")).toContainText(
+          `SRV_BOUND:${uniqueBound}`
+        );
+
+        // D. Submit Server Action with res.redirect("/t-z-server-actions/done") WITHOUT JavaScript!
+        await noJsPage.getByTestId("z3-nojs-title-input").fill(uniqueRedir);
+        await noJsPage.getByTestId("z3-nojs-godone-checkbox").check();
+        await Promise.all([
+          noJsPage.waitForNavigation({ waitUntil: "load" }),
+          noJsPage.getByTestId("z3-nojs-submit").click(),
+        ]);
+        await expect(noJsPage).toHaveURL(/\/t-z-server-actions\/done$/);
+        await expect(noJsPage.getByTestId("z3-done-cookie")).toHaveText(
+          `Done:${uniqueRedir}`
+        );
+      } finally {
+        await noJsContext.close();
+      }
+    });
+
+    test("2. useOptimistic + useActionState + useFormStatus rollback, Rich JS Types (Date/Map/Set/BigInt/Uint8Array), Binary Multi-File FormData & Concurrent Cookie Mutations (/t-z-server-actions)", async ({
+      page,
+    }) => {
+      const pageErrors: string[] = [];
+      const consoleErrors: string[] = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+      page.on("console", (msg) => {
+        if (msg.type() === "error") consoleErrors.push(msg.text());
+      });
+
+      await page.goto("/t-z-server-actions");
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+
+      // A. useOptimistic + useActionState + useFormStatus — SUCCESS path
+      await page.getByTestId("z3-opt-input").fill("alpha-task");
+      await page.getByTestId("z3-opt-submit").click();
+      // Must IMMEDIATELY show pending=true and optimistic item while 260ms server action is in flight!
+      await expect(page.getByTestId("z3-form-pending")).toHaveText("pending", {
+        timeout: 5000,
+      });
+      await expect(page.getByTestId("z3-opt-list")).toContainText(
+        "optimistic:alpha-task"
+      );
+      // Settles cleanly to confirmed item and pending=idle
+      await expect(page.getByTestId("z3-opt-list")).toContainText(
+        "confirmed:alpha-task",
+        { timeout: 10000 }
+      );
+      await expect(page.getByTestId("z3-opt-list")).not.toContainText(
+        "optimistic:alpha-task"
+      );
+      await expect(page.getByTestId("z3-form-pending")).toHaveText("idle");
+      await expect(page.getByTestId("z3-opt-error")).toHaveText("none");
+
+      // B. useOptimistic + useActionState — ROLLBACK on Server Function validation error
+      await page.getByTestId("z3-opt-fail-toggle").check();
+      await page.getByTestId("z3-opt-input").fill("bad-task");
+      await page.getByTestId("z3-opt-submit").click();
+      // Optimistic item appears immediately...
+      await expect(page.getByTestId("z3-opt-list")).toContainText(
+        "optimistic:bad-task",
+        { timeout: 5000 }
+      );
+      // ...and rolls back completely once server rejects it!
+      await expect(page.getByTestId("z3-opt-error")).toHaveText(
+        "Rejected:bad-task",
+        { timeout: 10000 }
+      );
+      await expect(page.getByTestId("z3-opt-list")).not.toContainText("bad-task");
+      await expect(page.getByTestId("z3-opt-list")).toContainText(
+        "confirmed:alpha-task"
+      );
+      await expect(page.getByTestId("z3-form-pending")).toHaveText("idle");
+
+      // C. Rich JS Types Round-Trip (Date, Map, Set, BigInt, binary Uint8Array with 0x0a/0x80/0xff, undefined, -0, NaN, Infinity, RegExp, URL)
+      await page.getByTestId("z3-btn-rich-types").click();
+      await expect(page.getByTestId("z3-rich-status")).toHaveText("rich-ok", {
+        timeout: 15000,
+      });
+
+      // D. Binary Multi-File FormData (café-🚀.bin 0x00..0xFF SHA-256) + Rich prevState + Non-Mutation on retry
+      await page.getByTestId("z3-btn-binary-upload").click();
+      await expect(page.getByTestId("z3-binary-status")).toHaveText("binary-ok", {
+        timeout: 15000,
+      });
+
+      // E. Concurrent Server Functions + res.cookie() / res.clearCookie() + immediate router.refresh() & refreshSlot()
+      await page.getByTestId("z3-btn-seed-cookie-b").click();
+      await expect(page.getByTestId("z3-cookie-status")).toHaveText("seeded", {
+        timeout: 15000,
+      });
+      await expect(page.getByTestId("z3-server-cookies")).toHaveText(
+        "a=none|b=initial_b|c=none",
+        { timeout: 15000 }
+      );
+      await expect(page.getByTestId("z3-slot-cookies")).toHaveText(
+        "a=none|b=initial_b|c=none",
+        { timeout: 15000 }
+      );
+
+      await page.getByTestId("z3-btn-concurrent-cookies").click();
+      await expect(page.getByTestId("z3-cookie-status")).toHaveText(
+        "concurrent-done",
+        { timeout: 15000 }
+      );
+      await expect(page.getByTestId("z3-server-cookies")).toHaveText(
+        "a=alpha_val|b=none|c=gamma_val",
+        { timeout: 15000 }
+      );
+      await expect(page.getByTestId("z3-slot-cookies")).toHaveText(
+        "a=alpha_val|b=none|c=gamma_val",
+        { timeout: 15000 }
+      );
+
+      // Cleanup server state for idempotent repeated runs
+      await page.getByTestId("z3-btn-reset-state").click();
+
+      const fatalConsoleErrors = consoleErrors.filter((e) =>
+        /hydrat|418|419|422|423|425|TypeError|ReferenceError/i.test(e)
+      );
+      expect(fatalConsoleErrors).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+  });
 });
