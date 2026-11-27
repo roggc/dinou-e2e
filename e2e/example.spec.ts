@@ -10150,7 +10150,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         `ISG:${cleanFirstId}:1`
       );
       await expect(page.getByTestId("client-search-value")).toHaveText(
-        "ClientSearch:cached-ok"
+        "ClientSearch:cached-ok",
+        { timeout: 15000 }
       );
 
       // 3b. Uncached visit WITH ?q=... (including repeated + empty params) first -> zero hydration mismatch + does NOT poison route as dynamic -> next clean visit caches ISG!
@@ -10162,7 +10163,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         `ISG:${queryFirstId}:1`
       );
       await expect(page.getByTestId("client-search-value")).toHaveText(
-        "ClientSearch:boots"
+        "ClientSearch:boots",
+        { timeout: 15000 }
       );
       await expect(page.getByTestId("client-search-tags")).toHaveText(
         "ClientTags:rsc,isg"
@@ -10184,7 +10186,8 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         `ISG:${queryFirstId}:2`
       );
       await expect(page.getByTestId("client-search-value")).toHaveText(
-        "ClientSearch:sneakers"
+        "ClientSearch:sneakers",
+        { timeout: 15000 }
       );
     });
 

@@ -556,6 +556,27 @@ const clearErroredCaches = () => {
   erroredLayoutCacheKeys.clear();
 };
 
+const INITIAL_HYDRATION_RETRY_DELAYS = [60, 180, 450];
+
+const fetchWithInitialHydrationRetry = (fetchOnce, isInitialHydration) => {
+  const attempt = (retryIdx) =>
+    fetchOnce().catch((err) => {
+      if (
+        isInitialHydration &&
+        !isStaticExportUnloading() &&
+        isNavigationAbortError(err) &&
+        retryIdx < INITIAL_HYDRATION_RETRY_DELAYS.length
+      ) {
+        const delayMs = INITIAL_HYDRATION_RETRY_DELAYS[retryIdx];
+        return new Promise((resolve) => setTimeout(resolve, delayMs)).then(() =>
+          isStaticExportUnloading() ? new Promise(() => {}) : attempt(retryIdx + 1)
+        );
+      }
+      throw err;
+    });
+  return attempt(0);
+};
+
 const getPagePayload = (route, isPrefetch = false, version = 0) => {
   const url = route.split("::")[0].split("#")[0] || "/";
   if (pageCache.has(url)) {
@@ -616,19 +637,7 @@ const getPagePayload = (route, isPrefetch = false, version = 0) => {
     });
   const fetchPromise = inlineRes
     ? Promise.resolve(inlineRes)
-    : fetchPageOnce()
-        .catch((err) => {
-          if (
-            isInitialHydration &&
-            !isStaticExportUnloading() &&
-            isNavigationAbortError(err)
-          ) {
-            return new Promise((resolve) => setTimeout(resolve, 60)).then(() =>
-              isStaticExportUnloading() ? new Promise(() => {}) : fetchPageOnce()
-            );
-          }
-          throw err;
-        })
+    : fetchWithInitialHydrationRetry(fetchPageOnce, isInitialHydration)
         .then((res) => {
         if (res.headers.has("x-rsc-redirect")) {
           const redirectUrl = res.headers.get("x-rsc-redirect");
@@ -738,19 +747,7 @@ const getLayoutPayload = (layoutKey, searchPart = "", version = 0) => {
     });
   const fetchPromise = inlineRes
     ? Promise.resolve(inlineRes)
-    : fetchLayoutOnce()
-        .catch((err) => {
-          if (
-            isInitialHydration &&
-            !isStaticExportUnloading() &&
-            isNavigationAbortError(err)
-          ) {
-            return new Promise((resolve) => setTimeout(resolve, 60)).then(() =>
-              isStaticExportUnloading() ? new Promise(() => {}) : fetchLayoutOnce()
-            );
-          }
-          throw err;
-        })
+    : fetchWithInitialHydrationRetry(fetchLayoutOnce, isInitialHydration)
         .then(
         (res) => {
           if (res.headers.has("x-rsc-redirect")) {
