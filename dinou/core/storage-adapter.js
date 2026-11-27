@@ -102,6 +102,104 @@ class FileSystemStorage extends StorageAdapter {
   constructor(baseDir = path.resolve(process.cwd(), ".dinou/dist2")) {
     super();
     this.baseDir = baseDir;
+    this._slotTagIndex = null;
+  }
+
+  _updateSlotTagIndex(normSlotKey, metadata) {
+    if (!this._slotTagIndex) return;
+    const match = String(normSlotKey || "").match(/^slots\/([^/]+)\//);
+    if (!match) return;
+    const dirName = match[1];
+    const canonicalId = (metadata && metadata.slotId) || dirName;
+    const nextTags = new Set([canonicalId]);
+    if (metadata && Array.isArray(metadata.tags)) {
+      for (const t of metadata.tags) {
+        if (t) nextTags.add(t);
+      }
+    }
+    const { tagToSlotIds, slotTagsById } = this._slotTagIndex;
+    const prevTags = slotTagsById.get(canonicalId);
+    if (prevTags) {
+      for (const oldTag of prevTags) {
+        if (!nextTags.has(oldTag)) {
+          const s = tagToSlotIds.get(oldTag);
+          if (s) {
+            s.delete(canonicalId);
+            if (s.size === 0) tagToSlotIds.delete(oldTag);
+          }
+        }
+      }
+    }
+    for (const tag of nextTags) {
+      if (!tagToSlotIds.has(tag)) {
+        tagToSlotIds.set(tag, new Set());
+      }
+      tagToSlotIds.get(tag).add(canonicalId);
+    }
+    slotTagsById.set(canonicalId, nextTags);
+    try {
+      const slotsDir = path.join(this.baseDir, "slots");
+      if (fs.existsSync(slotsDir)) {
+        const dirStat = fs.statSync(slotsDir);
+        const dirCount = fs
+          .readdirSync(slotsDir, { withFileTypes: true })
+          .filter((e) => e.isDirectory()).length;
+        this._slotTagIndex.signature = `${dirStat.mtimeMs}:${dirCount}`;
+      }
+    } catch (e) {}
+  }
+
+  getSlotTagIndex() {
+    const slotsDir = path.join(this.baseDir, "slots");
+    if (!fs.existsSync(slotsDir)) {
+      this._slotTagIndex = null;
+      return new Map();
+    }
+    let dirStat;
+    let entries;
+    try {
+      dirStat = fs.statSync(slotsDir);
+      entries = fs.readdirSync(slotsDir, { withFileTypes: true });
+    } catch (e) {
+      return new Map();
+    }
+    const dirNames = [];
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        dirNames.push(entry.name);
+      }
+    }
+    const dirSignature = `${dirStat.mtimeMs}:${dirNames.length}`;
+    if (this._slotTagIndex && this._slotTagIndex.signature === dirSignature) {
+      return this._slotTagIndex.tagToSlotIds;
+    }
+    const tagToSlotIds = new Map();
+    const slotTagsById = new Map();
+    for (const slotDirName of dirNames) {
+      const metaPath = path.join(slotsDir, slotDirName, "slot.metadata.json");
+      let meta = null;
+      if (fs.existsSync(metaPath)) {
+        try {
+          meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+        } catch (e) {}
+      }
+      const canonicalId = (meta && meta.slotId) || slotDirName;
+      const tagsForSlot = new Set([canonicalId]);
+      if (meta && Array.isArray(meta.tags)) {
+        for (const tag of meta.tags) {
+          if (tag) tagsForSlot.add(tag);
+        }
+      }
+      slotTagsById.set(canonicalId, tagsForSlot);
+      for (const tag of tagsForSlot) {
+        if (!tagToSlotIds.has(tag)) {
+          tagToSlotIds.set(tag, new Set());
+        }
+        tagToSlotIds.get(tag).add(canonicalId);
+      }
+    }
+    this._slotTagIndex = { signature: dirSignature, tagToSlotIds, slotTagsById };
+    return tagToSlotIds;
   }
 
   _resolve(key) {
@@ -179,6 +277,11 @@ class FileSystemStorage extends StorageAdapter {
     // Only write a companion metadata file if targetPath is NOT itself a metadata file
     const cleanKey = String(key || "").replace(/\\/g, "/");
     const isMetaJson = cleanKey.endsWith("metadata.json") || path.basename(targetPath).endsWith("metadata.json");
+    const normSlotKeyForIndex = cleanKey.replace(/^\/+/, "");
+    const isSlotKeyForIndex =
+      normSlotKeyForIndex.startsWith("slots/") ||
+      normSlotKeyForIndex.endsWith("/slot.json") ||
+      normSlotKeyForIndex.endsWith("/slot.metadata.json");
     if (metadata && !isMetaJson) {
       const isLayoutKey =
         cleanKey.includes("layout.rsc") ||
@@ -187,15 +290,23 @@ class FileSystemStorage extends StorageAdapter {
         cleanKey.includes("shell.layout.json") ||
         cleanKey.includes("shell.layout.own.json") ||
         cleanKey.includes("shell.layout._old.json");
-      const normSlotKey = cleanKey.replace(/^\/+/, "");
-      const isSlotKey = normSlotKey.startsWith("slots/") || normSlotKey.endsWith("/slot.json") || normSlotKey.endsWith("/slot.metadata.json");
       const metaFileName = isLayoutKey
         ? "layout.metadata.json"
-        : isSlotKey
+        : isSlotKeyForIndex
         ? "slot.metadata.json"
         : "metadata.json";
       const metaPath = path.join(dir, metaFileName);
       fs.writeFileSync(metaPath, JSON.stringify(metadata, null, 2), "utf8");
+      if (isSlotKeyForIndex) {
+        this._updateSlotTagIndex(normSlotKeyForIndex, metadata);
+      }
+    } else if (isSlotKeyForIndex && isMetaJson) {
+      try {
+        const parsedSlotMeta = JSON.parse(content);
+        this._updateSlotTagIndex(normSlotKeyForIndex, parsedSlotMeta);
+      } catch (e) {
+        this._slotTagIndex = null;
+      }
     }
   }
 
@@ -216,6 +327,7 @@ class FileSystemStorage extends StorageAdapter {
     const normSlotKey = String(key || "").replace(/^\/+/, "").replace(/\\/g, "/");
     const isSlotKey = normSlotKey.startsWith("slots/") || normSlotKey.endsWith("/slot.json") || normSlotKey.endsWith("/slot.metadata.json");
     if (isSlotKey) {
+      this._slotTagIndex = null;
       const dir = path.dirname(targetPath);
       if (fs.existsSync(dir)) {
         try {

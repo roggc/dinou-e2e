@@ -1104,43 +1104,110 @@ async function DinouCacheSlot(props) {
 }
 DinouCacheSlot.$$dinouCacheSlot = true;
 
-/**
- * Resolves a slot ID or tag to ALL matching canonical slotIds using slotRegistry and storage metadata.
- * Prevents multi-slot shared tags from being masked by the first matching slot.
- */
-async function resolveAllCanonicalSlotIds(slotIdOrTag, storage) {
-  const matched = new Set();
-  if (!slotIdOrTag) return [];
-  if (slotRegistry.has(slotIdOrTag)) {
-    matched.add(slotIdOrTag);
+const DIST2_SLOTS_FS_KEY = Symbol.for("dinou.dist2.slots.fs.index");
+
+function getDist2SlotsFs() {
+  try {
+    const cwdBase = path.resolve(process.cwd(), ".dinou/dist2");
+    const existing = globalThis[DIST2_SLOTS_FS_KEY];
+    if (existing && existing.baseDir === cwdBase) {
+      return existing;
+    }
+    const created = new FileSystemStorage(cwdBase);
+    globalThis[DIST2_SLOTS_FS_KEY] = created;
+    return created;
+  } catch (e) {
+    return null;
   }
-  for (const [regId, entry] of slotRegistry.entries()) {
-    if (Array.isArray(entry.tags) && entry.tags.includes(slotIdOrTag)) {
-      matched.add(regId);
+}
+
+/**
+ * Batch-resolves one or more slot IDs or tags to ALL matching canonical slotIds in a single pass.
+ * Uses FileSystemStorage's O(1) mtime-validated tag index on disk storages (avoiding O(N*M) disk
+ * scans per request) and deduplicated single-pass key inspection on distributed KV/Redis storages.
+ */
+async function resolveAllCanonicalSlotIdsBatch(rawTagsOrIds, storage) {
+  const resultMap = new Map();
+  const uniqueTags = [];
+  const tagSet = new Set();
+  for (const raw of rawTagsOrIds || []) {
+    if (!raw || tagSet.has(raw)) continue;
+    tagSet.add(raw);
+    uniqueTags.push(raw);
+    resultMap.set(raw, new Set());
+  }
+  if (uniqueTags.length === 0) return resultMap;
+
+  // 1. In-memory slotRegistry check (O(registrySize) once for the entire batch)
+  for (const tag of uniqueTags) {
+    if (slotRegistry.has(tag)) {
+      resultMap.get(tag).add(tag);
     }
   }
+  for (const [regId, entry] of slotRegistry.entries()) {
+    if (Array.isArray(entry.tags)) {
+      for (const t of entry.tags) {
+        if (tagSet.has(t)) {
+          resultMap.get(t).add(regId);
+        }
+      }
+    }
+  }
+
   if (storage) {
     try {
-      const direct = await getSlotFromStorage(storage, `slots/${slotIdOrTag}/slot.json`);
-      if (direct && direct.content) {
-        matched.add(slotIdOrTag);
-      }
-      const candidateKeySet = new Set();
-      if (typeof storage.keys === "function") {
-        const keys = await storage.keys("slots/");
-        for (const k of keys) candidateKeySet.add(String(k || "").replace(/\\/g, "/"));
-      }
-      if (!storage.baseDir && storage.hydrateFromDisk !== false) {
-        try {
-          const dist2SlotsFs = new FileSystemStorage();
-          const diskSlotKeys = await dist2SlotsFs.keys("slots/");
-          for (const k of diskSlotKeys) {
-            candidateKeySet.add(String(k || "").replace(/\\/g, "/"));
+      // 2. O(1) mtime-validated disk slot tag index for FileSystemStorage
+      if (typeof storage.getSlotTagIndex === "function") {
+        const fsTagIndex = storage.getSlotTagIndex();
+        for (const tag of uniqueTags) {
+          const indexedIds = fsTagIndex.get(tag);
+          if (indexedIds) {
+            const targetSet = resultMap.get(tag);
+            for (const id of indexedIds) targetSet.add(id);
           }
-        } catch (e) {}
-      }
-      for (const key of candidateKeySet) {
-        if (key.endsWith("/slot.json") || key.endsWith("/slot.metadata.json")) {
+        }
+      } else {
+        // 3. Distributed / non-FS storages (Cloudflare KV, Redis, Deno KV, Memory):
+        //    a) Merge read-only .dinou/dist2/slots fallback via cached O(1) disk index
+        if (!storage.baseDir && storage.hydrateFromDisk !== false) {
+          try {
+            const dist2Fs = getDist2SlotsFs();
+            if (dist2Fs && typeof dist2Fs.getSlotTagIndex === "function") {
+              const dist2Index = dist2Fs.getSlotTagIndex();
+              for (const tag of uniqueTags) {
+                const indexedIds = dist2Index.get(tag);
+                if (indexedIds) {
+                  const targetSet = resultMap.get(tag);
+                  for (const id of indexedIds) targetSet.add(id);
+                }
+              }
+            }
+          } catch (e) {}
+        }
+        //    b) Single-pass scan over live storage keys("slots/"), preferring slot.metadata.json
+        //       over slot.json so each slot is read at most once for the entire batch
+        const preferredKeyBySlot = new Map();
+        if (typeof storage.keys === "function") {
+          const keys = await storage.keys("slots/");
+          for (const rawKey of keys) {
+            const key = String(rawKey || "").replace(/\\/g, "/");
+            if (key.endsWith("/slot.metadata.json")) {
+              const m = key.match(/^slots\/([^/]+)\//);
+              if (m) preferredKeyBySlot.set(m[1], key);
+            } else if (key.endsWith("/slot.json")) {
+              const m = key.match(/^slots\/([^/]+)\//);
+              if (m && !preferredKeyBySlot.has(m[1])) {
+                preferredKeyBySlot.set(m[1], key);
+              }
+            }
+          }
+        }
+        for (const tag of uniqueTags) {
+          if (preferredKeyBySlot.has(tag)) {
+            resultMap.get(tag).add(tag);
+          }
+        }
+        for (const [slotDirId, key] of preferredKeyBySlot.entries()) {
           const item =
             (await storage.get(key)) || (await readDist2Fallback(storage, key));
           let meta = item?.metadata;
@@ -1149,25 +1216,49 @@ async function resolveAllCanonicalSlotIds(slotIdOrTag, storage) {
               meta = JSON.parse(item.content);
             } catch (e) {}
           }
-          if (meta && Array.isArray(meta.tags) && meta.tags.includes(slotIdOrTag)) {
-            if (meta.slotId) {
-              matched.add(meta.slotId);
-            } else {
-              const match = key.match(/^slots\/([^/]+)\//);
-              if (match) matched.add(match[1]);
+          if (meta && Array.isArray(meta.tags)) {
+            const canonicalId = meta.slotId || slotDirId;
+            for (const t of meta.tags) {
+              if (tagSet.has(t)) {
+                resultMap.get(t).add(canonicalId);
+              }
+            }
+          }
+        }
+        //    c) Direct lookup fallback when adapter does not implement storage.keys()
+        if (typeof storage.keys !== "function") {
+          for (const tag of uniqueTags) {
+            if (resultMap.get(tag).size === 0) {
+              const direct = await getSlotFromStorage(storage, `slots/${tag}/slot.json`);
+              if (direct && direct.content) {
+                resultMap.get(tag).add(tag);
+              }
             }
           }
         }
       }
     } catch (e) {}
   }
-  return matched.size > 0 ? Array.from(matched) : [slotIdOrTag];
+
+  return resultMap;
+}
+
+/**
+ * Resolves a slot ID or tag to ALL matching canonical slotIds using slotRegistry and storage metadata.
+ * Prevents multi-slot shared tags from being masked by the first matching slot.
+ */
+async function resolveAllCanonicalSlotIds(slotIdOrTag, storage) {
+  if (!slotIdOrTag) return [];
+  const batch = await resolveAllCanonicalSlotIdsBatch([slotIdOrTag], storage);
+  const matched = batch.get(slotIdOrTag);
+  return matched && matched.size > 0 ? Array.from(matched) : [slotIdOrTag];
 }
 
 /**
  * Resolves a slot ID or tag to its canonical slotId using slotRegistry or storage metadata.
  */
 async function resolveCanonicalSlotId(slotIdOrTag, storage) {
+  if (!slotIdOrTag) return slotIdOrTag;
   if (slotRegistry.has(slotIdOrTag)) {
     return slotIdOrTag;
   }
@@ -1176,46 +1267,8 @@ async function resolveCanonicalSlotId(slotIdOrTag, storage) {
       return regId;
     }
   }
-  if (storage) {
-    try {
-      const direct = await getSlotFromStorage(storage, `slots/${slotIdOrTag}/slot.json`);
-      if (direct && direct.content) {
-        return slotIdOrTag;
-      }
-      const candidateKeySet = new Set();
-      if (typeof storage.keys === "function") {
-        const keys = await storage.keys("slots/");
-        for (const k of keys) candidateKeySet.add(String(k || "").replace(/\\/g, "/"));
-      }
-      if (!storage.baseDir && storage.hydrateFromDisk !== false) {
-        try {
-          const dist2SlotsFs = new FileSystemStorage();
-          const diskSlotKeys = await dist2SlotsFs.keys("slots/");
-          for (const k of diskSlotKeys) {
-            candidateKeySet.add(String(k || "").replace(/\\/g, "/"));
-          }
-        } catch (e) {}
-      }
-      for (const key of candidateKeySet) {
-        if (key.endsWith("/slot.json") || key.endsWith("/slot.metadata.json")) {
-          const item =
-            (await storage.get(key)) || (await readDist2Fallback(storage, key));
-          let meta = item?.metadata;
-          if (!meta && key.endsWith("/slot.metadata.json") && item?.content) {
-            try {
-              meta = JSON.parse(item.content);
-            } catch (e) {}
-          }
-          if (meta && Array.isArray(meta.tags) && meta.tags.includes(slotIdOrTag)) {
-            if (meta.slotId) return meta.slotId;
-            const match = key.match(/^slots\/([^/]+)\//);
-            if (match) return match[1];
-          }
-        }
-      }
-    } catch (e) {}
-  }
-  return slotIdOrTag;
+  const all = await resolveAllCanonicalSlotIds(slotIdOrTag, storage);
+  return all.length > 0 ? all[0] : slotIdOrTag;
 }
 
 /**
@@ -1658,9 +1711,12 @@ async function inspectSlotsFreshness(slotTags, hostGeneratedAt = 0) {
   const now = Date.now();
   const hostGen = Number(hostGeneratedAt || 0);
   const checkedIds = new Set();
+  const resolvedBatch = await resolveAllCanonicalSlotIdsBatch(slotTags, storage);
   for (const rawTagOrId of slotTags) {
     if (!rawTagOrId) continue;
-    const targetIds = await resolveAllCanonicalSlotIds(rawTagOrId, storage);
+    const matchedSet = resolvedBatch.get(rawTagOrId);
+    const targetIds =
+      matchedSet && matchedSet.size > 0 ? Array.from(matchedSet) : [rawTagOrId];
     for (const targetId of targetIds) {
       if (!targetId || checkedIds.has(targetId)) continue;
       checkedIds.add(targetId);

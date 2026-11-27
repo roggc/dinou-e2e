@@ -12577,20 +12577,21 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
             }
 
             const ext = path.extname(target).toLowerCase();
+            const body = fs.readFileSync(target);
             res.writeHead(200, {
               "Content-Type": mimeByExt[ext] || "application/octet-stream",
-              Connection: "close",
+              "Content-Length": body.byteLength,
             });
-            res.end(fs.readFileSync(target));
+            res.end(body);
           } catch {
             if (!res.headersSent) {
-              res.writeHead(500, { Connection: "close" });
+              res.writeHead(500);
             }
             res.end();
           }
         });
-        staticServer.keepAliveTimeout = 1000;
-        staticServer.headersTimeout = 5000;
+        staticServer.keepAliveTimeout = 5000;
+        staticServer.headersTimeout = 30000;
 
         await new Promise<void>((resolve) =>
           staticServer!.listen(0, "127.0.0.1", () => resolve())
@@ -12610,7 +12611,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         await page.goto(`${staticOrigin}/t-public-assets`);
         await page.waitForSelector('body[data-hydrated="true"]', {
           state: "attached",
-          timeout: 15000,
+          timeout: 30000,
         });
         await expect(page.locator("h1")).toHaveText("Public Static Assets E2E");
 
@@ -21463,16 +21464,28 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         }
       }
 
+      const waitResumeHolesVisible = async () => {
+        await expect(page.locator("#uid-l1-hole")).toBeVisible({ timeout: 15000 });
+        await expect(page.locator("#uid-resume-hole-a")).toBeVisible({ timeout: 15000 });
+        await expect(page.locator("#uid-resume-hole-b")).toBeVisible({ timeout: 15000 });
+      };
+      const waitAsymHolesVisible = async () => {
+        await expect(page.locator("#uid-l1-hole")).toBeVisible({ timeout: 15000 });
+        await expect(page.locator("#uid-l2-layout")).toBeVisible({ timeout: 15000 });
+        await expect(page.locator("#uid-page-hole-a")).toBeVisible({ timeout: 15000 });
+        await expect(page.locator("#uid-page-hole-b")).toBeVisible({ timeout: 15000 });
+      };
+
       // 1. Direct SSR load on Warm PPR Resume route (/ppr-resume) — exercises handlePprResume + buildPprHoleSkeleton!
       const resumeResp = await page.goto("/t-3d-cube/use-id-cube/ppr-resume");
       expect(resumeResp?.status()).toBe(200);
-      await expect(page.locator("#uid-resume-hole-b")).toBeVisible({ timeout: 15000 });
+      await waitResumeHolesVisible();
       await waitCubeReady(page);
       await assertDomUseIdIntegrity(RESUME_CLIENT_OWNERS, RESUME_SERVER_OWNERS);
 
       // F5 reload on warm PPR resume route -> still zero #418 and zero duplicate IDs!
       await page.reload();
-      await expect(page.locator("#uid-resume-hole-b")).toBeVisible({ timeout: 15000 });
+      await waitResumeHolesVisible();
       await waitCubeReady(page);
       await assertDomUseIdIntegrity(RESUME_CLIENT_OWNERS, RESUME_SERVER_OWNERS);
 
@@ -21482,14 +21495,14 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       const l1MountId = await page.locator("#probe-mount-uid-l1").textContent();
 
       await page.click("#link-uid-asym");
-      await expect(page.locator("#uid-page-hole-b")).toBeVisible({ timeout: 15000 });
+      await waitAsymHolesVisible();
       await expect(page.locator("#probe-mount-uid-l1")).toHaveText(String(l1MountId));
       await expect(page.locator("#probe-count-uid-l1")).toHaveText("1");
       await assertDomUseIdIntegrity(ASYM_CLIENT_OWNERS, ASYM_SERVER_OWNERS);
 
       // Direct SSR F5 reload on Asymmetric 3D PPR chain (/asym)
       await page.reload();
-      await expect(page.locator("#uid-page-hole-b")).toBeVisible({ timeout: 15000 });
+      await waitAsymHolesVisible();
       await waitCubeReady(page);
       await assertDomUseIdIntegrity(ASYM_CLIENT_OWNERS, ASYM_SERVER_OWNERS);
 
@@ -21543,7 +21556,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         await (window as any).__CUBE_3D__.revalPage("/t-3d-cube/use-id-cube/asym");
       });
       await page.reload();
-      await expect(page.locator("#uid-page-hole-b")).toBeVisible({ timeout: 15000 });
+      await waitAsymHolesVisible();
       await waitCubeReady(page);
       await expect(page.locator('[data-uid-seq="l1-shell"]')).toHaveText(String(nextL1Shell));
       await expect(page.locator('[data-uid-seq="page-shell"]')).toHaveText(String(nextPageShell));
@@ -21555,7 +21568,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // 5. Soft <Link> back to /ppr-resume -> zero collisions & zero #418!
       await page.click("#link-uid-resume");
-      await expect(page.locator("#uid-resume-hole-b")).toBeVisible({ timeout: 15000 });
+      await waitResumeHolesVisible();
       await assertDomUseIdIntegrity(RESUME_CLIENT_OWNERS, RESUME_SERVER_OWNERS);
 
       expect(hydrationErrors).toEqual([]);

@@ -610,11 +610,26 @@ const getPagePayload = (route, isPrefetch = false, version = 0) => {
       volatilePageCacheKeys.add(url);
     }
   }
+  const fetchPageOnce = () =>
+    fetch(payloadUrl, {
+      cache: staticExport && !version ? "default" : "no-store",
+    });
   const fetchPromise = inlineRes
     ? Promise.resolve(inlineRes)
-    : fetch(payloadUrl, {
-        cache: staticExport && !version ? "default" : "no-store",
-      }).then((res) => {
+    : fetchPageOnce()
+        .catch((err) => {
+          if (
+            isInitialHydration &&
+            !isStaticExportUnloading() &&
+            isNavigationAbortError(err)
+          ) {
+            return new Promise((resolve) => setTimeout(resolve, 60)).then(() =>
+              isStaticExportUnloading() ? new Promise(() => {}) : fetchPageOnce()
+            );
+          }
+          throw err;
+        })
+        .then((res) => {
         if (res.headers.has("x-rsc-redirect")) {
           const redirectUrl = res.headers.get("x-rsc-redirect");
           const isCurrentTarget =
@@ -717,11 +732,26 @@ const getLayoutPayload = (layoutKey, searchPart = "", version = 0) => {
   }
 
   const inlineRes = isInitialHydration && !version ? consumeInlineRscResponse("L") : null;
+  const fetchLayoutOnce = () =>
+    fetch(layoutUrl, {
+      cache: staticExport && !version ? "default" : "no-store",
+    });
   const fetchPromise = inlineRes
     ? Promise.resolve(inlineRes)
-    : fetch(layoutUrl, {
-        cache: staticExport && !version ? "default" : "no-store",
-      }).then(
+    : fetchLayoutOnce()
+        .catch((err) => {
+          if (
+            isInitialHydration &&
+            !isStaticExportUnloading() &&
+            isNavigationAbortError(err)
+          ) {
+            return new Promise((resolve) => setTimeout(resolve, 60)).then(() =>
+              isStaticExportUnloading() ? new Promise(() => {}) : fetchLayoutOnce()
+            );
+          }
+          throw err;
+        })
+        .then(
         (res) => {
           if (res.headers.has("x-rsc-redirect")) {
             const redirectUrl = res.headers.get("x-rsc-redirect");
