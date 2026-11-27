@@ -8994,7 +8994,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(runtimeErrors).toEqual([]);
     });
 
-    test("4. Core AST & Non-Blocking TTFB Pipeline Suite (tests/promise-streaming.test.mjs)", async () => {
+    test("4. Core AST & Non-Blocking TTFB Pipeline Suite (tests/promise-streaming.test.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "Node standalone verification suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
       const { execFileSync } = await import("child_process");
       const output = execFileSync(
         process.execPath,
@@ -9744,7 +9750,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       }
     });
 
-    test("4. Static Typegen, Strict tsc, Didactic Bundler Guard & Zero-Leak Manifest Suite (scripts/verify-escaped-ci.mjs)", async () => {
+    test("4. Static Typegen, Strict tsc, Didactic Bundler Guard & Zero-Leak Manifest Suite (scripts/verify-escaped-ci.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "Node standalone verification suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
       const { execFileSync } = await import("child_process");
       const output = execFileSync(
         process.execPath,
@@ -10249,7 +10261,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
     });
 
-    test("5. Unit & Dual-Engine Bailout Verification Suite (scripts/verify-bailout-ci.mjs)", async () => {
+    test("5. Unit & Dual-Engine Bailout Verification Suite (scripts/verify-bailout-ci.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "Node standalone verification suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
       const { execFileSync } = await import("child_process");
       const output = execFileSync(
         process.execPath,
@@ -10478,7 +10496,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
     });
 
-    test("4. Unit, Strict TypeScript & Dual-Engine Slot Bailout Suite (scripts/verify-cache-slot-bailout-ci.mjs)", async () => {
+    test("4. Unit, Strict TypeScript & Dual-Engine Slot Bailout Suite (scripts/verify-cache-slot-bailout-ci.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "Node standalone verification suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
       const { execFileSync } = await import("child_process");
       const output = execFileSync(
         process.execPath,
@@ -10657,7 +10681,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(runtimeErrors).toEqual([]);
     });
 
-    test("3. Unit & Dual-Engine Server Functions Fixes Suite (scripts/verify-sf-fixes-ci.mjs)", async () => {
+    test("3. Unit & Dual-Engine Server Functions Fixes Suite (scripts/verify-sf-fixes-ci.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "Node standalone verification suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
       const { execFileSync } = await import("child_process");
       const output = execFileSync(
         process.execPath,
@@ -11115,7 +11145,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
     });
 
-    test("3. Unit, Multi-Pod RedisStorage, Standalone Worker & Dual-Bundle SSG Revalidation Suite (scripts/verify-revalidation-fixes-ci.mjs)", async () => {
+    test("3. Unit, Multi-Pod RedisStorage, Standalone Worker & Dual-Bundle SSG Revalidation Suite (scripts/verify-revalidation-fixes-ci.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "Node standalone verification suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
       const { execFileSync } = await import("child_process");
       const output = execFileSync(
         process.execPath,
@@ -11530,7 +11566,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
     });
 
-    test("4. Unit & Dual-Engine Streaming <Suspense> + Direct Promise<ReactNode> Suite (scripts/verify-streaming-suspense-ci.mjs)", async () => {
+    test("4. Unit & Dual-Engine Streaming <Suspense> + Direct Promise<ReactNode> Suite (scripts/verify-streaming-suspense-ci.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "Node standalone verification suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
       const { execFileSync } = await import("child_process");
       const output = execFileSync(
         process.execPath,
@@ -11790,7 +11832,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(pageErrors).toEqual([]);
     });
 
-    test("4. Standalone Pass B Isolation, Proxy Error/Digest & Rollup #default Verification Suite (scripts/verify-ssr-server-references-ci.mjs)", async () => {
+    test("4. Standalone Pass B Isolation, Proxy Error/Digest & Rollup #default Verification Suite (scripts/verify-ssr-server-references-ci.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "Node standalone verification suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
       const { execFileSync } = await import("child_process");
       const output = execFileSync(
         process.execPath,
@@ -11919,7 +11967,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(pageErrors).toEqual([]);
     });
 
-    test("2. Standalone Multi-Bundler React Compiler, 'use server' Ordering & DinouConfig.reactCompiler Suite (scripts/verify-react-compiler-ci.mjs)", async () => {
+    test("2. Standalone Multi-Bundler React Compiler, 'use server' Ordering & DinouConfig.reactCompiler Suite (scripts/verify-react-compiler-ci.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "Node standalone verification suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
       const { execFileSync } = await import("child_process");
       const output = execFileSync(
         process.execPath,
@@ -12343,7 +12397,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       }
     });
 
-    test("3. Standalone public/ Static Assets Security, .dinou/dist1 Physical Isolation, Multi-Bundler Parity, Cloudflare Adapter & export-static Suite (scripts/verify-public-static-assets-ci.mjs)", async () => {
+    test("3. Standalone public/ Static Assets Security, .dinou/dist1 Physical Isolation, Multi-Bundler Parity, Cloudflare Adapter & export-static Suite (scripts/verify-public-static-assets-ci.mjs)", async ({
+      browserName,
+    }) => {
+      test.skip(
+        browserName !== "chromium",
+        "Node standalone verification suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
       const { execFileSync } = await import("child_process");
       const output = execFileSync(
         process.execPath,
@@ -14652,6 +14712,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         browserName !== "chromium",
         "Node CLI parity suite is browser-agnostic; run once per CI matrix job in chromium"
       );
+      test.skip(
+        process.env.DINOU_SKIP_PLAYWRIGHT_UNIT_DUPES === "1",
+        "Executed in dedicated npm run test:unit step in this job"
+      );
       test.setTimeout(360000);
 
       const { execFileSync } = await import("child_process");
@@ -15050,6 +15114,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       test.skip(
         browserName !== "chromium",
         "Node CLI parity suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
+      test.skip(
+        process.env.DINOU_SKIP_PLAYWRIGHT_UNIT_DUPES === "1",
+        "Executed in dedicated npm run test:unit step in this job"
       );
       test.setTimeout(360000);
 
@@ -16408,6 +16476,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         browserName !== "chromium",
         "Page/layout functions tri-bundler precedence suite is browser-agnostic; run once per CI matrix job in chromium"
       );
+      test.skip(
+        process.env.DINOU_SKIP_PLAYWRIGHT_UNIT_DUPES === "1",
+        "Executed in dedicated npm run test:unit step in this job"
+      );
       test.setTimeout(360000);
 
       const { execFileSync } = await import("child_process");
@@ -16643,6 +16715,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       test.skip(
         browserName !== "chromium",
         "Importmap head injection unit & tri-bundler suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
+      test.skip(
+        process.env.DINOU_SKIP_PLAYWRIGHT_UNIT_DUPES === "1",
+        "Executed in dedicated npm run test:unit step in this job"
       );
       test.setTimeout(360000);
 
@@ -21765,6 +21841,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         browserName !== "chromium",
         "3D Cache Cube unit & compiled AOT integration suite is browser-agnostic; run once per CI matrix job in chromium"
       );
+      test.skip(
+        process.env.DINOU_SKIP_PLAYWRIGHT_UNIT_DUPES === "1",
+        "Executed in dedicated npm run test:unit step in this job"
+      );
       test.setTimeout(540000);
 
       const { execFileSync } = await import("child_process");
@@ -21997,6 +22077,10 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       test.skip(
         browserName !== "chromium",
         "Phase 6 revalidation matrix unit & compiled AOT integration suite is browser-agnostic; run once per CI matrix job in chromium"
+      );
+      test.skip(
+        process.env.DINOU_SKIP_PLAYWRIGHT_UNIT_DUPES === "1",
+        "Executed in dedicated npm run test:unit step in this job"
       );
       test.setTimeout(540000);
 

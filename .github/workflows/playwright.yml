@@ -139,6 +139,7 @@ jobs:
         env:
           TEST_CMD: npm run start:node:esbuild -- -u
           PORT: 3000
+          DINOU_SKIP_PLAYWRIGHT_UNIT_DUPES: '1'
         run: npx playwright test
 
       - name: Run Unit & HMR WebSocket Suites (tests/*.test.js, tests/unit & test:hmr:ws)
