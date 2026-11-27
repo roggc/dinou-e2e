@@ -158,6 +158,30 @@ jobs:
           path: playwright-report/
           retention-days: 30
 
+  unit-and-standalone-windows:
+    needs: quick-repro
+    if: ${{ !cancelled() && (needs.quick-repro.result == 'success' || needs.quick-repro.result == 'skipped') }}
+    name: Windows - Unit, HMR WS & Standalone E2E Suites
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Environment & Dependencies
+        uses: ./.github/actions/setup-e2e
+        with:
+          bun: 'true'
+
+      - name: Run Unit Suites (tests/*.test.js & tests/unit)
+        run: npm run test:unit
+
+      - name: Run HMR WebSocket Suite (test:hmr:ws)
+        run: npm run test:hmr:ws
+
+      - name: Run Standalone Playwright E2E Suites (tests/e2e)
+        run: npm run test:e2e:standalone
+
   compile-and-export-smoke:
     needs: quick-repro
     if: ${{ !cancelled() && (needs.quick-repro.result == 'success' || needs.quick-repro.result == 'skipped') }}

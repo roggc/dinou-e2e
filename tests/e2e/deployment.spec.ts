@@ -250,7 +250,17 @@ test.describe("Deployment Targets E2E (Netlify Functions v2 Simulator & Static E
 
   test.afterEach(() => {
     if (serverProcess) {
-      serverProcess.kill("SIGTERM");
+      try {
+        if (process.platform === "win32" && serverProcess.pid) {
+          spawnSync(
+            "taskkill",
+            ["/pid", String(serverProcess.pid), "/f", "/t"],
+            { stdio: "ignore", timeout: 5000 }
+          );
+        } else {
+          serverProcess.kill("SIGTERM");
+        }
+      } catch {}
       serverProcess = null;
     }
   });

@@ -24531,6 +24531,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
   test.describe("🧠 Series Z — Phase 1 — Stage 1 (Check #Z1): Long-Running Client SPA Memory Bounds & LRU Eviction", () => {
     test("1. 155-route SPA soak with dynamic layouts & <DinouCacheSlot> refreshSlot keeps all client caches bounded and cleanly re-fetches evicted routes on Back/navigation (/t-z-soak/[id])", async ({
       page,
+      browserName,
     }) => {
       test.setTimeout(180000);
       const pageErrors: string[] = [];
@@ -24539,6 +24540,24 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       page.on("console", (msg) => {
         if (msg.type() === "error") consoleErrors.push(msg.text());
       });
+
+      // WebKit enforces a strict 100 history.pushState() calls per 10s sliding window
+      // (SecurityError). Pace synthetic pushes only on WebKit so we stay strictly under
+      // the engine limit while adding zero delay on Chromium and Firefox.
+      let pushWindowStart = Date.now();
+      let pushesInWindow = 0;
+      const paceWebKitHistoryPush = async () => {
+        if (browserName !== "webkit") return;
+        if (pushesInWindow >= 75) {
+          const elapsed = Date.now() - pushWindowStart;
+          if (elapsed < 10800) {
+            await page.waitForTimeout(10800 - elapsed);
+          }
+          pushWindowStart = Date.now();
+          pushesInWindow = 0;
+        }
+        pushesInWindow++;
+      };
 
       const TOTAL_ROUTES = 155;
 
@@ -24574,6 +24593,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       //    triggering refreshSlot on each to exercise pageCache, layoutCache, scrollCache,
       //    knownClientSlots, and slotOverrideCache LRU caps simultaneously.
       for (let i = 2; i <= TOTAL_ROUTES; i++) {
+        await paceWebKitHistoryPush();
         await page.evaluate(
           (id) => (window as any).__Z1_SOAK__.push(`/t-z-soak/${id}`),
           i
@@ -24637,6 +24657,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       expect(cacheStats.hasEvictedLayout1).toBe(false);
 
       // 4. Eviction Recovery via soft push to genuinely LRU-evicted /t-z-soak/1
+      await paceWebKitHistoryPush();
       await page.evaluate(() =>
         (window as any).__Z1_SOAK__.push("/t-z-soak/1")
       );
@@ -24661,6 +24682,7 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       });
       try {
         for (let i = TOTAL_ROUTES + 1; i <= TOTAL_ROUTES + 20; i++) {
+          await paceWebKitHistoryPush();
           await page.evaluate(
             (id) => (window as any).__Z1_SOAK__.push(`/t-z-soak/${id}`),
             i

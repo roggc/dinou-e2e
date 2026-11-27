@@ -168,7 +168,7 @@ function isSlotNavigationAbortError(err) {
     /^(?:Load failed|Failed to fetch|NetworkError|The operation was aborted|Error in input stream)/i.test(
       msg.trim()
     ) ||
-    /____rsc_[a-z_]+____.*due to access control checks/i.test(msg)
+    /____(?:rsc_[a-z_]+|server_function)____.*due to access control checks/i.test(msg)
   );
 }
 

@@ -6,7 +6,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 const projectRoot = process.cwd();
 const serverPagePath = path.resolve(projectRoot, "src/t-hmr-test/page.tsx");
@@ -199,7 +199,11 @@ async function runHmrTests() {
       console.log("  🛑 Shutting down spawned dev server...");
       try {
         if (process.platform === "win32") {
-          spawn("taskkill", ["/pid", devServerProcess.pid.toString(), "/f", "/t"]);
+          spawnSync(
+            "taskkill",
+            ["/pid", devServerProcess.pid.toString(), "/f", "/t"],
+            { stdio: "ignore", timeout: 5000 }
+          );
         } else {
           devServerProcess.kill("SIGTERM");
         }

@@ -263,8 +263,18 @@ test.describe("Dinou Multi-Bundler & Dual-Mode Vendoring E2E", () => {
         await page.getByTestId("double-btn").click();
         await expect(valBadge).toHaveText("6");
       } finally {
-        if (serverProc && !serverProc.killed) {
-          serverProc.kill();
+        if (serverProc && serverProc.exitCode === null) {
+          try {
+            if (process.platform === "win32" && serverProc.pid) {
+              spawnSync(
+                "taskkill",
+                ["/pid", String(serverProc.pid), "/f", "/t"],
+                { stdio: "ignore", timeout: 5000 }
+              );
+            } else {
+              serverProc.kill("SIGTERM");
+            }
+          } catch {}
         }
         try {
           fs.rmSync(fixtureDir, {

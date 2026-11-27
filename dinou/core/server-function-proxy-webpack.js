@@ -108,11 +108,22 @@ function createServerFunctionProxy(id) {
           __dinou_codec: 1,
         });
       }
-      const res = await fetch("/____server_function____", {
-        method: "POST",
-        headers,
-        body,
-      });
+      let res;
+      try {
+        res = await fetch("/____server_function____", {
+          method: "POST",
+          headers,
+          body,
+        });
+      } catch (err) {
+        if (
+          typeof window !== "undefined" &&
+          window.__DINOU_STATIC_EXPORT_UNLOADING__
+        ) {
+          return new Promise(() => {});
+        }
+        throw err;
+      }
 
       if (!res.ok) {
         let errorMessage = "Server function failed";
@@ -142,6 +153,9 @@ function createServerFunctionProxy(id) {
       // Check header first
       const redirectUrl = res.headers.get("X-Dinou-Redirect");
       if (redirectUrl) {
+        try {
+          res.body?.cancel?.().catch(() => {});
+        } catch {}
         executeRedirect(redirectUrl);
         return Promise.resolve();
       }
