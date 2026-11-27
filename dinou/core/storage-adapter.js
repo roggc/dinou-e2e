@@ -619,6 +619,46 @@ class CloudflareKVStorage extends StorageAdapter {
     );
   }
 
+  async listSlotMetadataEntries() {
+    const kv = this._getKv();
+    if (!kv || typeof kv.list !== "function") return null;
+    try {
+      const bySlot = new Map();
+      let cursor = undefined;
+      while (true) {
+        const options = { prefix: "slots/" };
+        if (cursor) options.cursor = cursor;
+        const res = await kv.list(options);
+        if (res && Array.isArray(res.keys)) {
+          for (const k of res.keys) {
+            if (!k || typeof k.name !== "string") continue;
+            const key = k.name.replace(/\\/g, "/");
+            const m = key.match(/^slots\/([^/]+)\/(slot\.json|slot\.metadata\.json)$/);
+            if (!m) continue;
+            const slotDirId = m[1];
+            const prev = bySlot.get(slotDirId);
+            const inlineMeta =
+              k.metadata && typeof k.metadata === "object" ? k.metadata : null;
+            if (!prev || (!prev.metadata && inlineMeta) || m[2] === "slot.metadata.json") {
+              bySlot.set(slotDirId, {
+                slotDirId,
+                key,
+                metadata: inlineMeta || prev?.metadata || null,
+              });
+            }
+          }
+        }
+        if (!res || res.list_complete !== false || !res.cursor) {
+          break;
+        }
+        cursor = res.cursor;
+      }
+      return bySlot;
+    } catch (e) {
+      return null;
+    }
+  }
+
   async keys(prefix = "") {
     const kv = this._getKv();
     if (!kv || typeof kv.list !== "function") return [];
@@ -665,10 +705,71 @@ class MemoryStorage extends StorageAdapter {
     super();
     this.store = new Map();
     this.hydrateFromDisk = Boolean(options && options.hydrateFromDisk);
+    this._slotTagIndex = new Map();
+    this._slotTagsById = new Map();
   }
 
   _cleanKey(key) {
     return String(key || "").replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
+  }
+
+  _updateSlotTagIndex(cleanKey, content, metadata) {
+    const m = cleanKey.match(/^slots\/([^/]+)\/(slot\.json|slot\.metadata\.json)$/);
+    if (!m) return;
+    const dirName = m[1];
+    let meta = metadata;
+    if (!meta && m[2] === "slot.metadata.json" && typeof content === "string") {
+      try {
+        meta = JSON.parse(content);
+      } catch (e) {}
+    }
+    const canonicalId = (meta && meta.slotId) || dirName;
+    const nextTags = new Set([canonicalId]);
+    if (meta && Array.isArray(meta.tags)) {
+      for (const t of meta.tags) {
+        if (t) nextTags.add(t);
+      }
+    }
+    const prevTags = this._slotTagsById.get(canonicalId);
+    if (prevTags) {
+      for (const oldTag of prevTags) {
+        if (!nextTags.has(oldTag)) {
+          const s = this._slotTagIndex.get(oldTag);
+          if (s) {
+            s.delete(canonicalId);
+            if (s.size === 0) this._slotTagIndex.delete(oldTag);
+          }
+        }
+      }
+    }
+    for (const tag of nextTags) {
+      if (!this._slotTagIndex.has(tag)) {
+        this._slotTagIndex.set(tag, new Set());
+      }
+      this._slotTagIndex.get(tag).add(canonicalId);
+    }
+    this._slotTagsById.set(canonicalId, nextTags);
+  }
+
+  _removeSlotFromTagIndex(cleanKey) {
+    const m = cleanKey.match(/^slots\/([^/]+)\/(slot\.json|slot\.metadata\.json)$/);
+    if (!m) return;
+    const dirName = m[1];
+    const prevTags = this._slotTagsById.get(dirName);
+    if (prevTags) {
+      for (const oldTag of prevTags) {
+        const s = this._slotTagIndex.get(oldTag);
+        if (s) {
+          s.delete(dirName);
+          if (s.size === 0) this._slotTagIndex.delete(oldTag);
+        }
+      }
+      this._slotTagsById.delete(dirName);
+    }
+  }
+
+  getSlotTagIndex() {
+    return this._slotTagIndex;
   }
 
   async get(key) {
@@ -685,6 +786,9 @@ class MemoryStorage extends StorageAdapter {
     this._unmarkDeleted(key);
     const cleanKey = this._cleanKey(key);
     this.store.set(cleanKey, { content, metadata });
+    if (cleanKey.startsWith("slots/")) {
+      this._updateSlotTagIndex(cleanKey, content, metadata);
+    }
     if (cleanKey.endsWith("/index.html")) {
       const folderKey = cleanKey.slice(0, -11);
       this.store.set(folderKey, { content, metadata });
@@ -702,6 +806,9 @@ class MemoryStorage extends StorageAdapter {
     this._markDeleted(key);
     const cleanKey = this._cleanKey(key);
     this.store.delete(cleanKey);
+    if (cleanKey.startsWith("slots/")) {
+      this._removeSlotFromTagIndex(cleanKey);
+    }
     if (cleanKey.endsWith("/index.html")) {
       this.store.delete(cleanKey.slice(0, -11));
     } else if (cleanKey === "index.html") {

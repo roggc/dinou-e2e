@@ -845,18 +845,21 @@ async function revalidatePage(reqPath, internalOptions = {}) {
           ...(Array.isArray(currentMeta?.slotTags) ? currentMeta.slotTags : []),
           ...(Array.isArray(currentMeta?.tags) ? currentMeta.tags : []),
         ])
-      );
-      for (const t of initTags) {
-        if (!t) continue;
-        try {
-          const invAt =
-            typeof storage.getTagInvalidatedAtAsync === "function"
-              ? await storage.getTagInvalidatedAtAsync(t)
-              : typeof storage.getTagInvalidatedAt === "function"
-              ? storage.getTagInvalidatedAt(t)
-              : 0;
-          initialTagInvMap.set(t, Number(invAt || 0));
-        } catch (e) {}
+      ).filter(Boolean);
+      if (initTags.length > 0) {
+        await Promise.all(
+          initTags.map(async (t) => {
+            try {
+              const invAt =
+                typeof storage.getTagInvalidatedAtAsync === "function"
+                  ? await storage.getTagInvalidatedAtAsync(t)
+                  : typeof storage.getTagInvalidatedAt === "function"
+                  ? storage.getTagInvalidatedAt(t)
+                  : 0;
+              initialTagInvMap.set(t, Number(invAt || 0));
+            } catch (e) {}
+          })
+        );
       }
     }
     const now = Date.now();
@@ -1345,19 +1348,23 @@ async function revalidatePage(reqPath, internalOptions = {}) {
             ...(Array.isArray(currentMeta.slotTags) ? currentMeta.slotTags : []),
             ...(Array.isArray(currentMeta.tags) ? currentMeta.tags : []),
           ])
-        );
-        for (const t of tagsToCheck) {
-          if (!t) continue;
-          const invAt =
-            typeof storage.getTagInvalidatedAtAsync === "function"
-              ? await storage.getTagInvalidatedAtAsync(t)
-              : typeof storage.getTagInvalidatedAt === "function"
-              ? storage.getTagInvalidatedAt(t)
-              : 0;
-          const baselineInvAt = initialTagInvMap.has(t)
-            ? initialTagInvMap.get(t)
-            : now;
-          if (Number(invAt || 0) > baselineInvAt) {
+        ).filter(Boolean);
+        if (tagsToCheck.length > 0) {
+          const tagInvResults = await Promise.all(
+            tagsToCheck.map(async (t) => {
+              const invAt =
+                typeof storage.getTagInvalidatedAtAsync === "function"
+                  ? await storage.getTagInvalidatedAtAsync(t)
+                  : typeof storage.getTagInvalidatedAt === "function"
+                  ? storage.getTagInvalidatedAt(t)
+                  : 0;
+              const baselineInvAt = initialTagInvMap.has(t)
+                ? initialTagInvMap.get(t)
+                : now;
+              return Number(invAt || 0) > baselineInvAt;
+            })
+          );
+          if (tagInvResults.some(Boolean)) {
             return true;
           }
         }
@@ -1685,18 +1692,21 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
             ...(Array.isArray(currentMeta?.slotTags) ? currentMeta.slotTags : []),
             ...(Array.isArray(currentMeta?.tags) ? currentMeta.tags : []),
           ])
-        );
-        for (const t of initLayoutTags) {
-          if (!t) continue;
-          try {
-            const invAt =
-              typeof storage.getTagInvalidatedAtAsync === "function"
-                ? await storage.getTagInvalidatedAtAsync(t)
-                : typeof storage.getTagInvalidatedAt === "function"
-                ? storage.getTagInvalidatedAt(t)
-                : 0;
-            initialLayoutTagInvMap.set(t, Number(invAt || 0));
-          } catch (e) {}
+        ).filter(Boolean);
+        if (initLayoutTags.length > 0) {
+          await Promise.all(
+            initLayoutTags.map(async (t) => {
+              try {
+                const invAt =
+                  typeof storage.getTagInvalidatedAtAsync === "function"
+                    ? await storage.getTagInvalidatedAtAsync(t)
+                    : typeof storage.getTagInvalidatedAt === "function"
+                    ? storage.getTagInvalidatedAt(t)
+                    : 0;
+                initialLayoutTagInvMap.set(t, Number(invAt || 0));
+              } catch (e) {}
+            })
+          );
         }
       }
       const now = Date.now();
@@ -2206,19 +2216,23 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
               ...(Array.isArray(currentMeta.slotTags) ? currentMeta.slotTags : []),
               ...(Array.isArray(currentMeta.tags) ? currentMeta.tags : []),
             ])
-          );
-          for (const t of lAllTags) {
-            if (!t) continue;
-            const invAt =
-              typeof storage.getTagInvalidatedAtAsync === "function"
-                ? await storage.getTagInvalidatedAtAsync(t)
-                : typeof storage.getTagInvalidatedAt === "function"
-                ? storage.getTagInvalidatedAt(t)
-                : 0;
-            const baselineInvAt = initialLayoutTagInvMap.has(t)
-              ? initialLayoutTagInvMap.get(t)
-              : now;
-            if (Number(invAt || 0) > baselineInvAt) {
+          ).filter(Boolean);
+          if (lAllTags.length > 0) {
+            const lTagInvResults = await Promise.all(
+              lAllTags.map(async (t) => {
+                const invAt =
+                  typeof storage.getTagInvalidatedAtAsync === "function"
+                    ? await storage.getTagInvalidatedAtAsync(t)
+                    : typeof storage.getTagInvalidatedAt === "function"
+                    ? storage.getTagInvalidatedAt(t)
+                    : 0;
+                const baselineInvAt = initialLayoutTagInvMap.has(t)
+                  ? initialLayoutTagInvMap.get(t)
+                  : now;
+                return Number(invAt || 0) > baselineInvAt;
+              })
+            );
+            if (lTagInvResults.some(Boolean)) {
               return true;
             }
           }
