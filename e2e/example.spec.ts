@@ -3371,13 +3371,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // El componente @toxic/page.tsx falló, así que @toxic/error.tsx debió tomar su lugar.
       const dangerZone = page.locator("#danger-zone");
       await expect(dangerZone).toContainText("Ha ocurrido un error parcial");
-      // if (isProd) {
-      //   await expect(dangerZone).toContainText(
-      //     "An error occurred in the Server Components render. The specific message is omitted in production builds to avoid leaking sensitive details. A digest property is included on this error instance which may provide additional details about the nature of the error."
-      //   );
-      // } else {
-      await expect(dangerZone).toContainText("EXPLOSIÓN EN EL SLOT");
-      // }
+      if (isProd) {
+        await expect(dangerZone).toContainText(
+          "An error occurred in the Server Components render"
+        );
+      } else {
+        await expect(dangerZone).toContainText("EXPLOSIÓN EN EL SLOT");
+      }
     });
   });
   test.describe("Dinou Slots Error Handling (Granularity - Error page)", () => {
@@ -3399,13 +3399,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // El componente @toxic/page.tsx falló, así que @toxic/error.tsx debió tomar su lugar.
       const dangerZone = page.locator("#danger-zone");
       await expect(dangerZone).toContainText("Ha ocurrido un error parcial");
-      // if (isProd) {
-      //   await expect(dangerZone).toContainText(
-      //     "An error occurred in the Server Components render. The specific message is omitted in production builds to avoid leaking sensitive details. A digest property is included on this error instance which may provide additional details about the nature of the error."
-      //   );
-      // } else {
-      await expect(dangerZone).toContainText("EXPLOSIÓN EN EL SLOT");
-      // }
+      if (isProd) {
+        await expect(dangerZone).toContainText(
+          "An error occurred in the Server Components render"
+        );
+      } else {
+        await expect(dangerZone).toContainText("EXPLOSIÓN EN EL SLOT");
+      }
     });
   });
 
@@ -4742,7 +4742,13 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // Localized slot should crash and display boundary error
       await expect(page.locator("body")).toContainText("Localized Slot Crash Caught");
-      await expect(page.locator("body")).toContainText("Boom! Simulated server component rendering crash in Slot!");
+      if (isProd) {
+        await expect(page.locator("body")).toContainText(
+          "An error occurred in the Server Components render"
+        );
+      } else {
+        await expect(page.locator("body")).toContainText("Boom! Simulated server component rendering crash in Slot!");
+      }
     });
 
     test("Redirects: SSR and Server Action redirection flows", async ({ page }) => {
@@ -4887,11 +4893,18 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       // Click server function crash trigger
       await page.click("text=5. Call Server Function Action");
 
-      // Message should show in target element (Bug #2 fix now propagates the actual thrown err.message)
-      await expect(page.locator("body")).toContainText(
-        "Action Rejected: 💥 Rejection from 'use server' Server Function action!",
-        { timeout: 15000 }
-      );
+      // Message should show in target element (sanitized in production per Check #Z2, full err.message in dev)
+      if (isProd) {
+        await expect(page.locator("body")).toContainText(
+          "Action Rejected: Internal Server Error",
+          { timeout: 15000 }
+        );
+      } else {
+        await expect(page.locator("body")).toContainText(
+          "Action Rejected: 💥 Rejection from 'use server' Server Function action!",
+          { timeout: 15000 }
+        );
+      }
       // Main page should not crash
       await expect(page.locator("h2")).toContainText("Error Handling Lab", { timeout: 15000 });
     });
@@ -4907,7 +4920,14 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
 
       // Only the slot should show the error
       await expect(page.locator("body")).toContainText("Slot Error Caught", { timeout: 15000 });
-      await expect(page.locator("body")).toContainText("Parallel Slot component crashed during layout render pass", { timeout: 15000 });
+      if (isProd) {
+        await expect(page.locator("body")).toContainText(
+          "An error occurred in the Server Components render",
+          { timeout: 15000 }
+        );
+      } else {
+        await expect(page.locator("body")).toContainText("Parallel Slot component crashed during layout render pass", { timeout: 15000 });
+      }
 
       // Main content is intact
       await expect(page.locator("h2")).toContainText("Error Handling Lab", { timeout: 15000 });
