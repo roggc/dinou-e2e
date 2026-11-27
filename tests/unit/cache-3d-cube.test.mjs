@@ -1054,10 +1054,10 @@ assert.equal(textById(slug2, "asym-isg-l2"), "521", "Dynamic L2 executes fresh 5
 assert.equal(textById(slug2, "asym-slug"), "alpha:301", "Cold-populated ISG page stays cached 301");
 
 // F. Dynamic /____rsc_layout____ soft-navigation endpoint reuses static L1 while executing dynamic L2 fresh
-await callOp("write", { asymL1: 999, asymDynL2: 525, asymPage: 999 });
+await callOp("write", { asymL1: 999888777, asymDynL2: 525, asymPage: 999888777 });
 const dynLayoutRsc = await getHtml("/____rsc_layout____/asym/dyn");
 assert.ok(dynLayoutRsc.includes("525"), "Dynamic /____rsc_layout____ must execute L2 fresh (525)");
-assert.ok(dynLayoutRsc.includes("100") && !dynLayoutRsc.includes("999"), "Dynamic /____rsc_layout____ must reuse static L1 (100) without 999 leak");
+assert.ok(dynLayoutRsc.includes("100") && !dynLayoutRsc.includes("999888777"), "Dynamic /____rsc_layout____ must reuse static L1 (100) without poison leak");
 
 console.log("CUBE_3D_INT_OK");
 `
@@ -1382,7 +1382,7 @@ const get = async (u, headers = {}) => {
 };
 
 // A. S->D->S->S: poison L1, L3, PageS; bump L2
-writeS({ altL1: 999, altL2: 501, altL3: 999, altPageS: 999 });
+writeS({ altL1: 999888777, altL2: 501, altL3: 999888777, altPageS: 999888777 });
 const altS = await get("/alt/dyn-l2/static-l3");
 assert.equal(textById(altS, "alt-l1"), "100");
 assert.equal(textById(altS, "alt-l2"), "501");
@@ -1391,7 +1391,7 @@ assert.equal(textById(altS, "alt-ps"), "100");
 
 // Soft-nav /____rsc_page____ for PageS must NOT be poisoned by dynamic L2!
 const altPageRsc = await get("/____rsc_page____/alt/dyn-l2/static-l3");
-assert.ok(altPageRsc.includes("100") && !altPageRsc.includes("999"), "page.rsc must stay cached 100");
+assert.ok(altPageRsc.includes("100") && !altPageRsc.includes("999888777"), "page.rsc must stay cached 100");
 
 // Revalidate L3 under dynamic L2 -> updates ONLY L3 without freezing L2 or touching L1
 writeS({ altL1: 999, altL2: 502, altL3: 603, altPageS: 999 });
@@ -1674,11 +1674,11 @@ assert.equal(textById(deepHtml2, "d-mid"), "501");
 assert.equal(textById(deepHtml2, "d-inner"), "100");
 
 // 2. Shared slot across route-a and route-b: refreshSlot triggered on route-a MUST propagate to route-b (SSR AND soft-nav page.rsc)!
-writeS({ sharedHostA: 999, sharedHostB: 999, sharedSlot: 601 });
+writeS({ sharedHostA: 999888777, sharedHostB: 999888777, sharedSlot: 601 });
 await get("/____rsc_slot____/s2-shared?fresh=1", { "x-dinou-current-path": "/shared-a" });
 const htmlA = await get("/shared-a");
 const rscB = await get("/____rsc_page____/shared-b");
-assert.ok(rscB.includes("601") && !rscB.includes("999"), "soft-nav /____rsc_page____/shared-b MUST reflect refreshed shared slot without re-executing shared-b host!");
+assert.ok(rscB.includes("601") && !rscB.includes("999888777"), "soft-nav /____rsc_page____/shared-b MUST reflect refreshed shared slot without re-executing shared-b host!");
 const htmlB = await get("/shared-b");
 assert.equal(textById(htmlA, "sa-host"), "100", "shared-a host stays frozen");
 assert.equal(textById(htmlA, "s-val"), "601", "shared-a shows refreshed shared slot");
@@ -3501,13 +3501,13 @@ const textById = (html, id) => {
 
 // 1. Poison ALL static shells & slots; bump ONLY dynamic L2 / @panel host / PPR holes!
 writeS({
-  l1S: 999, l1Sl: 999, l1H: 201,
-  sbS: 999, sbSl: 999, sbH: 202,
-  dL2H: 203, dPanH: 204, dPanSl: 999,
-  dPS: 999, dPSl: 999, dPH: 205,
-  aL2S: 999, aPanS: 999, aPanSl: 999, aPanH: 206,
-  aPS: 999, aPH: 207,
-  errL1S: 999, errL1H: 208, errDynL2: 209, errPS: 999,
+  l1S: 999888777, l1Sl: 999888777, l1H: 201,
+  sbS: 999888777, sbSl: 999888777, sbH: 202,
+  dL2H: 203, dPanH: 204, dPanSl: 999888777,
+  dPS: 999888777, dPSl: 999888777, dPH: 205,
+  aL2S: 999888777, aPanS: 999888777, aPanSl: 999888777, aPanH: 206,
+  aPS: 999888777, aPH: 207,
+  errL1S: 999888777, errL1H: 208, errDynL2: 209, errPS: 999888777,
 });
 
 const dynHtml = await get("/pa/dyn-l2?p=d1", { cookie: "u=vega; sb=sbA" });
@@ -3550,18 +3550,18 @@ assert.equal(textById(dynAfterSlot, "dpan-h"), "rigel-204");
 assert.equal(textById(dynAfterSlot, "dp-s"), "100");
 
 // 4. Surgical revalidateTag on @sidebar slot -> MUST reflect in BOTH /____rsc_layout____/pa/dyn-l2 AND /____rsc_layout____/pa/alt-l2 while L1 & @sidebar shells stay frozen!
-writeS({ l1S: 888, sbS: 888, sbSl: 401, dL2H: 402, dPanH: 403 });
+writeS({ l1S: 888777666, sbS: 888777666, sbSl: 401, dL2H: 402, dPanH: 403 });
 await revalidateTag("p3s3-sb-slot-tag");
 
 const dynLayoutRsc = await get("/____rsc_layout____/pa/dyn-l2", { cookie: "u=nova; sb=sbC" });
 assert.ok(dynLayoutRsc.includes('"id":"sb-sl","children":401') || dynLayoutRsc.includes('401'), "Soft-nav /____rsc_layout____/pa/dyn-l2 MUST reflect fresh @sidebar slot 401 after revalidateTag!");
-assert.ok(!dynLayoutRsc.includes("888"), "Soft-nav /____rsc_layout____/pa/dyn-l2 MUST NOT re-execute poisoned L1/@sidebar shells 888!");
+assert.ok(!dynLayoutRsc.includes("888777666"), "Soft-nav /____rsc_layout____/pa/dyn-l2 MUST NOT re-execute poisoned L1/@sidebar shells!");
 assert.ok(dynLayoutRsc.includes("402") && dynLayoutRsc.includes("403"), "Soft-nav /____rsc_layout____/pa/dyn-l2 must include fresh dynamic L2 & @panel");
 assert.ok(dynLayoutRsc.includes("sbC-202"), "Soft-nav /____rsc_layout____/pa/dyn-l2 must splice live @sidebar PPR hole");
 
 const altLayoutRsc = await get("/____rsc_layout____/pa/alt-l2", { cookie: "u=nova; sb=sbC" });
 assert.ok(altLayoutRsc.includes("401"), "Soft-nav /____rsc_layout____/pa/alt-l2 MUST reflect fresh @sidebar slot 401!");
-assert.ok(!altLayoutRsc.includes("888"), "Soft-nav /____rsc_layout____/pa/alt-l2 MUST NOT re-execute poisoned L1/@sidebar shells 888!");
+assert.ok(!altLayoutRsc.includes("888777666"), "Soft-nav /____rsc_layout____/pa/alt-l2 MUST NOT re-execute poisoned L1/@sidebar shells!");
 assert.ok(altLayoutRsc.includes("nova-206"), "Soft-nav /____rsc_layout____/pa/alt-l2 must splice live alt @panel PPR hole");
 
 // 5. @sidebar/error.tsx error isolation inside asymmetric PPR L1 -> Dynamic L2 -> Static Page
@@ -3575,7 +3575,7 @@ assert.equal(textById(errHtml, "ep-s"), "100", "Static Page underneath must stay
 const errLayoutRsc = await get("/____rsc_layout____/pa-err/dyn", { cookie: "u=lyra" });
 assert.ok(errLayoutRsc.includes("isolated:sidebar-boom"), "Soft-nav /____rsc_layout____/pa-err/dyn must preserve @sidebar/error.tsx fallback");
 assert.ok(errLayoutRsc.includes("lyra-208"), "Soft-nav /____rsc_layout____/pa-err/dyn must still splice L1 PPR hole without crashing on throwing @sidebar!");
-assert.ok(!errLayoutRsc.includes("999"), "Soft-nav /____rsc_layout____/pa-err/dyn must NOT re-execute poisoned L1 shell");
+assert.ok(!errLayoutRsc.includes("999888777"), "Soft-nav /____rsc_layout____/pa-err/dyn must NOT re-execute poisoned L1 shell");
 
 console.log("PHASE3_STAGE3_PARALLEL_ASYM_OK");
 `
@@ -4374,12 +4374,12 @@ assert.equal(badGroupUrl.status, 404, "Public URL with literal (alpha) must stay
 
 // 2. Poison ALL static shells & slots for outer/(alpha)/(beta); bump ONLY dynamic holes!
 writeS({
-  outerS: 999, outerSl: 999, outerH: 201,
-  alphaS: 999, alphaSl: 999, alphaH: 202,
-  promoS: 999, promoH: 203,
-  promo2S: 999, promo2H: 204,
-  betaS: 999, betaSl: 999, betaH: 205,
-  settingsS: 999, settingsH: 206,
+  outerS: 999888777, outerSl: 999888777, outerH: 201,
+  alphaS: 999888777, alphaSl: 999888777, alphaH: 202,
+  promoS: 999888777, promoH: 203,
+  promo2S: 999888777, promo2H: 204,
+  betaS: 999888777, betaSl: 999888777, betaH: 205,
+  settingsS: 999888777, settingsH: 206,
 });
 
 const promoHtml = await fetchRaw("/grp/promo?q=liveA");
@@ -4413,13 +4413,13 @@ const alphaRsc = await fetchRaw("/____rsc_layout____/grp/(alpha)?q=rscA");
 assert.equal(alphaRsc.status, 200);
 assert.ok(alphaRsc.text.includes("grp-alpha") && !alphaRsc.text.includes("grp-beta"), "(alpha) layout RSC must contain ONLY alpha");
 assert.ok(alphaRsc.text.includes("rscA-202"), "(alpha) layout RSC must splice live alpha hole");
-assert.ok(!alphaRsc.text.includes("999"), "(alpha) layout RSC must NOT re-execute poisoned shells");
+assert.ok(!alphaRsc.text.includes("999888777"), "(alpha) layout RSC must NOT re-execute poisoned shells");
 
 const betaRsc = await fetchRaw("/____rsc_layout____/grp/(beta)?q=rscB");
 assert.equal(betaRsc.status, 200);
 assert.ok(betaRsc.text.includes("grp-beta") && !betaRsc.text.includes("grp-alpha"), "(beta) layout RSC must contain ONLY beta");
 assert.ok(betaRsc.text.includes("rscB-205"), "(beta) layout RSC must splice live beta hole");
-assert.ok(!betaRsc.text.includes("999"), "(beta) layout RSC must NOT re-execute poisoned shells");
+assert.ok(!betaRsc.text.includes("999888777"), "(beta) layout RSC must NOT re-execute poisoned shells");
 
 // 3. Surgical refreshSlot on (alpha)'s slot persists into (alpha)/shell.layout.own.json without touching (beta) or outer!
 writeS({ alphaSl: 301 });
@@ -4493,10 +4493,10 @@ assert.ok(fs.existsSync(path.resolve(".dinou/dist2/ca/docs/v2/shell.layout.own.j
 
 // Poison ALL catch-all shells & slots; bump ONLY dynamic holes!
 writeS({
-  caOuterS: 888, caOuterSl: 888, caOuterH: 501,
-  caRootLS: 888, caRootLSl: 888, caRootLH: 502, caRootPS: 888, caRootPH: 503,
-  caDocsLS: 888, caDocsLSl: 888, caDocsLH: 504, caDocsPS: 888, caDocsPH: 505,
-  caV2LS: 888, caV2LSl: 888, caV2LH: 506, caV2PS: 888, caV2PH: 507,
+  caOuterS: 888777666, caOuterSl: 888777666, caOuterH: 501,
+  caRootLS: 888777666, caRootLSl: 888777666, caRootLH: 502, caRootPS: 888777666, caRootPH: 503,
+  caDocsLS: 888777666, caDocsLSl: 888777666, caDocsLH: 504, caDocsPS: 888777666, caDocsPH: 505,
+  caV2LS: 888777666, caV2LSl: 888777666, caV2LH: 506, caV2PS: 888777666, caV2PH: 507,
 });
 
 const caRoot2 = await fetchRaw("/ca?q=warm0");
@@ -4511,7 +4511,7 @@ assert.equal(textById(caRoot2.text, "cap-h"), "root:warm0-503");
 const caRootRscEncoded = await fetchRaw("/____rsc_layout____/ca/%5B%5B...slug%5D%5D?q=enc0");
 assert.equal(caRootRscEncoded.status, 200);
 assert.ok(caRootRscEncoded.text.includes("root:enc0-502"), "Percent-encoded [[...slug]] layout RSC must resolve & splice live hole");
-assert.ok(!caRootRscEncoded.text.includes("888"), "Percent-encoded [[...slug]] layout RSC must NOT re-execute poisoned shells");
+assert.ok(!caRootRscEncoded.text.includes("888777666"), "Percent-encoded [[...slug]] layout RSC must NOT re-execute poisoned shells");
 
 // Surgical slot refresh + revalidateTag on 0-seg [[...slug]] MUST NOT touch outer, /docs, or /docs/v2!
 writeS({ caRootLSl: 601 });
@@ -4917,8 +4917,9 @@ const pageBoundRes = await callSfJson(pageBoundRef.id, [...pageBoundRef.bound, "
 assert.equal(pageBoundRes.status, 200, "Page bound closure failed: " + pageBoundRes.text);
 assert.ok(pageBoundRes.text.includes("PAGE:p-item:s100:from-client"), "Unexpected Page bound reply: " + pageBoundRes.text);
 
-// 3. Poison static shells (l1S=999, pS=999); invoke useActionState FormData SF -> mutates pSl=301 + revalidateTag!
-writeS({ l1S: 999, pS: 999, hS: 205 });
+// 3. Poison static shells (l1S=999888777, pS=999888777); invoke useActionState FormData SF -> mutates pSl=301 + revalidateTag!
+//    Use a 9-digit sentinel so it can never collide with an 8-char SHA-1 / esbuild chunk hash in the RSC payload.
+writeS({ l1S: 999888777, pS: 999888777, hS: 205 });
 const fd1 = new FormData();
 fd1.append("msg", "action-state-v2");
 fd1.append("nextSlot", "301");
@@ -4941,7 +4942,8 @@ const slotRefreshRes = await rscMod.handleRequest(
 assert.equal(slotRefreshRes.status, 200);
 const slotRefreshBody = await slotRefreshRes.text();
 assert.ok(slotRefreshBody.includes("p-item:s301"), "Refreshed slot RSC must stream new bound arg p-item:s301");
-assert.ok(!slotRefreshBody.includes("999"), "Refreshed slot must NOT leak poisoned page shell 999");
+assert.ok(!slotRefreshBody.includes("999888777"), "Refreshed slot must NOT leak poisoned page shell 999888777: " + slotRefreshBody);
+assert.ok(!slotRefreshBody.includes('"id":"sf-p"') && !slotRefreshBody.includes('"id":"p-s"'), "Refreshed slot must NOT leak outer page shell DOM: " + slotRefreshBody);
 
 const refreshedSlotJson = fs.readFileSync(path.resolve(".dinou/dist2/slots/p4s3-page-slot/slot.json"), "utf8");
 const pageBoundRef2 = extractBoundActionRef(refreshedSlotJson, "page\\\\.tsx");
@@ -5700,38 +5702,38 @@ await get("/qp/asym?tab=init&sort=init");
 
 // Poison ALL static shells & cached slots; mutate dynamic holes & L2 host!
 writeS({
-  l1S: 999, l1Sl: 999, l1H: 201,
-  pS: 999, pSl: 999, pH: 202,
-  l2H: 203, l2Sl: 999,
-  apS: 999, apSl: 999, apH: 204,
+  l1S: 999888777, l1Sl: 999888777, l1H: 201,
+  pS: 999888777, pSl: 999888777, pH: 202,
+  l2H: 203, l2Sl: 999888777,
+  apS: 999888777, apSl: 999888777, apH: 204,
 });
 
 // 1. Pure PPR RSC layout & page transitions (?tab=overview&sort=asc -> ?tab=metrics&sort=desc -> clean)
 const layOver = await get("/____rsc_layout____/qp?tab=overview&sort=asc&____v____=1");
 assert.ok(layOver.includes("overview-201-CLEAN"), "L1 PPR RSC must splice ?tab=overview without leaking ____v____");
-assert.ok(!layOver.includes("999"), "L1 PPR RSC must keep L1 shell & slot frozen (no 999)");
+assert.ok(!layOver.includes("999888777"), "L1 PPR RSC must keep L1 shell & slot frozen");
 
 const layMet = await get("/____rsc_layout____/qp?tab=metrics&sort=desc&____v____=2");
 assert.ok(layMet.includes("metrics-201-CLEAN"), "L1 PPR RSC must splice ?tab=metrics");
-assert.ok(!layMet.includes("999"));
+assert.ok(!layMet.includes("999888777"));
 
 const pageMet = await get("/____rsc_page____/qp?tab=metrics&sort=desc&____v____=2");
 assert.ok(pageMet.includes("metrics:desc-202-CLEAN"), "Page PPR RSC must splice ?tab=metrics&sort=desc");
-assert.ok(!pageMet.includes("999"), "Page PPR RSC must keep Page shell & slot frozen (no 999)");
+assert.ok(!pageMet.includes("999888777"), "Page PPR RSC must keep Page shell & slot frozen");
 
 const pageClean = await get("/____rsc_page____/qp?____v____=3");
 assert.ok(pageClean.includes("default:none-202-CLEAN"), "Clean Page PPR RSC must render default:none");
-assert.ok(!pageClean.includes("999"));
+assert.ok(!pageClean.includes("999888777"));
 
 // 2. Asymmetric 3D PPR (L1 Static PPR -> L2 Dynamic -> Page Static PPR) RSC layout & page transitions
 const asymLayMet = await get("/____rsc_layout____/qp/asym?tab=metrics&sort=desc&____v____=4");
 assert.ok(asymLayMet.includes("metrics-201-CLEAN"), "Asym L1 PPR hole must update via /____rsc_layout____");
 assert.ok(asymLayMet.includes("metrics:desc-203"), "Asym L2 dynamic host must update via /____rsc_layout____");
-assert.ok(!asymLayMet.includes("999"), "Asym layout RSC must keep L1 shell/slot & L2 slot frozen (no 999)");
+assert.ok(!asymLayMet.includes("999888777"), "Asym layout RSC must keep L1 shell/slot & L2 slot frozen");
 
 const asymPageMet = await get("/____rsc_page____/qp/asym?tab=metrics&sort=desc&____v____=4");
 assert.ok(asymPageMet.includes("metrics:desc-204-CLEAN"), "Asym Page PPR hole must update via /____rsc_page____");
-assert.ok(!asymPageMet.includes("999"), "Asym page RSC must keep Page shell & slot frozen (no 999)");
+assert.ok(!asymPageMet.includes("999888777"), "Asym page RSC must keep Page shell & slot frozen");
 
 console.log("PHASE4_STAGE5_QUERY_PPR_OK");
 `
@@ -6007,7 +6009,7 @@ assert.equal(warmRes.status, 200);
 await warmRes.text();
 
 // Poison static shell & slow slot; bump holes!
-writeS({ shell: 999, shellSlot: 999, slowSlot: 999, holeA: 201, holeB: 202 });
+writeS({ shell: 999888777, shellSlot: 999888777, slowSlot: 999888777, holeA: 201, holeB: 202 });
 
 // 1. Staggered streaming arrival on handlePprResume: Fast Hole A MUST arrive BEFORE Slow Hole B!
 const stagRes = await rscMod.handleRequest(new Request("http://localhost/stag?fastMs=15&slowMs=300"), opts);
@@ -6086,7 +6088,7 @@ assert.ok(slotRefreshDone, "Expected Fast Hole A to trigger concurrent slot refr
 const slotRscText = await slotRefreshDone;
 assert.ok(slotRscText.includes("301"), "Mid-stream refreshSlot must return fresh 301");
 assert.ok(rscBuf.includes("slow-303"), "Slow Hole B must still complete cleanly during mid-stream refreshSlot");
-assert.ok(!rscBuf.includes("999"), "Static shell & frozen slow slot must never leak 999");
+assert.ok(!rscBuf.includes("999888777"), "Static shell & frozen slow slot must never leak poison");
 
 assert.equal(unhandled.length, 0);
 console.error = origErr;
