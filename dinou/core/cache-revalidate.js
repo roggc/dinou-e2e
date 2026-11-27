@@ -36,6 +36,22 @@ import {
 } from "./layout-composition.js";
 import { fetchCloudflareDist2Asset } from "./static-assets.js";
 
+let _cachedRevalLayoutsRef = null;
+let _cachedRevalLayoutsJson = "[]";
+
+function getRevalLayoutsJson() {
+  const knownLayouts =
+    (typeof globalThis !== "undefined" && globalThis.__DINOU_LAYOUTS__) || null;
+  if (!knownLayouts) return "[]";
+  if (knownLayouts === _cachedRevalLayoutsRef) {
+    return _cachedRevalLayoutsJson;
+  }
+  const serialized = JSON.stringify(knownLayouts);
+  _cachedRevalLayoutsRef = knownLayouts;
+  _cachedRevalLayoutsJson = serialized;
+  return serialized;
+}
+
 const INFLIGHT_LAYOUT_REVAL_KEY = Symbol.for("dinou.layout.inflight.revalidations");
 if (!globalThis[INFLIGHT_LAYOUT_REVAL_KEY]) {
   globalThis[INFLIGHT_LAYOUT_REVAL_KEY] = new Map();
@@ -1054,11 +1070,10 @@ async function revalidatePage(reqPath, internalOptions = {}) {
 
           const renderHtmlStream =
             typeof globalThis !== "undefined" && globalThis.__DINOU_RENDER_HTML_STREAM__;
-          const knownLayouts =
-            (typeof globalThis !== "undefined" && globalThis.__DINOU_LAYOUTS__) || [];
+          const knownLayoutsJson = getRevalLayoutsJson();
           const bootstrapScriptContent = isRoutePpr
-            ? `window.__DINOU_LAYOUTS__ = ${JSON.stringify(knownLayouts)};\nwindow.__DINOU_USE_STATIC__ = false;\nwindow.__DINOU_PPR__ = true;\nwindow.__DINOU_BUILD_ID__ = "${newGenTime}";\n`
-            : `window.__DINOU_LAYOUTS__ = ${JSON.stringify(knownLayouts)};\nwindow.__DINOU_USE_STATIC__ = true;\nwindow.__DINOU_BUILD_ID__ = "${newGenTime}";\n`;
+            ? `window.__DINOU_LAYOUTS__ = ${knownLayoutsJson};\nwindow.__DINOU_USE_STATIC__ = false;\nwindow.__DINOU_PPR__ = true;\nwindow.__DINOU_BUILD_ID__ = "${newGenTime}";\n`
+            : `window.__DINOU_LAYOUTS__ = ${knownLayoutsJson};\nwindow.__DINOU_USE_STATIC__ = true;\nwindow.__DINOU_BUILD_ID__ = "${newGenTime}";\n`;
           const assetManifest =
             (typeof globalThis !== "undefined" && globalThis.__DINOU_ASSET_MANIFEST__) || {};
           const rawMain = assetManifest["main.js"] || "/main.js";

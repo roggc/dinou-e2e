@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -659,5 +660,164 @@ test("OPT-4: FileSystemStorage.get()/has() minimal syscalls, directory EISDIR fa
     if (prevDinouDev === undefined) delete process.env.DINOU_DEV;
     else process.env.DINOU_DEV = prevDinouDev;
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("OPT-5: getDiscoveredLayouts() caches permanently in production, pre-serializes JSON in O(1), and preserves 1000ms DEV TTL", async () => {
+  const prevNodeEnv = process.env.NODE_ENV;
+  const prevDinouDev = process.env.DINOU_DEV;
+  const prevGlobalDev = globalThis.__DINOU_DEV__;
+  const prevGlobalLayouts = globalThis.__DINOU_LAYOUTS__;
+  const prevGlobalVfs = globalThis.__DINOU_VFS__;
+  const prevGlobalRouteMods = globalThis.__DINOU_ROUTE_MODULES__;
+  const origCwd = process.cwd();
+  const origDateNow = Date.now;
+  const origStringify = JSON.stringify;
+
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dinou-opt5-"));
+  const tmpSrc = path.join(tmpRoot, "src");
+  fs.mkdirSync(path.join(tmpSrc, "alpha"), { recursive: true });
+  fs.writeFileSync(path.join(tmpSrc, "layout.tsx"), "export default ({children}) => children;", "utf8");
+  fs.writeFileSync(path.join(tmpSrc, "alpha", "page.tsx"), "export default () => null;", "utf8");
+
+  let fakeNow = origDateNow();
+  Date.now = () => fakeNow;
+
+  try {
+    process.env.NODE_ENV = "production";
+    delete process.env.DINOU_DEV;
+    delete globalThis.__DINOU_DEV__;
+    delete globalThis.__DINOU_LAYOUTS__;
+    delete globalThis.__DINOU_VFS__;
+    delete globalThis.__DINOU_ROUTE_MODULES__;
+
+    const handlerMod = await import(
+      pathToFileURL(path.resolve(origCwd, "dinou/core/handler.js")).href
+    );
+    const pprMod = await import(
+      pathToFileURL(path.resolve(origCwd, "dinou/core/ppr-runtime.js")).href
+    );
+
+    process.chdir(tmpRoot);
+    handlerMod.clearDiscoveredLayoutsCache();
+
+    // 1. Production permanent cache: advancing Date.now by +5000ms and adding a new layout does NOT re-walk src/
+    const prodFirst = handlerMod.getDiscoveredLayouts();
+    assert.ok(Array.isArray(prodFirst) && prodFirst.includes(""));
+
+    fs.mkdirSync(path.join(tmpSrc, "beta"), { recursive: true });
+    fs.writeFileSync(path.join(tmpSrc, "beta", "layout.tsx"), "export default ({children}) => children;", "utf8");
+    fs.writeFileSync(path.join(tmpSrc, "beta", "page.tsx"), "export default () => null;", "utf8");
+    fakeNow += 5000;
+
+    const prodSecond = handlerMod.getDiscoveredLayouts();
+    assert.equal(prodSecond, prodFirst, "Production getDiscoveredLayouts() must reuse the exact cached array permanently");
+    assert.equal(prodSecond.includes("beta"), false);
+
+    // 2. getDiscoveredLayoutsJson() serializes once and returns cached string with 0 subsequent JSON.stringify calls
+    let stringifyCalls = 0;
+    JSON.stringify = function (...args) {
+      stringifyCalls++;
+      return origStringify.apply(this, args);
+    };
+    const json1 = handlerMod.getDiscoveredLayoutsJson();
+    const json2 = handlerMod.getDiscoveredLayoutsJson();
+    const json3 = handlerMod.getDiscoveredLayoutsJson();
+    assert.equal(stringifyCalls, 1, "Production getDiscoveredLayoutsJson() should call JSON.stringify only once");
+    assert.equal(json1, json2);
+    assert.equal(json2, json3);
+    assert.equal(json1, origStringify(prodFirst), "Pre-serialized JSON must match JSON.stringify(layouts) byte-for-byte");
+
+    // 3. Pre-populated globalThis.__DINOU_LAYOUTS__ (AOT / Bun / Deno / Cloudflare):
+    //    caches serialized JSON across calls and invalidates automatically when array reference changes
+    const aotLayoutsA = ["", "alpha", "@alpha=0"];
+    globalThis.__DINOU_LAYOUTS__ = aotLayoutsA;
+    stringifyCalls = 0;
+    const aotJson1 = handlerMod.getDiscoveredLayoutsJson();
+    const aotJson2 = handlerMod.getDiscoveredLayoutsJson();
+    assert.equal(stringifyCalls, 1);
+    assert.equal(aotJson1, aotJson2);
+    assert.equal(aotJson1, origStringify(aotLayoutsA));
+
+    const aotLayoutsB = ["", "alpha", "beta", "@beta=1"];
+    globalThis.__DINOU_LAYOUTS__ = aotLayoutsB;
+    const aotJson3 = handlerMod.getDiscoveredLayoutsJson();
+    assert.equal(stringifyCalls, 2);
+    assert.equal(aotJson3, origStringify(aotLayoutsB));
+
+    // 4. handlePprResume uses getDiscoveredLayoutsJson() without re-stringifying and produces byte-for-byte identical script
+    stringifyCalls = 0;
+    const pprRes = await pprMod.handlePprResume({
+      reqPath: "/alpha",
+      queryObj: {},
+      simReq: { method: "GET", path: "/alpha", query: {}, cookies: {}, headers: {} },
+      bridge: { headers: new Headers(), cookies: [], _explicitStatusSet: false, statusCode: 200 },
+      platformContext: {},
+      rootContext: {},
+      cachedItem: {
+        content: "<!DOCTYPE html><html><head></head><body>ok</body></html>",
+        metadata: { status: 200, ppr: true, holes: [] },
+      },
+      metadata: { status: 200, ppr: true, holes: [] },
+      isDevelopment: false,
+      getDiscoveredLayouts: () => {
+        throw new Error("handlePprResume should prefer getDiscoveredLayoutsJson over getDiscoveredLayouts");
+      },
+      getDiscoveredLayoutsJson: handlerMod.getDiscoveredLayoutsJson,
+      createRequestContext: () => ({}),
+      copyCustomContextProperties: () => {},
+    });
+    const pprHtml = await pprRes.text();
+    assert.ok(
+      pprHtml.includes(`<script>window.__DINOU_LAYOUTS__=${origStringify(aotLayoutsB)};</script>`),
+      "handlePprResume must embed byte-for-byte identical window.__DINOU_LAYOUTS__ bootstrap script"
+    );
+
+    // 5. DEV mode preserves 1000ms TTL discovery refresh & updates JSON
+    JSON.stringify = origStringify;
+    delete globalThis.__DINOU_LAYOUTS__;
+    process.env.DINOU_DEV = "true";
+    handlerMod.clearDiscoveredLayoutsCache();
+
+    const devInitial = handlerMod.getDiscoveredLayouts();
+    assert.ok(devInitial.includes("beta"), "DEV initial scan must see beta layout");
+
+    fs.mkdirSync(path.join(tmpSrc, "gamma"), { recursive: true });
+    fs.writeFileSync(path.join(tmpSrc, "gamma", "layout.tsx"), "export default ({children}) => children;", "utf8");
+    fs.writeFileSync(path.join(tmpSrc, "gamma", "page.tsx"), "export default () => null;", "utf8");
+
+    // Within 1000ms TTL: still cached
+    fakeNow += 500;
+    const devWithinTtl = handlerMod.getDiscoveredLayouts();
+    assert.equal(devWithinTtl, devInitial);
+    assert.equal(devWithinTtl.includes("gamma"), false);
+
+    // After 1000ms TTL: refreshes and picks up gamma
+    fakeNow += 600;
+    const devRefreshed = handlerMod.getDiscoveredLayouts();
+    assert.notEqual(devRefreshed, devInitial);
+    assert.ok(devRefreshed.includes("gamma"), "DEV scan after 1000ms TTL must discover new gamma layout");
+    assert.equal(handlerMod.getDiscoveredLayoutsJson(), origStringify(devRefreshed));
+  } finally {
+    Date.now = origDateNow;
+    JSON.stringify = origStringify;
+    process.chdir(origCwd);
+    if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevNodeEnv;
+    if (prevDinouDev === undefined) delete process.env.DINOU_DEV;
+    else process.env.DINOU_DEV = prevDinouDev;
+    if (prevGlobalDev === undefined) delete globalThis.__DINOU_DEV__;
+    else globalThis.__DINOU_DEV__ = prevGlobalDev;
+    if (prevGlobalLayouts === undefined) delete globalThis.__DINOU_LAYOUTS__;
+    else globalThis.__DINOU_LAYOUTS__ = prevGlobalLayouts;
+    if (prevGlobalVfs === undefined) delete globalThis.__DINOU_VFS__;
+    else globalThis.__DINOU_VFS__ = prevGlobalVfs;
+    if (prevGlobalRouteMods === undefined) delete globalThis.__DINOU_ROUTE_MODULES__;
+    else globalThis.__DINOU_ROUTE_MODULES__ = prevGlobalRouteMods;
+    const handlerMod = await import(
+      pathToFileURL(path.resolve(origCwd, "dinou/core/handler.js")).href
+    );
+    handlerMod.clearDiscoveredLayoutsCache();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
 });

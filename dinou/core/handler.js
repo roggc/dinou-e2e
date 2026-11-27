@@ -883,25 +883,60 @@ function parseCookieHeader(cookieHeader) {
   return cookies;
 }
 
+function isLiveDevMode() {
+  return (
+    process.env.DINOU_DEV === "true" ||
+    (typeof globalThis !== "undefined" && Boolean(globalThis.__DINOU_DEV__)) ||
+    process.env.NODE_ENV !== "production"
+  );
+}
+
 let discoveredLayoutsCache = null;
+let discoveredLayoutsCacheVfs = null;
+let discoveredLayoutsCacheRouteMods = null;
+let discoveredLayoutsCacheCwd = null;
 let lastLayoutsDiscoveryTime = 0;
+let discoveredLayoutsJsonSource = null;
+let discoveredLayoutsJsonCache = null;
+
+function clearDiscoveredLayoutsCache() {
+  discoveredLayoutsCache = null;
+  discoveredLayoutsCacheVfs = null;
+  discoveredLayoutsCacheRouteMods = null;
+  discoveredLayoutsCacheCwd = null;
+  lastLayoutsDiscoveryTime = 0;
+  discoveredLayoutsJsonSource = null;
+  discoveredLayoutsJsonCache = null;
+}
 
 function getDiscoveredLayouts() {
   if (typeof globalThis !== "undefined" && Array.isArray(globalThis.__DINOU_LAYOUTS__) && globalThis.__DINOU_LAYOUTS__.length > 0) {
     return globalThis.__DINOU_LAYOUTS__;
   }
-  const now = Date.now();
-  if (discoveredLayoutsCache && now - lastLayoutsDiscoveryTime < 1000) {
-    return discoveredLayoutsCache;
+  const devMode = isLiveDevMode();
+  const vfsRef = typeof globalThis !== "undefined" ? globalThis.__DINOU_VFS__ || null : null;
+  const routeModulesRef = typeof globalThis !== "undefined" ? globalThis.__DINOU_ROUTE_MODULES__ || null : null;
+  const cwd = typeof process !== "undefined" && typeof process.cwd === "function" ? process.cwd() : "";
+  const sameContext =
+    discoveredLayoutsCache !== null &&
+    discoveredLayoutsCacheVfs === vfsRef &&
+    discoveredLayoutsCacheRouteMods === routeModulesRef &&
+    discoveredLayoutsCacheCwd === cwd;
+  if (sameContext) {
+    if (!devMode) {
+      return discoveredLayoutsCache;
+    }
+    if (Date.now() - lastLayoutsDiscoveryTime < 1000) {
+      return discoveredLayoutsCache;
+    }
   }
   let discovered = [];
 
   // 1. Edge/Workers: Discover layouts and page rules from VFS
-  if (typeof globalThis !== "undefined" && globalThis.__DINOU_VFS__) {
-    const vfs = globalThis.__DINOU_VFS__;
+  if (vfsRef) {
     const vfsFiles = [];
-    for (const key of Object.keys(vfs)) {
-      if (vfs[key]?.type === "file") {
+    for (const key of Object.keys(vfsRef)) {
+      if (vfsRef[key]?.type === "file") {
         const idx = key.indexOf("src/");
         if (idx !== -1) {
           vfsFiles.push(key.slice(idx + 4));
@@ -914,9 +949,9 @@ function getDiscoveredLayouts() {
   }
 
   // 2. Edge/Workers: Discover layouts and page rules from Route Modules registry
-  if (discovered.length === 0 && typeof globalThis !== "undefined" && globalThis.__DINOU_ROUTE_MODULES__) {
+  if (discovered.length === 0 && routeModulesRef) {
     const modFiles = [];
-    for (const key of Object.keys(globalThis.__DINOU_ROUTE_MODULES__)) {
+    for (const key of Object.keys(routeModulesRef)) {
       const idx = key.indexOf("src/");
       if (idx !== -1) {
         modFiles.push(key.slice(idx + 4));
@@ -932,14 +967,34 @@ function getDiscoveredLayouts() {
   // 3. Node/Local filesystem discovery
   if (discovered.length === 0) {
     try {
-      const srcFolder = path.resolve(process.cwd(), "src");
+      const srcFolder = path.resolve(cwd, "src");
       discovered = discoverLayoutsFromFs(srcFolder, { existsSync, readdirSync });
     } catch (e) {}
   }
 
   discoveredLayoutsCache = discovered;
-  lastLayoutsDiscoveryTime = now;
+  discoveredLayoutsCacheVfs = vfsRef;
+  discoveredLayoutsCacheRouteMods = routeModulesRef;
+  discoveredLayoutsCacheCwd = cwd;
+  lastLayoutsDiscoveryTime = devMode ? Date.now() : 0;
+  discoveredLayoutsJsonSource = null;
+  discoveredLayoutsJsonCache = null;
   return discovered;
+}
+
+function getDiscoveredLayoutsJson() {
+  const layouts = getDiscoveredLayouts();
+  if (
+    discoveredLayoutsJsonCache !== null &&
+    discoveredLayoutsJsonSource === layouts &&
+    (!isLiveDevMode() || layouts === discoveredLayoutsCache)
+  ) {
+    return discoveredLayoutsJsonCache;
+  }
+  const serialized = JSON.stringify(layouts);
+  discoveredLayoutsJsonSource = layouts;
+  discoveredLayoutsJsonCache = serialized;
+  return serialized;
 }
 
 async function readMetaFromStorage(storage, metaKey, fallbackKey = null, platformContext = null, requestUrl = null) {
@@ -4355,8 +4410,7 @@ async function handleRequestInner(request, platformContext = {}) {
                     controller.close();
                   },
                 });
-              const knownLayouts = getDiscoveredLayouts();
-              let bootstrapScriptContent = `window.__DINOU_LAYOUTS__ = ${JSON.stringify(knownLayouts)};\n`;
+              let bootstrapScriptContent = `window.__DINOU_LAYOUTS__ = ${getDiscoveredLayoutsJson()};\n`;
               if (isPprRoute) {
                 bootstrapScriptContent += "window.__DINOU_USE_STATIC__ = false;\nwindow.__DINOU_PPR__ = true;\n";
               } else {
@@ -4715,6 +4769,7 @@ async function handleRequestInner(request, platformContext = {}) {
           metadata,
           isDevelopment,
           getDiscoveredLayouts,
+          getDiscoveredLayoutsJson,
           createRequestContext,
           copyCustomContextProperties,
           preloadedPageShellJson,
@@ -4735,8 +4790,7 @@ async function handleRequestInner(request, platformContext = {}) {
       }
       let content = cachedItem.content;
       if (typeof content === "string" && !content.includes("window.__DINOU_LAYOUTS__")) {
-        const knownLayouts = getDiscoveredLayouts();
-        content = content.replace("</head>", `<script>window.__DINOU_LAYOUTS__=${JSON.stringify(knownLayouts)};</script></head>`);
+        content = content.replace("</head>", `<script>window.__DINOU_LAYOUTS__=${getDiscoveredLayoutsJson()};</script></head>`);
       }
       bridge.end(content);
       return bridge.toResponse();
@@ -5644,9 +5698,7 @@ async function handleRequestInner(request, platformContext = {}) {
             streamForCache = teed[1];
           }
 
-          let bootstrapScriptContent = "";
-          const knownLayouts = getDiscoveredLayouts();
-          bootstrapScriptContent += `window.__DINOU_LAYOUTS__ = ${JSON.stringify(knownLayouts)};\n`;
+          let bootstrapScriptContent = `window.__DINOU_LAYOUTS__ = ${getDiscoveredLayoutsJson()};\n`;
           if (shouldCacheISG && !isPprConfig) {
             bootstrapScriptContent += "window.__DINOU_USE_STATIC__ = true;\n";
             bootstrapScriptContent += `window.__DINOU_BUILD_ID__ = "${nowGen}";\n`;
@@ -5904,9 +5956,7 @@ async function handleRequestInner(request, platformContext = {}) {
                 ].filter(Boolean)
               : [errorClientEntry];
 
-            let errorBootstrapScript = "";
-            const knownLayouts = getDiscoveredLayouts();
-            errorBootstrapScript += `window.__DINOU_LAYOUTS__ = ${JSON.stringify(knownLayouts)};\n`;
+            let errorBootstrapScript = `window.__DINOU_LAYOUTS__ = ${getDiscoveredLayoutsJson()};\n`;
             errorBootstrapScript += "window.__DINOU_USE_STATIC__ = false;\n";
             errorBootstrapScript += `window.__DINOU_ERROR_MESSAGE__=${JSON.stringify(
               serializedError.message
@@ -6321,6 +6371,7 @@ async function handleRequestInner(request, platformContext = {}) {
                 metadata: metaObj,
                 isDevelopment,
                 getDiscoveredLayouts,
+                getDiscoveredLayoutsJson,
                 createRequestContext,
                 copyCustomContextProperties,
               });
@@ -6337,8 +6388,7 @@ async function handleRequestInner(request, platformContext = {}) {
           return bridge.toResponse();
         }
 
-        const knownLayouts = getDiscoveredLayouts();
-        let scripts = `<script>window.__DINOU_USE_STATIC__=true;window.__DINOU_LAYOUTS__=${JSON.stringify(knownLayouts)};</script>`;
+        let scripts = `<script>window.__DINOU_USE_STATIC__=true;window.__DINOU_LAYOUTS__=${getDiscoveredLayoutsJson()};</script>`;
         if (htmlPathOld && existsSync(htmlPathOld)) {
           scripts += `<script>window.__DINOU_USE_OLD_RSC__=true;</script>`;
         }
@@ -6368,5 +6418,8 @@ export {
   handleRequest,
   WebResponseBridge,
   resolvePageFunctionsConfig,
+  getDiscoveredLayouts,
+  getDiscoveredLayoutsJson,
+  clearDiscoveredLayoutsCache,
 };
 export default handleRequest;

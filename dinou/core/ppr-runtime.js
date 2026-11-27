@@ -990,6 +990,7 @@ async function handlePprResume({
   metadata,
   isDevelopment,
   getDiscoveredLayouts,
+  getDiscoveredLayoutsJson,
   createRequestContext,
   copyCustomContextProperties,
   preloadedPageShellJson,
@@ -1033,10 +1034,13 @@ async function handlePprResume({
   let shellHtml = cachedItem.content;
   if (typeof shellHtml === "string") {
     if (!shellHtml.includes("window.__DINOU_LAYOUTS__")) {
-      const knownLayouts = typeof getDiscoveredLayouts === "function" ? getDiscoveredLayouts() : {};
+      const layoutsJson =
+        typeof getDiscoveredLayoutsJson === "function"
+          ? getDiscoveredLayoutsJson()
+          : JSON.stringify(typeof getDiscoveredLayouts === "function" ? getDiscoveredLayouts() : {});
       shellHtml = shellHtml.replace(
         "</head>",
-        `<script>window.__DINOU_LAYOUTS__=${JSON.stringify(knownLayouts)};</script></head>`
+        `<script>window.__DINOU_LAYOUTS__=${layoutsJson};</script></head>`
       );
     }
     shellHtml = shellHtml.replace(
