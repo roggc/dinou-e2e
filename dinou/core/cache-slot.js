@@ -1166,7 +1166,7 @@ async function resolveAllCanonicalSlotIdsBatch(rawTagsOrIds, storage) {
             for (const id of indexedIds) targetSet.add(id);
           }
         }
-        if (!storage.baseDir && storage.hydrateFromDisk !== false) {
+        if (!isCloudflareWorkersRuntime() && !storage.baseDir && storage.hydrateFromDisk !== false) {
           try {
             const dist2Fs = getDist2SlotsFs();
             if (dist2Fs && typeof dist2Fs.getSlotTagIndex === "function") {

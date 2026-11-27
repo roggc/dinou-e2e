@@ -105,6 +105,18 @@ class FileSystemStorage extends StorageAdapter {
     this._slotTagIndex = null;
   }
 
+  _readSlotsDirMtimeKey(slotsDir) {
+    try {
+      const st = fs.statSync(slotsDir, { bigint: true });
+      if (st && st.mtimeNs !== undefined) return String(st.mtimeNs);
+    } catch (e) {}
+    try {
+      return String(fs.statSync(slotsDir).mtimeMs);
+    } catch (e) {
+      return null;
+    }
+  }
+
   _updateSlotTagIndex(normSlotKey, metadata) {
     if (!this._slotTagIndex) return;
     const match = String(normSlotKey || "").match(/^slots\/([^/]+)\//);
@@ -117,7 +129,7 @@ class FileSystemStorage extends StorageAdapter {
         if (t) nextTags.add(t);
       }
     }
-    const { tagToSlotIds, slotTagsById } = this._slotTagIndex;
+    const { tagToSlotIds, slotTagsById, dirToCanonicalId } = this._slotTagIndex;
     const prevTags = slotTagsById.get(canonicalId);
     if (prevTags) {
       for (const oldTag of prevTags) {
@@ -137,45 +149,67 @@ class FileSystemStorage extends StorageAdapter {
       tagToSlotIds.get(tag).add(canonicalId);
     }
     slotTagsById.set(canonicalId, nextTags);
-    try {
-      const slotsDir = path.join(this.baseDir, "slots");
-      if (fs.existsSync(slotsDir)) {
-        const dirStat = fs.statSync(slotsDir);
-        const dirCount = fs
-          .readdirSync(slotsDir, { withFileTypes: true })
-          .filter((e) => e.isDirectory()).length;
-        this._slotTagIndex.signature = `${dirStat.mtimeMs}:${dirCount}`;
+    dirToCanonicalId.set(dirName, canonicalId);
+    const slotsDir = path.join(this.baseDir, "slots");
+    const mtimeKey = this._readSlotsDirMtimeKey(slotsDir);
+    if (mtimeKey !== null) {
+      this._slotTagIndex.mtimeKey = mtimeKey;
+    }
+  }
+
+  _removeSlotFromTagIndex(normSlotKey) {
+    if (!this._slotTagIndex) return;
+    const match = String(normSlotKey || "").match(/^slots\/([^/]+)\//);
+    if (!match) {
+      this._slotTagIndex = null;
+      return;
+    }
+    const dirName = match[1];
+    const { tagToSlotIds, slotTagsById, dirToCanonicalId } = this._slotTagIndex;
+    const canonicalId = dirToCanonicalId.get(dirName) || dirName;
+    dirToCanonicalId.delete(dirName);
+    const prevTags = slotTagsById.get(canonicalId);
+    if (prevTags) {
+      for (const oldTag of prevTags) {
+        const s = tagToSlotIds.get(oldTag);
+        if (s) {
+          s.delete(canonicalId);
+          if (s.size === 0) tagToSlotIds.delete(oldTag);
+        }
       }
-    } catch (e) {}
+      slotTagsById.delete(canonicalId);
+    }
+    const slotsDir = path.join(this.baseDir, "slots");
+    const mtimeKey = this._readSlotsDirMtimeKey(slotsDir);
+    if (mtimeKey !== null) {
+      this._slotTagIndex.mtimeKey = mtimeKey;
+    } else {
+      this._slotTagIndex = null;
+    }
   }
 
   getSlotTagIndex() {
     const slotsDir = path.join(this.baseDir, "slots");
-    if (!fs.existsSync(slotsDir)) {
+    const mtimeKey = this._readSlotsDirMtimeKey(slotsDir);
+    if (mtimeKey === null) {
       this._slotTagIndex = null;
       return new Map();
     }
-    let dirStat;
+    if (this._slotTagIndex && this._slotTagIndex.mtimeKey === mtimeKey) {
+      return this._slotTagIndex.tagToSlotIds;
+    }
     let entries;
     try {
-      dirStat = fs.statSync(slotsDir);
       entries = fs.readdirSync(slotsDir, { withFileTypes: true });
     } catch (e) {
       return new Map();
     }
-    const dirNames = [];
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        dirNames.push(entry.name);
-      }
-    }
-    const dirSignature = `${dirStat.mtimeMs}:${dirNames.length}`;
-    if (this._slotTagIndex && this._slotTagIndex.signature === dirSignature) {
-      return this._slotTagIndex.tagToSlotIds;
-    }
     const tagToSlotIds = new Map();
     const slotTagsById = new Map();
-    for (const slotDirName of dirNames) {
+    const dirToCanonicalId = new Map();
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const slotDirName = entry.name;
       const metaPath = path.join(slotsDir, slotDirName, "slot.metadata.json");
       let meta = null;
       if (fs.existsSync(metaPath)) {
@@ -191,6 +225,7 @@ class FileSystemStorage extends StorageAdapter {
         }
       }
       slotTagsById.set(canonicalId, tagsForSlot);
+      dirToCanonicalId.set(slotDirName, canonicalId);
       for (const tag of tagsForSlot) {
         if (!tagToSlotIds.has(tag)) {
           tagToSlotIds.set(tag, new Set());
@@ -198,7 +233,7 @@ class FileSystemStorage extends StorageAdapter {
         tagToSlotIds.get(tag).add(canonicalId);
       }
     }
-    this._slotTagIndex = { signature: dirSignature, tagToSlotIds, slotTagsById };
+    this._slotTagIndex = { mtimeKey, tagToSlotIds, slotTagsById, dirToCanonicalId };
     return tagToSlotIds;
   }
 
@@ -327,13 +362,13 @@ class FileSystemStorage extends StorageAdapter {
     const normSlotKey = String(key || "").replace(/^\/+/, "").replace(/\\/g, "/");
     const isSlotKey = normSlotKey.startsWith("slots/") || normSlotKey.endsWith("/slot.json") || normSlotKey.endsWith("/slot.metadata.json");
     if (isSlotKey) {
-      this._slotTagIndex = null;
       const dir = path.dirname(targetPath);
       if (fs.existsSync(dir)) {
         try {
           fs.rmSync(dir, { force: true, recursive: true });
         } catch (e) {}
       }
+      this._removeSlotFromTagIndex(normSlotKey);
     }
   }
 
@@ -707,6 +742,7 @@ class MemoryStorage extends StorageAdapter {
     this.hydrateFromDisk = Boolean(options && options.hydrateFromDisk);
     this._slotTagIndex = new Map();
     this._slotTagsById = new Map();
+    this._slotDirToCanonicalId = new Map();
   }
 
   _cleanKey(key) {
@@ -722,6 +758,9 @@ class MemoryStorage extends StorageAdapter {
       try {
         meta = JSON.parse(content);
       } catch (e) {}
+    }
+    if (!meta && m[2] === "slot.json" && this._slotDirToCanonicalId.has(dirName)) {
+      return;
     }
     const canonicalId = (meta && meta.slotId) || dirName;
     const nextTags = new Set([canonicalId]);
@@ -749,22 +788,25 @@ class MemoryStorage extends StorageAdapter {
       this._slotTagIndex.get(tag).add(canonicalId);
     }
     this._slotTagsById.set(canonicalId, nextTags);
+    this._slotDirToCanonicalId.set(dirName, canonicalId);
   }
 
   _removeSlotFromTagIndex(cleanKey) {
     const m = cleanKey.match(/^slots\/([^/]+)\/(slot\.json|slot\.metadata\.json)$/);
     if (!m) return;
     const dirName = m[1];
-    const prevTags = this._slotTagsById.get(dirName);
+    const canonicalId = this._slotDirToCanonicalId.get(dirName) || dirName;
+    this._slotDirToCanonicalId.delete(dirName);
+    const prevTags = this._slotTagsById.get(canonicalId);
     if (prevTags) {
       for (const oldTag of prevTags) {
         const s = this._slotTagIndex.get(oldTag);
         if (s) {
-          s.delete(dirName);
+          s.delete(canonicalId);
           if (s.size === 0) this._slotTagIndex.delete(oldTag);
         }
       }
-      this._slotTagsById.delete(dirName);
+      this._slotTagsById.delete(canonicalId);
     }
   }
 
