@@ -258,11 +258,21 @@ class FileSystemStorage extends StorageAdapter {
 
   async get(key) {
     let targetPath = this._resolve(key);
-    if (fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory()) {
-      targetPath = path.join(targetPath, "index.html");
+    let content;
+    try {
+      content = fs.readFileSync(targetPath, "utf8");
+    } catch (err) {
+      if (err && (err.code === "EISDIR" || err.code === "EPERM")) {
+        targetPath = path.join(targetPath, "index.html");
+        try {
+          content = fs.readFileSync(targetPath, "utf8");
+        } catch (err2) {
+          return null;
+        }
+      } else {
+        return null;
+      }
     }
-    if (!fs.existsSync(targetPath)) return null;
-    const content = fs.readFileSync(targetPath, "utf8");
 
     const cleanKey = String(key || "").replace(/\\/g, "/");
     const isMetaJson = cleanKey.endsWith("metadata.json") || path.basename(targetPath).endsWith("metadata.json");
@@ -276,7 +286,7 @@ class FileSystemStorage extends StorageAdapter {
       return { content, metadata };
     }
 
-    // Check companion metadata if available
+    // Check companion metadata if available (single readFileSync without redundant existsSync)
     let metadata = null;
     const isLayoutKey =
       cleanKey.includes("layout.rsc") ||
@@ -293,11 +303,9 @@ class FileSystemStorage extends StorageAdapter {
       ? "slot.metadata.json"
       : "metadata.json";
     const metaPath = path.join(path.dirname(targetPath), metaFileName);
-    if (fs.existsSync(metaPath)) {
-      try {
-        metadata = JSON.parse(fs.readFileSync(metaPath, "utf8"));
-      } catch (e) {}
-    }
+    try {
+      metadata = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+    } catch (e) {}
     return { content, metadata };
   }
 
@@ -362,11 +370,16 @@ class FileSystemStorage extends StorageAdapter {
   }
 
   async has(key) {
-    let targetPath = this._resolve(key);
-    if (fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory()) {
-      targetPath = path.join(targetPath, "index.html");
+    const targetPath = this._resolve(key);
+    try {
+      const st = fs.statSync(targetPath);
+      if (st.isDirectory()) {
+        return fs.existsSync(path.join(targetPath, "index.html"));
+      }
+      return true;
+    } catch (e) {
+      return false;
     }
-    return fs.existsSync(targetPath);
   }
 
   async delete(key) {

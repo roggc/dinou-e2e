@@ -33,7 +33,7 @@ All optimizations below are designed to be implemented **one stage at a time**, 
 - [x] **`OPT-3`** — Parallel Multi-Layout / Multi-Slot Prefetch & Metadata-Only, Per-Request Deduplicated `inspectSlotsFreshness()` (`cache-slot.js`, `handler.js`, `layout-composition.js`, `storage-adapter.js`)
 
 ### Tier 2 — Clean, High-Value Low-Risk Wins
-- [ ] **`OPT-4`** — `FileSystemStorage.get()` Syscall Reduction (`6 → 1–2` syscalls) & Redundant Cache-Miss Elimination (`storage-adapter.js`, `handler.js`)
+- [x] **`OPT-4`** — `FileSystemStorage.get()` Syscall Reduction (`6 → 1–2` syscalls) & Redundant Cache-Miss Elimination (`storage-adapter.js`, `handler.js`)
 - [ ] **`OPT-5`** — Permanent Production Caching & Pre-Serialized JSON for `getDiscoveredLayouts()` (`handler.js`)
 
 ### Tier 3 — PPR & Micro-Level CPU Optimizations

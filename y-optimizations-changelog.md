@@ -54,6 +54,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
     - `FileSystemStorage` multi-layer slot freshness check (6 × 40 KB slots shared across L1/L2/L3/Page, 50 requests): full `slot.json` payload reads **`600` (`12`/req) → `0` (`0`/req)** (**100% eliminated**); latency **`416.46 ms` (`8.33 ms`/req) → `91.37 ms` (`1.83 ms`/req)** (**~4.5× faster**).
     - Simulated 10 ms remote KV/Redis warm HTML cache hit on a 3-layout + 4-slot 3D Cube route: latency **`297.8 ms → 99.0 ms`/req** (**~3.0× faster**), remote `get()` calls **`17 → 12`/req** (**-29.4%**).
 
+#### `OPT-4` (Tier 2) — `FileSystemStorage.get()` / `has()` Syscall Reduction & Redundant Cache-Miss Cleanup
+- **Reduced `FileSystemStorage` syscalls by 67% per read and eliminated redundant cache-miss disk probes in `handler.js`** (`dinou/core/storage-adapter.js`, `dinou/core/handler.js`):
+  - **Direct `readFileSync` + `EISDIR`/`EPERM` handling in `FileSystemStorage.get()` & single-`statSync` `has()` (`dinou/core/storage-adapter.js`)**:
+    - Previously, `FileSystemStorage.get()` executed up to 6 synchronous OS syscalls (`existsSync` → `statSync` → duplicate `existsSync` → `readFileSync` → `existsSync(metaPath)` → `readFileSync(metaPath)`).
+    - Replaced with direct `fs.readFileSync()` catching `EISDIR`/`EPERM` (retrying with `index.html` for dotted directory keys) and `ENOENT` (`return null`), plus direct `try { JSON.parse(fs.readFileSync(metaPath, "utf8")) }` without a preceding `existsSync`: **1 syscall** for `metadata.json` and cache misses, **2 syscalls** for HTML/RSC/Slot + companion metadata.
+    - Simplified `FileSystemStorage.has()` from 3 syscalls to 1 `statSync` for regular files and misses.
+  - **Eliminated duplicate cache-miss lookups & pre-storage disk probes (`dinou/core/handler.js`)**:
+    - Skipped the duplicate `storage.get(cleanPath)` fallback on `FileSystemStorage` (`!storage.baseDir`) when `storage.get(htmlKey)` already missed (both resolve to identical `<cleanPath>/index.html` on disk, avoiding double misses on PPR `shell.html` routes).
+    - Moved pre-storage `existsSync(payloadPath)` / `currentFallbackPath` / `legacyPath` disk probes on `/____rsc_page____` & `/____rsc_layout____` into the `!storage` fallback branch while keeping the pure-string `distDir` path-confinement `403` guard upfront, and passed `activeChain: perimeterLayoutChain` into `resolvePprForRoute()`.
+  - **Measured Impact** (2,000 `FileSystemStorage.get()` calls across HTML, RSC, `layout.metadata.json`, and misses on Windows Node 24):
+    - Total OS syscalls: **`9,000` (`4.50`/get) → `3,000` (`1.50`/get)** (**-66.7%**, `existsSync: 5,000 → 0`, `statSync: 1,500 → 0`).
+    - Wall-clock latency: **`837.02 ms` (`418.5 µs`/get) → `271.56 ms` (`135.8 µs`/get)** (**~3.1× faster**).
+
 ---
 
 ## Tracking Log
@@ -63,3 +76,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 | **`OPT-1`** | Tier 1 | Authoritative production VFS negative lookups & `getLayoutFunctionsPath()` cache | `dinou/core/vfs.js`, `dinou/core/layout-functions.js` | `35.2 → 0` `fs.existsSync`/req; `2.15 ms → 0.21 ms`/req (**~10.5× faster**) | `optimizations-hot-path`, `cache-3d-distributed-storage`, `test:3d-reval`, `test:3d-cube`, `cache-3d-cube-phase7`, `cache-3d-cube-phase8` |
 | **`OPT-2`** | Tier 1 | Production `layoutFunctionsConfigCache` & single-pass layout chain / `lMeta` reuse | `dinou/core/layout-functions.js`, `dinou/core/layout-composition.js`, `dinou/core/handler.js` | `getStaticPaths` `300 → 0` (**~5.8× faster**); `layout.metadata.json` reads **`6 → 3`/req** (-50%); HTML cache hit **-34.3%** | `optimizations-hot-path`, `cache-3d-distributed-storage`, `test:3d-reval`, `test:3d-cube`, `cache-3d-cube-phase7`, `cache-3d-cube-phase8` |
 | **`OPT-3`** | Tier 1 | Parallel multi-layout / multi-slot I/O & metadata-only deduplicated `inspectSlotsFreshness()` | `dinou/core/storage-adapter.js`, `dinou/core/cache-slot.js`, `dinou/core/cache-revalidate.js`, `dinou/core/layout-composition.js`, `dinou/core/handler.js` | `slot.json` body reads **`12 → 0`/req** (**~4.5× faster** FS); simulated 10ms KV/Redis 3D hit **`298 ms → 99 ms`/req** (**~3.0× faster**, `-29%` remote reads) | `optimizations-hot-path`, `cache-3d-distributed-storage`, `test:3d-reval`, `test:3d-cube`, `cache-3d-cube-phase7`, `cache-3d-cube-phase8` |
+| **`OPT-4`** | Tier 2 | `FileSystemStorage.get()`/`has()` syscall reduction & duplicate miss cleanup | `dinou/core/storage-adapter.js`, `dinou/core/handler.js` | OS syscalls **`4.50 → 1.50`/get** (**-66.7%**); `418.5 µs → 135.8 µs`/get (**~3.1× faster**) | `optimizations-hot-path`, `cache-3d-distributed-storage`, `test:3d-reval`, `test:3d-cube`, `cache-3d-cube-phase7`, `cache-3d-cube-phase8` |

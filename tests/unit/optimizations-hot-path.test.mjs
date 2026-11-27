@@ -524,3 +524,140 @@ test("OPT-3: Metadata-only parallel inspectSlotsFreshness(), request-scoped dedu
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test("OPT-4: FileSystemStorage.get()/has() minimal syscalls, directory EISDIR fallback, and zero duplicate FS miss lookups in handler", async () => {
+  const prevNodeEnv = process.env.NODE_ENV;
+  const prevDinouDev = process.env.DINOU_DEV;
+  const origExists = fs.existsSync;
+  const origStat = fs.statSync;
+  const origRead = fs.readFileSync;
+  const tmpDir = fs.mkdtempSync(path.join(rootDir, ".dinou", "tmp-opt4-fs-"));
+
+  const storageMod = await import(
+    pathToFileURL(path.resolve(rootDir, "dinou/core/storage-adapter.js")).href
+  );
+  const handlerMod = await import(
+    pathToFileURL(path.resolve(rootDir, "dinou/core/handler.js")).href
+  );
+  const prevAdapter = storageMod.hasExplicitStorageAdapter()
+    ? storageMod.getStorageAdapter()
+    : null;
+
+  try {
+    process.env.NODE_ENV = "production";
+    delete process.env.DINOU_DEV;
+
+    const store = new storageMod.FileSystemStorage(tmpDir);
+    const now = Date.now();
+    await store.set("route/index.html", "<!DOCTYPE html><html>ok</html>", {
+      status: 200,
+      generatedAt: now,
+    });
+    await store.set("route/layout.metadata.json", JSON.stringify({ generatedAt: now }));
+    // Directory with dotted name to test EISDIR/EPERM -> index.html fallback
+    const dottedDir = path.join(tmpDir, "v1.0");
+    fs.mkdirSync(dottedDir, { recursive: true });
+    fs.writeFileSync(path.join(dottedDir, "index.html"), "<html>dotted-dir</html>");
+
+    let existsCalls = 0;
+    let statCalls = 0;
+    let readCalls = 0;
+    fs.existsSync = (...a) => {
+      existsCalls++;
+      return origExists.apply(fs, a);
+    };
+    fs.statSync = (...a) => {
+      statCalls++;
+      return origStat.apply(fs, a);
+    };
+    fs.readFileSync = (...a) => {
+      readCalls++;
+      return origRead.apply(fs, a);
+    };
+
+    // 1. Metadata file: 1 readFileSync, 0 existsSync, 0 statSync
+    const metaRes = await store.get("route/layout.metadata.json");
+    assert.equal(metaRes?.metadata?.generatedAt, now);
+    assert.equal(existsCalls, 0);
+    assert.equal(statCalls, 0);
+    assert.equal(readCalls, 1);
+
+    // 2. HTML + companion metadata: 2 readFileSync, 0 existsSync, 0 statSync
+    readCalls = 0;
+    const htmlRes = await store.get("route/index.html");
+    assert.equal(htmlRes?.content, "<!DOCTYPE html><html>ok</html>");
+    assert.equal(htmlRes?.metadata?.generatedAt, now);
+    assert.equal(existsCalls, 0);
+    assert.equal(statCalls, 0);
+    assert.equal(readCalls, 2);
+
+    // 3. Cache miss: 1 readFileSync (ENOENT), 0 existsSync, 0 statSync
+    readCalls = 0;
+    const missRes = await store.get("route/nope.html");
+    assert.equal(missRes, null);
+    assert.equal(existsCalls, 0);
+    assert.equal(statCalls, 0);
+    assert.equal(readCalls, 1);
+
+    // 4. Dotted directory key triggers EISDIR/EPERM fallback to index.html cleanly
+    const dottedRes = await store.get("v1.0");
+    assert.equal(dottedRes?.content, "<html>dotted-dir</html>");
+
+    // 5. has() uses 1 statSync (0 existsSync) for regular files and misses
+    existsCalls = 0;
+    statCalls = 0;
+    assert.equal(await store.has("route/index.html"), true);
+    assert.equal(await store.has("route/nope.html"), false);
+    assert.equal(existsCalls, 0);
+    assert.equal(statCalls, 2);
+
+    // 6. Handler on FileSystemStorage skips duplicate storage.get(cleanPath) when htmlKey misses
+    fs.existsSync = origExists;
+    fs.statSync = origStat;
+    fs.readFileSync = origRead;
+
+    const pprRel = "t-3d-cube/router-coherence/ppr-a";
+    await store.set(`${pprRel}/shell.html`, "<!DOCTYPE html><html><head></head><body>shell</body></html>", {
+      status: 200,
+      generatedAt: now,
+      ppr: true,
+      holes: [],
+    });
+    for (const lk of ["", "t-3d-cube", "t-3d-cube/router-coherence"]) {
+      await store.set(
+        lk ? `${lk}/layout.metadata.json` : "layout.metadata.json",
+        JSON.stringify({ generatedAt: now, layoutGeneratedAt: now, ownGeneratedAt: now, revalidate: 3600 })
+      );
+    }
+    const fetchedKeys = [];
+    const origStoreGet = store.get.bind(store);
+    store.get = async (k) => {
+      fetchedKeys.push(String(k));
+      return origStoreGet(k);
+    };
+    storageMod.setStorageAdapter(store);
+
+    const res = await handlerMod.handleRequest(
+      new Request(`http://localhost:3000/${pprRel}`, { method: "HEAD" }),
+      { runtime: "edge" }
+    );
+    assert.equal(res.status, 200);
+    assert.ok(fetchedKeys.includes(`${pprRel}/index.html`));
+    assert.ok(fetchedKeys.includes(`${pprRel}/shell.html`));
+    assert.equal(
+      fetchedKeys.includes(pprRel),
+      false,
+      `FileSystemStorage must skip duplicate storage.get("${pprRel}") after "${pprRel}/index.html" missed`
+    );
+  } finally {
+    fs.existsSync = origExists;
+    fs.statSync = origStat;
+    fs.readFileSync = origRead;
+    if (prevAdapter) storageMod.setStorageAdapter(prevAdapter);
+    if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevNodeEnv;
+    if (prevDinouDev === undefined) delete process.env.DINOU_DEV;
+    else process.env.DINOU_DEV = prevDinouDev;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});

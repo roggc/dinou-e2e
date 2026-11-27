@@ -2706,11 +2706,13 @@ async function handleRequestInner(request, platformContext = {}) {
             segment: "layout",
             ignoreNoLayout: true,
             exactLayoutKey: true,
+            activeChain: perimeterLayoutChain,
           })
         : pageConfig?.pagePpr !== undefined && pageConfig?.pagePpr !== null
         ? Boolean(pageConfig.pagePpr)
         : await resolvePprForRoute(pagePath, null, reqSegments, queryObj, {
             segment: "page",
+            activeChain: perimeterLayoutChain,
           });
     }
 
@@ -2744,36 +2746,12 @@ async function handleRequestInner(request, platformContext = {}) {
           : "page._old.rsc"
         : resolvedTargetFileName;
 
+      const distDir = path.resolve(".dinou/dist2");
       let payloadPath = path.resolve(
-        ".dinou/dist2",
+        distDir,
         cleanPath.replace(/^\//, ""),
         actualFileName,
       );
-
-      if (!existsSync(payloadPath) && useOld) {
-        const currentFallbackPath = path.resolve(
-          ".dinou/dist2",
-          cleanPath.replace(/^\//, ""),
-          resolvedTargetFileName,
-        );
-        if (existsSync(currentFallbackPath)) {
-          payloadPath = currentFallbackPath;
-        }
-      }
-
-      // Legacy fallback for rsc_payload if page.rsc doesn't exist
-      if (!existsSync(payloadPath) && !isLayoutReq && !isPageReq) {
-        const legacyPath = path.resolve(
-          ".dinou/dist2",
-          cleanPath.replace(/^\//, ""),
-          useOld ? "rsc._old.rsc" : "rsc.rsc",
-        );
-        if (existsSync(legacyPath)) {
-          payloadPath = legacyPath;
-        }
-      }
-
-      const distDir = path.resolve(".dinou/dist2");
       if (!payloadPath.startsWith(distDir)) {
         return new Response("Forbidden", { status: 403 });
       }
@@ -2970,21 +2948,43 @@ async function handleRequestInner(request, platformContext = {}) {
             return bridge.toResponse();
           }
         }
-      } else if (existsSync(payloadPath)) {
-        try {
-          const buffer = readFileSync(payloadPath);
-          if (buffer && buffer.length > 0) {
-            bridge.setHeader("Content-Type", "application/octet-stream");
-            bridge.setHeader("X-Dinou-Cache-Mode", "static");
-            if (!bridge.headers.has("Cache-Control")) {
-  bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-}
-            bridge.end(buffer);
-            return bridge.toResponse();
+      } else {
+        if (!existsSync(payloadPath) && useOld) {
+          const currentFallbackPath = path.resolve(
+            distDir,
+            cleanPath.replace(/^\//, ""),
+            resolvedTargetFileName,
+          );
+          if (currentFallbackPath.startsWith(distDir) && existsSync(currentFallbackPath)) {
+            payloadPath = currentFallbackPath;
           }
-        } catch (err) {
-          console.error("[Dinou] Error reading RSC file:", err);
-          return new Response("Internal Server Error", { status: 500 });
+        }
+        if (!existsSync(payloadPath) && !isLayoutReq && !isPageReq) {
+          const legacyPath = path.resolve(
+            distDir,
+            cleanPath.replace(/^\//, ""),
+            useOld ? "rsc._old.rsc" : "rsc.rsc",
+          );
+          if (legacyPath.startsWith(distDir) && existsSync(legacyPath)) {
+            payloadPath = legacyPath;
+          }
+        }
+        if (existsSync(payloadPath)) {
+          try {
+            const buffer = readFileSync(payloadPath);
+            if (buffer && buffer.length > 0) {
+              bridge.setHeader("Content-Type", "application/octet-stream");
+              bridge.setHeader("X-Dinou-Cache-Mode", "static");
+              if (!bridge.headers.has("Cache-Control")) {
+                bridge.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+              }
+              bridge.end(buffer);
+              return bridge.toResponse();
+            }
+          } catch (err) {
+            console.error("[Dinou] Error reading RSC file:", err);
+            return new Response("Internal Server Error", { status: 500 });
+          }
         }
       }
     }
@@ -3892,7 +3892,7 @@ async function handleRequestInner(request, platformContext = {}) {
     let cachedItem = null;
     if (!isDevelopment) {
       cachedItem = await storage.get(htmlKey);
-      if (!cachedItem) {
+      if (!cachedItem && !storage.baseDir) {
         cachedItem = await storage.get(cleanPath);
       }
       if (!cachedItem && isPprConfig) {
