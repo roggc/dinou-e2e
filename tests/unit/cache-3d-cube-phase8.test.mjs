@@ -2524,6 +2524,18 @@ if (BUNDLER === "esbuild" || BUNDLER === "rollup" || BUNDLER === "webpack") {
     assert.equal(textById(afterCrossIso.text, "cf-slot-seq"), "303", \`[\${BUNDLER}] CF cross-isolate race clobbered Slot update!\`);
     assert.ok(l2RscAfter.text.includes("301"), \`[\${BUNDLER}] layout.rsc must match L2=301\`);
     assert.ok(pageRscAfter.text.includes("302") && pageRscAfter.text.includes("303"), \`[\${BUNDLER}] page.rsc must match Page=302 & Slot=303\`);
+
+    // 1C. Cloudflare Workers Surgical Slot-Only Revalidation Isolation (POISON Guard!):
+    //     Calling revalidateTag("cf-slot-tag") while L1/L2/Page are poisoned MUST ONLY update cf-slot
+    //     and MUST NEVER self-trigger checkCloudflarePageRace / checkCloudflareLayoutRace into a full re-render!
+    writeS({ cfL1: POISON, cfL2: POISON, cfPage: POISON, cfSlot: 404, cfHole: 405 });
+    await rscMod.revalidateTag("cf-slot-tag");
+    const afterSurgicalSlot = await req("/cf/sub");
+    assert.equal(textById(afterSurgicalSlot.text, "cf-slot-seq"), "404", \`[\${BUNDLER}] CF surgical slot revalidateTag must update cf-slot to 404\`);
+    assert.equal(textById(afterSurgicalSlot.text, "cf-l1-seq"), "200", \`[\${BUNDLER}] CF surgical slot revalidateTag MUST NOT re-execute poisoned L1\`);
+    assert.equal(textById(afterSurgicalSlot.text, "cf-l2-seq"), "301", \`[\${BUNDLER}] CF surgical slot revalidateTag MUST NOT re-execute poisoned L2\`);
+    assert.equal(textById(afterSurgicalSlot.text, "cf-page-seq"), "302", \`[\${BUNDLER}] CF surgical slot revalidateTag MUST NOT re-execute poisoned Page\`);
+    assert.ok(!afterSurgicalSlot.text.includes(String(POISON)), \`[\${BUNDLER}] CF surgical slot revalidateTag leaked POISON into HTML!\`);
   } finally {
     setStorageAdapter(prevStorage);
     if (origNavDesc) {

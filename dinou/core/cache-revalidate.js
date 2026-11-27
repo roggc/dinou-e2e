@@ -1311,7 +1311,9 @@ async function revalidatePage(reqPath, internalOptions = {}) {
     }
 
     // Cross-isolate optimistic consistency check (Cloudflare Workers / distributed KV):
-    // Prevent a slower isolate from clobbering newer layout/page/slot commits with stale artifacts.
+    // Prevent a slower isolate from clobbering newer layout/page/slot commits with stale artifacts,
+    // without false-triggering on slots freshly written by THIS revalidation pass or upgrading
+    // surgical `onlyRefreshSlots` retries into full page re-executions.
     const checkCloudflarePageRace = async (committedGen = 0) => {
       if (!isCloudflareWorkersRuntime() || retryDepth >= 2) return false;
       try {
@@ -1352,14 +1354,21 @@ async function revalidatePage(reqPath, internalOptions = {}) {
               : typeof storage.getTagInvalidatedAt === "function"
               ? storage.getTagInvalidatedAt(t)
               : 0;
-          if (Number(invAt || 0) > (initialTagInvMap.get(t) || 0)) {
+          const baselineInvAt = initialTagInvMap.has(t)
+            ? initialTagInvMap.get(t)
+            : now;
+          if (Number(invAt || 0) > baselineInvAt) {
             return true;
           }
         }
-        if (Array.isArray(currentMeta.slotTags) && currentMeta.slotTags.length > 0) {
+        if (
+          committedGen > 0 &&
+          Array.isArray(currentMeta.slotTags) &&
+          currentMeta.slotTags.length > 0
+        ) {
           const slotCheck = await inspectSlotsFreshness(
             currentMeta.slotTags,
-            committedGen > 0 ? committedGen : now
+            committedGen
           );
           if (slotCheck.hasNewer) {
             return true;
@@ -1372,7 +1381,6 @@ async function revalidatePage(reqPath, internalOptions = {}) {
     if (await checkCloudflarePageRace(0)) {
       return await revalidatePage(reqPath, {
         ...internalOptions,
-        onlyRefreshSlots: false,
         _retryDepth: retryDepth + 1,
       });
     }
@@ -1415,7 +1423,6 @@ async function revalidatePage(reqPath, internalOptions = {}) {
     if (await checkCloudflarePageRace(commitGenTime)) {
       return await revalidatePage(reqPath, {
         ...internalOptions,
-        onlyRefreshSlots: false,
         _retryDepth: retryDepth + 1,
       });
     }
@@ -1670,6 +1677,28 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
             currentMeta.layoutGeneratedAt ||
             currentMeta.generatedAt)) ||
         0;
+      const initialLayoutTagInvMap = new Map();
+      if (isCloudflareWorkersRuntime() && retryDepth < 2) {
+        const initLayoutTags = Array.from(
+          new Set([
+            ...(Array.isArray(currentMeta?.ownSlotTags) ? currentMeta.ownSlotTags : []),
+            ...(Array.isArray(currentMeta?.slotTags) ? currentMeta.slotTags : []),
+            ...(Array.isArray(currentMeta?.tags) ? currentMeta.tags : []),
+          ])
+        );
+        for (const t of initLayoutTags) {
+          if (!t) continue;
+          try {
+            const invAt =
+              typeof storage.getTagInvalidatedAtAsync === "function"
+                ? await storage.getTagInvalidatedAtAsync(t)
+                : typeof storage.getTagInvalidatedAt === "function"
+                ? storage.getTagInvalidatedAt(t)
+                : 0;
+            initialLayoutTagInvMap.set(t, Number(invAt || 0));
+          } catch (e) {}
+        }
+      }
       const now = Date.now();
       const newGenTime = nextMonotonicGenTime(prevGenTime);
       currentMeta.generatedAt = newGenTime;
@@ -2119,10 +2148,7 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
         }
       } catch (e) {}
 
-      const commitLayoutGenTime = Math.max(newGenTime, Date.now());
-      if (commitLayoutGenTime > revalState.lastGenTime) {
-        revalState.lastGenTime = commitLayoutGenTime;
-      }
+      const commitLayoutGenTime = nextMonotonicGenTime(newGenTime);
       delete currentMeta.dynamic;
       delete currentMeta.notFound;
       currentMeta.status = 200;
@@ -2174,16 +2200,38 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
           } else if (latestGen > prevGenTime) {
             return true;
           }
+          const lAllTags = Array.from(
+            new Set([
+              ...(Array.isArray(currentMeta.ownSlotTags) ? currentMeta.ownSlotTags : []),
+              ...(Array.isArray(currentMeta.slotTags) ? currentMeta.slotTags : []),
+              ...(Array.isArray(currentMeta.tags) ? currentMeta.tags : []),
+            ])
+          );
+          for (const t of lAllTags) {
+            if (!t) continue;
+            const invAt =
+              typeof storage.getTagInvalidatedAtAsync === "function"
+                ? await storage.getTagInvalidatedAtAsync(t)
+                : typeof storage.getTagInvalidatedAt === "function"
+                ? storage.getTagInvalidatedAt(t)
+                : 0;
+            const baselineInvAt = initialLayoutTagInvMap.has(t)
+              ? initialLayoutTagInvMap.get(t)
+              : now;
+            if (Number(invAt || 0) > baselineInvAt) {
+              return true;
+            }
+          }
           const lSlotTags = Array.from(
             new Set([
               ...(Array.isArray(currentMeta.ownSlotTags) ? currentMeta.ownSlotTags : []),
               ...(Array.isArray(currentMeta.slotTags) ? currentMeta.slotTags : []),
             ])
           );
-          if (lSlotTags.length > 0) {
+          if (committedGen > 0 && lSlotTags.length > 0) {
             const slotCheck = await inspectSlotsFreshness(
               lSlotTags,
-              committedGen > 0 ? committedGen : now
+              committedGen
             );
             if (slotCheck.hasNewer) return true;
           }
@@ -2194,8 +2242,6 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
       if (await checkCloudflareLayoutRace(0)) {
         return await revalidateLayout(reqPath, {
           ...internalOptions,
-          onlyRefreshSlots: false,
-          recomposeOnly: false,
           _retryDepth: retryDepth + 1,
         });
       }
@@ -2221,8 +2267,6 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
       if (await checkCloudflareLayoutRace(commitLayoutGenTime)) {
         return await revalidateLayout(reqPath, {
           ...internalOptions,
-          onlyRefreshSlots: false,
-          recomposeOnly: false,
           _retryDepth: retryDepth + 1,
         });
       }
