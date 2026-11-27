@@ -1133,3 +1133,228 @@ test("OPT-7: _DinouPageSlot memoizes client ref with manifest invalidation, and 
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
 });
+
+test("OPT-8: O(1) inverted tag index on FileSystemStorage & MemoryStorage, zero-get CloudflareKV listKeysWithMetadata, and parallel revalidateTag scan", async () => {
+  const storageMod = await import(
+    pathToFileURL(path.resolve(rootDir, "dinou/core/storage-adapter.js")).href
+  );
+  const revalMod = await import(
+    pathToFileURL(path.resolve(rootDir, "dinou/core/cache-revalidate.js")).href
+  );
+  const {
+    FileSystemStorage,
+    MemoryStorage,
+    CloudflareKVStorage,
+    StorageAdapter,
+    getStorageAdapter,
+    setStorageAdapter,
+  } = storageMod;
+
+  const prevStorage = getStorageAdapter();
+  const origReaddir = fs.readdirSync;
+  const origReadFile = fs.readFileSync;
+  const tmpDist = fs.mkdtempSync(path.join(os.tmpdir(), "dinou-opt8-"));
+
+  try {
+    // 1. FileSystemStorage: O(1) inverted tag index across slots, layouts & pages,
+    //    preserving exact onlyRefreshSlots semantics & incremental set()/delete() updates
+    const fsStore = new FileSystemStorage(tmpDist);
+    const now = Date.now();
+    await fsStore.set("slots/id-only-slot/slot.json", '"v1"', {
+      slotId: "id-only-slot",
+      tags: [],
+      generatedAt: now,
+    });
+    await fsStore.set("slots/tagged-slot/slot.json", '"v1"', {
+      slotId: "tagged-slot",
+      tags: ["shared-tag"],
+      generatedAt: now,
+    });
+    await fsStore.set(
+      "section/layout.metadata.json",
+      JSON.stringify({
+        generatedAt: now,
+        tags: ["layout-route-tag", "dual-tag"],
+        slotTags: ["shared-tag", "dual-tag"],
+      })
+    );
+    await fsStore.set(
+      "section/page-a/metadata.json",
+      JSON.stringify({
+        generatedAt: now,
+        tags: ["page-route-tag"],
+        slotTags: ["id-only-slot", "shared-tag"],
+      })
+    );
+
+    // Warm build
+    const warm1 = fsStore.findTargetsByTag("id-only-slot");
+    assert.ok(warm1.slotKeys.has("slots/id-only-slot/slot.json"));
+    assert.ok(warm1.slotKeys.has("slots/id-only-slot/slot.metadata.json"));
+    assert.deepEqual(warm1.pagePaths.get("/section/page-a"), { onlyRefreshSlots: true });
+
+    // Subsequent queries perform 0 readdirSync and 0 readFileSync
+    let readdirCalls = 0;
+    let readFileCalls = 0;
+    fs.readdirSync = function (...args) {
+      readdirCalls++;
+      return origReaddir.apply(this, args);
+    };
+    fs.readFileSync = function (...args) {
+      readFileCalls++;
+      return origReadFile.apply(this, args);
+    };
+
+    const dualRes = fsStore.findTargetsByTag("dual-tag");
+    assert.deepEqual(
+      dualRes.layoutPaths.get("/section"),
+      { onlyRefreshSlots: false },
+      "When a layout carries BOTH route tag and slotTag, onlyRefreshSlots must be false"
+    );
+    const sharedRes = fsStore.findTargetsByTag("shared-tag");
+    assert.ok(sharedRes.slotKeys.has("slots/tagged-slot/slot.json"));
+    assert.deepEqual(sharedRes.layoutPaths.get("/section"), { onlyRefreshSlots: true });
+    assert.deepEqual(sharedRes.pagePaths.get("/section/page-a"), { onlyRefreshSlots: true });
+    assert.equal(readdirCalls, 0, "Warm FileSystemStorage.findTargetsByTag must perform 0 readdirSync");
+    assert.equal(readFileCalls, 0, "Warm FileSystemStorage.findTargetsByTag must perform 0 readFileSync");
+
+    // Incremental set() updates index without rebuilding from disk
+    await fsStore.set("section/page-b/index.html", "<html>b</html>", {
+      generatedAt: now,
+      tags: ["new-incremental-tag"],
+    });
+    const incRes = fsStore.findTargetsByTag("new-incremental-tag");
+    assert.deepEqual(incRes.pagePaths.get("/section/page-b"), { onlyRefreshSlots: false });
+    assert.equal(readdirCalls, 0, "Incremental set() must update inverted tag index without full re-walk");
+
+    // Incremental delete() removes target cleanly without rebuilding from disk
+    await fsStore.delete("slots/id-only-slot/slot.json");
+    const afterDel = fsStore.findTargetsByTag("id-only-slot");
+    assert.equal(afterDel.slotKeys.size, 0);
+    assert.equal(readdirCalls, 0, "Incremental delete() must update inverted tag index without full re-walk");
+
+    fs.readdirSync = origReaddir;
+    fs.readFileSync = origReadFile;
+
+    // 2. MemoryStorage: O(1) findTargetsByTag (0 storage.get() calls on revalidateTag)
+    const memStore = new MemoryStorage({ hydrateFromDisk: false });
+    await memStore.set("slots/mem-slot/slot.json", '"v1"', { slotId: "mem-slot", tags: ["m-tag"], generatedAt: now });
+    await memStore.set("mem-page/metadata.json", JSON.stringify({ generatedAt: now, tags: ["p-tag"], slotTags: ["m-tag"] }));
+    setStorageAdapter(memStore);
+
+    let memGets = 0;
+    const origMemGet = memStore.get.bind(memStore);
+    memStore.get = async (...a) => {
+      memGets++;
+      return origMemGet(...a);
+    };
+    await revalMod.revalidateTag("nonexistent-mem-tag");
+    assert.equal(memGets, 0, "MemoryStorage revalidateTag must use O(1) inverted index with 0 storage.get() calls");
+
+    const memMatch = memStore.findTargetsByTag("m-tag");
+    assert.ok(memMatch.slotKeys.has("slots/mem-slot/slot.json"));
+    assert.deepEqual(memMatch.pagePaths.get("/mem-page"), { onlyRefreshSlots: true });
+    await memStore.delete("slots/mem-slot/slot.json");
+    assert.equal(memStore.findTargetsByTag("m-tag").slotKeys.size, 0);
+
+    // 3. CloudflareKVStorage: listKeysWithMetadata() avoids per-key kv.get() for <=1024B inline metadata
+    //    and fetches ONLY >1024B overflow metadata keys
+    const kvMap = new Map();
+    let kvGets = 0;
+    let kvLists = 0;
+    const mockKv = {
+      async put(k, v, opts) {
+        kvMap.set(k, { value: v, metadata: opts?.metadata || null });
+      },
+      async get(k) {
+        kvGets++;
+        return kvMap.get(k)?.value ?? null;
+      },
+      async getWithMetadata(k) {
+        kvGets++;
+        const hit = kvMap.get(k);
+        return hit ? { value: hit.value, metadata: hit.metadata } : { value: null, metadata: null };
+      },
+      async delete(k) {
+        kvMap.delete(k);
+      },
+      async list({ prefix } = {}) {
+        kvLists++;
+        const keys = [];
+        for (const [name, entry] of kvMap.entries()) {
+          if (!prefix || name.startsWith(prefix)) {
+            keys.push({ name, metadata: entry.metadata });
+          }
+        }
+        return { keys, list_complete: true };
+      },
+    };
+    const cfStore = new CloudflareKVStorage(mockKv);
+    cfStore.hydrateFromDisk = false;
+    for (let i = 0; i < 25; i++) {
+      await cfStore.set(`cf-p-${i}/index.html`, "<html>ok</html>", { generatedAt: now, tags: [`cf-t-${i}`] });
+    }
+    const bigTags = Array.from({ length: 80 }, (_, j) => `overflow-tag-${j}-padding-xxxxxxxxxxxx`);
+    await cfStore.set("cf-overflow/index.html", "<html>big</html>", { generatedAt: now, tags: bigTags });
+    await cfStore.set("slots/cf-inline-slot/slot.json", '"v1"', {
+      slotId: "cf-inline-slot",
+      tags: ["cf-inline-tag"],
+      generatedAt: now,
+    });
+
+    setStorageAdapter(cfStore);
+    kvGets = 0;
+    kvLists = 0;
+    await revalMod.revalidateTag("cf-miss-tag");
+    assert.equal(kvLists, 1);
+    assert.equal(
+      kvGets,
+      1,
+      `CloudflareKVStorage revalidateTag should fetch ONLY the 1 overflow metadata.json (skipping 26 inline keys), got ${kvGets}`
+    );
+
+    // Inline match still deletes slot accurately via listKeysWithMetadata
+    kvGets = 0;
+    await revalMod.revalidateTag("cf-inline-tag");
+    assert.equal(await cfStore.get("slots/cf-inline-slot/slot.json"), null);
+
+    // 4. Generic remote adapter (Redis/DenoKV): runs metadata fetches in bounded parallel concurrency
+    let inflight = 0;
+    let maxInflight = 0;
+    class ConcurrentRemoteAdapter extends StorageAdapter {
+      constructor() {
+        super();
+        this.hydrateFromDisk = false;
+        this.map = new Map();
+      }
+      async get(k) {
+        inflight++;
+        if (inflight > maxInflight) maxInflight = inflight;
+        await new Promise((r) => setTimeout(r, 15));
+        inflight--;
+        return this.map.get(k) || null;
+      }
+      async set(k, content, metadata = null) {
+        this.map.set(k, { content, metadata });
+      }
+      async has(k) { return this.map.has(k); }
+      async delete(k) { this.map.delete(k); }
+      async keys() { return Array.from(this.map.keys()); }
+    }
+    const remote = new ConcurrentRemoteAdapter();
+    for (let i = 0; i < 24; i++) {
+      await remote.set(`rem-${i}/metadata.json`, JSON.stringify({ generatedAt: now, tags: [`rt-${i}`] }));
+    }
+    setStorageAdapter(remote);
+    await revalMod.revalidateTag("rem-miss-tag");
+    assert.ok(
+      maxInflight >= 8 && maxInflight <= 16,
+      `Expected bounded parallel scan concurrency in [8..16], observed maxInflight=${maxInflight}`
+    );
+  } finally {
+    fs.readdirSync = origReaddir;
+    fs.readFileSync = origReadFile;
+    if (prevStorage) setStorageAdapter(prevStorage);
+    fs.rmSync(tmpDist, { recursive: true, force: true });
+  }
+});

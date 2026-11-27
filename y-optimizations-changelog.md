@@ -1,6 +1,6 @@
 # Performance Optimizations Changelog — Dinou (`y-optimizations-changelog.md`)
 
-All core request-path & 3D Caching Cube performance optimizations implemented from `y-optimizations.md` (`OPT-1` through `OPT-7`) are documented in this file.
+All core request-path & 3D Caching Cube performance optimizations implemented from `y-optimizations.md` (`OPT-1` through `OPT-8`) are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
@@ -106,6 +106,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
     - `createDinouPageSlotElement()` (10,000 calls, 151-entry client manifest): `registerClientReference` **`10,000 → 0`**, latency **`39.75 ms` (`3.97 µs`/call) → `2.37 ms` (`0.24 µs`/call)** (**~16.8× faster**).
     - `getFilePathAndDynamicParams("page")` + `getActiveLayoutChain()` across 10 real multi-level `src/t-3d-cube/*` routes (2,000 requests): **`358.53 ms` (`179.26 µs`/req) → `10.05 ms` (`5.03 µs`/req)** (**~35.7× faster**).
 
+#### `OPT-8` (Tier 2) — `O(1)` Inverted Tag Index (`FileSystemStorage` / `MemoryStorage`) & Parallel / Metadata-List `revalidateTag()` Scan
+- **Eliminated `O(total_files)` recursive `.dinou/dist2` scans and sequential remote metadata reads during `revalidateTag()` across all 5 storage adapters** (`dinou/core/storage-adapter.js`, `dinou/core/cache-revalidate.js`):
+  - **Incremental `O(1)` `InvertedTagIndex` on `FileSystemStorage` & `MemoryStorage` (`dinou/core/storage-adapter.js`)**:
+    - Added internal `InvertedTagIndex` tracking `slots`, `layouts`, and `pages` with separate route-tag (`tags`) and slot-tag (`slotTags`/`ownSlotTags`) attribution to preserve exact `onlyRefreshSlots = !hasRouteTag && hasSlotTag` semantics and cold-pod `revalidateTag(slotId)` resolution.
+    - On `FileSystemStorage`, added `findTargetsByTag(tag)` (lazy one-time build reading only `*.metadata.json` files, validated via `baseDir` + `slots/` `mtimeNs`, with surgical `O(tags)` incremental updates in `set()` / `delete()`, per-match existence pruning, and `invalidateTagIndex()`).
+    - On `MemoryStorage`, added `findTargetsByTag(tag)` maintained incrementally in `set()` / `delete()` (falling back cleanly to disk+store merge when `hydrateFromDisk === true`).
+  - **Zero-`get` `CloudflareKVStorage.listKeysWithMetadata()` & bounded-concurrency parallel scan (`dinou/core/storage-adapter.js`, `dinou/core/cache-revalidate.js`)**:
+    - Added cursor-paginated `listKeysWithMetadata()` on `CloudflareKVStorage` so `revalidateTag()` classifies all `<= 1024 B` inline-metadata keys directly from `kv.list()` with **zero `kv.get()` calls**, skipping bulky payload keys when an overflow companion `*.metadata.json` is present.
+    - Replaced the sequential `for ... await` metadata-reading loop (and disk-metadata tombstone checks) in `revalidateTag()` with a `runBoundedConcurrency(..., 16)` parallel worker pool for `RedisStorage`, `DenoKVStorage`, Cloudflare `>1024 B` overflow keys, and custom adapters — preserving exact slot backups, ancestor-first `revalidateLayout()` order, sequential `revalidatePage()`, and error rollback.
+  - **Measured Impact** (Windows Node 24, production mode):
+    - `FileSystemStorage` on real `.dinou/dist2` (4,227 files / 910 `*.metadata.json`, 20 `revalidateTag` calls): `readdirSync` **`940 → 0`/call**, `readFileSync` **`910 → 0`/call**, latency **`153.47 ms → 0.17 ms`/call** (**~916× faster**).
+    - `MemoryStorage` (1,200 keys, 200 `revalidateTag` calls): `storage.get()` **`240,000 → 0`**, latency **`1,015.9 µs → 14.0 µs`/call** (**~72.6× faster**).
+    - Simulated 10 ms `CloudflareKVStorage` (80 keys: 78 inline + 2 overflow): `kv.get` **`84 → 2`** (**-97.6%**), latency **`1,431.5 ms → 31.8 ms`** (**~45.0× faster**).
+    - Simulated 10 ms remote Redis/DenoKV adapter (64 metadata keys): latency **`1,048.4 ms → 80.9 ms`** (**~13.0× faster**).
+
 ---
 
 ## Tracking Log
@@ -119,3 +134,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 | **`OPT-5`** | Tier 2 | Permanent production `getDiscoveredLayouts()` cache & `O(1)` pre-serialized JSON | `dinou/core/handler.js`, `dinou/core/ppr-runtime.js`, `dinou/core/cache-revalidate.js` | Node Classic 20s prod: `readdirSync` **`14,340 → 0`**, `2,645.8 ms → 0.38 ms`; AOT/Edge JSON stringify **`10,000 → 0`** (`22.14 µs → 0.57 µs`/req, **~39× faster**) | `optimizations-hot-path`, `cache-3d-distributed-storage`, `test:3d-reval`, `test:3d-cube`, `cache-3d-cube-phase7`, `cache-3d-cube-phase8` |
 | **`OPT-6`** | Tier 3 | Zero-hole static layout & 0-hole page pre-rendered RSC reuse in `handlePprResume()` | `dinou/core/ppr-runtime.js`, `dinou/core/handler.js` | 0-hole PPR resume: **`1.380 ms → 0.167 ms`/req** (**~8.2× faster**); static layout + live page PPR: **`1.171 ms → 0.804 ms`/req** (**-31.3%**) | `optimizations-hot-path`, `cache-3d-distributed-storage`, `test:3d-reval`, `test:3d-cube`, `cache-3d-cube-phase7`, `cache-3d-cube-phase8` |
 | **`OPT-7`** | Tier 3 | Memoized `_DinouPageSlot` client ref & bounded (`1000`) production route/layout LRU caches | `dinou/core/get-jsx.js`, `dinou/core/get-file-path-and-dynamic-params.js`, `dinou/core/layout-functions.js` | `_DinouPageSlot`: **`3.97 µs → 0.24 µs`/call** (**~16.8× faster**); page + layout chain match (warm VFS): **`179.26 µs → 5.03 µs`/req** (**~35.7× faster**) | `optimizations-hot-path`, `cache-3d-distributed-storage`, `test:3d-reval`, `test:3d-cube`, `cache-3d-cube-phase7`, `cache-3d-cube-phase8` |
+| **`OPT-8`** | Tier 2 | `O(1)` inverted tag index (`FileSystemStorage` / `MemoryStorage`) & parallel / `listKeysWithMetadata` `revalidateTag()` | `dinou/core/storage-adapter.js`, `dinou/core/cache-revalidate.js` | FS `revalidateTag`: `1,850 → 0` dir/read syscalls, **`153.5 ms → 0.17 ms`** (**~916×**); Memory: **`72.6×`**; CF KV: `84 → 2` gets (**~45×**); Redis/DenoKV: **`~13×`** | `optimizations-hot-path`, `api-reference-cache-storage`, `test:api-ref-3`, `cache-3d-distributed-storage`, `test:3d-reval`, `test:3d-cube`, `cache-3d-cube-phase7`, `cache-3d-cube-phase8` |

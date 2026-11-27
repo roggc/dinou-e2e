@@ -36,7 +36,7 @@ All optimizations below are designed to be implemented **one stage at a time**, 
 ### Tier 2 — Clean, High-Value Low-Risk Wins
 - [x] **`OPT-4`** — `FileSystemStorage.get()` Syscall Reduction (`6 → 1–2` syscalls) & Redundant Cache-Miss Elimination (`storage-adapter.js`, `handler.js`)
 - [x] **`OPT-5`** — Permanent Production Caching & Pre-Serialized JSON for `getDiscoveredLayouts()` (`handler.js`)
-- [ ] **`OPT-8`** — `O(1)` Inverted Tag Index (`FileSystemStorage` / `MemoryStorage`) & Parallel / Metadata-List `revalidateTag()` Scan (`storage-adapter.js`, `cache-revalidate.js`)
+- [x] **`OPT-8`** — `O(1)` Inverted Tag Index (`FileSystemStorage` / `MemoryStorage`) & Parallel / Metadata-List `revalidateTag()` Scan (`storage-adapter.js`, `cache-revalidate.js`)
 
 ### Tier 3 — PPR & Micro-Level CPU Optimizations
 - [x] **`OPT-6`** — Zero-Hole Static Layout (and 0-Hole Page) Pre-Rendered RSC Reuse in `handlePprResume()` (`ppr-runtime.js`)

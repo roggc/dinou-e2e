@@ -2318,6 +2318,21 @@ async function revalidateLayout(reqPath, internalOptions = {}) {
   }
 }
 
+const TAG_SCAN_CONCURRENCY = 16;
+
+async function runBoundedConcurrency(items, concurrency, worker) {
+  if (!Array.isArray(items) || items.length === 0) return;
+  const limit = Math.min(concurrency, items.length);
+  let cursor = 0;
+  const runners = Array.from({ length: limit }, async () => {
+    while (cursor < items.length) {
+      const idx = cursor++;
+      await worker(items[idx]);
+    }
+  });
+  await Promise.all(runners);
+}
+
 async function revalidateTag(tag, options) {
   const sfCallerCtx = getContext();
   if (options !== undefined) {
@@ -2330,33 +2345,11 @@ async function revalidateTag(tag, options) {
   const storage = getStorageAdapter();
   if (isEdgeRuntime() || (storage && typeof storage.keys === "function")) {
     if (storage && typeof storage.keys === "function") {
-      const allKeysSet = new Set(await storage.keys());
       const isFsStorage = Boolean(storage && storage.baseDir);
-      if (!isFsStorage && storage.hydrateFromDisk !== false) {
-        try {
-          const dist2Folder = path.resolve(process.cwd(), ".dinou/dist2");
-          if (existsSync(dist2Folder)) {
-            const diskMetaFiles = await walkMetadataFiles(dist2Folder);
-            for (const diskMeta of diskMetaFiles) {
-              const relKey = path
-                .relative(dist2Folder, diskMeta)
-                .replace(/\\/g, "/");
-              const deleted =
-                typeof storage.isKeyDeleted === "function"
-                  ? await storage.isKeyDeleted(relKey)
-                  : typeof storage.isDeleted === "function" &&
-                    storage.isDeleted(relKey);
-              if (!deleted) {
-                allKeysSet.add(relKey);
-              }
-            }
-          }
-        } catch (e) {}
-      }
-      const allKeys = Array.from(allKeysSet);
       const targetPaths = new Map();
       const targetLayoutPaths = new Map();
       const targetSlotKeys = new Set();
+
       if (typeof storage.markTagInvalidatedAsync === "function") {
         await storage.markTagInvalidatedAsync(tag);
       } else if (typeof storage.markTagInvalidated === "function") {
@@ -2372,19 +2365,80 @@ async function revalidateTag(tag, options) {
           }
         }
       }
+
       const readKeyOrFallback = async (k) =>
         (await storage.get(k)) || (await readEdgeStorageOrAsset(storage, k));
-      for (const rawKey of allKeys) {
-        const key = String(rawKey || "").replace(/\\/g, "/");
-        if (key.endsWith("/slot.metadata.json") || (!isFsStorage && (key.startsWith("slots/") || key.endsWith("/slot.json")))) {
-          try {
-            const item = await readKeyOrFallback(key);
-            let meta = item?.metadata;
-            if (!meta && item?.content) {
-              try {
-                meta = JSON.parse(item.content);
-              } catch (e) {}
+
+      // O(1) inverted tag index fast path (FileSystemStorage & non-disk-hydrated MemoryStorage)
+      const indexedTargets =
+        typeof storage.findTargetsByTag === "function"
+          ? await storage.findTargetsByTag(tag)
+          : null;
+
+      if (indexedTargets) {
+        if (indexedTargets.slotKeys) {
+          for (const k of indexedTargets.slotKeys) targetSlotKeys.add(k);
+        }
+        if (indexedTargets.layoutPaths) {
+          for (const [normPath, opts] of indexedTargets.layoutPaths.entries()) {
+            const prev = targetLayoutPaths.get(normPath);
+            targetLayoutPaths.set(normPath, {
+              onlyRefreshSlots: prev
+                ? prev.onlyRefreshSlots && opts.onlyRefreshSlots
+                : opts.onlyRefreshSlots,
+            });
+          }
+        }
+        if (indexedTargets.pagePaths) {
+          for (const [normPath, opts] of indexedTargets.pagePaths.entries()) {
+            const prev = targetPaths.get(normPath);
+            targetPaths.set(normPath, {
+              onlyRefreshSlots: prev
+                ? prev.onlyRefreshSlots && opts.onlyRefreshSlots
+                : opts.onlyRefreshSlots,
+            });
+          }
+        }
+      } else {
+        let listedMetaMap = null;
+        const allKeysSet = new Set();
+        if (typeof storage.listKeysWithMetadata === "function") {
+          listedMetaMap = await storage.listKeysWithMetadata();
+          if (listedMetaMap) {
+            for (const k of listedMetaMap.keys()) {
+              allKeysSet.add(k);
             }
+          }
+        }
+        if (!listedMetaMap) {
+          for (const k of await storage.keys()) {
+            allKeysSet.add(k);
+          }
+        }
+        if (!isFsStorage && storage.hydrateFromDisk !== false) {
+          try {
+            const dist2Folder = path.resolve(process.cwd(), ".dinou/dist2");
+            if (existsSync(dist2Folder)) {
+              const diskMetaFiles = await walkMetadataFiles(dist2Folder);
+              await runBoundedConcurrency(diskMetaFiles, TAG_SCAN_CONCURRENCY, async (diskMeta) => {
+                const relKey = path
+                  .relative(dist2Folder, diskMeta)
+                  .replace(/\\/g, "/");
+                const deleted =
+                  typeof storage.isKeyDeleted === "function"
+                    ? await storage.isKeyDeleted(relKey)
+                    : typeof storage.isDeleted === "function" &&
+                      storage.isDeleted(relKey);
+                if (!deleted) {
+                  allKeysSet.add(relKey);
+                }
+              });
+            }
+          } catch (e) {}
+        }
+
+        const classifyWithMeta = (key, kind, meta) => {
+          if (kind === "slot") {
             const slotIdMatch = key.match(/^slots\/([^/]+)\//);
             const matchedSlotId = meta?.slotId || slotIdMatch?.[1];
             const matchesSlotId = Boolean(matchedSlotId && matchedSlotId === tag);
@@ -2399,87 +2453,94 @@ async function revalidateTag(tag, options) {
                 targetSlotKeys.add(key.slice(0, -"/slot.json".length) + "/slot.metadata.json");
               }
             }
-          } catch (e) {}
-        } else if (key.endsWith("layout.metadata.json") || (!isFsStorage && key.endsWith("layout.rsc"))) {
-          try {
-            const item = await readKeyOrFallback(key);
-            let meta = item?.metadata;
-            if (!meta && item?.content) {
-              try {
-                meta = JSON.parse(item.content);
-              } catch (e) {}
+            return;
+          }
+          const hasRouteTag = Boolean(meta && Array.isArray(meta.tags) && meta.tags.includes(tag));
+          const hasSlotTag = Boolean(
+            meta &&
+              ((Array.isArray(meta.slotTags) && meta.slotTags.includes(tag)) ||
+                (Array.isArray(meta.ownSlotTags) && meta.ownSlotTags.includes(tag)))
+          );
+          if (!hasRouteTag && !hasSlotTag) return;
+
+          if (kind === "layout") {
+            const cleanKey = key
+              .replace(/\/(?:layout\.metadata\.json|layout\.rsc)$/, "")
+              .replace(/^(?:layout\.metadata\.json|layout\.rsc)$/, "");
+            const normPath = cleanKey ? (cleanKey.startsWith("/") ? cleanKey : "/" + cleanKey) : "/";
+            const prev = targetLayoutPaths.get(normPath);
+            targetLayoutPaths.set(normPath, {
+              onlyRefreshSlots: prev ? prev.onlyRefreshSlots && !hasRouteTag : !hasRouteTag && hasSlotTag,
+            });
+            return;
+          }
+
+          const cleanKey = key
+            .replace(/\/(?:metadata\.json|index\.html|shell\.html)$/, "")
+            .replace(/^(?:metadata\.json|index\.html|shell\.html)$/, "");
+          if (cleanKey.startsWith("slots/") || cleanKey.endsWith("layout.rsc") || cleanKey.endsWith("layout.metadata.json")) {
+            return;
+          }
+          const normPath = cleanKey ? (cleanKey.startsWith("/") ? cleanKey : "/" + cleanKey) : "/";
+          const prev = targetPaths.get(normPath);
+          targetPaths.set(normPath, {
+            onlyRefreshSlots: prev ? prev.onlyRefreshSlots && !hasRouteTag : !hasRouteTag && hasSlotTag,
+          });
+        };
+
+        const keysNeedingFetch = [];
+        for (const rawKey of allKeysSet) {
+          const key = String(rawKey || "").replace(/\\/g, "/");
+          let kind = null;
+          let storageOnly = false;
+          if (key.endsWith("/slot.metadata.json") || (!isFsStorage && (key.startsWith("slots/") || key.endsWith("/slot.json")))) {
+            kind = "slot";
+          } else if (key.endsWith("layout.metadata.json") || (!isFsStorage && key.endsWith("layout.rsc"))) {
+            kind = "layout";
+          } else if (key.endsWith("metadata.json")) {
+            kind = "page";
+          } else if (!isFsStorage && (key.endsWith("index.html") || key.endsWith("shell.html"))) {
+            kind = "page";
+            storageOnly = true;
+          }
+          if (!kind) continue;
+
+          // Cloudflare KV fast path: classify directly from kv.list() inline metadata with 0 kv.get() calls!
+          if (listedMetaMap && listedMetaMap.has(rawKey)) {
+            const inlineMeta = listedMetaMap.get(rawKey);
+            if (inlineMeta && typeof inlineMeta === "object") {
+              classifyWithMeta(key, kind, inlineMeta);
+              continue;
             }
-            const hasRouteTag = Boolean(meta && Array.isArray(meta.tags) && meta.tags.includes(tag));
-            const hasSlotTag = Boolean(
-              meta &&
-                ((Array.isArray(meta.slotTags) && meta.slotTags.includes(tag)) ||
-                  (Array.isArray(meta.ownSlotTags) && meta.ownSlotTags.includes(tag)))
-            );
-            if (hasRouteTag || hasSlotTag) {
-              const cleanKey = key
-                .replace(/\/(?:layout\.metadata\.json|layout\.rsc)$/, "")
-                .replace(/^(?:layout\.metadata\.json|layout\.rsc)$/, "");
-              const normPath = cleanKey ? (cleanKey.startsWith("/") ? cleanKey : "/" + cleanKey) : "/";
-              const prev = targetLayoutPaths.get(normPath);
-              targetLayoutPaths.set(normPath, {
-                onlyRefreshSlots: prev ? prev.onlyRefreshSlots && !hasRouteTag : !hasRouteTag && hasSlotTag,
-              });
+            // If inline metadata overflowed (>1024B) and its companion *.metadata.json is also listed,
+            // skip reading the bulky payload key (index.html / shell.html / layout.rsc / slot.json).
+            if (kind === "page" && (key.endsWith("index.html") || key.endsWith("shell.html"))) {
+              const compMeta = key.replace(/(?:index|shell)\.html$/, "metadata.json");
+              if (allKeysSet.has(compMeta)) continue;
+            } else if (kind === "layout" && key.endsWith("layout.rsc")) {
+              const compMeta = key.replace(/layout\.rsc$/, "layout.metadata.json");
+              if (allKeysSet.has(compMeta)) continue;
+            } else if (kind === "slot" && key.endsWith("/slot.json")) {
+              const compMeta = key.replace(/\/slot\.json$/, "/slot.metadata.json");
+              if (allKeysSet.has(compMeta)) continue;
             }
-          } catch (e) {}
-        } else if (key.endsWith("metadata.json")) {
-          try {
-            const item = await readKeyOrFallback(key);
-            let meta = item?.metadata;
-            if (!meta && item?.content) {
-              try {
-                meta = JSON.parse(item.content);
-              } catch (e) {}
-            }
-            const hasRouteTag = Boolean(meta && Array.isArray(meta.tags) && meta.tags.includes(tag));
-            const hasSlotTag = Boolean(
-              meta &&
-                ((Array.isArray(meta.slotTags) && meta.slotTags.includes(tag)) ||
-                  (Array.isArray(meta.ownSlotTags) && meta.ownSlotTags.includes(tag)))
-            );
-            if (hasRouteTag || hasSlotTag) {
-              const cleanKey = key
-                .replace(/\/(?:metadata\.json|index\.html)$/, "")
-                .replace(/^(?:metadata\.json|index\.html)$/, "");
-              if (cleanKey.startsWith("slots/") || cleanKey.endsWith("layout.rsc") || cleanKey.endsWith("layout.metadata.json")) {
-                continue;
-              }
-              const normPath = cleanKey ? (cleanKey.startsWith("/") ? cleanKey : "/" + cleanKey) : "/";
-              const prev = targetPaths.get(normPath);
-              targetPaths.set(normPath, {
-                onlyRefreshSlots: prev ? prev.onlyRefreshSlots && !hasRouteTag : !hasRouteTag && hasSlotTag,
-              });
-            }
-          } catch (e) {}
-        } else if (!isFsStorage && (key.endsWith("index.html") || key.endsWith("shell.html"))) {
-          try {
-            const item = await storage.get(key);
-            const meta = item?.metadata;
-            const hasRouteTag = Boolean(meta && Array.isArray(meta.tags) && meta.tags.includes(tag));
-            const hasSlotTag = Boolean(
-              meta &&
-                ((Array.isArray(meta.slotTags) && meta.slotTags.includes(tag)) ||
-                  (Array.isArray(meta.ownSlotTags) && meta.ownSlotTags.includes(tag)))
-            );
-            if (hasRouteTag || hasSlotTag) {
-              const cleanKey = key
-                .replace(/\/(?:metadata\.json|index\.html|shell\.html)$/, "")
-                .replace(/^(?:metadata\.json|index\.html|shell\.html)$/, "");
-              if (cleanKey.startsWith("slots/") || cleanKey.endsWith("layout.rsc") || cleanKey.endsWith("layout.metadata.json")) {
-                continue;
-              }
-              const normPath = cleanKey ? (cleanKey.startsWith("/") ? cleanKey : "/" + cleanKey) : "/";
-              const prev = targetPaths.get(normPath);
-              targetPaths.set(normPath, {
-                onlyRefreshSlots: prev ? prev.onlyRefreshSlots && !hasRouteTag : !hasRouteTag && hasSlotTag,
-              });
-            }
-          } catch (e) {}
+          }
+
+          keysNeedingFetch.push({ key, kind, storageOnly });
         }
+
+        await runBoundedConcurrency(keysNeedingFetch, TAG_SCAN_CONCURRENCY, async ({ key, kind, storageOnly }) => {
+          try {
+            const item = storageOnly ? await storage.get(key) : await readKeyOrFallback(key);
+            let meta = item?.metadata;
+            if (!meta && !storageOnly && item?.content) {
+              try {
+                meta = JSON.parse(item.content);
+              } catch (e) {}
+            }
+            classifyWithMeta(key, kind, meta);
+          } catch (e) {}
+        });
       }
 
       // 0. Snapshot invalidated slot artifacts before deletion so if slot regeneration throws during
