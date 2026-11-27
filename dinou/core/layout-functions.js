@@ -12,6 +12,7 @@ const LAYOUT_FUNCTIONS_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mjs"];
 const LAYOUT_FUNCTIONS_NAMES = ["layout_functions", "layout.functions"];
 
 const layoutFunctionsPathCache = new Map();
+const layoutFunctionsConfigCache = new Map();
 
 function isLayoutDevMode() {
   return (
@@ -23,6 +24,20 @@ function isLayoutDevMode() {
 
 function clearLayoutFunctionsPathCache() {
   layoutFunctionsPathCache.clear();
+}
+
+function clearLayoutFunctionsConfigCache() {
+  layoutFunctionsConfigCache.clear();
+}
+
+function getLayoutConfigCacheKey(layoutFunctionsPath) {
+  const hasRouteModules =
+    typeof globalThis !== "undefined" && Boolean(globalThis.__DINOU_ROUTE_MODULES__);
+  const rawKey = String(layoutFunctionsPath || "").replace(/\\/g, "/");
+  const prefix = hasRouteModules ? "m:" : "f:";
+  return path.isAbsolute(layoutFunctionsPath)
+    ? `${prefix}${rawKey}`
+    : `${prefix}${process.cwd().replace(/\\/g, "/")}/${rawKey}`;
 }
 
 /**
@@ -89,12 +104,23 @@ async function getLayoutProps(layoutPath, dParams = {}) {
   if (!layoutFunctionsPath) return {};
 
   try {
-    const mod = await importModule(layoutFunctionsPath);
-    const defaultExport = mod.default?.default ? mod.default.default : mod.default;
-    const getPropsFn =
-      mod.getProps ||
-      defaultExport?.getProps ||
-      (typeof mod.default === "function" ? mod.default : null);
+    let getPropsFn = null;
+    if (!isLayoutDevMode()) {
+      const cfgKey = getLayoutConfigCacheKey(layoutFunctionsPath);
+      const cached = layoutFunctionsConfigCache.get(cfgKey);
+      if (cached) {
+        getPropsFn = cached.getProps;
+        if (typeof getPropsFn !== "function") return {};
+      }
+    }
+    if (!getPropsFn) {
+      const mod = await importModule(layoutFunctionsPath);
+      const defaultExport = mod.default?.default ? mod.default.default : mod.default;
+      getPropsFn =
+        mod.getProps ||
+        defaultExport?.getProps ||
+        (typeof mod.default === "function" ? mod.default : null);
+    }
     if (typeof getPropsFn === "function") {
       const res = await getPropsFn(dParams);
       return res && typeof res === "object" ? res : {};
@@ -107,6 +133,9 @@ async function getLayoutProps(layoutPath, dParams = {}) {
 
 /**
  * Resolves layout_functions configuration (revalidate, tags, dynamic, allowISG, validateParams).
+ * Caches static module exports (including `getStaticPaths` set, `allowISG`, `ppr`, `validateParams`,
+ * `getProps`) in production while still invoking per-request dynamic `revalidate(dParams)` and
+ * `getCacheTags(dParams)` functions on every call.
  * @param {string} layoutPath
  * @param {object} dParams
  * @returns {Promise<object>}
@@ -137,99 +166,134 @@ async function resolveLayoutFunctionsConfig(layoutPath, dParams = {}) {
   const layoutFunctionsPath = getLayoutFunctionsPath(layoutFolder);
   if (!layoutFunctionsPath) return defaultConfig;
 
-  let layoutPpr = null;
-  try {
-    const mod = await importModule(layoutFunctionsPath);
-    if (mod) {
-      layoutPpr = await resolveModulePpr(mod);
-    }
-    if (layoutPpr === null && typeof globalThis !== "undefined" && globalThis.__DINOU_ROUTE_METADATA__) {
-      const normKey = layoutFunctionsPath ? layoutFunctionsPath.replace(/\\/g, "/") : "";
-      for (const [k, meta] of Object.entries(globalThis.__DINOU_ROUTE_METADATA__)) {
-        if (meta.ppr !== undefined && (normKey === k || normKey.endsWith("/" + k) || normKey.endsWith(k))) {
-          layoutPpr = Boolean(meta.ppr);
-          break;
+  const isDev = isLayoutDevMode();
+  const cacheKey = !isDev ? getLayoutConfigCacheKey(layoutFunctionsPath) : null;
+  let cachedStatic = cacheKey ? layoutFunctionsConfigCache.get(cacheKey) : null;
+
+  if (!cachedStatic) {
+    let layoutPpr = null;
+    try {
+      const mod = await importModule(layoutFunctionsPath);
+      if (mod) {
+        layoutPpr = await resolveModulePpr(mod);
+      }
+      if (layoutPpr === null && typeof globalThis !== "undefined" && globalThis.__DINOU_ROUTE_METADATA__) {
+        const normKey = layoutFunctionsPath ? layoutFunctionsPath.replace(/\\/g, "/") : "";
+        for (const [k, meta] of Object.entries(globalThis.__DINOU_ROUTE_METADATA__)) {
+          if (meta.ppr !== undefined && (normKey === k || normKey.endsWith("/" + k) || normKey.endsWith(k))) {
+            layoutPpr = Boolean(meta.ppr);
+            break;
+          }
         }
       }
-    }
-    const defaultExport = mod.default?.default ? mod.default.default : mod.default;
-    const rawAllowISG =
-      mod.allowISG !== undefined ? mod.allowISG : defaultExport?.allowISG;
-    const resolvedAllowISG =
-      typeof rawAllowISG === "function"
-        ? await rawAllowISG()
-        : (rawAllowISG ?? defaultAllowISG);
+      const defaultExport = mod.default?.default ? mod.default.default : mod.default;
+      const rawAllowISG =
+        mod.allowISG !== undefined ? mod.allowISG : defaultExport?.allowISG;
+      const resolvedAllowISG =
+        typeof rawAllowISG === "function"
+          ? await rawAllowISG()
+          : (rawAllowISG ?? null);
 
-    const getStaticPathsFn = mod.getStaticPaths || defaultExport?.getStaticPaths;
-    let staticPathsSet = null;
-    if (getStaticPathsFn) {
-      const paths = await (typeof getStaticPathsFn === "function" ? getStaticPathsFn() : getStaticPathsFn);
-      if (Array.isArray(paths)) {
-        staticPathsSet = new Set(
-          paths.map((p) => {
-            if (typeof p === "object" && p !== null && !Array.isArray(p)) {
-              const sorted = Object.entries(p)
-                .sort((a, b) => a[0].localeCompare(b[0]))
-                .map(([k, v]) => [
-                  k,
-                  Array.isArray(v)
-                    ? v.join(",")
-                    : v === undefined || v === null
-                    ? ""
-                    : String(v),
-                ]);
-              return JSON.stringify(sorted);
-            }
-            if (Array.isArray(p)) {
-              return p.join(",");
-            }
-            return p === undefined || p === null ? "" : String(p);
-          })
-        );
+      const getStaticPathsFn = mod.getStaticPaths || defaultExport?.getStaticPaths;
+      let staticPathsSet = null;
+      if (getStaticPathsFn) {
+        const paths = await (typeof getStaticPathsFn === "function" ? getStaticPathsFn() : getStaticPathsFn);
+        if (Array.isArray(paths)) {
+          staticPathsSet = new Set(
+            paths.map((p) => {
+              if (typeof p === "object" && p !== null && !Array.isArray(p)) {
+                const sorted = Object.entries(p)
+                  .sort((a, b) => a[0].localeCompare(b[0]))
+                  .map(([k, v]) => [
+                    k,
+                    Array.isArray(v)
+                      ? v.join(",")
+                      : v === undefined || v === null
+                      ? ""
+                      : String(v),
+                  ]);
+                return JSON.stringify(sorted);
+              }
+              if (Array.isArray(p)) {
+                return p.join(",");
+              }
+              return p === undefined || p === null ? "" : String(p);
+            })
+          );
+        }
       }
-    }
 
-    const rawRevalidate =
-      mod.revalidate !== undefined ? mod.revalidate : defaultExport?.revalidate;
-    const revalidateVal =
-      typeof rawRevalidate === "function"
-        ? await rawRevalidate(dParams)
-        : rawRevalidate;
+      const rawRevalidate =
+        mod.revalidate !== undefined ? mod.revalidate : defaultExport?.revalidate;
+      const revalidateFn = typeof rawRevalidate === "function" ? rawRevalidate : null;
+      const staticRevalidate = revalidateFn ? undefined : rawRevalidate;
 
-    const isDynamic = typeof revalidateVal === "number" && revalidateVal < 1;
+      const rawTags = mod.getCacheTags ?? defaultExport?.getCacheTags;
+      const getCacheTagsFn = typeof rawTags === "function" ? rawTags : null;
+      const staticTags = Array.isArray(rawTags) ? rawTags : [];
 
-    const rawTags = mod.getCacheTags ?? defaultExport?.getCacheTags;
-    let tagsVal = [];
-    if (typeof rawTags === "function") {
-      try {
-        tagsVal = await rawTags(dParams);
-      } catch (e) {
-        console.error("Error running getCacheTags in layout-functions:", e);
+      const validateParamsFn = mod.validateParams || defaultExport?.validateParams;
+      const getPropsFn =
+        mod.getProps ||
+        defaultExport?.getProps ||
+        (typeof mod.default === "function" ? mod.default : null);
+
+      cachedStatic = {
+        allowISG: resolvedAllowISG,
+        staticPathsSet,
+        validateParams: typeof validateParamsFn === "function" ? validateParamsFn : null,
+        revalidateFn,
+        staticRevalidate,
+        getCacheTagsFn,
+        staticTags,
+        getProps: typeof getPropsFn === "function" ? getPropsFn : null,
+        ppr: layoutPpr,
+      };
+      if (cacheKey) {
+        layoutFunctionsConfigCache.set(cacheKey, cachedStatic);
       }
-    } else if (Array.isArray(rawTags)) {
-      tagsVal = rawTags;
+    } catch (err) {
+      console.error(`[Dinou] Error resolving layout_functions config from ${layoutFunctionsPath}:`, err);
+      return { ...defaultConfig, ppr: layoutPpr };
     }
-
-    const validateParamsFn = mod.validateParams || defaultExport?.validateParams;
-    const getPropsFn =
-      mod.getProps ||
-      defaultExport?.getProps ||
-      (typeof mod.default === "function" ? mod.default : null);
-
-    return {
-      allowISG: resolvedAllowISG,
-      staticPathsSet,
-      validateParams: typeof validateParamsFn === "function" ? validateParamsFn : null,
-      isDynamic,
-      revalidate: revalidateVal,
-      tags: Array.isArray(tagsVal) ? tagsVal : [],
-      getProps: typeof getPropsFn === "function" ? getPropsFn : null,
-      ppr: layoutPpr,
-    };
-  } catch (err) {
-    console.error(`[Dinou] Error resolving layout_functions config from ${layoutFunctionsPath}:`, err);
-    return { ...defaultConfig, ppr: layoutPpr };
   }
+
+  let revalidateVal = cachedStatic.staticRevalidate;
+  if (typeof cachedStatic.revalidateFn === "function") {
+    try {
+      revalidateVal = await cachedStatic.revalidateFn(dParams);
+    } catch (err) {
+      console.error(`[Dinou] Error running revalidate in ${layoutFunctionsPath}:`, err);
+    }
+  }
+  const isDynamic = typeof revalidateVal === "number" && revalidateVal < 1;
+
+  let tagsVal = cachedStatic.staticTags;
+  if (typeof cachedStatic.getCacheTagsFn === "function") {
+    try {
+      const dynTags = await cachedStatic.getCacheTagsFn(dParams);
+      tagsVal = Array.isArray(dynTags) ? dynTags : [];
+    } catch (e) {
+      console.error("Error running getCacheTags in layout-functions:", e);
+      tagsVal = [];
+    }
+  }
+
+  const effectiveAllowISG =
+    cachedStatic.allowISG !== null && cachedStatic.allowISG !== undefined
+      ? Boolean(cachedStatic.allowISG)
+      : defaultAllowISG;
+
+  return {
+    allowISG: effectiveAllowISG,
+    staticPathsSet: cachedStatic.staticPathsSet,
+    validateParams: cachedStatic.validateParams,
+    isDynamic,
+    revalidate: revalidateVal,
+    tags: Array.isArray(tagsVal) ? tagsVal : [],
+    getProps: cachedStatic.getProps,
+    ppr: cachedStatic.ppr,
+  };
 }
 
 function safeDecodeSegment(val) {
@@ -435,12 +499,16 @@ async function resolveLayoutChainPpr(
 ) {
   const globalCfg = await getDinouConfig();
   const defaultPpr = Boolean(globalCfg?.ppr);
-  const activeChain = getActiveLayoutChain(reqSegments, queryObj, srcFolder, options);
+  const activeChain = Array.isArray(options?.activeChain)
+    ? options.activeChain
+    : getActiveLayoutChain(reqSegments, queryObj, srcFolder, options);
   const layoutPprMap = new Map();
 
   for (let i = activeChain.length - 1; i >= 0; i--) {
     const entry = activeChain[i];
-    const lConfig = await resolveLayoutFunctionsConfig(entry.layoutPath, entry.dParams);
+    const lConfig =
+      entry._layoutConfig ||
+      (await resolveLayoutFunctionsConfig(entry.layoutPath, entry.dParams));
     const segmentPpr =
       lConfig && lConfig.ppr !== null && lConfig.ppr !== undefined
         ? Boolean(lConfig.ppr)
@@ -463,6 +531,7 @@ async function resolveLayoutChainPpr(
 export {
   getLayoutFunctionsPath,
   clearLayoutFunctionsPathCache,
+  clearLayoutFunctionsConfigCache,
   getLayoutProps,
   resolveLayoutFunctionsConfig,
   computeLayoutKeyFromFolder,
@@ -472,6 +541,7 @@ export {
 export default {
   getLayoutFunctionsPath,
   clearLayoutFunctionsPathCache,
+  clearLayoutFunctionsConfigCache,
   getLayoutProps,
   resolveLayoutFunctionsConfig,
   computeLayoutKeyFromFolder,

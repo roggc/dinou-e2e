@@ -503,10 +503,11 @@ async function resolvePprForRoute(
     {
       ignoreNoLayout: Boolean(options?.ignoreNoLayout),
       exactLayoutKey: Boolean(options?.exactLayoutKey),
+      ...(Array.isArray(options?.activeChain) ? { activeChain: options.activeChain } : {}),
     },
   );
 
-  if (options?.segment === "layout") {
+  if (options?.segment === "layout" && !options?.returnDetails) {
     return Boolean(anyLayoutPpr);
   }
 
@@ -557,6 +558,13 @@ async function resolvePprForRoute(
 
   const pageEffectivePpr =
     explicitPagePpr !== null ? explicitPagePpr : Boolean(defaultPpr);
+  if (options?.returnDetails) {
+    return {
+      routePpr: Boolean(pageEffectivePpr || anyLayoutPpr),
+      pagePpr: Boolean(pageEffectivePpr),
+      anyLayoutPpr: Boolean(anyLayoutPpr),
+    };
+  }
   if (options?.segment === "page") {
     return Boolean(pageEffectivePpr);
   }
@@ -567,7 +575,15 @@ async function resolvePprForRoute(
  * Resolves page_functions configuration (allowISG, validateParams, getStaticPaths)
  * and determines whether the current request path is blocked or allowed for ISG.
  */
-async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynamicParams, reqPath, isSSG = false) {
+async function resolvePageFunctionsConfig(
+  pagePath,
+  reqSegments,
+  queryObj,
+  dynamicParams,
+  reqPath,
+  isSSG = false,
+  precomputedActiveChain = null,
+) {
   const globalCfg = await getDinouConfig();
   const defaultAllowISG =
     globalCfg?.allowISG !== undefined && globalCfg?.allowISG !== null
@@ -601,10 +617,20 @@ async function resolvePageFunctionsConfig(pagePath, reqSegments, queryObj, dynam
         } catch (e) {}
       }
 
-      const isPpr = await resolvePprForRoute(pagePath, pageFunctionsModule, reqSegments, queryObj);
-      const isPagePpr = await resolvePprForRoute(pagePath, pageFunctionsModule, reqSegments, queryObj, {
-        segment: "page",
-      });
+      const pprDetails = await resolvePprForRoute(
+        pagePath,
+        pageFunctionsModule,
+        reqSegments,
+        queryObj,
+        {
+          returnDetails: true,
+          ...(Array.isArray(precomputedActiveChain)
+            ? { activeChain: precomputedActiveChain }
+            : {}),
+        },
+      );
+      const isPpr = Boolean(pprDetails?.routePpr);
+      const isPagePpr = Boolean(pprDetails?.pagePpr);
 
       if (pageFunctionsModule) {
         const defaultExport = pageFunctionsModule.default?.default ? pageFunctionsModule.default.default : pageFunctionsModule.default;
@@ -2139,16 +2165,16 @@ async function handleRequestInner(request, platformContext = {}) {
       ? [undefined, {}]
       : getFilePathAndDynamicParams(reqSegments, queryObj, srcFolder);
 
+    const perimeterLayoutChain = getActiveLayoutChain(reqSegments, queryObj, srcFolder, {
+      ignoreNoLayout: isLayoutReq,
+      exactLayoutKey: isLayoutReq,
+    });
     let layoutPath = null;
     let layoutParams = dynamicParams;
-    let layouts = null;
-    if (isLayoutReq) {
-      layouts = getLayoutsForLayoutKey(reqSegments, queryObj, srcFolder);
-      if (layouts && layouts.length > 0) {
-        const leafLayout = layouts[layouts.length - 1];
-        layoutPath = leafLayout[0];
-        layoutParams = leafLayout[1] || dynamicParams;
-      }
+    if (isLayoutReq && perimeterLayoutChain.length > 0) {
+      const leafLayout = perimeterLayoutChain[0];
+      layoutPath = leafLayout.layoutPath;
+      layoutParams = leafLayout.dParams || dynamicParams;
     }
 
     if (!isDynamic.has(cleanPath)) {
@@ -2164,14 +2190,11 @@ async function handleRequestInner(request, platformContext = {}) {
     let pageConfig = null;
     await requestStorage.run(rootContext, async () => {
       // Authoritative perimeter validation (root-to-child layouts, then page) BEFORE any cached RSC hit
-      const perimeterLayoutChain = getActiveLayoutChain(reqSegments, queryObj, srcFolder, {
-        ignoreNoLayout: isLayoutReq,
-        exactLayoutKey: isLayoutReq,
-      });
       if (perimeterLayoutChain.length > 0) {
         for (let i = perimeterLayoutChain.length - 1; i >= 0; i--) {
           const entry = perimeterLayoutChain[i];
           const lCfg = await resolveLayoutFunctionsConfig(entry.layoutPath, entry.dParams);
+          entry._layoutConfig = lCfg;
           if (i === 0 && isLayoutReq) {
             layoutConfig = lCfg;
           }
@@ -2223,6 +2246,7 @@ async function handleRequestInner(request, platformContext = {}) {
           dynamicParams,
           reqPath,
           Boolean(platformContext?.isSSG),
+          perimeterLayoutChain,
         );
         if (pageConfig.isDynamicConfig) {
           dynamicState.value = true;
@@ -2422,15 +2446,14 @@ async function handleRequestInner(request, platformContext = {}) {
       const storage = getStorageAdapter();
       const cleanRel = cleanPath.replace(/^\/+/, "").replace(/\/+$/, "");
       try {
-        const activeChain = getActiveLayoutChain(reqSegments, queryObj, srcFolder, {
-          ignoreNoLayout: isLayoutReq,
-          exactLayoutKey: isLayoutReq,
-        });
+        const activeChain = perimeterLayoutChain;
         if (activeChain.length > 0) {
           for (const entry of activeChain) {
             const lMetaKey = entry.cleanLayoutKey ? `${entry.cleanLayoutKey}/layout.metadata.json` : "layout.metadata.json";
             const lRscKey = entry.cleanLayoutKey ? `${entry.cleanLayoutKey}/layout.rsc` : "layout.rsc";
             const lMeta = await readMetaFromStorage(storage, lMetaKey, lRscKey, platformContext, request.url);
+            entry._prefetchedMeta = lMeta;
+            entry._hasPrefetchedMeta = true;
             entry.hasMeta = Boolean(lMeta);
             entry.generatedAt = Number(lMeta?.generatedAt || 0);
             entry.layoutGeneratedAt = Number(lMeta?.layoutGeneratedAt || lMeta?.generatedAt || 0);
@@ -2451,7 +2474,9 @@ async function handleRequestInner(request, platformContext = {}) {
               let isLayoutEvictedStatic = false;
               if (isLayoutReq && !internalBuildId && !entry.hasMeta) {
                 try {
-                  const lCfg = await resolveLayoutFunctionsConfig(entry.layoutPath, entry.dParams);
+                  const lCfg =
+                    entry._layoutConfig ||
+                    (await resolveLayoutFunctionsConfig(entry.layoutPath, entry.dParams));
                   if (!lCfg?.isDynamic) {
                     isLayoutEvictedStatic = true;
                   }
@@ -2531,6 +2556,8 @@ async function handleRequestInner(request, platformContext = {}) {
                   platformContext,
                   request.url
                 );
+                entry._prefetchedMeta = refreshedMeta;
+                entry._hasPrefetchedMeta = true;
                 if (refreshedMeta?.generatedAt) {
                   entry.generatedAt = Number(refreshedMeta.generatedAt);
                 }
@@ -2959,20 +2986,19 @@ async function handleRequestInner(request, platformContext = {}) {
             try {
               const storage = getStorageAdapter();
               const cleanRel = cleanPath.replace(/^\/+/, "").replace(/\/+$/, "");
-              const activeChain = getActiveLayoutChain(reqSegments, queryObj, srcFolder, {
-                ignoreNoLayout: true,
-                exactLayoutKey: true,
-              });
+              const activeChain = perimeterLayoutChain;
               if (activeChain.length > 0 && activeChain[0].cleanLayoutKey === cleanRel) {
                 await hydrateActiveChainPpr(activeChain, reqSegments, queryObj, srcFolder, {
                   ignoreNoLayout: true,
                   exactLayoutKey: true,
                 });
                 const leafEntry = activeChain[0];
-                const leafLayoutCfg = await resolveLayoutFunctionsConfig(
-                  leafEntry.layoutPath,
-                  leafEntry.dParams
-                );
+                const leafLayoutCfg =
+                  leafEntry._layoutConfig ||
+                  (await resolveLayoutFunctionsConfig(
+                    leafEntry.layoutPath,
+                    leafEntry.dParams
+                  ));
                 // Isolate THIS layout level's own dynamic state from any dynamic ancestor
                 // so a static L3 underneath a dynamic L2 still persists its own shell.layout.own.json!
                 const ownDynamicState = { value: Boolean(leafLayoutCfg.isDynamic) };
@@ -3311,10 +3337,7 @@ async function handleRequestInner(request, platformContext = {}) {
           if (!jsx && isLayoutReq && !isDevelopment && !platformContext?.isSSG) {
             context._isPprRuntimeResume = false;
             try {
-              const activeChain = getActiveLayoutChain(reqSegments, queryObj, srcFolder, {
-                ignoreNoLayout: true,
-                exactLayoutKey: true,
-              });
+              const activeChain = perimeterLayoutChain;
               if (activeChain.length > 0) {
                 await hydrateActiveChainPpr(activeChain, reqSegments, queryObj, srcFolder, {
                   ignoreNoLayout: true,
@@ -3323,20 +3346,24 @@ async function handleRequestInner(request, platformContext = {}) {
                 const overrides = new Map();
                 for (let i = activeChain.length - 1; i >= 0; i--) {
                   const entry = activeChain[i];
-                  const lCfg = await resolveLayoutFunctionsConfig(entry.layoutPath, entry.dParams);
+                  const lCfg =
+                    entry._layoutConfig ||
+                    (await resolveLayoutFunctionsConfig(entry.layoutPath, entry.dParams));
                   const lMetaKey = entry.cleanLayoutKey
                     ? `${entry.cleanLayoutKey}/layout.metadata.json`
                     : "layout.metadata.json";
                   const lRscKey = entry.cleanLayoutKey
                     ? `${entry.cleanLayoutKey}/layout.rsc`
                     : "layout.rsc";
-                  const lMeta = await readMetaFromStorage(
-                    storage,
-                    lMetaKey,
-                    lRscKey,
-                    platformContext,
-                    request.url
-                  );
+                  const lMeta = entry._hasPrefetchedMeta
+                    ? entry._prefetchedMeta
+                    : await readMetaFromStorage(
+                        storage,
+                        lMetaKey,
+                        lRscKey,
+                        platformContext,
+                        request.url
+                      );
                   if (lCfg.isDynamic || lMeta?.dynamic || !lMeta) {
                     const single = await renderSingleLayoutLevel(entry, {
                       reqSegments,
@@ -3400,10 +3427,7 @@ async function handleRequestInner(request, platformContext = {}) {
           ) {
             try {
               const storage = getStorageAdapter();
-              const activeChain = getActiveLayoutChain(reqSegments, queryObj, srcFolder, {
-                ignoreNoLayout: true,
-                exactLayoutKey: true,
-              });
+              const activeChain = perimeterLayoutChain;
               if (activeChain.length > 0) {
                 await hydrateActiveChainPpr(activeChain, reqSegments, queryObj, srcFolder, {
                   ignoreNoLayout: true,
@@ -3414,20 +3438,24 @@ async function handleRequestInner(request, platformContext = {}) {
                 let failedRscLayoutErr = null;
                 for (let i = activeChain.length - 1; i >= 0; i--) {
                   const entry = activeChain[i];
-                  const lCfg = await resolveLayoutFunctionsConfig(entry.layoutPath, entry.dParams);
+                  const lCfg =
+                    entry._layoutConfig ||
+                    (await resolveLayoutFunctionsConfig(entry.layoutPath, entry.dParams));
                   const lMetaKey = entry.cleanLayoutKey
                     ? `${entry.cleanLayoutKey}/layout.metadata.json`
                     : "layout.metadata.json";
                   const lRscKey = entry.cleanLayoutKey
                     ? `${entry.cleanLayoutKey}/layout.rsc`
                     : "layout.rsc";
-                  let lMeta = await readMetaFromStorage(
-                    storage,
-                    lMetaKey,
-                    lRscKey,
-                    platformContext,
-                    request.url
-                  );
+                  let lMeta = entry._hasPrefetchedMeta
+                    ? entry._prefetchedMeta
+                    : await readMetaFromStorage(
+                        storage,
+                        lMetaKey,
+                        lRscKey,
+                        platformContext,
+                        request.url
+                      );
                   if (lCfg.isDynamic || lMeta?.dynamic) {
                     try {
                       const single = await renderSingleLayoutLevel(entry, {
@@ -3682,19 +3710,6 @@ async function handleRequestInner(request, platformContext = {}) {
     dynamicState.value = false;
   }
 
-  const layouts = getFilePathAndDynamicParams(
-    reqSegments,
-    queryObj,
-    srcFolder,
-    "layout",
-    true,
-    false,
-    undefined,
-    0,
-    {},
-    true
-  );
-
   let isPathBlocked = false;
   let blockedLayoutIdx = -1;
   let allowISGValue = true;
@@ -3716,6 +3731,7 @@ async function handleRequestInner(request, platformContext = {}) {
       for (let i = activeLayoutsForRoute.length - 1; i >= 0; i--) {
         const entry = activeLayoutsForRoute[i];
         const layoutConfig = await resolveLayoutFunctionsConfig(entry.layoutPath, entry.dParams);
+        entry._layoutConfig = layoutConfig;
         entry.isDynamicConfig = Boolean(layoutConfig.isDynamic);
         entry.revalidate = layoutConfig.revalidate;
 
@@ -3761,6 +3777,8 @@ async function handleRequestInner(request, platformContext = {}) {
               platformContext,
               request.url
             );
+            entry._prefetchedMeta = lMeta;
+            entry._hasPrefetchedMeta = true;
             if (lMeta?.dynamic) {
               entry.isDynamicConfig = true;
               dynamicState = { value: true };
@@ -3798,6 +3816,7 @@ async function handleRequestInner(request, platformContext = {}) {
         dynamicParams,
         reqPath,
         Boolean(platformContext?.isSSG),
+        activeLayoutsForRoute,
       )
     );
     isPathBlocked = pageCfg.isPathBlocked;
@@ -4068,6 +4087,11 @@ async function handleRequestInner(request, platformContext = {}) {
         }
       } catch (e) {
         console.error(`[Dinou PPR] Error regenerating static shell for ${reqPath}:`, e);
+      } finally {
+        for (const entry of activeLayoutsForRoute) {
+          entry._hasPrefetchedMeta = false;
+          entry._prefetchedMeta = undefined;
+        }
       }
     }
 
@@ -4076,14 +4100,9 @@ async function handleRequestInner(request, platformContext = {}) {
       const pendingLayoutSlotRevalPaths = [];
       let cachedHitActiveLayoutChain = [];
       try {
-        const activeLayoutChain = getActiveLayoutChain(reqSegments, queryObj, srcFolder);
+        const activeLayoutChain = activeLayoutsForRoute;
         cachedHitActiveLayoutChain = activeLayoutChain;
         if (activeLayoutChain.length > 0) {
-          const dynLayoutKeys = new Set(
-            activeLayoutsForRoute
-              .filter((e) => Boolean(e?.isDynamicConfig))
-              .map((e) => e.cleanLayoutKey || "")
-          );
           for (const entry of activeLayoutChain) {
             const lMetaKey = entry.cleanLayoutKey
               ? `${entry.cleanLayoutKey}/layout.metadata.json`
@@ -4091,15 +4110,19 @@ async function handleRequestInner(request, platformContext = {}) {
             const lRscKey = entry.cleanLayoutKey
               ? `${entry.cleanLayoutKey}/layout.rsc`
               : "layout.rsc";
-            const lMeta = await readMetaFromStorage(
-              storage,
-              lMetaKey,
-              lRscKey,
-              platformContext,
-              request.url
-            );
+            const lMeta = entry._hasPrefetchedMeta
+              ? entry._prefetchedMeta
+              : await readMetaFromStorage(
+                  storage,
+                  lMetaKey,
+                  lRscKey,
+                  platformContext,
+                  request.url
+                );
+            entry._prefetchedMeta = lMeta;
+            entry._hasPrefetchedMeta = true;
             entry.hasMeta = Boolean(lMeta);
-            entry.isDynamicConfig = dynLayoutKeys.has(entry.cleanLayoutKey || "");
+            entry.isDynamicConfig = Boolean(entry.isDynamicConfig);
             entry.generatedAt = Number(lMeta?.generatedAt || 0);
             entry.layoutGeneratedAt = Number(lMeta?.layoutGeneratedAt || lMeta?.generatedAt || 0);
             entry.ownGeneratedAt = Number(lMeta?.ownGeneratedAt || lMeta?.layoutGeneratedAt || lMeta?.generatedAt || 0);
@@ -4182,6 +4205,8 @@ async function handleRequestInner(request, platformContext = {}) {
                 platformContext,
                 request.url
               );
+              entry._prefetchedMeta = refreshedMeta;
+              entry._hasPrefetchedMeta = true;
               if (refreshedMeta?.generatedAt) {
                 entry.generatedAt = Number(refreshedMeta.generatedAt);
               }
@@ -4731,7 +4756,7 @@ async function handleRequestInner(request, platformContext = {}) {
         try {
           if (!isError) {
             if (platformContext?.isSSG && isPprConfig) {
-              const activeChain = getActiveLayoutChain(reqSegments, queryObj, srcFolder);
+              const activeChain = activeLayoutsForRoute;
               let leafLayoutRsc = "";
               let leafMeta = null;
               if (activeChain.length > 0) {
@@ -5087,13 +5112,15 @@ async function handleRequestInner(request, platformContext = {}) {
                         ? `${entry.cleanLayoutKey}/layout.rsc`
                         : "layout.rsc";
                       const lMeta = !isDevelopment
-                        ? await readMetaFromStorage(
-                            storage,
-                            lMetaKey,
-                            lRscKey,
-                            platformContext,
-                            request.url
-                          )
+                        ? entry._hasPrefetchedMeta
+                          ? entry._prefetchedMeta
+                          : await readMetaFromStorage(
+                              storage,
+                              lMetaKey,
+                              lRscKey,
+                              platformContext,
+                              request.url
+                            )
                         : null;
                       const isEntryDynamic = Boolean(
                         isDevelopment || entry.isDynamicConfig || lMeta?.dynamic || !lMeta
@@ -5148,6 +5175,8 @@ async function handleRequestInner(request, platformContext = {}) {
                               platformContext,
                               request.url
                             )) || lMeta;
+                          entry._prefetchedMeta = effectiveLMeta;
+                          entry._hasPrefetchedMeta = true;
                         } else {
                           const mergedLSlotTags = Array.from(
                             new Set([
@@ -5173,6 +5202,8 @@ async function handleRequestInner(request, platformContext = {}) {
                                   platformContext,
                                   request.url
                                 )) || lMeta;
+                              entry._prefetchedMeta = effectiveLMeta;
+                              entry._hasPrefetchedMeta = true;
                             } else if (lSlotFresh.hasExpired) {
                               pendingAsymLayoutSlotRevalPaths.push(entry.layoutRoutePath);
                             }
@@ -5648,7 +5679,7 @@ async function handleRequestInner(request, platformContext = {}) {
               context._resolvedLayoutClientJsx !== undefined
             ) {
               try {
-                const activeChain = getActiveLayoutChain(reqSegments, queryObj, srcFolder);
+                const activeChain = activeLayoutsForRoute;
                 if (activeChain.length > 0) {
                   const leafLayout = activeChain[0];
                   const leafRscKey = leafLayout.cleanLayoutKey
@@ -5657,13 +5688,15 @@ async function handleRequestInner(request, platformContext = {}) {
                   const leafMetaKey = leafLayout.cleanLayoutKey
                     ? `${leafLayout.cleanLayoutKey}/layout.metadata.json`
                     : "layout.metadata.json";
-                  const lMeta = await readMetaFromStorage(
-                    storage,
-                    leafMetaKey,
-                    leafRscKey,
-                    platformContext,
-                    request.url
-                  );
+                  const lMeta = leafLayout._hasPrefetchedMeta
+                    ? leafLayout._prefetchedMeta
+                    : await readMetaFromStorage(
+                        storage,
+                        leafMetaKey,
+                        leafRscKey,
+                        platformContext,
+                        request.url
+                      );
                   const layoutHasPprHoles =
                     Boolean(lMeta?.ppr) ||
                     (Array.isArray(lMeta?.holes) && lMeta.holes.length > 0);
@@ -5890,7 +5923,7 @@ async function handleRequestInner(request, platformContext = {}) {
                   }
                 }
                 const pageSlotTags =
-                  layouts && layouts.length > 0
+                  activeLayoutsForRoute && activeLayoutsForRoute.length > 0
                     ? context._pageSlotTags
                     : context._pageSlotTags && context._pageSlotTags.size > 0
                     ? context._pageSlotTags

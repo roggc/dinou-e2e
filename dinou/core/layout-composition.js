@@ -579,7 +579,7 @@ async function hydrateActiveChainPpr(activeChain, reqSegments, queryObj, srcFold
     reqSegments,
     queryObj,
     srcFolder,
-    options
+    { ...options, activeChain }
   );
   for (const entry of activeChain) {
     const norm = entry.layoutPath.replace(/\\/g, "/");
