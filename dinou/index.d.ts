@@ -623,7 +623,7 @@ export type FallbackRouteParams<Path extends string> =
     : [`/@${string}`] extends [Path]
       ? Record<string, string | string[] | undefined>
       : keyof ExtractRouteParams<Path> extends never
-        ? Record<string, never>
+        ? Record<never, never>
         : SimplifyParams<ExtractRouteParams<Path>>;
 
 export type FallbackNavigableParams<Path extends string> =
@@ -632,7 +632,7 @@ export type FallbackNavigableParams<Path extends string> =
     : [`/@${string}`] extends [Path]
       ? Record<string, string | string[] | undefined>
       : keyof ExtractNavigableRouteParams<Path> extends never
-        ? Record<string, never>
+        ? Record<never, never>
         : SimplifyParams<ExtractNavigableRouteParams<Path>>;
 
 /**

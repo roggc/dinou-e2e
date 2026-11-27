@@ -335,8 +335,7 @@ async function findClientComponents(parsedClientManifest = {}) {
     if (fileUrl.startsWith("file:///")) {
       try {
         const filePath = fileURLToPath(fileUrl);
-        const norm = filePath.replace(/\\/g, "/");
-        if (norm.includes("/out/") || norm.includes("/dist/") || norm.includes("/.dinou/")) continue;
+        if (isProjectInternalOutputPath(filePath)) continue;
         const base = path.basename(filePath);
         if (
           base === "client.jsx" ||
@@ -353,6 +352,41 @@ async function findClientComponents(parsedClientManifest = {}) {
   }
 
   return Array.from(clientFiles);
+}
+
+const normProjectRootForFilter = path.resolve(projectRoot).replace(/\\/g, "/");
+const normProjectRootLowerForFilter =
+  process.platform === "win32"
+    ? normProjectRootForFilter.toLowerCase()
+    : normProjectRootForFilter;
+
+function isProjectInternalOutputPath(rawPathOrUrl) {
+  if (!rawPathOrUrl || typeof rawPathOrUrl !== "string") return false;
+  let candidate = rawPathOrUrl.split("#")[0].split("?")[0];
+  if (candidate.startsWith("file://")) {
+    try {
+      candidate = fileURLToPath(candidate);
+    } catch {
+      candidate = candidate.replace(/^file:\/\/\/?/, "");
+    }
+  }
+  const norm = candidate.replace(/\\/g, "/");
+  const normCmp = process.platform === "win32" ? norm.toLowerCase() : norm;
+  if (normCmp === normProjectRootLowerForFilter) return false;
+  if (normCmp.startsWith(normProjectRootLowerForFilter + "/")) {
+    const rel = norm.slice(normProjectRootForFilter.length + 1);
+    return (
+      rel.startsWith("out/") ||
+      rel.startsWith("dist/") ||
+      rel.startsWith(".dinou/")
+    );
+  }
+  const relClean = norm.replace(/^\.\/+/, "").replace(/^\/+/, "");
+  return (
+    relClean.startsWith("out/") ||
+    relClean.startsWith("dist/") ||
+    relClean.startsWith(".dinou/")
+  );
 }
 
 // Manifest paths and helpers
@@ -423,15 +457,9 @@ async function updateManifestsState(options = {}) {
   if (rawClient) {
     const cleanClient = {};
     for (const [k, v] of Object.entries(rawClient)) {
-      const normK = k.replace(/\\/g, "/");
-      const normId = (v?.id || "").replace(/\\/g, "/");
       if (
-        normK.includes("/out/") ||
-        normK.includes("/dist/") ||
-        normK.includes("/.dinou/") ||
-        normId.includes("/out/") ||
-        normId.includes("/dist/") ||
-        normId.includes("/.dinou/")
+        isProjectInternalOutputPath(k) ||
+        isProjectInternalOutputPath(v?.id || "")
       ) {
         continue;
       }
@@ -502,8 +530,7 @@ async function updateManifestsState(options = {}) {
   let linkEntry = null;
   let redirectEntry = null;
   for (const [k, v] of Object.entries(parsedClientManifest)) {
-    const norm = k.replace(/\\/g, "/");
-    if (norm.includes("/out/") || norm.includes("/dist/") || norm.includes("/.dinou/")) continue;
+    if (isProjectInternalOutputPath(k)) continue;
     if (k.includes("/core/link.jsx") || k.includes("dinouLink")) {
       if (v?.id) { resolvedLinkChunkId = v.id; linkEntry = v; }
     }

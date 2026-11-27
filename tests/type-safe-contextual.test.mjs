@@ -66,10 +66,20 @@ async function main() {
     routesDtsContent.includes('"/t-type-safe-contextual/[slug]/@sidebar": { slug: string }'),
     "Expected DinouSlotParamsMap to include /t-type-safe-contextual/[slug]/@sidebar"
   );
+  const customAssetsDtsPath = path.join(root, ".dinou/types/assets.d.ts");
+  assert(
+    routesDtsContent.includes('/// <reference path="./assets.d.ts" />'),
+    "Expected .dinou/types/routes.d.ts to reference ambient .dinou/types/assets.d.ts"
+  );
+  assert(
+    fs.existsSync(customAssetsDtsPath),
+    "Expected ambient .dinou/types/assets.d.ts to exist for custom assetExtensions"
+  );
+  const customAssetsDtsContent = fs.readFileSync(customAssetsDtsPath, "utf8");
   for (const customExt of ["glb", "gltf", "hdr"]) {
     assert(
-      routesDtsContent.includes(`declare module "*.${customExt}"`),
-      `Expected .dinou/types/routes.d.ts to declare custom asset module "*.${customExt}" from dinou.config.mjs`
+      customAssetsDtsContent.includes(`declare module "*.${customExt}"`),
+      `Expected .dinou/types/assets.d.ts to declare custom asset module "*.${customExt}" from dinou.config.mjs`
     );
   }
   for (const envKey of [

@@ -229,13 +229,21 @@ console.log(
       path.join(tmpApp, ".dinou", "types", "routes.d.ts"),
       "utf8"
     );
-    assert.match(routesDts, /declare module "\*\.glb"/);
-    assert.match(routesDts, /declare module "\*\.gltf"/);
-    assert.match(routesDts, /declare module "\*\.hdr"/);
+    assert.ok(
+      routesDts.includes('/// <reference path="./assets.d.ts" />'),
+      "routes.d.ts must reference ambient .dinou/types/assets.d.ts"
+    );
+    const assetsDts = fs.readFileSync(
+      path.join(tmpApp, ".dinou", "types", "assets.d.ts"),
+      "utf8"
+    );
+    assert.match(assetsDts, /declare module "\*\.glb"/);
+    assert.match(assetsDts, /declare module "\*\.gltf"/);
+    assert.match(assetsDts, /declare module "\*\.hdr"/);
     assert.equal(
-      routesDts.includes('declare module "*.png"'),
+      assetsDts.includes('declare module "*.png"'),
       false,
-      "Built-in extensions from dinou/assets.d.ts must not be re-declared in routes.d.ts"
+      "Built-in extensions from dinou/assets.d.ts must not be re-declared in .dinou/types/assets.d.ts"
     );
 
     const indexDtsPath = path.join(dinouRoot, "index.d.ts");

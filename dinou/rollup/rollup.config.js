@@ -1,5 +1,6 @@
 import path from "node:path";
 import fs from "node:fs";
+import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { isUnvendorizedRequested } from "../core/ensure-vendor-mode.js";
@@ -144,8 +145,28 @@ export default async function () {
       dir: outputDirectory,
       format: "esm",
       entryFileNames: isDevelopment ? "[name].js" : "[name]-[hash].js",
+      ...(isDevelopment
+        ? {
+            manualChunks(id) {
+              if (!id) return undefined;
+              if (id.includes("commonjsHelpers")) {
+                return "_commonjsHelpers";
+              }
+              if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) {
+                return "vendor-react";
+              }
+              return undefined;
+            },
+          }
+        : {}),
       chunkFileNames: (chunkInfo) => {
         if (!isDevelopment) return "[name]-[hash].js";
+        if (
+          chunkInfo.name === "vendor-react" ||
+          chunkInfo.name === "_commonjsHelpers"
+        ) {
+          return "[name].js";
+        }
         const moduleIds =
           chunkInfo.moduleIds || Object.keys(chunkInfo.modules || {});
         if (moduleIds.length === 0) return "[name].js";
@@ -156,7 +177,16 @@ export default async function () {
             id.includes("commonjsHelpers")
         );
         if (isVendor) {
-          return "[name]-[hash].js";
+          const stableKey = moduleIds
+            .map((m) => String(m).replace(/\\/g, "/"))
+            .sort()
+            .join("\0");
+          const stableHash = crypto
+            .createHash("sha1")
+            .update(stableKey)
+            .digest("hex")
+            .slice(0, 8);
+          return `[name]-${stableHash}.js`;
         }
         return "[name].js";
       },
@@ -344,18 +374,23 @@ export default async function () {
     ].filter(Boolean),
     watch: {
       buildDelay: 100,
-      exclude: [
-        /[\\/]node_modules[\\/]/,
-        /[\\/]\.git[\\/]/,
-        /[\\/]\.dinou[\\/]/,
-        /[\\/]test-results[\\/]/,
-        /[\\/]playwright-report[\\/]/,
-        "**/node_modules/**",
-        "**/.git/**",
-        "**/.dinou/**",
-        "**/test-results/**",
-        "**/playwright-report/**",
-      ],
+      exclude: (() => {
+        const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const cwdNorm = path.resolve(process.cwd());
+        const makeLocalDirRe = (dirName) =>
+          new RegExp(
+            `^${escapeRe(cwdNorm)}[\\\\/]${escapeRe(dirName)}(?:[\\\\/]|$)`,
+            process.platform === "win32" ? "i" : ""
+          );
+        return [
+          /[\\/]node_modules[\\/]/,
+          makeLocalDirRe(".git"),
+          makeLocalDirRe(".dinou"),
+          makeLocalDirRe("test-results"),
+          makeLocalDirRe("playwright-report"),
+          "**/node_modules/**",
+        ];
+      })(),
     },
     onwarn(warning, warn) {
       if (warning.code === "CIRCULAR_DEPENDENCY" || warning.code === "THIS_IS_UNDEFINED") {
