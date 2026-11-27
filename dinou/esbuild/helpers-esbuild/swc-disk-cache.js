@@ -1,0 +1,261 @@
+import fs from "node:fs/promises";
+import fsSync from "node:fs";
+import path from "node:path";
+import globModule from "#fast-glob";
+
+const glob = globModule?.default || globModule;
+import { transform } from "@swc/core";
+import { useClientRegex, useServerRegex } from "../../constants.js";
+import { hasServerFunctions, extractServerFunctions } from "../../core/transform-server-functions.js";
+import { getAssetExtensionsInfo } from "../../core/asset-extensions.js";
+
+function isServerFunctionsModule(raw, filename) {
+  const trimmed = raw.trim();
+  if (useClientRegex.test(trimmed)) return false;
+  if (useServerRegex.test(trimmed)) return true;
+  if (hasServerFunctions(raw)) {
+    const actions = extractServerFunctions(raw, filename);
+    return Boolean(actions && actions.length > 0);
+  }
+  return false;
+}
+
+const styleExtensions = ["css", "scss", "less", "sass"];
+const redirectFilter = new RegExp(`\\.(${styleExtensions.join("|")})$`, "i");
+
+const normPath = (p) => {
+  if (!p) return "";
+  let s = path.resolve(p).replace(/\\/g, "/");
+  if (process.platform === "win32") {
+    s = s.replace(/^([a-zA-Z]):/, (_, d) => d.toLowerCase() + ":");
+  }
+  return s;
+};
+
+export function getMirrorPath(srcPath, projectRoot = process.cwd()) {
+  if (!srcPath) return "";
+  const norm = normPath(srcPath);
+  const rootNorm = normPath(projectRoot);
+  if (!norm.startsWith(rootNorm)) return srcPath;
+  const rel = norm.slice(rootNorm.length + 1);
+  const targetRel = rel.replace(/\.[jt]sx?$/, ".js");
+  return path.resolve(projectRoot, ".dinou/swc", targetRel);
+}
+
+export function getOriginalPath(mirrorPath, projectRoot = process.cwd()) {
+  if (!mirrorPath) return "";
+  const norm = normPath(mirrorPath);
+  const rootNorm = normPath(projectRoot);
+  const swcPrefix = `${rootNorm}/.dinou/swc/`;
+  if (!norm.startsWith(swcPrefix)) return mirrorPath;
+  const rel = norm.slice(swcPrefix.length);
+  const base = path.resolve(projectRoot, rel.replace(/\.js$/, ""));
+  for (const ext of [".tsx", ".ts", ".jsx", ".js"]) {
+    const candidate = base + ext;
+    if (fsSync.existsSync(candidate)) return candidate;
+  }
+  return base + ".tsx";
+}
+
+export async function transformToDisk(srcPath, projectRoot = process.cwd()) {
+  const normSrc = path.resolve(srcPath);
+  if (!fsSync.existsSync(normSrc)) return null;
+
+  const raw = await fs.readFile(normSrc, "utf8");
+  const targetPath = getMirrorPath(normSrc, projectRoot);
+  // Skip server functions - handled by serverFunctionsPlugin proxy
+  if (isServerFunctionsModule(raw, normSrc)) {
+    try {
+      if (fsSync.existsSync(targetPath)) await fs.unlink(targetPath);
+    } catch (e) {}
+    return null;
+  }
+
+  let compiledCode = raw;
+  try {
+    const { code } = await transform(raw, {
+      filename: normSrc,
+      configFile: false,
+      swcrc: false,
+      sourceMaps: "inline",
+      jsc: {
+        parser: { syntax: "typescript", tsx: true, dynamicImport: true },
+        target: "es2022",
+        transform: {
+          react: {
+            refresh: true,
+            development: true,
+            runtime: "automatic",
+          },
+        },
+      },
+    });
+    compiledCode = code;
+  } catch (err) {
+    compiledCode = raw;
+  }
+
+  const targetDir = path.dirname(targetPath);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await fs.mkdir(targetDir, { recursive: true });
+      await fs.writeFile(targetPath, compiledCode, "utf8");
+      break;
+    } catch (ioErr) {
+      if (attempt === 2) throw ioErr;
+      await new Promise((r) => setTimeout(r, 15));
+    }
+  }
+  return targetPath;
+}
+
+export async function syncAllSwcFiles(srcDir = path.resolve("src"), projectRoot = process.cwd()) {
+  const files = await glob(["**/*.{js,jsx,ts,tsx}"], { cwd: srcDir, absolute: true, ignore: ["_*/**", "**/_*/**"] });
+  const tasks = [];
+
+  for (const f of files) {
+    let raw = "";
+    try {
+      raw = fsSync.readFileSync(f, "utf8");
+    } catch (e) {
+      continue;
+    }
+    const targetPath = getMirrorPath(f, projectRoot);
+    // Skip server functions
+    if (isServerFunctionsModule(raw, f)) {
+      try {
+        if (fsSync.existsSync(targetPath)) fsSync.unlinkSync(targetPath);
+      } catch (e) {}
+      continue;
+    }
+
+    let needCompile = true;
+    try {
+      if (fsSync.existsSync(targetPath)) {
+        const srcStat = fsSync.statSync(f);
+        const tgtStat = fsSync.statSync(targetPath);
+        if (tgtStat.mtimeMs >= srcStat.mtimeMs) {
+          needCompile = false;
+        }
+      }
+    } catch (e) {}
+
+    if (needCompile) {
+      tasks.push(transformToDisk(f, projectRoot));
+    }
+  }
+
+  if (tasks.length > 0) {
+    await Promise.all(tasks);
+  }
+}
+
+export function swcRedirectPlugin({ projectRoot = process.cwd() } = {}) {
+  const swcDir = path.resolve(projectRoot, ".dinou/swc");
+  const resolveCache = new Map();
+
+  let redirTime = 0;
+  let redirCalls = 0;
+  let redirHits = 0;
+
+  const candidateExtensions = [
+    "",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    "/index.js",
+    "/index.jsx",
+    "/index.ts",
+    "/index.tsx",
+  ];
+
+  return {
+    name: "swc-disk-cache-redirect",
+    setup(build) {
+      let activeAssetFilter = getAssetExtensionsInfo(null, projectRoot).resolveFilterRegex;
+      build.onStart(() => {
+        activeAssetFilter = getAssetExtensionsInfo(null, projectRoot).resolveFilterRegex;
+        resolveCache.clear();
+        redirTime = 0;
+        redirCalls = 0;
+        redirHits = 0;
+      });
+
+      // Redirect CSS and source files imported from inside .dinou/swc back to src/.
+      // Never intercept asset imports here so `assetsPlugin` handles them in the `dinou-asset` namespace.
+      build.onResolve(
+        { filter: /.*/ },
+        (args) => {
+          const importer = args.importer || "";
+          if (!importer.includes(".dinou/swc") && !importer.includes(".dinou\\swc")) {
+            return null;
+          }
+
+          if (activeAssetFilter.test(args.path)) {
+            return null;
+          }
+
+          // Only process relative imports or stylesheets
+          const isRelative = args.path.startsWith(".");
+          const isStyle = redirectFilter.test(args.path);
+          if (!isRelative && !isStyle) {
+            return null;
+          }
+
+          const tStart = Date.now();
+          redirCalls++;
+
+          const cacheKey = importer + "::" + args.path;
+          if (resolveCache.has(cacheKey)) {
+            redirHits++;
+            redirTime += Date.now() - tStart;
+            return resolveCache.get(cacheKey);
+          }
+
+          // 1. Check if it exists directly in .dinou/swc
+          const candidateBase = path.resolve(path.dirname(importer), args.path);
+          if (fsSync.existsSync(candidateBase) && !fsSync.statSync(candidateBase).isDirectory()) {
+            resolveCache.set(cacheKey, null);
+            redirTime += Date.now() - tStart;
+            return null;
+          }
+
+          for (const ext of [".js", ".jsx", ".ts", ".tsx", "/index.js", "/index.jsx", "/index.ts", "/index.tsx"]) {
+            const candidate = candidateBase + ext;
+            if (fsSync.existsSync(candidate) && !fsSync.statSync(candidate).isDirectory()) {
+              resolveCache.set(cacheKey, null);
+              redirTime += Date.now() - tStart;
+              return null;
+            }
+          }
+
+          // 2. Otherwise redirect to original in src/
+          const relFromSwc = path.relative(swcDir, path.dirname(importer));
+          const originalDir = path.join(projectRoot, relFromSwc);
+          const targetBase = path.resolve(originalDir, args.path);
+
+          for (const ext of candidateExtensions) {
+            const target = targetBase + ext;
+            if (fsSync.existsSync(target) && !fsSync.statSync(target).isDirectory()) {
+              const res = { path: target };
+              resolveCache.set(cacheKey, res);
+              redirTime += Date.now() - tStart;
+              return res;
+            }
+          }
+
+          resolveCache.set(cacheKey, null);
+          redirTime += Date.now() - tStart;
+          return null;
+        }
+      );
+
+      build.onEnd(() => {
+        globalThis.__DINOU_REDIRECT_TIME__ = redirTime;
+        globalThis.__DINOU_REDIRECT_CALLS__ = redirCalls;
+        globalThis.__DINOU_REDIRECT_HITS__ = redirHits;
+      });
+    },
+  };
+}
