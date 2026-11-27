@@ -509,9 +509,12 @@ async function getJSX(
               const SlotError = slotErrorModule.default ?? slotErrorModule;
 
               const serializedError = {
-                message: e.message || "Unknown Error",
-                name: e.name,
-                stack: isDevelopment ? e.stack : undefined,
+                message: isDevelopment
+                  ? (e?.message || "Unknown Error")
+                  : "An error occurred in the Server Components render",
+                name: e?.name || "Error",
+                ...(typeof e?.digest === "string" ? { digest: e.digest } : {}),
+                stack: isDevelopment ? e?.stack : undefined,
               };
 
               updatedSlotElement = React.createElement(SlotError, {
@@ -578,9 +581,14 @@ async function getJSX(
             layoutErr?.message || layoutErr
           );
           const serializedError = {
-            message: layoutErr.message || "Unknown Error",
-            name: layoutErr.name || "Error",
-            stack: isDevelopment ? layoutErr.stack : undefined,
+            message: isDevelopment
+              ? (layoutErr?.message || "Unknown Error")
+              : "An error occurred in the Server Components render",
+            name: layoutErr?.name || "Error",
+            ...(typeof layoutErr?.digest === "string"
+              ? { digest: layoutErr.digest }
+              : {}),
+            stack: isDevelopment ? layoutErr?.stack : undefined,
           };
           jsx = await getErrorJSX(
             reqPath,
@@ -624,9 +632,14 @@ async function getJSX(
             layoutErr?.message || layoutErr
           );
           const serializedError = {
-            message: layoutErr.message || "Unknown Error",
-            name: layoutErr.name || "Error",
-            stack: isDevelopment ? layoutErr.stack : undefined,
+            message: isDevelopment
+              ? (layoutErr?.message || "Unknown Error")
+              : "An error occurred in the Server Components render",
+            name: layoutErr?.name || "Error",
+            ...(typeof layoutErr?.digest === "string"
+              ? { digest: layoutErr.digest }
+              : {}),
+            stack: isDevelopment ? layoutErr?.stack : undefined,
           };
           jsx = await getErrorJSX(
             reqPath,

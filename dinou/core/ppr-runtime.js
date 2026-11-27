@@ -1361,7 +1361,20 @@ async function handlePprResume({
         }
 
         if (context._hasRedirected && context._redirectLocation) {
-          const safeTarget = safeJsonForInlineScript(context._redirectLocation);
+          const rawLoc = String(context._redirectLocation);
+          const isValidPprRel =
+            !/[\u0000-\u001F\u007F]/.test(rawLoc) &&
+            rawLoc.startsWith("/") &&
+            !/^\/[\/\\]/.test(rawLoc) &&
+            !rawLoc.split("?")[0].split("#")[0].includes("\\");
+          let isValidPprExt = false;
+          if (!isValidPprRel && /^https?:\/\//i.test(rawLoc) && !/[\u0000-\u001F\u007F]/.test(rawLoc)) {
+            try {
+              const p = new URL(rawLoc);
+              isValidPprExt = (p.protocol === "http:" || p.protocol === "https:") && Boolean(p.hostname);
+            } catch {}
+          }
+          const safeTarget = safeJsonForInlineScript(isValidPprRel || isValidPprExt ? rawLoc : "/");
           const redirectScript = `\n<script>(function(){try{window.__DINOU_STATIC_EXPORT_UNLOADING__=true;window.location.replace(${safeTarget});}catch(_){window.__DINOU_STATIC_EXPORT_UNLOADING__=true;window.location.href=${safeTarget};}})();</script>\n`;
           didEmitRedirect = true;
           await safeWrite(redirectScript);

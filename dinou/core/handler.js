@@ -3,7 +3,7 @@
 // Implements (Request) => Promise<Response> independently of Express.
 
 import path from "node:path";
-import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, realpathSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { PassThrough, Readable } from "node:stream";
 
@@ -186,6 +186,95 @@ function toAsciiHeaderJson(value) {
   });
 }
 
+function isSafeRelativeRedirectPath(candidate) {
+  if (typeof candidate !== "string" || candidate.length === 0) return false;
+  if (/[\u0000-\u001F\u007F]/.test(candidate)) return false;
+  if (candidate !== candidate.trim()) return false;
+  if (!candidate.startsWith("/") || /^\/[\/\\]/.test(candidate)) return false;
+  const pathOnly = candidate.split("?")[0].split("#")[0];
+  if (pathOnly.includes("\\")) return false;
+  try {
+    const parsed = new URL(candidate, "http://dinou.invalid");
+    return parsed.origin === "http://dinou.invalid";
+  } catch {
+    return false;
+  }
+}
+
+function isSafeExternalHttpUrl(candidate) {
+  if (typeof candidate !== "string" || candidate.length === 0) return false;
+  if (/[\u0000-\u001F\u007F]/.test(candidate)) return false;
+  if (candidate !== candidate.trim()) return false;
+  if (!/^https?:\/\//i.test(candidate)) return false;
+  try {
+    const parsed = new URL(candidate);
+    return (
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      Boolean(parsed.hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isAllowedServerRedirectTarget(candidate) {
+  return isSafeRelativeRedirectPath(candidate) || isSafeExternalHttpUrl(candidate);
+}
+
+const DEFAULT_MAX_SF_JSON_BYTES = 1 * 1024 * 1024; // 1 MB
+const DEFAULT_MAX_SF_MULTIPART_BYTES = 10 * 1024 * 1024; // 10 MB
+const DEFAULT_MAX_ERROR_REPORT_BYTES = 64 * 1024; // 64 KB
+
+async function readRequestBodyWithLimit(request, maxBytes) {
+  const contentLengthRaw = request.headers?.get?.("content-length");
+  if (contentLengthRaw !== null && contentLengthRaw !== undefined && contentLengthRaw !== "") {
+    const declared = Number(contentLengthRaw);
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      const err = new Error("Payload Too Large");
+      err.$$dinouPayloadTooLarge = true;
+      throw err;
+    }
+  }
+  if (!request.body || typeof request.body.getReader !== "function") {
+    const ab = await request.arrayBuffer();
+    if (ab.byteLength > maxBytes) {
+      const err = new Error("Payload Too Large");
+      err.$$dinouPayloadTooLarge = true;
+      throw err;
+    }
+    return new Uint8Array(ab);
+  }
+  const reader = request.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        total += value.byteLength;
+        if (total > maxBytes) {
+          const err = new Error("Payload Too Large");
+          err.$$dinouPayloadTooLarge = true;
+          throw err;
+        }
+        chunks.push(value);
+      }
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch (_) {}
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    out.set(c, offset);
+    offset += c.byteLength;
+  }
+  return out;
+}
+
 function decodePathSegmentsSafely(rawPath) {
   const rawSegs = String(rawPath || "").split("/").filter(Boolean);
   const segments = [];
@@ -204,6 +293,23 @@ function decodePathSegmentsSafely(rawPath) {
       decoded.includes("\0")
     ) {
       return { segments: null, invalid: true };
+    }
+    if (decoded.includes("%")) {
+      let decodedTwice;
+      try {
+        decodedTwice = decodeURIComponent(decoded);
+      } catch (e) {
+        return { segments: null, invalid: true };
+      }
+      if (
+        decodedTwice === "." ||
+        decodedTwice === ".." ||
+        decodedTwice.includes("/") ||
+        decodedTwice.includes("\\") ||
+        decodedTwice.includes("\0")
+      ) {
+        return { segments: null, invalid: true };
+      }
     }
     segments.push(decoded);
   }
@@ -1377,9 +1483,7 @@ function createRequestContext(simReq, resBridge, platformContext = {}, dynamicSt
   );
 
   const isAllowedRedirectTarget = (candidate) =>
-    typeof candidate === "string" &&
-    ((candidate.startsWith("/") && !candidate.startsWith("//")) ||
-      /^https?:\/\//i.test(candidate));
+    isAllowedServerRedirectTarget(candidate);
 
   const safeResCall = (methodName, ...args) => {
     if (hasRedirected) return;
@@ -1570,10 +1674,7 @@ function createServerFunctionContext(simReq, resBridge, platformContext = {}) {
           } catch (e) { }
         }
         const resolvedUrl = resolveRelativeUrl(rawUrl, refererPath);
-        let finalUrl = "/";
-        if (typeof resolvedUrl === "string" && resolvedUrl.startsWith("/") && !resolvedUrl.startsWith("//")) {
-          finalUrl = resolvedUrl;
-        }
+        const finalUrl = isSafeRelativeRedirectPath(resolvedUrl) ? resolvedUrl : "/";
         throw {
           $$type: "dinou-internal-redirect",
           url: finalUrl,
@@ -1625,11 +1726,7 @@ function createServerFunctionContext(simReq, resBridge, platformContext = {}) {
 
 function resolveInternalRedirectTarget(rawUrl, currentPath) {
   const resolvedUrl = resolveRelativeUrl(rawUrl || "/", currentPath || "/");
-  const isAllowed =
-    typeof resolvedUrl === "string" &&
-    ((resolvedUrl.startsWith("/") && !resolvedUrl.startsWith("//")) ||
-      /^https?:\/\//i.test(resolvedUrl));
-  return isAllowed ? resolvedUrl : "/";
+  return isAllowedServerRedirectTarget(resolvedUrl) ? resolvedUrl : "/";
 }
 
 function normalizeLogicalRequestPathname(pathname, headersObj = {}) {
@@ -1884,10 +1981,70 @@ async function handleRequestInner(request, platformContext = {}) {
   if (pathname === "/____server_function____" && request.method === "POST") {
     try {
       const origin = headersObj["origin"];
-      const host = headersObj["x-forwarded-host"] || headersObj["host"];
+      const secFetchSite = String(headersObj["sec-fetch-site"] || "").trim().toLowerCase();
+      const trustProxy = Boolean(
+        cfg?.security?.trustProxy === true ||
+          cfg?.trustProxy === true ||
+          process.env.DINOU_TRUST_PROXY === "true"
+      );
+      const rawDirectHost = headersObj["host"] || url.host || "";
+      const rawForwardedHost = trustProxy ? headersObj["x-forwarded-host"] || "" : "";
+      const expectedHost = String(rawForwardedHost || rawDirectHost)
+        .split(",")[0]
+        .trim()
+        .toLowerCase();
 
-      if (!isDevelopment && origin && !origin.includes(host)) {
-        return Response.json({ error: "Invalid Origin" }, { status: 403 });
+      const allowedOriginsRaw =
+        cfg?.security?.allowedOrigins || cfg?.allowedOrigins || [];
+      const allowedOriginSet = new Set(
+        Array.isArray(allowedOriginsRaw)
+          ? allowedOriginsRaw
+              .filter((v) => typeof v === "string" && v.trim())
+              .map((v) => v.trim().toLowerCase())
+          : []
+      );
+      const isAllowlistedOrigin = (origStr) => {
+        if (allowedOriginSet.size === 0 || !origStr) return false;
+        const lower = origStr.trim().toLowerCase();
+        if (allowedOriginSet.has(lower)) return true;
+        try {
+          const parsed = new URL(origStr);
+          return (
+            allowedOriginSet.has(parsed.origin.toLowerCase()) ||
+            allowedOriginSet.has(parsed.host.toLowerCase())
+          );
+        } catch {
+          return false;
+        }
+      };
+
+      if (!isDevelopment) {
+        if (origin) {
+          let originValid = false;
+          try {
+            const originUrl = new URL(origin);
+            const isHttpProto =
+              originUrl.protocol === "http:" || originUrl.protocol === "https:";
+            if (isHttpProto) {
+              if (
+                expectedHost &&
+                originUrl.host.toLowerCase() === expectedHost
+              ) {
+                originValid = true;
+              } else if (isAllowlistedOrigin(origin)) {
+                originValid = true;
+              }
+            }
+          } catch {
+            originValid = false;
+          }
+          if (!originValid) {
+            return Response.json({ error: "Invalid Origin" }, { status: 403 });
+          }
+        }
+        if (secFetchSite === "cross-site" && !isAllowlistedOrigin(origin)) {
+          return Response.json({ error: "Cross-site request blocked" }, { status: 403 });
+        }
       }
       if (headersObj["x-server-function-call"] !== "1") {
         return Response.json({ error: "Missing security header" }, { status: 403 });
@@ -1895,9 +2052,33 @@ async function handleRequestInner(request, platformContext = {}) {
 
       let id, args;
       const contentType = headersObj["content-type"] || "";
+      const configuredMaxBytes = Number(
+        cfg?.security?.maxServerFunctionBodyBytes ??
+          cfg?.maxServerFunctionBodyBytes ??
+          process.env.DINOU_MAX_SERVER_FUNCTION_BODY_BYTES
+      );
+      const isMultipart = contentType.includes("multipart/form-data");
+      const maxBodyBytes =
+        Number.isFinite(configuredMaxBytes) && configuredMaxBytes > 0
+          ? configuredMaxBytes
+          : isMultipart
+            ? DEFAULT_MAX_SF_MULTIPART_BYTES
+            : DEFAULT_MAX_SF_JSON_BYTES;
 
-      if (contentType.includes("multipart/form-data")) {
-        const formData = await request.formData();
+      let boundedBytes;
+      try {
+        boundedBytes = await readRequestBodyWithLimit(request, maxBodyBytes);
+      } catch (limitErr) {
+        if (limitErr && limitErr.$$dinouPayloadTooLarge) {
+          return Response.json({ error: "Payload Too Large" }, { status: 413 });
+        }
+        throw limitErr;
+      }
+
+      if (isMultipart) {
+        const formData = await new Response(boundedBytes, {
+          headers: { "content-type": contentType },
+        }).formData();
         id = formData.get("__dinou_func_id");
         const extraArgs = formData.get("__dinou_args");
         const formDataIndex = formData.get("__dinou_formData_index");
@@ -1923,24 +2104,53 @@ async function handleRequestInner(request, platformContext = {}) {
           args = [formData];
         }
       } else {
-        const bodyJson = await request.json();
-        id = bodyJson.id;
-        args = bodyJson.args;
+        const bodyText = new TextDecoder().decode(boundedBytes);
+        let bodyJson;
+        try {
+          bodyJson = JSON.parse(bodyText);
+        } catch (parseErr) {
+          return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+        }
+        id = bodyJson?.id;
+        args = bodyJson?.args;
       }
 
       if (typeof id !== "string" || !Array.isArray(args)) {
         return Response.json({ error: "Invalid request body" }, { status: 400 });
       }
+      if (id.includes("\0")) {
+        return Response.json({ error: "Invalid file URL format" }, { status: 400 });
+      }
 
-      const [fileUrl, exportName] = id.split("#");
+      const hashIdx = id.indexOf("#");
+      const fileUrl = hashIdx !== -1 ? id.slice(0, hashIdx) : id;
+      const exportName = hashIdx !== -1 ? id.slice(hashIdx + 1) : "";
       if (!fileUrl.startsWith("file://")) {
         return Response.json({ error: "Invalid file URL format" }, { status: 400 });
+      }
+      if (
+        !exportName ||
+        exportName === "__proto__" ||
+        exportName === "constructor" ||
+        exportName === "prototype" ||
+        exportName.includes("\0")
+      ) {
+        return Response.json({ error: "Invalid export name" }, { status: 400 });
       }
 
       let relativePath;
       const isRelativeSrc = fileUrl.startsWith("file:///src/") || fileUrl.startsWith("file:///src\\");
       if (isRelativeSrc) {
-        relativePath = fileUrl.replace(/^file:\/\/\/?/, "").trim();
+        let rawRel = fileUrl.replace(/^file:\/\/\/?/, "").trim();
+        try {
+          rawRel = decodeURIComponent(rawRel);
+        } catch {
+          return Response.json({ error: "Invalid file URL format" }, { status: 400 });
+        }
+        if (rawRel.includes("\0")) {
+          return Response.json({ error: "Invalid file URL format" }, { status: 400 });
+        }
+        relativePath = rawRel;
       } else {
         let resolvedPath;
         try {
@@ -1959,7 +2169,11 @@ async function handleRequestInner(request, platformContext = {}) {
 
       const normalizedRelativePath = path.normalize(relativePath).replace(/\\/g, "/");
       const hasEscapedDir = normalizedRelativePath.split("/").slice(1, -1).some((seg) => seg.startsWith("_"));
-      if ((!normalizedRelativePath.startsWith("src/") && normalizedRelativePath !== "src") || hasEscapedDir) {
+      if (
+        (!normalizedRelativePath.startsWith("src/") && normalizedRelativePath !== "src") ||
+        normalizedRelativePath.includes("..") ||
+        hasEscapedDir
+      ) {
         return Response.json({ error: "Forbidden access" }, { status: 403 });
       }
 
@@ -1980,9 +2194,29 @@ async function handleRequestInner(request, platformContext = {}) {
         }
       }
 
+      const srcRootDir = path.resolve(process.cwd(), "src");
       const absPath = path.resolve(process.cwd(), resolvedRelativePath);
+      const srcRootPrefix = srcRootDir.endsWith(path.sep) ? srcRootDir : srcRootDir + path.sep;
+      if (!normalizePathCase(absPath).startsWith(normalizePathCase(srcRootPrefix))) {
+        return Response.json({ error: "Forbidden access" }, { status: 403 });
+      }
+      if (typeof realpathSync === "function" && existsSync(absPath)) {
+        try {
+          const realSrc = realpathSync(srcRootDir);
+          const realAbs = realpathSync(absPath);
+          const realSrcPrefix = realSrc.endsWith(path.sep) ? realSrc : realSrc + path.sep;
+          if (!normalizePathCase(realAbs).startsWith(normalizePathCase(realSrcPrefix))) {
+            return Response.json({ error: "Forbidden access" }, { status: 403 });
+          }
+        } catch {}
+      }
       const mod = await importModule(absPath);
-      const fn = exportName === "default" ? mod.default : mod[exportName];
+      const fn =
+        exportName === "default"
+          ? mod.default
+          : Object.prototype.hasOwnProperty.call(mod, exportName)
+            ? mod[exportName]
+            : undefined;
 
       if (typeof fn !== "function") {
         return Response.json({ error: `Function '${exportName}' not found` }, { status: 404 });
@@ -2021,13 +2255,14 @@ async function handleRequestInner(request, platformContext = {}) {
       } catch (e) {
         if (e && e.$$type === "dinou-internal-redirect") {
           attachServerFunctionRevalidatedHint();
-          const safeUrl = JSON.stringify(e.url);
+          const finalSfRedirectUrl = isSafeRelativeRedirectPath(e.url) ? e.url : "/";
+          const safeUrl = JSON.stringify(finalSfRedirectUrl);
           if (!bridge.headersSent) {
             bridge.setHeader("Content-Type", "application/json");
-            bridge.setHeader("X-Dinou-Redirect", e.url);
-            bridge.setHeader("x-rsc-redirect", e.url);
+            bridge.setHeader("X-Dinou-Redirect", finalSfRedirectUrl);
+            bridge.setHeader("x-rsc-redirect", finalSfRedirectUrl);
             bridge.status(200);
-            bridge.json({ redirect: e.url });
+            bridge.json({ redirect: finalSfRedirectUrl });
             return bridge.toResponse();
           } else {
             bridge.write(`D:{"type":"redirect","url":${safeUrl}}\n`);
@@ -2051,8 +2286,16 @@ async function handleRequestInner(request, platformContext = {}) {
       return bridge.toResponse();
     } catch (err) {
       console.error("[Dinou] Error executing server function:", err);
-      const errorPayload = { error: err?.message || "Internal Server Error" };
-      if (err && typeof err.digest === "string") {
+      const hasIntentionalDigest =
+        err && typeof err.digest === "string" && err.digest.length > 0;
+      const shouldExposeMessage =
+        isDevelopment || hasIntentionalDigest || Boolean(err && err.expose === true);
+      const errorPayload = {
+        error: shouldExposeMessage
+          ? (err?.message || "Internal Server Error")
+          : "Internal Server Error",
+      };
+      if (hasIntentionalDigest) {
         errorPayload.digest = err.digest;
       }
       return Response.json(errorPayload, { status: 500 });
@@ -2062,13 +2305,29 @@ async function handleRequestInner(request, platformContext = {}) {
   // 5. Client Error RSC Endpoint (POST /____rsc_payload_error____/*)
   if (pathname.includes("____rsc_payload_error____") && request.method === "POST") {
     try {
-      const cleanPath = (pathname.endsWith("/") ? pathname : pathname + "/")
-        .replace("/____rsc_payload_error____", "");
+      const rawErrorPath = (pathname.endsWith("/") ? pathname : pathname + "/")
+        .replace(/^\/____rsc_payload_error____/, "");
+      const decodedErrPath = decodePathSegmentsSafely(rawErrorPath);
+      if (decodedErrPath.invalid) {
+        return new Response("Bad Request", { status: 400 });
+      }
+      const cleanPath =
+        decodedErrPath.segments.length > 0
+          ? "/" + decodedErrPath.segments.join("/") + "/"
+          : "/";
 
       let body = {};
       try {
-        body = await request.json();
-      } catch (e) {}
+        const errBodyBytes = await readRequestBodyWithLimit(
+          request,
+          DEFAULT_MAX_ERROR_REPORT_BYTES
+        );
+        body = JSON.parse(new TextDecoder().decode(errBodyBytes));
+      } catch (e) {
+        if (e && e.$$dinouPayloadTooLarge) {
+          return Response.json({ error: "Payload Too Large" }, { status: 413 });
+        }
+      }
 
       const rawClientError = body?.error || { message: "Unknown Error" };
       const clientError = {
@@ -2076,6 +2335,9 @@ async function handleRequestInner(request, platformContext = {}) {
           ? (rawClientError.message || "Unknown Error")
           : "An error occurred in the Server Components render",
         name: rawClientError.name || "Error",
+        ...(typeof rawClientError.digest === "string"
+          ? { digest: rawClientError.digest }
+          : {}),
         stack: isDevelopment ? rawClientError.stack : undefined,
       };
       const context = createRequestContext(simReq, bridge, platformContext);
@@ -2107,22 +2369,20 @@ async function handleRequestInner(request, platformContext = {}) {
   // 5.5. Granular Slot RSC Endpoint (GET /____rsc_slot____/*)
   if (pathname.includes("____rsc_slot____")) {
     try {
-      const rawSlotId = pathname
+      const slotSuffix = pathname
         .replace(/^.*\/____rsc_slot____\/?/, "")
         .split("?")[0]
-        .split("/")[0]
-        .trim();
+        .replace(/\/+$/, "");
 
-      if (!rawSlotId) {
+      if (!slotSuffix) {
         return new Response("Missing slot id", { status: 400 });
       }
 
-      let slotId;
-      try {
-        slotId = decodeURIComponent(rawSlotId).trim();
-      } catch (e) {
+      const decodedSlotSegs = decodePathSegmentsSafely(slotSuffix);
+      if (decodedSlotSegs.invalid || !decodedSlotSegs.segments || decodedSlotSegs.segments.length !== 1) {
         return new Response("Bad Request", { status: 400 });
       }
+      const slotId = decodedSlotSegs.segments[0].trim();
       if (
         !slotId ||
         slotId === "." ||
@@ -2148,12 +2408,13 @@ async function handleRequestInner(request, platformContext = {}) {
       const decodedSlotPath = decodePathSegmentsSafely(
         String(rawCurrentPath).split("?")[0].split("#")[0]
       );
+      if (decodedSlotPath.invalid) {
+        return new Response("Bad Request", { status: 400 });
+      }
       const currentPath =
-        !decodedSlotPath.invalid && decodedSlotPath.segments
-          ? decodedSlotPath.segments.length > 0
-            ? "/" + decodedSlotPath.segments.join("/")
-            : "/"
-          : rawCurrentPath;
+        decodedSlotPath.segments && decodedSlotPath.segments.length > 0
+          ? "/" + decodedSlotPath.segments.join("/")
+          : "/";
 
       const context = createRequestContext(simReq, bridge, platformContext);
       copyCustomContextProperties(rootContext, context);
@@ -3660,6 +3921,9 @@ async function handleRequestInner(request, platformContext = {}) {
                             "An error occurred in the Server Components render")
                         : "An error occurred in the Server Components render",
                       name: failedRscLayoutErr?.name || "Error",
+                      ...(typeof failedRscLayoutErr?.digest === "string"
+                        ? { digest: failedRscLayoutErr.digest }
+                        : {}),
                       stack: isDevelopment ? failedRscLayoutErr?.stack : undefined,
                     };
                     const errPageJsx = await getErrorJSX(
@@ -3749,6 +4013,7 @@ async function handleRequestInner(request, platformContext = {}) {
             ? (err.message || "An error occurred in the Server Components render")
             : "An error occurred in the Server Components render",
           name: err.name || "Error",
+          ...(typeof err?.digest === "string" ? { digest: err.digest } : {}),
           stack: isDevelopment ? err.stack : undefined,
         };
         const errJsx = await getErrorJSX(reqPath, queryObj, serializedError, isDevelopment, { segment });
@@ -5547,6 +5812,9 @@ async function handleRequestInner(request, platformContext = {}) {
               ? (caughtError?.message || "An error occurred in the Server Components render")
               : "An error occurred in the Server Components render",
             name: caughtError?.name || "Error",
+            ...(typeof caughtError?.digest === "string"
+              ? { digest: caughtError.digest }
+              : {}),
             stack: isDevelopment ? caughtError?.stack : undefined,
           };
           try {
@@ -5811,6 +6079,8 @@ async function handleRequestInner(request, platformContext = {}) {
               clientErrMsg
             )};window.__DINOU_ERROR_NAME__=${JSON.stringify(
               caughtError?.name || "Error"
+            )};window.__DINOU_ERROR_DIGEST__=${JSON.stringify(
+              typeof caughtError?.digest === "string" ? caughtError.digest : ""
             )};window.__DINOU_ERROR_STACK__=${JSON.stringify(
               isDevelopment ? (caughtError?.stack || "") : ""
             )};window.__DINOU_ERROR_SEGMENT__=${JSON.stringify(
@@ -5987,6 +6257,7 @@ async function handleRequestInner(request, platformContext = {}) {
                 ? (ssrErr?.message || "An error occurred in the Server Components render")
                 : "An error occurred in the Server Components render",
               name: ssrErr?.name || "Error",
+              ...(typeof ssrErr?.digest === "string" ? { digest: ssrErr.digest } : {}),
               stack: isDevelopment ? ssrErr?.stack : undefined,
             };
 
@@ -6012,7 +6283,7 @@ async function handleRequestInner(request, platformContext = {}) {
                 : "";
               return {
                 type: "html",
-                html: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dinou Dev Error</title></head><body style="margin:0;background:#fff1f2;padding:20px;"><div style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:32px;max-width:960px;margin:40px auto;background-color:#fff1f2;border:1px solid #fecdd3;border-radius:12px;color:#9f1239;box-shadow:0 10px 25px -5px rgba(0,0,0,0.1);"><div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;"><span style="background:#e11d48;color:white;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:bold;">${isDevelopment ? "Dinou Dev Error" : "Application Error"}</span><h2 style="margin:0;font-size:1.25rem;font-weight:700;color:#881337;">${errMsg.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</h2></div>${devHelp}${stackHtml}</div></body></html>`,
+                html: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${isDevelopment ? "Dinou Dev Error" : "Application Error"}</title></head><body style="margin:0;background:#fff1f2;padding:20px;"><div style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:32px;max-width:960px;margin:40px auto;background-color:#fff1f2;border:1px solid #fecdd3;border-radius:12px;color:#9f1239;box-shadow:0 10px 25px -5px rgba(0,0,0,0.1);"><div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;"><span style="background:#e11d48;color:white;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:bold;">${isDevelopment ? "Dinou Dev Error" : "Application Error"}</span><h2 style="margin:0;font-size:1.25rem;font-weight:700;color:#881337;">${errMsg.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</h2></div>${devHelp}${stackHtml}</div></body></html>`,
                 status: 500,
                 headers: new Headers(bridge.headers),
                 cookies: [...bridge.cookies],
@@ -6036,6 +6307,8 @@ async function handleRequestInner(request, platformContext = {}) {
               serializedError.message
             )};window.__DINOU_ERROR_NAME__=${JSON.stringify(
               serializedError.name
+            )};window.__DINOU_ERROR_DIGEST__=${JSON.stringify(
+              typeof serializedError.digest === "string" ? serializedError.digest : ""
             )};window.__DINOU_ERROR_STACK__=${JSON.stringify(
               isDevelopment ? (serializedError.stack || "") : ""
             )};window.__DINOU_ERROR_SEGMENT__=${JSON.stringify(
@@ -6082,7 +6355,7 @@ async function handleRequestInner(request, platformContext = {}) {
                 : "";
               return {
                 type: "html",
-                html: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dinou Dev Error</title></head><body style="margin:0;background:#fff1f2;padding:20px;"><div style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:32px;max-width:960px;margin:40px auto;background-color:#fff1f2;border:1px solid #fecdd3;border-radius:12px;color:#9f1239;box-shadow:0 10px 25px -5px rgba(0,0,0,0.1);"><div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;"><span style="background:#e11d48;color:white;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:bold;">${isDevelopment ? "Dinou Dev Error" : "Application Error"}</span><h2 style="margin:0;font-size:1.25rem;font-weight:700;color:#881337;">${errMsg.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</h2></div>${devHelp}${stackHtml}</div></body></html>`,
+                html: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${isDevelopment ? "Dinou Dev Error" : "Application Error"}</title></head><body style="margin:0;background:#fff1f2;padding:20px;"><div style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:32px;max-width:960px;margin:40px auto;background-color:#fff1f2;border:1px solid #fecdd3;border-radius:12px;color:#9f1239;box-shadow:0 10px 25px -5px rgba(0,0,0,0.1);"><div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;"><span style="background:#e11d48;color:white;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:bold;">${isDevelopment ? "Dinou Dev Error" : "Application Error"}</span><h2 style="margin:0;font-size:1.25rem;font-weight:700;color:#881337;">${errMsg.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</h2></div>${devHelp}${stackHtml}</div></body></html>`,
                 status: 500,
                 headers: new Headers(bridge.headers),
                 cookies: [...bridge.cookies],

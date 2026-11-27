@@ -562,22 +562,39 @@ class FileSystemStorage extends StorageAdapter {
   }
 
   _resolve(key) {
-    let cleanKey = String(key || "")
+    const rawStr = String(key || "");
+    if (rawStr.includes("\0")) {
+      return null;
+    }
+    let cleanKey = rawStr
       .replace(/\\/g, "/")
       .replace(/^\/+/, "")
       .replace(/\/+$/, "");
+    const rootDir = path.resolve(this.baseDir);
     if (!cleanKey) {
-      return path.join(this.baseDir, "index.html");
+      return path.join(rootDir, "index.html");
+    }
+    const segments = cleanKey.split("/").filter(Boolean);
+    if (segments.some((seg) => seg === "." || seg === "..")) {
+      return null;
     }
     const ext = path.extname(cleanKey);
-    if (!ext) {
-      return path.join(this.baseDir, cleanKey, "index.html");
+    const candidate = !ext
+      ? path.resolve(rootDir, ...segments, "index.html")
+      : path.resolve(rootDir, ...segments);
+    const rootPrefix = rootDir.endsWith(path.sep) ? rootDir : rootDir + path.sep;
+    const isWin = typeof process !== "undefined" && process.platform === "win32";
+    const cmpRoot = isWin ? rootPrefix.toLowerCase() : rootPrefix;
+    const cmpCandidate = isWin ? candidate.toLowerCase() : candidate;
+    if (!cmpCandidate.startsWith(cmpRoot)) {
+      return null;
     }
-    return path.join(this.baseDir, cleanKey);
+    return candidate;
   }
 
   async get(key) {
     let targetPath = this._resolve(key);
+    if (!targetPath) return null;
     let content;
     try {
       content = fs.readFileSync(targetPath, "utf8");
@@ -632,7 +649,7 @@ class FileSystemStorage extends StorageAdapter {
   async getSlotMetadata(slotId) {
     if (!slotId) return null;
     const slotPath = this._resolve(`slots/${slotId}/slot.json`);
-    if (!fs.existsSync(slotPath)) return null;
+    if (!slotPath || !fs.existsSync(slotPath)) return null;
     const metaPath = path.join(path.dirname(slotPath), "slot.metadata.json");
     let metadata = null;
     try {
@@ -642,8 +659,11 @@ class FileSystemStorage extends StorageAdapter {
   }
 
   async set(key, content, metadata = null) {
-    this._unmarkDeleted(key);
     let targetPath = this._resolve(key);
+    if (!targetPath) {
+      throw new Error(`[FileSystemStorage] Refused unsafe cache key outside baseDir: ${String(key)}`);
+    }
+    this._unmarkDeleted(key);
     if (fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory()) {
       targetPath = path.join(targetPath, "index.html");
     }
@@ -714,6 +734,7 @@ class FileSystemStorage extends StorageAdapter {
 
   async has(key) {
     const targetPath = this._resolve(key);
+    if (!targetPath) return false;
     try {
       const st = fs.statSync(targetPath);
       if (st.isDirectory()) {
@@ -726,8 +747,11 @@ class FileSystemStorage extends StorageAdapter {
   }
 
   async delete(key) {
-    this._markDeleted(key);
     let targetPath = this._resolve(key);
+    if (!targetPath) {
+      throw new Error(`[FileSystemStorage] Refused unsafe delete key outside baseDir: ${String(key)}`);
+    }
+    this._markDeleted(key);
     let wasDir = false;
     try {
       wasDir = fs.statSync(targetPath).isDirectory();

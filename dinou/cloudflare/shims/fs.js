@@ -78,6 +78,7 @@ export const mkdirSync = () => {};
 export const writeFileSync = () => {};
 export const rmSync = () => {};
 export const copyFileSync = () => {};
+export const realpathSync = (p) => p;
 
 export const promises = {
   readFile: async (p) => readFileSync(p),
@@ -98,5 +99,6 @@ export default {
   writeFileSync,
   rmSync,
   copyFileSync,
+  realpathSync,
   promises,
 };

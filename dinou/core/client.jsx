@@ -467,15 +467,42 @@ const wrapAbortSafeResponse = (res) => {
   });
 };
 
+const sanitizeRedirectUrl = (candidate) => {
+  if (typeof candidate !== "string" || candidate.length === 0) return null;
+  if (/[\u0000-\u001F\u007F]/.test(candidate)) return null;
+  if (candidate !== candidate.trim()) return null;
+  if (candidate.startsWith("/")) {
+    if (/^\/[\/\\]/.test(candidate)) return null;
+    const pathOnly = candidate.split("?")[0].split("#")[0];
+    if (pathOnly.includes("\\")) return null;
+    try {
+      const parsed = new URL(candidate, "http://dinou.invalid");
+      return parsed.origin === "http://dinou.invalid" ? candidate : null;
+    } catch {
+      return null;
+    }
+  }
+  if (/^https?:\/\//i.test(candidate)) {
+    try {
+      const parsed = new URL(candidate);
+      if ((parsed.protocol === "http:" || parsed.protocol === "https:") && parsed.hostname) {
+        return candidate;
+      }
+    } catch {}
+  }
+  return null;
+};
+
 const executeRscRedirect = (redirectUrl) => {
   if (!redirectUrl || typeof window === "undefined") return;
-  if (/^https?:\/\//i.test(redirectUrl) || !window.__DINOU_ROUTER_NAVIGATE__) {
+  const safeTarget = sanitizeRedirectUrl(redirectUrl) || "/";
+  if (/^https?:\/\//i.test(safeTarget) || !window.__DINOU_ROUTER_NAVIGATE__) {
     window.__DINOU_STATIC_EXPORT_UNLOADING__ = true;
-    window.location.href = redirectUrl;
+    window.location.href = safeTarget;
     return;
   }
-  if (getCurrentRoute() !== redirectUrl) {
-    window.__DINOU_ROUTER_NAVIGATE__(redirectUrl, { replace: true });
+  if (getCurrentRoute() !== safeTarget) {
+    window.__DINOU_ROUTER_NAVIGATE__(safeTarget, { replace: true });
   }
 };
 
@@ -835,6 +862,7 @@ const getErrorRSCPayload = (route, error) => {
         error: {
           message: error.message || "Unknown Error",
           name: error.name,
+          ...(typeof error.digest === "string" ? { digest: error.digest } : {}),
           stack: error.stack,
         },
       }),
@@ -846,12 +874,7 @@ const getErrorRSCPayload = (route, error) => {
         if (res.headers.has("x-rsc-redirect")) {
           const redirectUrl = res.headers.get("x-rsc-redirect");
           pageCache.delete(cacheKey);
-          if (window.__DINOU_ROUTER_NAVIGATE__) {
-            window.__DINOU_ROUTER_NAVIGATE__(redirectUrl, { replace: true });
-          } else {
-            window.__DINOU_STATIC_EXPORT_UNLOADING__ = true;
-            window.location.href = redirectUrl;
-          }
+          executeRscRedirect(redirectUrl);
           return new Promise(() => {});
         }
         return res;
@@ -970,7 +993,7 @@ class ErrorBoundary extends Component {
           <head>
             <meta charSet="UTF-8" />
             <meta name="viewport" content="width=device-width, initial-scale=1" />
-            <title>"Dinou Dev Error from client.jsx ErrorBoundary"</title>
+            <title>{isDev ? "Dinou Dev Error" : "Application Error"}</title>
           </head>
           <body
             style={{
@@ -1068,6 +1091,7 @@ function Router() {
       ? (() => {
           const err = new Error(window.__DINOU_ERROR_MESSAGE__);
           err.name = window.__DINOU_ERROR_NAME__ || "Error";
+          if (window.__DINOU_ERROR_DIGEST__) err.digest = window.__DINOU_ERROR_DIGEST__;
           if (window.__DINOU_ERROR_STACK__) err.stack = window.__DINOU_ERROR_STACK__;
           return getErrorRSCPayload(getCurrentRoute(), err);
         })()
@@ -1083,12 +1107,23 @@ function Router() {
     const finalPath = resolveUrl(href, window.location.pathname);
 
     if (isExternalUrl(finalPath)) {
+      if (!sanitizeRedirectUrl(finalPath)) {
+        return;
+      }
       window.__DINOU_STATIC_EXPORT_UNLOADING__ = true;
       if (options.replace) {
         window.location.replace(finalPath);
       } else {
         window.location.assign(finalPath);
       }
+      return;
+    }
+    if (
+      typeof finalPath === "string" &&
+      (/[\u0000-\u001F\u007F]/.test(finalPath) ||
+        /^\/[\/\\]/.test(finalPath) ||
+        finalPath.split("?")[0].split("#")[0].includes("\\"))
+    ) {
       return;
     }
 

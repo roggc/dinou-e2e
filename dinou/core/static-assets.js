@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { isDotEnvFileName } from "./runtime-env.js";
 
@@ -198,6 +199,29 @@ export function normalizePublicRequestPath(pathname) {
     return null;
   }
 
+  // Reject double-encoded traversal / separators / null bytes / hidden dotfiles
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    if (seg.includes("%")) {
+      let decodedTwice = null;
+      try {
+        decodedTwice = decodeURIComponent(seg);
+      } catch {
+        return null;
+      }
+      if (
+        decodedTwice === "." ||
+        decodedTwice === ".." ||
+        decodedTwice.includes("/") ||
+        decodedTwice.includes("\\") ||
+        decodedTwice.includes("\0") ||
+        (decodedTwice.startsWith(".") && !(i === 0 && decodedTwice === ".well-known"))
+      ) {
+        return null;
+      }
+    }
+  }
+
   // Block hidden dotfiles & dot-directories except RFC 8615 /.well-known/<file>
   const hasDotSegment = segments.some((seg) => seg.startsWith("."));
   if (hasDotSegment) {
@@ -220,7 +244,7 @@ export function normalizePublicRequestPath(pathname) {
 
 /**
  * Resolves a validated relative POSIX path inside `baseDir` and verifies strict
- * filesystem containment so no path can escape `baseDir`.
+ * lexical and realpath (symlink) filesystem containment so no path can escape `baseDir`.
  *
  * @returns {string | null} Absolute filesystem path inside `baseDir`, or `null` if unsafe.
  */
@@ -242,9 +266,34 @@ export function resolveConfinedStaticFile(baseDir, relPosixPath) {
   const rootDir = path.resolve(baseDir);
   const rootPrefix = rootDir.endsWith(path.sep) ? rootDir : rootDir + path.sep;
   const resolved = path.resolve(rootDir, ...segments);
-  if (!resolved.startsWith(rootPrefix)) {
+  const isWin = typeof process !== "undefined" && process.platform === "win32";
+  const cmpRoot = isWin ? rootPrefix.toLowerCase() : rootPrefix;
+  const cmpResolved = isWin ? resolved.toLowerCase() : resolved;
+  if (!cmpResolved.startsWith(cmpRoot)) {
     return null;
   }
+
+  if (
+    typeof fs.realpathSync === "function" &&
+    typeof fs.existsSync === "function" &&
+    fs.existsSync(resolved)
+  ) {
+    try {
+      const realRoot = fs.realpathSync(rootDir);
+      const realTarget = fs.realpathSync(resolved);
+      const realRootPrefix = realRoot.endsWith(path.sep)
+        ? realRoot
+        : realRoot + path.sep;
+      const cmpRealRoot = isWin ? realRootPrefix.toLowerCase() : realRootPrefix;
+      const cmpRealTarget = isWin ? realTarget.toLowerCase() : realTarget;
+      if (!cmpRealTarget.startsWith(cmpRealRoot)) {
+        return null;
+      }
+    } catch {
+      return null;
+    }
+  }
+
   return resolved;
 }
 

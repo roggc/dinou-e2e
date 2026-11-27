@@ -1532,14 +1532,23 @@ async function getSlotJSX(slotId, options = {}) {
                     // If the route itself throws an error (rendering error.tsx), discover
                     // any <DinouCacheSlot> mounted inside the route's error.tsx boundary!
                     try {
+                      const isSlotErrDev =
+                        process.env.DINOU_DEV === "true" ||
+                        (typeof globalThis !== "undefined" && Boolean(globalThis.__DINOU_DEV__)) ||
+                        process.env.NODE_ENV !== "production";
                       const errJsx = await getErrorJSX(
                         options.currentPath,
                         {},
                         {
-                          message: routeErr?.message || "Error",
+                          message: isSlotErrDev
+                            ? (routeErr?.message || "Error")
+                            : "An error occurred in the Server Components render",
                           name: routeErr?.name || "Error",
+                          ...(typeof routeErr?.digest === "string"
+                            ? { digest: routeErr.digest }
+                            : {}),
                         },
-                        false,
+                        isSlotErrDev,
                         {}
                       );
                       if (errJsx) {

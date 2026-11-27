@@ -295,9 +295,12 @@ async function renderSingleLayoutLevel(entry, options = {}) {
             const slotErrorModule = await importModule(slotErrorPath);
             const SlotError = slotErrorModule.default ?? slotErrorModule;
             const serializedError = {
-              message: e.message || "Unknown Error",
-              name: e.name,
-              stack: isDevelopment ? e.stack : undefined,
+              message: isDevelopment
+                ? (e?.message || "Unknown Error")
+                : "An error occurred in the Server Components render",
+              name: e?.name || "Error",
+              ...(typeof e?.digest === "string" ? { digest: e.digest } : {}),
+              stack: isDevelopment ? e?.stack : undefined,
             };
             updatedSlotElement = React.createElement(SlotError, {
               params: slotErrorParams,
@@ -682,8 +685,11 @@ async function spliceSingleLayoutOwnHoles(entry, storage, options = {}) {
               const slotErrorModule = await importModule(slotErrorPath);
               const SlotError = slotErrorModule.default ?? slotErrorModule;
               const serializedError = {
-                message: e?.message || "Unknown Error",
-                name: e?.name,
+                message: isDevelopment
+                  ? (e?.message || "Unknown Error")
+                  : "An error occurred in the Server Components render",
+                name: e?.name || "Error",
+                ...(typeof e?.digest === "string" ? { digest: e.digest } : {}),
                 stack: isDevelopment ? e?.stack : undefined,
               };
               return React.createElement(SlotError, {

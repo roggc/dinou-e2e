@@ -3568,12 +3568,20 @@ assert.ok(altLayoutRsc.includes("nova-206"), "Soft-nav /____rsc_layout____/pa/al
 const errHtml = await get("/pa-err/dyn", { cookie: "u=lyra" });
 assert.equal(textById(errHtml, "el1-s"), "100", "L1 shell must stay frozen even when @sidebar threw & fell back to error.tsx");
 assert.equal(textById(errHtml, "el1-h"), "lyra-208", "L1 PPR hole must STILL stream cleanly when @sidebar failed to error.tsx!");
-assert.equal(textById(errHtml, "sb-err-fb"), "isolated:sidebar-boom", "@sidebar/error.tsx fallback must render cleanly");
+assert.equal(
+  textById(errHtml, "sb-err-fb"),
+  "isolated:An error occurred in the Server Components render",
+  "@sidebar/error.tsx fallback must render cleanly with sanitized production error message"
+);
 assert.equal(textById(errHtml, "edyn-h"), "209", "Dynamic L2 underneath erroring @sidebar must still execute live");
 assert.equal(textById(errHtml, "ep-s"), "100", "Static Page underneath must stay frozen");
 
 const errLayoutRsc = await get("/____rsc_layout____/pa-err/dyn", { cookie: "u=lyra" });
-assert.ok(errLayoutRsc.includes("isolated:sidebar-boom"), "Soft-nav /____rsc_layout____/pa-err/dyn must preserve @sidebar/error.tsx fallback");
+assert.ok(
+  errLayoutRsc.includes("isolated:An error occurred in the Server Components render"),
+  "Soft-nav /____rsc_layout____/pa-err/dyn must preserve @sidebar/error.tsx fallback with sanitized error"
+);
+assert.ok(!errLayoutRsc.includes("sidebar-boom"), "Production @sidebar/error.tsx must NOT leak raw error message");
 assert.ok(errLayoutRsc.includes("lyra-208"), "Soft-nav /____rsc_layout____/pa-err/dyn must still splice L1 PPR hole without crashing on throwing @sidebar!");
 assert.ok(!errLayoutRsc.includes("999888777"), "Soft-nav /____rsc_layout____/pa-err/dyn must NOT re-execute poisoned L1 shell");
 

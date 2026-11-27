@@ -187,7 +187,13 @@ async function getErrorJSX(reqPath, query, error, isDevelopment = false, options
         "div",
         { style: { display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" } },
         React.createElement("span", { style: { background: "#e11d48", color: "white", padding: "2px 8px", borderRadius: "9999px", fontSize: "12px", fontWeight: "bold" } }, isDev ? "Dinou Dev Error" : "Application Error"),
-        React.createElement("h2", { style: { margin: 0, fontSize: "1.25rem", fontWeight: 700, color: "#881337" } }, error?.message || "Unhandled Application Error")
+        React.createElement(
+          "h2",
+          { style: { margin: 0, fontSize: "1.25rem", fontWeight: 700, color: "#881337" } },
+          isDev
+            ? (error?.message || "Unhandled Application Error")
+            : "An error occurred in the Server Components render"
+        )
       ),
       isDev && React.createElement(
         "p",
@@ -217,11 +223,11 @@ async function getErrorJSX(reqPath, query, error, isDevelopment = false, options
     const pageModule = await importModule(pagePath);
     const Page = pageModule.default ?? pageModule;
     const sanitizedError = {
-      ...(typeof error === "object" && error !== null ? error : {}),
       message: isDevelopment
         ? (error?.message || "Unknown Error")
-        : (error?.message && !error.stack ? error.message : "An error occurred in the Server Components render"),
+        : "An error occurred in the Server Components render",
       name: error?.name || "Error",
+      ...(typeof error?.digest === "string" ? { digest: error.digest } : {}),
       stack: isDevelopment ? error?.stack : undefined,
     };
     const rawErrorEl = React.createElement(Page, {
@@ -328,9 +334,12 @@ async function getErrorJSX(reqPath, query, error, isDevelopment = false, options
                 const SlotError = slotErrorModule.default ?? slotErrorModule;
 
                 const serializedError = {
-                  message: e.message || "Unknown Error",
-                  name: e.name,
-                  stack: isDevelopment ? e.stack : undefined,
+                  message: isDevelopment
+                    ? (e?.message || "Unknown Error")
+                    : "An error occurred in the Server Components render",
+                  name: e?.name || "Error",
+                  ...(typeof e?.digest === "string" ? { digest: e.digest } : {}),
+                  stack: isDevelopment ? e?.stack : undefined,
                 };
 
                 updatedSlotElement = React.createElement(SlotError, {

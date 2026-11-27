@@ -1,8 +1,8 @@
 export function isExternalUrl(href) {
   if (!href) return false;
 
-  // Protocol-relative (e.g. //google.com)
-  if (href.startsWith("//")) {
+  // Protocol-relative or backslash-prefixed (e.g. //google.com, /\google.com)
+  if (href.startsWith("//") || /^\/\\/.test(href) || /^\\\//.test(href)) {
     return true;
   }
 

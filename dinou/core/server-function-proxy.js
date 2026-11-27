@@ -1,7 +1,17 @@
 import { createFromFetch } from "@roggc/react-server-dom-esm/client";
 
 function isSafeRedirect(url) {
-  return typeof url === "string" && url.startsWith("/") && !url.startsWith("//");
+  if (typeof url !== "string" || url.length === 0) return false;
+  if (/[\u0000-\u001F\u007F]/.test(url)) return false;
+  if (!url.startsWith("/") || /^\/[\/\\]/.test(url)) return false;
+  const pathOnly = url.split("?")[0].split("#")[0];
+  if (pathOnly.includes("\\")) return false;
+  try {
+    const parsed = new URL(url, "http://dinou.invalid");
+    return parsed.origin === "http://dinou.invalid";
+  } catch {
+    return false;
+  }
 }
 
 function applyRevalidationHint(hint) {

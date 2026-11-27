@@ -9161,7 +9161,9 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
       );
       await expect(page.getByTestId("ctx-sidebar-error-slug")).toHaveText("crash-slot");
       await expect(page.getByTestId("ctx-sidebar-error-msg")).toContainText(
-        "Simulated sidebar slot failure"
+        isProd
+          ? "An error occurred in the Server Components render"
+          : "Simulated sidebar slot failure"
       );
     });
 
@@ -24503,6 +24505,153 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
           { erShouldThrowError: false }
         );
       }
+    });
+  });
+
+  test.describe("🛡️ Series Z — Phase 1 — Stage 2 (Check #Z2): HTTP Security & Hardening", () => {
+    test("1. CSRF Origin/Host/Sec-Fetch-Site rejection, traversal confinement, malicious redirect blocking & production error sanitization (/t-z-security)", async ({
+      page,
+      request,
+    }) => {
+      const pageErrors: string[] = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      // A. Navigate to /t-z-security and verify browser-side malicious redirects NEVER execute XSS or leave origin
+      await page.goto("/t-z-security");
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+      const initialOrigin = new URL(page.url()).origin;
+      const initialHost = new URL(page.url()).host;
+
+      // A1. router.push() blocks javascript:, data:, //evil.example, /\evil.example
+      await page.getByTestId("z2-btn-router-malicious").click();
+      await expect(page.getByTestId("z2-router-probe-status")).toHaveText(
+        "blocked-ok"
+      );
+      expect(new URL(page.url()).origin).toBe(initialOrigin);
+      const xssTriggered = await page.evaluate(
+        () => Boolean((window as any).__Z2_XSS__)
+      );
+      expect(xssTriggered).toBe(false);
+
+      // A2. Server Function uncaught error redacts secret in production; intentional digest propagates
+      await page.getByTestId("z2-btn-sf-secret-err").click();
+      if (isProd) {
+        await expect(page.getByTestId("z2-sf-err-msg")).toHaveText(
+          "Internal Server Error",
+          { timeout: 15000 }
+        );
+        await expect(page.getByTestId("z2-sf-err-digest")).toHaveText("none");
+      } else {
+        await expect(page.getByTestId("z2-sf-err-msg")).toContainText(
+          "Z2_BROWSER_SECRET_DB_PASS",
+          { timeout: 15000 }
+        );
+      }
+
+      await page.getByTestId("z2-btn-sf-digest-err").click();
+      await expect(page.getByTestId("z2-sf-err-digest")).toHaveText(
+        "Z2_DIGEST_OK",
+        { timeout: 15000 }
+      );
+      await expect(page.getByTestId("z2-sf-err-msg")).toHaveText(
+        "Z2 intentional domain validation error"
+      );
+
+      // A3. Server Function res.redirect("/\\evil.example/pwn") clamps safely to "/" on same origin
+      await page.getByTestId("z2-btn-sf-redirect-backslash").click();
+      await expect(page).toHaveURL(new RegExp(`^${initialOrigin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/$`));
+
+      // A4. <ClientRedirect to="/\\evil.example/pwn" /> clamps safely to "/" on same origin
+      await page.goto("/t-z-security");
+      await page.waitForSelector('body[data-hydrated="true"]', {
+        state: "attached",
+        timeout: 15000,
+      });
+      await page.getByTestId("z2-btn-client-redirect-backslash").click();
+      await expect(page).toHaveURL(new RegExp(`^${initialOrigin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/$`));
+
+      // B. SSR error.tsx boundary redacts raw secret in production & propagates digest safely
+      const crashRes = await page.goto("/t-z-security/crash");
+      expect(crashRes?.status()).toBe(500);
+      await expect(page.getByTestId("z2-crash-error-boundary")).toBeVisible({
+        timeout: 15000,
+      });
+      await expect(page.getByTestId("z2-crash-err-digest")).toHaveText(
+        "Z2_SSR_DIGEST_OK"
+      );
+      if (isProd) {
+        await expect(page.getByTestId("z2-crash-err-msg")).toHaveText(
+          "An error occurred in the Server Components render"
+        );
+        await expect(page.getByTestId("z2-crash-err-stack")).toHaveText(
+          "no-stack"
+        );
+        const crashBodyText = await page.locator("body").innerText();
+        expect(crashBodyText).not.toContain("Z2_SSR_SECRET_LEAK_TOKEN");
+        expect(await page.title()).not.toContain("Dinou Dev Error");
+      }
+
+      // C. Live HTTP CSRF & Traversal probes against running server
+      if (isProd) {
+        const suffixOriginRes = await request.post("/____server_function____", {
+          headers: {
+            host: initialHost,
+            origin: `https://${initialHost}.evil.example`,
+            "x-server-function-call": "1",
+            "content-type": "application/json",
+          },
+          data: JSON.stringify({
+            id: "file:///src/t-z-security/actions.ts#z2ThrowDigestError",
+            args: [],
+          }),
+        });
+        expect(suffixOriginRes.status()).toBe(403);
+
+        const spoofedXfhRes = await request.post("/____server_function____", {
+          headers: {
+            host: initialHost,
+            "x-forwarded-host": "evil.example",
+            origin: "https://evil.example",
+            "x-server-function-call": "1",
+            "content-type": "application/json",
+          },
+          data: JSON.stringify({
+            id: "file:///src/t-z-security/actions.ts#z2ThrowDigestError",
+            args: [],
+          }),
+        });
+        expect(spoofedXfhRes.status()).toBe(403);
+
+        const crossSiteRes = await request.post("/____server_function____", {
+          headers: {
+            host: initialHost,
+            "sec-fetch-site": "cross-site",
+            "x-server-function-call": "1",
+            "content-type": "application/json",
+          },
+          data: JSON.stringify({
+            id: "file:///src/t-z-security/actions.ts#z2ThrowDigestError",
+            args: [],
+          }),
+        });
+        expect(crossSiteRes.status()).toBe(403);
+      }
+
+      const badSlotTraversalRes = await request.get(
+        "/____rsc_slot____/%252e%252e"
+      );
+      expect(badSlotTraversalRes.status()).toBe(400);
+
+      const badSlotHeaderRes = await request.get(
+        "/____rsc_slot____/any-slot",
+        { headers: { "x-dinou-current-path": "/../../etc/passwd" } }
+      );
+      expect(badSlotHeaderRes.status()).toBe(400);
+
+      expect(pageErrors).toEqual([]);
     });
   });
 });
