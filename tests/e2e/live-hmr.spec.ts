@@ -101,19 +101,35 @@ async function getFreePortPair() {
 }
 
 function killProcessTree(child: ReturnType<typeof spawn> | null) {
-  if (!child || child.exitCode !== null) return;
+  if (!child) return;
+  if (child.exitCode === null && child.pid) {
+    try {
+      if (process.platform === "win32") {
+        spawnSync("taskkill", ["/pid", String(child.pid), "/f", "/t"], {
+          stdio: "ignore",
+          timeout: 5000,
+        });
+      } else {
+        try {
+          process.kill(-child.pid, "SIGTERM");
+        } catch {}
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {}
+        try {
+          child.kill("SIGKILL");
+        } catch {}
+      }
+    } catch {}
+  }
   try {
-    if (process.platform === "win32") {
-      spawnSync("taskkill", ["/pid", String(child.pid), "/f", "/t"], {
-        stdio: "ignore",
-        timeout: 5000,
-      });
-    } else {
-      child.kill("SIGTERM");
-    }
+    child.stdout?.destroy();
   } catch {}
   try {
-    child.kill("SIGKILL");
+    child.stderr?.destroy();
+  } catch {}
+  try {
+    child.unref?.();
   } catch {}
 }
 
@@ -239,6 +255,7 @@ test.describe("🔥 Series Z — Phase 1 — Stage 4 (Check #Z4): Real-Browser L
 
         devProc = spawn(process.execPath, [CLI_PATH, `dev:${bundler}`], {
           cwd: tmpApp,
+          detached: process.platform !== "win32",
           env: {
             ...process.env,
             PORT: String(port),

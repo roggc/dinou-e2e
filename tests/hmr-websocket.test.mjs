@@ -88,6 +88,7 @@ async function runHmrTests() {
     console.log(`  🚀 Dev server not running on port ${port}. Launching 'npm run dev:esbuild'...`);
     devServerProcess = spawn("npm", ["run", "dev:esbuild"], {
       cwd: projectRoot,
+      detached: process.platform !== "win32",
       stdio: "pipe",
       shell: true,
       env: { ...process.env, PORT: String(port), HMR_PORT: String(hmrPort) },
@@ -205,7 +206,15 @@ async function runHmrTests() {
             { stdio: "ignore", timeout: 5000 }
           );
         } else {
-          devServerProcess.kill("SIGTERM");
+          try {
+            process.kill(-devServerProcess.pid, "SIGTERM");
+          } catch {}
+          try {
+            process.kill(-devServerProcess.pid, "SIGKILL");
+          } catch {}
+          try {
+            devServerProcess.kill("SIGKILL");
+          } catch {}
         }
       } catch (e) {}
     }

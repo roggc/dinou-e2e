@@ -726,6 +726,7 @@ export default function PprMwPage() {
   } finally {
     process.chdir(origCwd);
     if (server) {
+      server.closeAllConnections?.();
       await new Promise((r) => server.close(r));
     }
     removeDirSafe(tmpApp);
