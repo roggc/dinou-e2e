@@ -251,7 +251,7 @@ export interface DinouConfig {
    * Additional file extensions (with or without leading dot, e.g. `["glb", "gltf", "hdr", "wasm"]`)
    * recognized as static media/binary assets when imported in Server Components, Client Components, or CSS `url(...)`.
    * Automatically fingerprinted into `/assets/[name]-[hash].[ext]` across Esbuild, Rollup, Webpack, and all runtimes,
-   * with ambient TypeScript declarations emitted into `.dinou/types/routes.d.ts`.
+   * with ambient TypeScript declarations emitted into `.dinou/types/assets.d.ts` (referenced from `.dinou/types/routes.d.ts`).
    */
   assetExtensions?: string[];
 
@@ -336,9 +336,13 @@ export interface RouteSegmentConfig<
    * - `>= 1`: Pre-rendered/cached with Incremental Static Regeneration (ISR) expiring after the specified seconds.
    * - `false` (or omitted): Statically pre-rendered and cached forever until on-demand revalidation via `revalidatePath` or `revalidateTag`.
    *
-   * Can be declared as a number, false, or as a sync/async function in `page_functions.ts` or `layout_functions.ts`.
+   * Can be declared as a number, `false`, or as a sync/async function `(params) => number | false` in `page_functions.ts` or `layout_functions.ts`.
+   * Zero-argument functions are evaluated eagerly before static path expansion; parameterized functions receive concrete route `params` per path/request.
    */
-  revalidate?: number | false | (() => number | false | Promise<number | false>);
+  revalidate?:
+    | number
+    | false
+    | ((params: TParams) => number | false | Promise<number | false>);
 
   /**
    * Cache tags associated with this route segment for on-demand invalidation via `revalidateTag(tag)`.
@@ -890,13 +894,27 @@ export type LayoutProps<
  * Props for Dinou Error Page components (`error.tsx`), including intermediate and `@slot/error.tsx` boundaries.
  *
  * @example
- * export default function ErrorPage({ error, params }: ErrorProps<"/blog/[id]">) {
- *   return <h1>Error loading {params.id}: {error.message}</h1>;
+ * "use client";
+ * import type { ErrorProps } from "dinou";
+ *
+ * export default function ErrorPage({ error, params, reset }: ErrorProps<"/blog/[id]">) {
+ *   return (
+ *     <div>
+ *       <h1>Error loading {params.id}: {error.message}</h1>
+ *       {error.digest && <p>Digest: {error.digest}</p>}
+ *       {reset && <button onClick={reset}>Retry</button>}
+ *     </div>
+ *   );
  * }
  */
 export interface ErrorProps<T extends DinouErrorPattern = DinouErrorPattern> {
-  error: Error;
+  error: Error & { digest?: string };
   params: ErrorParams<T>;
+  /**
+   * Recovery callback automatically injected into `"use client"` error boundaries.
+   * Evicts the failed route/layout from the client router cache and retries rendering.
+   */
+  reset?: () => void;
 }
 
 /**

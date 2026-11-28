@@ -703,8 +703,13 @@ ${slotPropsDecl}
  * Zero-boilerplate Error boundary props (\`error.tsx\`) pre-bound to this directory (${lookupLiteral}).
  */
 export interface ErrorProps {
-  error: Error;
+  error: Error & { digest?: string };
   params: RouteParams;
+  /**
+   * Recovery callback automatically injected into \`"use client"\` error boundaries.
+   * Evicts the failed route/layout from the client router cache and retries rendering.
+   */
+  reset?: () => void;
 }
 
 /**
@@ -782,6 +787,7 @@ export type {
   NodeMiddleware,
   ServerHookContext,
   DinouPlugin,
+  DinouSecurityConfig,
   DinouConfig,
   PPRConfig,
   AllowUndefinedStaticPath,
