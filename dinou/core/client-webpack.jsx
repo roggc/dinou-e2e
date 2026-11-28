@@ -412,16 +412,43 @@ const isNavigationAbortError = (err) => {
   const msg = typeof err === "object" ? String(err.message || "") : String(err);
   return (
     name === "AbortError" ||
-    /^(?:Load failed|Failed to fetch|NetworkError|The operation was aborted|Error in input stream)/i.test(
+    /^(?:Load failed|Failed to fetch|NetworkError|The operation was aborted|Error in input stream|Connection closed)/i.test(
       msg.trim()
     ) ||
     /____(?:rsc_[a-z_]+|server_function)____.*due to access control checks/i.test(msg)
   );
 };
 
+const activeClientFetchControllers = new Set();
+
+const abortAwareFetch = (url, init = {}) => {
+  if (isStaticExportUnloading()) {
+    return new Promise(() => {});
+  }
+  const controller =
+    typeof AbortController !== "undefined" ? new AbortController() : null;
+  if (controller) {
+    activeClientFetchControllers.add(controller);
+  }
+  return fetch(url, {
+    ...init,
+    signal: controller ? controller.signal : init.signal,
+  }).finally(() => {
+    if (controller) {
+      activeClientFetchControllers.delete(controller);
+    }
+  });
+};
+
 if (typeof window !== "undefined") {
   const markDocumentUnloading = () => {
     window.__DINOU_STATIC_EXPORT_UNLOADING__ = true;
+    for (const controller of activeClientFetchControllers) {
+      try {
+        controller.abort();
+      } catch {}
+    }
+    activeClientFetchControllers.clear();
   };
   window.addEventListener("beforeunload", markDocumentUnloading);
   window.addEventListener("pagehide", markDocumentUnloading);
@@ -741,7 +768,7 @@ const getPagePayload = (route, isPrefetch = false, version = 0) => {
     }
   }
   const fetchPageOnce = () =>
-    fetch(payloadUrl, {
+    abortAwareFetch(payloadUrl, {
       cache: staticExport && !version ? "default" : "no-store",
     });
   const fetchPromise = inlineRes
@@ -851,7 +878,7 @@ const getLayoutPayload = (layoutKey, searchPart = "", version = 0) => {
 
   const inlineRes = isInitialHydration && !version ? consumeInlineRscResponse("L") : null;
   const fetchLayoutOnce = () =>
-    fetch(layoutUrl, {
+    abortAwareFetch(layoutUrl, {
       cache: staticExport && !version ? "default" : "no-store",
     });
   const fetchPromise = inlineRes
@@ -924,8 +951,11 @@ const getLayoutPayload = (layoutKey, searchPart = "", version = 0) => {
 };
 
 const getErrorRSCPayload = (route, error) => {
-  if (isStaticExportMode() || isStaticExportUnloading()) {
+  if (isStaticExportMode()) {
     return null;
+  }
+  if (isStaticExportUnloading() || isNavigationAbortError(error)) {
+    return new Promise(() => {});
   }
   const url = route.split("::")[0];
   const cacheKey = `error::${url}::${error.message || String(error)}`;
@@ -935,7 +965,7 @@ const getErrorRSCPayload = (route, error) => {
 
   const payloadUrl = "/____rsc_payload_error____" + url;
   const promise = createFromFetch(
-    fetch(payloadUrl, {
+    abortAwareFetch(payloadUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -991,7 +1021,7 @@ const fetchSlotRSC = (slotId, options = {}) => {
   const slotSeq = (window.__DINOU_SLOT_SEQ__ = (window.__DINOU_SLOT_SEQ__ || 0) + 1);
   const slotUrl = `/____rsc_slot____/${encodeURIComponent(slotId)}?t=${Date.now()}-${slotSeq}${freshQuery}`;
   return createFromFetch(
-    fetch(slotUrl, {
+    abortAwareFetch(slotUrl, {
       headers: {
         "x-dinou-current-path": currentPath,
       },
@@ -1048,7 +1078,7 @@ class ErrorBoundary extends Component {
   }
 
   componentDidCatch(error, errorInfo) {
-    if (isStaticExportUnloading()) return;
+    if (isStaticExportUnloading() || isNavigationAbortError(error)) return;
     console.error("[Dinou] ErrorBoundary caught error:", error, errorInfo);
     if (this.props.onError) {
       this.props.onError(error);
@@ -1063,7 +1093,7 @@ class ErrorBoundary extends Component {
 
   render() {
     if (this.state.hasError) {
-      if (isStaticExportUnloading()) {
+      if (isStaticExportUnloading() || isNavigationAbortError(this.state.error)) {
         return null;
       }
       if (this.props.fallback) {

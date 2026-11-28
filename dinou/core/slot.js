@@ -165,7 +165,7 @@ function isSlotNavigationAbortError(err) {
   const msg = typeof err === "object" ? String(err.message || "") : String(err);
   return (
     name === "AbortError" ||
-    /^(?:Load failed|Failed to fetch|NetworkError|The operation was aborted|Error in input stream)/i.test(
+    /^(?:Load failed|Failed to fetch|NetworkError|The operation was aborted|Error in input stream|Connection closed)/i.test(
       msg.trim()
     ) ||
     /____(?:rsc_[a-z_]+|server_function)____.*due to access control checks/i.test(msg)

@@ -51,6 +51,35 @@ if (!globalThis[INFLIGHT_KEY]) {
 }
 const inflightSlotRenders = globalThis[INFLIGHT_KEY];
 
+const CF_INFLIGHT_MARKER = Symbol.for("dinou.slot.cf.inflight");
+
+function createCfInflightMarker() {
+  return {
+    [CF_INFLIGHT_MARKER]: true,
+    done: false,
+    serialized: null,
+    failed: false,
+  };
+}
+
+async function waitForInflightSlotEntry(entry) {
+  if (!entry) return null;
+  if (entry[CF_INFLIGHT_MARKER]) {
+    // Cloudflare Workers (workerd) forbids awaiting a Promise tied to another
+    // request's I/O context (timers, KV, ASSETS.fetch). Poll with this request's
+    // own local timer until the leader publishes the serialized payload.
+    const deadline = Date.now() + 10000;
+    while (!entry.done && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    if (entry.done && !entry.failed && typeof entry.serialized === "string") {
+      return deserializeJSX(entry.serialized);
+    }
+    throw new Error("In-flight Cloudflare slot render did not complete");
+  }
+  return await entry;
+}
+
 const SLOT_GEN_KEY = Symbol.for("dinou.slot.render.generation");
 if (!globalThis[SLOT_GEN_KEY]) {
   globalThis[SLOT_GEN_KEY] = new Map();
@@ -1096,19 +1125,21 @@ async function DinouCacheSlot(props) {
 
   // 2. Cache MISS or expired TTL: Deduplicate synchronous render
   if (inflightSlotRenders.has(storageKey)) {
-    const existingPromise = inflightSlotRenders.get(storageKey);
+    const existingEntry = inflightSlotRenders.get(storageKey);
     if (shouldStreamSlotInSuspense) {
       commitSlotTags(slotTagsToCommit);
-      const dedupedStreamPromise = existingPromise.then(async (deduped) => {
-        return await asyncRenderJSXToClientJSX(wrapWithBoundary(deduped, true));
-      });
+      const dedupedStreamPromise = waitForInflightSlotEntry(existingEntry).then(
+        async (deduped) => {
+          return await asyncRenderJSXToClientJSX(wrapWithBoundary(deduped, true));
+        }
+      );
       dedupedStreamPromise.catch(() => {});
       return React.createElement(DinouDeferredSlotStream, {
         promise: dedupedStreamPromise,
       });
     }
     try {
-      const deduped = await existingPromise;
+      const deduped = await waitForInflightSlotEntry(existingEntry);
       commitSlotTags(slotTagsToCommit);
       return wrapWithBoundary(deduped, !isPprBuildActive());
     } catch (e) {}
@@ -1122,50 +1153,67 @@ async function DinouCacheSlot(props) {
   const isPprShellBuild =
     !isSlotEndpointReq && !reqCtxForMeta?._isPprRuntimeResume;
 
+  const useCfMarker = isCloudflareWorkersRuntime();
+  const cfSlotMarker = useCfMarker ? createCfInflightMarker() : null;
+
   const renderPromise = (async () => {
-    const resolved = await runInCachedSlot(
-      async () => {
-        const childElement = typeof children === "function" ? await children() : children;
-        return await asyncRenderJSXToClientJSX(childElement);
-      },
-      { cached: true, slotId }
-    );
-    const serialized = serializeJSX(resolved);
+    try {
+      const resolved = await runInCachedSlot(
+        async () => {
+          const childElement = typeof children === "function" ? await children() : children;
+          return await asyncRenderJSXToClientJSX(childElement);
+        },
+        { cached: true, slotId }
+      );
+      const serialized = serializeJSX(resolved);
 
-    const slotMeta = {
-      tags: allTags,
-      revalidate: typeof revalidate === "number" ? revalidate : undefined,
-      generatedAt: Date.now(),
-      slotId,
-      inStaticShell: Boolean(isPprShellBuild || cached?.metadata?.inStaticShell),
-      inStaticSuspense: Boolean(inPprSuspense || cached?.metadata?.inStaticSuspense),
-    };
+      const slotMeta = {
+        tags: allTags,
+        revalidate: typeof revalidate === "number" ? revalidate : undefined,
+        generatedAt: Date.now(),
+        slotId,
+        inStaticShell: Boolean(isPprShellBuild || cached?.metadata?.inStaticShell),
+        inStaticSuspense: Boolean(inPprSuspense || cached?.metadata?.inStaticSuspense),
+      };
 
-    const persistSlot = async () => {
-      try {
-        await storage.set(storageKey, serialized, slotMeta);
-        if (!storage.baseDir) {
-          try {
-            await storage.set(`slots/${slotId}/slot.metadata.json`, JSON.stringify(slotMeta));
-          } catch (metaErr) {}
+      const persistSlot = async () => {
+        try {
+          await storage.set(storageKey, serialized, slotMeta);
+          if (!storage.baseDir) {
+            try {
+              await storage.set(`slots/${slotId}/slot.metadata.json`, JSON.stringify(slotMeta));
+            } catch (metaErr) {}
+          }
+        } catch (err) {
+          console.error(`[DinouCacheSlot] Failed to write cache for slot "${slotId}":`, err);
         }
-      } catch (err) {
-        console.error(`[DinouCacheSlot] Failed to write cache for slot "${slotId}":`, err);
-      }
-    };
+      };
 
-    if (inPprSuspense) {
-      if (!deferPprSuspenseEffect(persistSlot)) {
+      if (inPprSuspense) {
+        if (!deferPprSuspenseEffect(persistSlot)) {
+          await persistSlot();
+        }
+      } else {
         await persistSlot();
       }
-    } else {
-      await persistSlot();
-    }
 
-    return deserializeJSX(serialized);
+      if (cfSlotMarker) {
+        cfSlotMarker.serialized = serialized;
+      }
+      return deserializeJSX(serialized);
+    } catch (err) {
+      if (cfSlotMarker) {
+        cfSlotMarker.failed = true;
+      }
+      throw err;
+    } finally {
+      if (cfSlotMarker) {
+        cfSlotMarker.done = true;
+      }
+    }
   })();
 
-  inflightSlotRenders.set(storageKey, renderPromise);
+  inflightSlotRenders.set(storageKey, cfSlotMarker || renderPromise);
   if (shouldStreamSlotInSuspense) {
     commitSlotTags(slotTagsToCommit);
     const streamPromise = (async () => {
@@ -1442,7 +1490,9 @@ async function getSlotJSX(slotId, options = {}) {
 
   if (!isEarlyNoCache && inflightSlotRenders.has(earlyInflightKey)) {
     try {
-      const deduped = await inflightSlotRenders.get(earlyInflightKey);
+      const deduped = await waitForInflightSlotEntry(
+        inflightSlotRenders.get(earlyInflightKey)
+      );
       return await refreshNestedSlotsInTree(deduped, targetId, options);
     } catch (e) {}
   }
@@ -1685,8 +1735,12 @@ async function getSlotJSX(slotId, options = {}) {
     const inflightKey = options.fresh ? stampedeKey : storageKey;
     try {
       if (!isEntryNoCache && inflightSlotRenders.has(inflightKey)) {
-        const deduped = await inflightSlotRenders.get(inflightKey);
-        return await refreshNestedSlotsInTree(deduped, targetId, options);
+        try {
+          const deduped = await waitForInflightSlotEntry(
+            inflightSlotRenders.get(inflightKey)
+          );
+          return await refreshNestedSlotsInTree(deduped, targetId, options);
+        } catch (e) {}
       }
 
       if (
@@ -1708,55 +1762,72 @@ async function getSlotJSX(slotId, options = {}) {
       const renderGen = bumpSlotRenderGeneration(storageKey);
       const isLatestGen = () => slotRenderGenerations.get(storageKey) === renderGen;
 
+      const useCfMarker = isCloudflareWorkersRuntime();
+      const cfRenderMarker = !isEntryNoCache && useCfMarker ? createCfInflightMarker() : null;
+
       const renderPromise = (async () => {
-        const resolved = await entry.render();
-        const serialized = serializeJSX(resolved);
-        if (!isEntryNoCache && options.fresh && hasHttpRequest && isLatestGen()) {
-          setRecentFreshSlotRender(stampedeKey, {
-            timestamp: Date.now(),
-            serialized,
-          });
-        }
-        if (storage && !isEntryNoCache && isLatestGen()) {
-          const revalStateRef =
-            typeof globalThis !== "undefined"
-              ? globalThis[Symbol.for("dinou.reval.queue.state")]
-              : null;
-          const nextSlotGenAt = Math.max(
-            Date.now(),
-            Number(cached?.metadata?.generatedAt || 0) + 1,
-            Number(revalStateRef?.lastGenTime || 0) + 1
-          );
-          if (revalStateRef && nextSlotGenAt > (revalStateRef.lastGenTime || 0)) {
-            revalStateRef.lastGenTime = nextSlotGenAt;
+        try {
+          const resolved = await entry.render();
+          const serialized = serializeJSX(resolved);
+          if (!isEntryNoCache && options.fresh && hasHttpRequest && isLatestGen()) {
+            setRecentFreshSlotRender(stampedeKey, {
+              timestamp: Date.now(),
+              serialized,
+            });
           }
-          const freshSlotMeta = {
-            tags: entry.tags,
-            revalidate: entry.revalidate,
-            generatedAt: nextSlotGenAt,
-            slotId: targetId,
-            inStaticShell: Boolean(cached?.metadata?.inStaticShell),
-            inStaticSuspense: Boolean(cached?.metadata?.inStaticSuspense),
-          };
-          await storage.set(storageKey, serialized, freshSlotMeta);
-          if (!storage.baseDir) {
-            try {
-              await storage.set(`slots/${targetId}/slot.metadata.json`, JSON.stringify(freshSlotMeta));
-            } catch (metaErr) {}
+          if (storage && !isEntryNoCache && isLatestGen()) {
+            const revalStateRef =
+              typeof globalThis !== "undefined"
+                ? globalThis[Symbol.for("dinou.reval.queue.state")]
+                : null;
+            const nextSlotGenAt = Math.max(
+              Date.now(),
+              Number(cached?.metadata?.generatedAt || 0) + 1,
+              Number(revalStateRef?.lastGenTime || 0) + 1
+            );
+            if (revalStateRef && nextSlotGenAt > (revalStateRef.lastGenTime || 0)) {
+              revalStateRef.lastGenTime = nextSlotGenAt;
+            }
+            const freshSlotMeta = {
+              tags: entry.tags,
+              revalidate: entry.revalidate,
+              generatedAt: nextSlotGenAt,
+              slotId: targetId,
+              inStaticShell: Boolean(cached?.metadata?.inStaticShell),
+              inStaticSuspense: Boolean(cached?.metadata?.inStaticSuspense),
+            };
+            await storage.set(storageKey, serialized, freshSlotMeta);
+            if (!storage.baseDir) {
+              try {
+                await storage.set(`slots/${targetId}/slot.metadata.json`, JSON.stringify(freshSlotMeta));
+              } catch (metaErr) {}
+            }
+          }
+          if (!isEntryNoCache && options.fresh && hasHttpRequest && isLatestGen()) {
+            setRecentFreshSlotRender(stampedeKey, {
+              timestamp: Date.now(),
+              serialized,
+            });
+          }
+          if (cfRenderMarker) {
+            cfRenderMarker.serialized = serialized;
+          }
+          return deserializeJSX(serialized);
+        } catch (err) {
+          if (cfRenderMarker) {
+            cfRenderMarker.failed = true;
+          }
+          throw err;
+        } finally {
+          if (cfRenderMarker) {
+            cfRenderMarker.done = true;
           }
         }
-        if (!isEntryNoCache && options.fresh && hasHttpRequest && isLatestGen()) {
-          setRecentFreshSlotRender(stampedeKey, {
-            timestamp: Date.now(),
-            serialized,
-          });
-        }
-        return deserializeJSX(serialized);
       })();
 
       let restored;
       if (!isEntryNoCache) {
-        inflightSlotRenders.set(inflightKey, renderPromise);
+        inflightSlotRenders.set(inflightKey, cfRenderMarker || renderPromise);
       }
       try {
         restored = await renderPromise;
