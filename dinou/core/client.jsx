@@ -951,10 +951,10 @@ const getLayoutPayload = (layoutKey, searchPart = "", version = 0) => {
 };
 
 const getErrorRSCPayload = (route, error) => {
-  if (isStaticExportMode()) {
+  if (isStaticExportMode() || isStaticExportUnloading()) {
     return null;
   }
-  if (isStaticExportUnloading() || isNavigationAbortError(error)) {
+  if (isNavigationAbortError(error)) {
     return new Promise(() => {});
   }
   const url = route.split("::")[0];
@@ -1600,7 +1600,7 @@ function Router() {
       >
         <DinouPageContext.Provider value={slotContextValue}>
           {navError
-            ? use(pagePromise)
+            ? (pagePromise ? use(pagePromise) : null)
             : layoutPromise
               ? use(layoutPromise)
               : use(pagePromise)}
