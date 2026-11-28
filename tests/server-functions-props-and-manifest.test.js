@@ -7,9 +7,77 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
 
+function resolveDinouBase() {
+  return fs.existsSync(new URL("../dinou/core/handler.js", import.meta.url))
+    ? "../dinou"
+    : fs.existsSync(new URL("../node_modules/dinou/dinou/core/handler.js", import.meta.url))
+      ? "../node_modules/dinou/dinou"
+      : "../node_modules/dinou";
+}
+
+async function ensureServerFunctionsManifest(dist1Manifest, nodeDevManifest) {
+  if (fs.existsSync(dist1Manifest) || fs.existsSync(nodeDevManifest)) {
+    return;
+  }
+  const dinouBase = resolveDinouBase();
+  const dinouAbs = path.resolve(__dirname, dinouBase);
+  const prevNodeEnv = process.env.NODE_ENV;
+  const prevDinouDev = process.env.DINOU_DEV;
+  const prevWriteToDisk = process.env.DINOU_WRITE_TO_DISK;
+  process.env.NODE_ENV = "production";
+  delete process.env.DINOU_DEV;
+  process.env.DINOU_WRITE_TO_DISK = "true";
+
+  try {
+    const { default: esbuild } = await import("esbuild");
+    const { default: getEsbuildEntries } = await import(
+      `${dinouBase}/esbuild/helpers-esbuild/get-esbuild-entries.js`
+    );
+    const { default: getConfigEsbuildProd } = await import(
+      `${dinouBase}/esbuild/helpers-esbuild/get-config-esbuild-prod.js`
+    );
+    const { getDinouConfig } = await import(`${dinouBase}/core/load-dinou-config.js`);
+
+    const dinouConfig = await getDinouConfig();
+    const manifest = {};
+    const [esbuildEntries, detectedCSSEntries, detectedAssetEntries, serverFiles] =
+      await getEsbuildEntries({ manifest, dinouConfig });
+
+    const entryPoints = {
+      main: path.resolve(dinouAbs, "core/client.jsx"),
+      serverFunctionProxy: path.resolve(dinouAbs, "core/server-function-proxy.js"),
+      dinouClientRedirect: path.resolve(dinouAbs, "core/client-redirect.jsx"),
+      dinouLink: path.resolve(dinouAbs, "core/link.jsx"),
+      dinouSlot: path.resolve(dinouAbs, "core/slot.js"),
+      ...[...esbuildEntries].reduce((acc, e) => ({ ...acc, [e.outfileName]: e.absPath }), {}),
+      ...[...detectedCSSEntries].reduce((acc, e) => ({ ...acc, [e.outfileName]: e.absPath }), {}),
+    };
+
+    await esbuild.build(
+      getConfigEsbuildProd({
+        entryPoints,
+        manifest,
+        outdir: ".dinou/dist3",
+        serverFiles,
+        serverAssetPaths: [...detectedAssetEntries].map((a) => a.absPath),
+        dinouConfig,
+        reactCompiler: false,
+      })
+    );
+  } finally {
+    if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevNodeEnv;
+    if (prevDinouDev === undefined) delete process.env.DINOU_DEV;
+    else process.env.DINOU_DEV = prevDinouDev;
+    if (prevWriteToDisk === undefined) delete process.env.DINOU_WRITE_TO_DISK;
+    else process.env.DINOU_WRITE_TO_DISK = prevWriteToDisk;
+  }
+}
+
 test("Server Functions: reachable modules are registered and unimported modules are excluded", async () => {
   const dist1Manifest = path.join(projectRoot, ".dinou", "dist1", "server-functions-manifest.json");
   const nodeDevManifest = path.join(projectRoot, ".dinou", "node-dev", "server-functions-manifest.json");
+  await ensureServerFunctionsManifest(dist1Manifest, nodeDevManifest);
   const manifestPath = fs.existsSync(dist1Manifest) ? dist1Manifest : nodeDevManifest;
   assert.ok(fs.existsSync(manifestPath), `Manifest must exist at ${manifestPath}`);
 
