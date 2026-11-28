@@ -60,7 +60,23 @@ export default function (source) {
   // as a module → it will remain a string → replaced later → browser loads it.
 
   let proxyCode = `
-const loadProxy = new Function('return import("/"+"__SERVER_FUNCTION_PROXY__")');
+let __proxyModPromise = null;
+const loadProxy = () => {
+  if (typeof window !== "undefined") {
+    if (window.__DINOU_STATIC_EXPORT_UNLOADING__) return new Promise(() => {});
+    if (window.__SERVER_FUNCTION_PROXY_LIB__) return Promise.resolve(window.__SERVER_FUNCTION_PROXY_LIB__);
+  }
+  if (!__proxyModPromise) {
+    __proxyModPromise = new Function('return import("/"+"__SERVER_FUNCTION_PROXY__")')().catch((err) => {
+      __proxyModPromise = null;
+      if (typeof window !== "undefined" && window.__DINOU_STATIC_EXPORT_UNLOADING__) {
+        return new Promise(() => {});
+      }
+      throw err;
+    });
+  }
+  return __proxyModPromise;
+};
 `;
 
   for (const exp of exports) {
