@@ -47,9 +47,42 @@ function executeRedirect(url) {
   }
 }
 
+const activeServerFunctionControllers = new Set();
+
+if (
+  typeof window !== "undefined" &&
+  typeof window.addEventListener === "function" &&
+  !window.__DINOU_SF_UNLOAD_HOOKED__
+) {
+  window.__DINOU_SF_UNLOAD_HOOKED__ = true;
+  const abortInFlightServerFunctions = () => {
+    window.__DINOU_STATIC_EXPORT_UNLOADING__ = true;
+    for (const controller of activeServerFunctionControllers) {
+      try {
+        controller.abort();
+      } catch {}
+    }
+    activeServerFunctionControllers.clear();
+  };
+  window.addEventListener("beforeunload", abortInFlightServerFunctions);
+  window.addEventListener("pagehide", abortInFlightServerFunctions);
+  window.addEventListener("pageshow", (event) => {
+    if (event && event.persisted) {
+      window.__DINOU_STATIC_EXPORT_UNLOADING__ = false;
+    }
+  });
+}
+
 export function createServerFunctionProxy(id) {
   return new Proxy(() => { }, {
     apply: async (_target, _thisArg, args) => {
+      if (
+        typeof window !== "undefined" &&
+        window.__DINOU_STATIC_EXPORT_UNLOADING__
+      ) {
+        return new Promise(() => {});
+      }
+
       let customHeaders = {};
       if (typeof window !== "undefined") {
         if (typeof window.__DINOU_SERVER_FUNCTION_HEADERS__ === "function") {
@@ -108,21 +141,40 @@ export function createServerFunctionProxy(id) {
           __dinou_codec: 1,
         });
       }
+      if (
+        typeof window !== "undefined" &&
+        window.__DINOU_STATIC_EXPORT_UNLOADING__
+      ) {
+        return new Promise(() => {});
+      }
+      const controller =
+        typeof AbortController !== "undefined" ? new AbortController() : null;
+      if (controller) {
+        activeServerFunctionControllers.add(controller);
+      }
       let res;
       try {
         res = await fetch("/____server_function____", {
           method: "POST",
           headers,
           body,
+          signal: controller ? controller.signal : undefined,
         });
       } catch (err) {
+        if (controller) {
+          activeServerFunctionControllers.delete(controller);
+        }
         if (
-          typeof window !== "undefined" &&
-          window.__DINOU_STATIC_EXPORT_UNLOADING__
+          controller?.signal?.aborted ||
+          (typeof window !== "undefined" &&
+            window.__DINOU_STATIC_EXPORT_UNLOADING__)
         ) {
           return new Promise(() => {});
         }
         throw err;
+      }
+      if (controller) {
+        activeServerFunctionControllers.delete(controller);
       }
 
       if (!res.ok) {
