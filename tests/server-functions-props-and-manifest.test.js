@@ -37,8 +37,10 @@ async function ensureServerFunctionsManifest(dist1Manifest, nodeDevManifest) {
       `${dinouBase}/esbuild/helpers-esbuild/get-config-esbuild-prod.js`
     );
     const { getDinouConfig } = await import(`${dinouBase}/core/load-dinou-config.js`);
+    const { generateRouteTypes } = await import(`${dinouBase}/core/generate-route-types.js`);
 
     const dinouConfig = await getDinouConfig();
+    generateRouteTypes(projectRoot);
     const manifest = {};
     const [esbuildEntries, detectedCSSEntries, detectedAssetEntries, serverFiles] =
       await getEsbuildEntries({ manifest, dinouConfig });
