@@ -24541,22 +24541,35 @@ test.describe("🏗️ Tests de Generación Estática Completa", () => {
         if (msg.type() === "error") consoleErrors.push(msg.text());
       });
 
-      // WebKit enforces a strict 100 history.pushState() calls per 10s sliding window
-      // (SecurityError). Pace synthetic pushes only on WebKit so we stay strictly under
-      // the engine limit while adding zero delay on Chromium and Firefox.
-      let pushWindowStart = Date.now();
-      let pushesInWindow = 0;
+      // WebKit enforces a strict 100 history.pushState() calls per 10s SLIDING window
+      // (SecurityError). Track exact push timestamps on WebKit so NO 11s sliding window
+      // can ever contain more than 70 pushes (0ms delay on Chromium and Firefox).
+      const webkitPushTimestamps: number[] = [];
       const paceWebKitHistoryPush = async () => {
         if (browserName !== "webkit") return;
-        if (pushesInWindow >= 75) {
-          const elapsed = Date.now() - pushWindowStart;
-          if (elapsed < 10800) {
-            await page.waitForTimeout(10800 - elapsed);
-          }
-          pushWindowStart = Date.now();
-          pushesInWindow = 0;
+        const WINDOW_MS = 11_000;
+        const MAX_PUSHES_IN_WINDOW = 70;
+        const now = Date.now();
+        while (
+          webkitPushTimestamps.length > 0 &&
+          now - webkitPushTimestamps[0] >= WINDOW_MS
+        ) {
+          webkitPushTimestamps.shift();
         }
-        pushesInWindow++;
+        if (webkitPushTimestamps.length >= MAX_PUSHES_IN_WINDOW) {
+          const waitMs = WINDOW_MS - (now - webkitPushTimestamps[0]) + 50;
+          if (waitMs > 0) {
+            await page.waitForTimeout(waitMs);
+          }
+          const afterWait = Date.now();
+          while (
+            webkitPushTimestamps.length > 0 &&
+            afterWait - webkitPushTimestamps[0] >= WINDOW_MS
+          ) {
+            webkitPushTimestamps.shift();
+          }
+        }
+        webkitPushTimestamps.push(Date.now());
       };
 
       const TOTAL_ROUTES = 155;
